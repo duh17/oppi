@@ -33,14 +33,15 @@ enum RexTailnetProbe {
 
     /// One probe, at most `timeout`. Redirects are not followed: a machine
     /// that sends this one elsewhere is not Rex.
-    static func probe(dnsName: String, timeout: Duration = timeout) async -> Verdict {
-        guard let host = RexTailnetHost(dnsName: dnsName) else { return .notRex }
+    static func probe(address: String, timeout: Duration = timeout) async -> Verdict {
+        guard let host = RexTailnetHost(address: address) else { return .notRex }
         let seconds = Double(timeout.components.seconds) + Double(timeout.components.attoseconds) / 1e18
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = seconds
         configuration.timeoutIntervalForResource = seconds
         configuration.urlCache = nil
-        TailnetTransportRoute.apply(to: configuration, proxy: TailnetTransportRoute.Snapshot.forHost(host.dnsName).proxy)
+        // A machine of the node's own list is on the tailnet, whatever its name.
+        TailnetTransportRoute.applyToEveryHost(configuration, proxy: TailnetTransportRoute.proxy)
         let session = URLSession(configuration: configuration, delegate: RexProbeRedirects(), delegateQueue: nil)
         defer { session.invalidateAndCancel() }
         var request = URLRequest(url: host.url.appending(path: "api/control"))
@@ -122,17 +123,17 @@ final class RexTailnetDiscovery {
     var probing: Bool { passes > 0 }
     @ObservationIgnored private let probe: @Sendable (String) async -> RexTailnetProbe.Verdict
 
-    init(probe: @escaping @Sendable (String) async -> RexTailnetProbe.Verdict = { await RexTailnetProbe.probe(dnsName: $0) }) {
+    init(probe: @escaping @Sendable (String) async -> RexTailnetProbe.Verdict = { await RexTailnetProbe.probe(address: $0) }) {
         self.probe = probe
     }
 
     /// The machines worth asking: online, able to run a server, and on the
     /// tailnet `selfDNSName` (this node's own name) is on.
     static func candidates(_ peers: [TailnetPeer], selfDNSName: String?) -> [TailnetPeer] {
-        guard let own = RexTailnetHost.normalizedName(selfDNSName ?? "") else { return [] }
+        guard let own = RexTailnetHost(address: selfDNSName ?? "")?.address else { return [] }
         let suffix = own.drop { $0 != "." }
         return peers.filter {
-            $0.isOnline && $0.canHostOppi && RexTailnetHost.normalizedName($0.dnsName)?.hasSuffix(suffix) == true
+            $0.isOnline && $0.canHostOppi && RexTailnetHost(address: $0.dnsName)?.address.hasSuffix(suffix) == true
         }
     }
 
@@ -160,7 +161,7 @@ final class RexTailnetDiscovery {
     /// The candidates `discover` would ask now: those with no answer and not
     /// already unanswered this visit, or every one with `force`.
     func pendingNames(peers: [TailnetPeer], selfDNSName: String?, force: Bool = false) -> [String] {
-        Self.candidates(peers, selfDNSName: selfDNSName).compactMap { RexTailnetHost.normalizedName($0.dnsName) }
+        Self.candidates(peers, selfDNSName: selfDNSName).compactMap { RexTailnetHost(address: $0.dnsName)?.address }
             .filter { force || (verdicts[$0] == nil && !unanswered.contains($0)) }
     }
 
@@ -172,8 +173,8 @@ final class RexTailnetDiscovery {
     /// The Rex nodes among `peers`, named by their Tailscale device name.
     func found(among peers: [TailnetPeer], selfDNSName: String?) -> [RexTailnetHost] {
         Self.candidates(peers, selfDNSName: selfDNSName).compactMap { peer in
-            guard let host = RexTailnetHost(dnsName: peer.dnsName, name: peer.hostName.isEmpty ? nil : peer.hostName),
-                  verdicts[host.dnsName] == .rex else { return nil }
+            guard let host = RexTailnetHost(address: peer.dnsName, name: peer.hostName.isEmpty ? nil : peer.hostName),
+                  verdicts[host.address] == .rex else { return nil }
             return host
         }
     }

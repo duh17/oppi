@@ -28,10 +28,14 @@ protocol SSHTerminalConnection: Sendable {
     /// Rex reached over Tailscale alone has no SSH beside it, so uploads, the
     /// host's Ghostty colors, keybinding files, and Herdr are not there.
     var sideCommandsUnavailable: String? { get }
+    /// Side commands would sign in to the host first, which may ask for Face
+    /// ID: a Rex reached over Tailscale signs in to SSH only when one needs it.
+    var sideCommandsSignInPending: Bool { get }
 }
 
 extension SSHTerminalConnection {
     var sideCommandsUnavailable: String? { nil }
+    var sideCommandsSignInPending: Bool { false }
 }
 
 /// A side command asked of a terminal that has none (`sideCommandsUnavailable`):
@@ -404,6 +408,9 @@ final class SSHTerminalChannel {
     /// Why this terminal cannot run side commands (`SSHTerminalConnection`),
     /// kept after it ends so a screen still says why.
     private(set) var sideCommandsUnavailable: String?
+    /// Side commands would sign in first (`SSHTerminalConnection`): automatic
+    /// reads leave them be, and a command the person asks for signs in.
+    var sideCommandsSignInPending: Bool { connection?.sideCommandsSignInPending ?? false }
     /// The startup command running instead of a shell, if any. Exit reasons
     /// name it so a finished `herdr` attach is not reported as a shell exit.
     private(set) var command: String?

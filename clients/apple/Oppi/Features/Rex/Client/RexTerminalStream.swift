@@ -31,6 +31,12 @@ enum RexDataHandshake {
 
     static func hello(ticket: Data) -> Data { Data([0x01]) + ticket }
 
+    /// RESUME: the latest WELCOME's token, then the stream bytes received so
+    /// far as a 64-bit little-endian integer.
+    static func resume(token: Data, received: UInt64) -> Data {
+        Data([0x02]) + token + Data((0..<8).map { UInt8((received >> ($0 * 8)) & 0xFF) })
+    }
+
     static func answer(_ message: Data) throws -> Answer {
         let bytes = [UInt8](message)
         switch bytes.first {
@@ -220,6 +226,110 @@ struct RexTerminalStream {
             return .childExited(code: object["exit_code"] as? Int ?? 0)
         default:
             return .other(type: type)
+        }
+    }
+}
+
+/// A pane's data connection (`/api/data`, `rex.data.terminal.v1`) as a state
+/// machine: the socket's messages in, what the terminal gets out. The socket
+/// opens and upgrades while `data.connect` is still issuing its ticket; its
+/// owner sends `hello(ticket:)` once both are in. It reads WELCOME for the
+/// stream's nonce, then splits the stream (`RexTerminalStream`).
+struct RexDataStream {
+    enum Output: Equatable, Sendable {
+        /// The snapshot's screen (`RexTerminalStream.Piece.snapshot`).
+        case snapshot(Data)
+        /// Its records after READY (`RexTerminalStream.Piece.snapshotRecords`).
+        case snapshotRecords(Data)
+        case output(Data)
+        case exited(code: Int)
+        /// Rex closed the pane (close code 4000). Nothing follows it.
+        case paneClosed
+        /// The stream is over, and why. Nothing follows it.
+        case ended(String)
+        /// Rex would not continue the stream (`resume()`); a new one starts
+        /// with a ticket and a snapshot. Nothing follows it.
+        case resumeRefused
+    }
+
+    private var terminal: RexTerminalStream?
+    private var over = false
+    /// The newest WELCOME's reconnect token, and the stream bytes this side
+    /// has used since the first WELCOME, across every connection of the
+    /// stream: what a RESUME on a new connection carries.
+    private var token: Data?
+    private var received: UInt64 = 0
+    /// A RESUME went out; the next message is Rex's answer to it.
+    private var resuming = false
+    private var nonce: UInt64?
+
+    /// HELLO with the ticket `data.connect` issued: the first message on the open socket.
+    static func hello(ticket: Data) -> RexSocketMessage { .binary(RexDataHandshake.hello(ticket: ticket)) }
+
+    /// RESUME, for the first message on a new connection after this stream's
+    /// dropped, or nil when Rex never welcomed it: the same parser then reads
+    /// on from the first byte it has not used.
+    mutating func resume() -> RexSocketMessage? {
+        guard let token, !over else { return nil }
+        resuming = true
+        return .binary(RexDataHandshake.resume(token: token, received: received))
+    }
+
+    mutating func receive(_ message: RexSocketMessage) -> [Output] {
+        guard !over else { return [] }
+        do {
+            return try deliver(message)
+        } catch {
+            over = true
+            return [.ended(error.localizedDescription)]
+        }
+    }
+
+    private mutating func deliver(_ message: RexSocketMessage) throws -> [Output] {
+        switch message {
+        case .binary(let payload):
+            if resuming {
+                resuming = false
+                switch try? RexDataHandshake.answer(payload) {
+                case .welcome(let welcome)? where welcome.nonce == nonce:
+                    token = welcome.reconnectToken
+                    return []
+                default:
+                    over = true
+                    return [.resumeRefused]
+                }
+            }
+            guard var stream = terminal else {
+                switch try RexDataHandshake.answer(payload) {
+                case .welcome(let welcome):
+                    terminal = RexTerminalStream(nonce: welcome.nonce)
+                    token = welcome.reconnectToken
+                    nonce = welcome.nonce
+                    return []
+                case .reject(let code):
+                    throw RexDataHandshake.Failure.rejected(code)
+                }
+            }
+            received &+= UInt64(payload.count)
+            let pieces = try stream.receive(payload)
+            terminal = stream
+            return pieces.compactMap { piece in
+                switch piece {
+                case .snapshot(let snapshot): .snapshot(snapshot)
+                case .snapshotRecords(let records): .snapshotRecords(records)
+                case .output(let output): .output(output)
+                case .message(.childExited(let code)): .exited(code: code)
+                // Resize and theme: who sizes the pane is followed by its owner
+                // (`block_owner_changed`), and this client keeps its own colors.
+                case .message: nil
+                }
+            }
+        case .close(let code, let reason):
+            over = true
+            if code == 4000 { return [.paneClosed] }
+            return [.ended(reason.isEmpty ? "Rex ended the pane's stream." : "Rex ended the pane's stream: \(reason).")]
+        case .text:
+            return []
         }
     }
 }

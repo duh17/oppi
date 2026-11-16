@@ -13,7 +13,7 @@ final class RexPreviewStreamHost: RexStreamHost {
     init(world: RexFakeWorld = .preview()) { self.world = world }
 
     func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
-        guard command == RexBridge.command else { throw SSHConnectionError.notConnected }
+        guard RexBridge.isBridge(command) else { throw SSHConnectionError.notConnected }
         let host = world.host()
         hosts.append(host)
         return host.open(sink: sink)

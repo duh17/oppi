@@ -15,11 +15,11 @@ extension Array where Element == RexTailnetHost {
     ) -> [RexTailnetHost] {
         var seen = Set<String>()
         var hosts: [RexTailnetHost] = []
-        for host in saved where seen.insert(host.dnsName).inserted && !listedBySSH(host) {
+        for host in saved where seen.insert(host.address).inserted && !listedBySSH(host) {
             hosts.append(host)
         }
         let found = discovered.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        for host in found where seen.insert(host.dnsName).inserted && !listedBySSH(host) {
+        for host in found where seen.insert(host.address).inserted && !listedBySSH(host) {
             hosts.append(host)
         }
         return hosts
@@ -172,14 +172,19 @@ final class RexTailnetSection {
     @ObservationIgnored private let reachNow: @MainActor () -> RexTailnetReach
     /// The experiments: Rex is discovered and read only while its switch is on.
     @ObservationIgnored private let access: @MainActor () -> SSHTerminalExperimentAccess
+    /// Find Rex on Your Tailnet (`AppPreferenceStore.Terminal.findsTailnetRex`):
+    /// off, nothing is probed and only the Rex servers added by name are listed.
+    @ObservationIgnored private let findsTailnetRex: @MainActor () -> Bool
 
     init(
         store: RexDirectStore = RexDirectStore(),
         discovery: RexTailnetDiscovery = .shared,
         reach: @escaping @MainActor () -> RexTailnetReach = { .current },
         makeFollower: @escaping @MainActor (RexTailnetHost) -> RexTailnetFollower = { RexTailnetFollower(host: $0) },
-        access: @escaping @MainActor () -> SSHTerminalExperimentAccess = { .current }
+        access: @escaping @MainActor () -> SSHTerminalExperimentAccess = { .current },
+        findsTailnetRex: @escaping @MainActor () -> Bool = { AppPreferenceStore.Terminal.findsTailnetRex() }
     ) {
+        self.findsTailnetRex = findsTailnetRex
         self.store = store
         self.discovery = discovery
         self.reachNow = reach
@@ -207,7 +212,7 @@ final class RexTailnetSection {
     var isShown: Bool { !entries.isEmpty || reach != .none }
 
     /// The listed nodes' followers, in list order.
-    var listedFollowers: [RexTailnetFollower] { entries.compactMap { followers[$0.dnsName] } }
+    var listedFollowers: [RexTailnetFollower] { entries.compactMap { followers[$0.address] } }
 
     /// Takes what the tab knows now: the node's machine list and its own name,
     /// the SSH hosts whose Rex the tab already lists (one of them reaching the
@@ -225,22 +230,28 @@ final class RexTailnetSection {
         if let cached = sshNamesCache, cached.hosts == sshRexHosts {
             sshNames = cached.names
         } else {
-            sshNames = store.tailnetNames(among: sshRexHosts)
+            sshNames = store.tailnetAddresses(among: sshRexHosts)
             sshNamesCache = (sshRexHosts, sshNames)
         }
+        let finds = reach == .peers && findsTailnetRex()
         let next = [RexTailnetHost].tailnet(
             saved: saved,
-            discovered: reach == .peers ? discovery.found(among: peers, selfDNSName: selfDNSName) : [],
-            listedBySSH: { sshNames.contains($0.dnsName) }
+            discovered: finds ? discovery.found(among: peers, selfDNSName: selfDNSName) : [],
+            listedBySSH: { sshNames.contains($0.address) }
         )
         if next != entries { entries = next }
-        let wanted = Set(entries.map(\.dnsName))
+        let wanted = Set(entries.map(\.address))
         for name in followers.keys where !wanted.contains(name) {
             followers[name]?.close()
             followers[name] = nil
         }
-        for host in entries where followers[host.dnsName] == nil {
-            followers[host.dnsName] = makeFollower(host)
+        for host in entries where followers[host.address] == nil {
+            followers[host.address] = makeFollower(host)
+        }
+        // Turning Find Rex on Your Tailnet off stops a pass that is running.
+        if !finds, let running = discovering {
+            running.cancel()
+            discovering = nil
         }
         // Like the followers, a prompt over the tab does not stop discovery;
         // leaving the tab does (`stop`).
@@ -250,7 +261,7 @@ final class RexTailnetSection {
             // A machine that did not answer is asked again on the next visit.
             discovery.forgetUnanswered()
         }
-        if reach == .peers, discovering == nil,
+        if finds, discovering == nil,
            !discovery.pendingNames(peers: peers, selfDNSName: selfDNSName).isEmpty {
             startDiscovery(force: false)
         }
@@ -278,7 +289,7 @@ final class RexTailnetSection {
     /// A pull to refresh: probes every machine again (through `discovering`,
     /// so leaving the tab cancels it and `update` starts no second pass beside it).
     func refresh() async {
-        guard access().rex, reach == .peers else { return }
+        guard access().rex, reach == .peers, findsTailnetRex() else { return }
         startDiscovery(force: true)
         await discovering?.value
     }

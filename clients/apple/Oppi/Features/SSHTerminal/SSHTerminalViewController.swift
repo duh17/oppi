@@ -388,6 +388,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         let connected = channel.connected
         let connecting = channel.connecting
         let networkChanged = channel.networkChanged
+        // A Rex terminal whose connection dropped stays up while it opens again.
+        let rexReconnecting = channel.connected && channel.rex?.state.reconnecting == true
         _ = channel.reason
         _ = channel.inputNotice
         _ = channel.title
@@ -461,7 +463,9 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         updatePolling()
         refreshPairedHome()
         updateFloatingControls(themeID: chromeID)
-        updateBanners(connecting: connecting, connected: connected, networkChanged: networkChanged, themeID: chromeID)
+        updateBanners(
+            connecting: connecting || rexReconnecting, connected: connected, networkChanged: networkChanged, themeID: chromeID
+        )
         updateNotice(themeID: chromeID)
         updateCopyAndLive(themeID: chromeID)
         updateDictationTail(themeID: chromeID)
@@ -1561,6 +1565,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         )
     }
     private var statusText: String {
+        if channel.connected, channel.rex?.state.reconnecting == true { return "Connection lost \u{2014} reconnecting to Rex\u{2026}" }
         if channel.networkChanged { return "Network changed \u{2014} checking the connection\u{2026}" }
         return channel.connecting ? channel.reason : "Disconnected \u{00b7} \(channel.reason)"
     }
@@ -1749,7 +1754,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         guard SSHTerminalExperimentAccess.current.allows(action) else { return nil }
         return switch action {
         // Herdr is read with side commands, which a terminal without SSH has none of.
-        case .herdr: channel.sideCommandsUnavailable == nil ? herdr : nil
+        case .herdr: channel.sideCommandsUnavailable == nil && !channel.sideCommandsSignInPending ? herdr : nil
         default: nil
         }
     }
@@ -2253,7 +2258,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// straight over Tailscale and nothing is recorded for it.
     static func makeRexMonitor(for profile: SSHTerminalProfile?, hosts: SSHTerminalRexHostStore?) -> RexMonitor {
         if profile?.rexTailnet != nil { return RexMonitor.forTerminal(of: profile) }
-        let monitor = RexMonitor(directHost: profile.map(RexDirectHost.init))
+        // Reading Rex beside a shell never starts one on the host.
+        let monitor = RexMonitor(directHost: profile.map(RexDirectHost.init), autostart: false)
         if let profile, let hosts {
             monitor.onFinding = { hosts.record($0, on: profile) }
         }
@@ -2297,8 +2303,11 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         }
         let dark = appIsDark
         // The host's Ghostty colors are read with side commands; a terminal
-        // without them keeps the colors it has (Oppi's theme, or the last read).
+        // without them keeps the colors it has (Oppi's theme, or the last read),
+        // and a Rex over Tailscale reads them only once something else signed
+        // in to SSH: a read on its own never asks for Face ID.
         let readsColors = channel.connected && colorChoice != .oppi && channel.sideCommandsUnavailable == nil
+            && !channel.sideCommandsSignInPending
         let colorKey = readsColors ? "\(colorChoice)|\(dark)" : nil
         if colorToken != colorKey {
             colorToken = colorKey
@@ -2312,7 +2321,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
                 }
             }
         }
-        let token = channel.connected ? keymapProgram : nil
+        let token = channel.connected && !channel.sideCommandsSignInPending ? keymapProgram : nil
         if keymapToken != token {
             keymapToken = token
             keymapTask?.cancel()

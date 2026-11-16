@@ -260,6 +260,19 @@ enum SettingsCatalog {
         )
     )
 
+    /// Whether the Terminal tab finds Rex on the tailnet by asking each of its
+    /// computers, or lists only the Rex servers added by name.
+    static let terminalFindsTailnetRex = SettingDeclaration<Bool>(
+        id: "settings.sshTerminal.findsTailnetRex",
+        key: AppPreferenceStore.Terminal.findsTailnetRexKey,
+        storage: .device(perServer: false),
+        default: AppPreferenceStore.Terminal.findsTailnetRexDefault,
+        copy: SettingCopy(
+            title: String(localized: "Find Rex on Your Tailnet"),
+            footer: String(localized: "While the Terminal tab shows, asks each computer of your own tailnet whether it runs Rex (a plain request to its Rex address) and lists the ones that do. Off, Oppi connects only to the Rex servers you add here or reach through a saved host, as Rex's own apps do. Needs Oppi's own Tailscale.")
+        )
+    )
+
     // MARK: - Experiments
 
     /// Rex: the Terminal tab's Rex sections, Rex sessions screens, Rex panes, and the
@@ -468,6 +481,7 @@ enum SettingsCatalog {
         piIcon.descriptor,
         terminalPageMode.descriptor,
         terminalTapMode.descriptor,
+        terminalFindsTailnetRex.descriptor,
         experimentRex.descriptor,
         experimentHerdr.descriptor,
         experimentCalendarEvents.descriptor,

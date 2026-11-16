@@ -76,6 +76,9 @@ final class SSHTerminalConnectSession {
     /// How a Rex reached over Tailscale alone is dialed (`RexTLSStream.open`);
     /// tests pass a stand-in Rex.
     @ObservationIgnored private let openRexDirect: RexLink.OpenDirect
+    /// Whether this device has a route onto the tailnet (`RexTailnetPath`);
+    /// tests pin it.
+    @ObservationIgnored private let rexTailnetUsable: @Sendable () -> Bool
     /// The experiments: a Rex path asks this before it dials anything.
     @ObservationIgnored private let access: @MainActor () -> SSHTerminalExperimentAccess
 
@@ -83,22 +86,27 @@ final class SSHTerminalConnectSession {
         registry: SSHTerminalRegistry = .shared,
         profileStore: @escaping @Sendable () -> SSHTerminalProfileStore = { SSHTerminalProfileStore() },
         openRexDirect: @escaping RexLink.OpenDirect = RexTLSStream.open,
+        rexTailnetUsable: @escaping @Sendable () -> Bool = { RexTailnetPath.usable() },
         access: @escaping @MainActor () -> SSHTerminalExperimentAccess = { .current }
     ) {
         self.access = access
         self.registry = registry
         self.profileStore = profileStore
         self.openRexDirect = openRexDirect
+        self.rexTailnetUsable = rexTailnetUsable
     }
 
     /// Which hosts Rex was seen on, in the store this session's hosts live in.
     var rexHosts: SSHTerminalRexHostStore { profileStore().rexHosts }
 
+    /// `overSSH`: a Rex pane signs in to SSH even when its Rex is reached over
+    /// Tailscale (the Tailscale attempt already failed).
     func connect(
         profile: SSHTerminalProfile,
         suppliedPassword: String? = nil,
         reconnecting: Bool = false,
         sudoPassword: String? = nil,
+        overSSH: Bool = false,
         onSaved: ((SSHTerminalProfile) -> Void)? = nil
     ) {
         // Every Rex path needs the experiment: a reconnect of a closed Rex pane, a
@@ -108,7 +116,7 @@ final class SSHTerminalConnectSession {
             failure = "Rex is off in Settings → Experiments."
             return
         }
-        if let host = profile.rexTailnet.flatMap({ _ in RexTailnetHost(dnsName: profile.host) }) {
+        if let host = profile.rexTailnet.flatMap({ RexTailnetHost(url: $0) }) {
             return connectTailnetRex(host)
         }
         let value = profile.normalized()
@@ -141,6 +149,15 @@ final class SSHTerminalConnectSession {
             }
             return
         }
+        // A Rex pane whose Rex this host reaches over Tailscale opens there with
+        // no SSH sign-in, as Rex's own apps do: Rex admits this device by its
+        // Tailscale identity. The host as saved is what it was learned for.
+        if let rexPane, !listsRexSessions, !overSSH, sudoPassword == nil, suppliedPassword == nil {
+            let plan = routePlan(for: value)
+            if plan.directCandidate() != nil {
+                return connectRexOverTailnet(value, pane: rexPane, plan: plan, reconnecting: reconnecting, onSaved: onSaved)
+            }
+        }
         promptTarget = PromptTarget(profile: value, isReconnect: reconnecting)
         // A lock that is due but not applied yet covers Oppi as well.
         if AppLockService.shared.requiresUnlock() { SSHApprovalCache.shared.invalidateAll() }
@@ -169,20 +186,8 @@ final class SSHTerminalConnectSession {
                 onSaved?(value)
                 connectedProfile = value
                 let savedKey = try SSHKnownHosts().savedKey(host: value.host, port: value.port)
-                let authenticate: @Sendable () async throws -> SSHAuthentication = {
-                    switch value.authentication {
-                    case .password:
-                        if let suppliedPassword { return .password(suppliedPassword) }
-                        let stored = try await makeStore().approvedPassword(for: value)
-                        guard let stored else { throw SSHKeychainError.passwordRequired }
-                        return .password(stored)
-                    case .deviceKey:
-                        return .deviceKey(try await SSHIdentityKeyStore.authenticatedIdentity())
-                    }
-                }
-                let dial: @Sendable () async throws -> Int32 = {
-                    try await SSHDial.socket(host: value.host, port: value.port, whenNodeStopped: .direct)
-                }
+                let authenticate = Self.authentication(for: value, suppliedPassword: suppliedPassword, store: makeStore)
+                let dial = Self.dial(value)
                 if listsRexSessions {
                     let connection = try await SSHConnection.open(
                         username: value.username, savedHostKey: savedKey,
@@ -225,11 +230,16 @@ final class SSHTerminalConnectSession {
                     do {
                         // Typing travels on the control connection, so its
                         // writability is what lets the input pump resume.
-                        let plan = RexRoutePlan(host: RexDirectHost(profile: value))
-                        let (transport, control) = try await RexHostTransport.open(connection: connection, plan: plan) { writable in
+                        let plan = routePlan(for: value)
+                        let (transport, control) = try await RexHostTransport.open(
+                            connection: connection, plan: plan, signIn: Self.signIn(value, store: makeStore)
+                        ) { writable in
                             queue.push(.writabilityChanged(writable))
                         }
-                        pane = try await RexSessionConnection.open(transport: transport, control: control, target: rexPane, queue: queue)
+                        pane = try await RexSessionConnection.open(
+                            transport: transport, control: control, target: rexPane, queue: queue,
+                            reopen: rexReopen(for: value, queue: queue)
+                        )
                     } catch { queue.finish(); connection.close(); throw error }
                     guard !Task.isCancelled, runID == self.runID else { queue.finish(); await pane.cancel(); return }
                     owner.rex = RexSessionModel(connection: pane)
@@ -402,10 +412,14 @@ final class SSHTerminalConnectSession {
                 let queue = SSHTerminalEventQueue()
                 let pane: RexSessionConnection
                 do {
-                    let (transport, control) = try await RexTailnetTransport.open(host: host, openDirect: openDirect) { writable in
-                        queue.push(.writabilityChanged(writable))
-                    }
-                    pane = try await RexSessionConnection.open(transport: transport, control: control, target: rexPane, queue: queue)
+                    let onWritable: @Sendable (Bool) -> Void = { writable in queue.push(.writabilityChanged(writable)) }
+                    let (transport, control) = try await RexTailnetTransport.open(host: host, openDirect: openDirect, onWritable: onWritable)
+                    pane = try await RexSessionConnection.open(
+                        transport: transport, control: control, target: rexPane, queue: queue,
+                        reopen: { token in
+                            try await RexTailnetTransport.open(host: host, openDirect: openDirect, reconnectToken: token, onWritable: onWritable)
+                        }
+                    )
                 } catch { queue.finish(); throw error }
                 guard !Task.isCancelled, runID == self.runID else { queue.finish(); await pane.cancel(); return }
                 owner.rex = RexSessionModel(connection: pane)
@@ -430,6 +444,157 @@ final class SSHTerminalConnectSession {
             registry.track(attempt: attempt, task: task) { [weak self] in
                 self?.handleBackground()
             }
+        }
+    }
+
+    /// A Rex pane of a saved SSH host whose Rex is reached over Tailscale: no
+    /// SSH sign-in, password, Face ID, or host-key trust to open it. Side
+    /// commands sign in when first needed (`RexHostTransport`). If Rex does
+    /// not answer there, the same pane opens over SSH (`overSSH`), as before.
+    private func connectRexOverTailnet(
+        _ value: SSHTerminalProfile, pane rexPane: RexPaneTarget, plan: RexRoutePlan,
+        reconnecting: Bool, onSaved: ((SSHTerminalProfile) -> Void)?
+    ) {
+        begin(value, savingHostOnly: false)
+        promptTarget = nil
+        connectedProfile = value
+        let attempt = runID
+        let makeStore = profileStore
+        task = Task {
+            defer { registry.untrack(attempt: attempt) }
+            do {
+                let owner = try SSHTerminalChannel(answersTerminalQueries: false)
+                channel = owner
+                let queue = SSHTerminalEventQueue()
+                let opened: (RexHostTransport, RexControl)?
+                do {
+                    opened = try await RexHostTransport.openOverTailnet(plan: plan, signIn: Self.signIn(value, store: makeStore)) { writable in
+                        queue.push(.writabilityChanged(writable))
+                    }
+                } catch { queue.finish(); throw error }
+                guard runID == self.runID, !Task.isCancelled else { queue.finish(); opened?.0.close(); return }
+                guard let (transport, control) = opened else {
+                    queue.finish()
+                    connect(profile: value, reconnecting: reconnecting, overSSH: true, onSaved: onSaved)
+                    return
+                }
+                let pane: RexSessionConnection
+                do {
+                    pane = try await RexSessionConnection.open(
+                        transport: transport, control: control, target: rexPane, queue: queue,
+                        reopen: rexReopen(for: value, queue: queue)
+                    )
+                } catch { queue.finish(); transport.close(); throw error }
+                guard !Task.isCancelled, runID == self.runID else { queue.finish(); await pane.cancel(); return }
+                owner.rex = RexSessionModel(connection: pane)
+                owner.opened(pane)
+                let adopted = registry.adopt(owner, profile: value, rexPane: rexPane, queue: queue)
+                task = nil
+                connecting = false
+                if adopted {
+                    makeStore().rexHosts.markSeen(value)
+                    showsTerminal = true
+                } else {
+                    failure = Self.backgroundFailure
+                }
+            } catch {
+                guard runID == self.runID, !Task.isCancelled else { return }
+                noteFailure(error, profile: value)
+            }
+        }
+        if let task {
+            registry.track(attempt: attempt, task: task) { [weak self] in
+                self?.handleBackground()
+            }
+        }
+    }
+
+    /// How a Rex terminal of `value` reaches Rex: over Tailscale when the
+    /// host's Rex said it serves there, for the host as saved now.
+    private func routePlan(for value: SSHTerminalProfile) -> RexRoutePlan {
+        planMaker(for: value)()
+    }
+
+    /// Makes a fresh route plan for `value` from any task: one per open, so
+    /// a reconnect tries Tailscale again.
+    private func planMaker(for value: SSHTerminalProfile) -> @Sendable () -> RexRoutePlan {
+        let makeStore = profileStore
+        let host = RexDirectHost(profile: value)
+        let tailnetUsable = rexTailnetUsable
+        let openDirect = openRexDirect
+        return {
+            RexRoutePlan(
+                host: host, store: makeStore().rexDirect, tailnetUsable: tailnetUsable,
+                isCurrent: { makeStore().profile(id: host.id).map { RexDirectHost(profile: $0) == host } ?? false },
+                openDirect: openDirect
+            )
+        }
+    }
+
+    /// How a Rex terminal of saved host `value` opens Rex again after its
+    /// connection is lost (`RexSessionConnection.Reopen`): over Tailscale with
+    /// no sign-in when the host's Rex serves there, else signed in over SSH
+    /// again with the saved credential (Face ID or the passcode once its
+    /// approval has lapsed, as Reconnect asks).
+    private func rexReopen(for value: SSHTerminalProfile, queue: SSHTerminalEventQueue) -> RexSessionConnection.Reopen {
+        let makePlan = planMaker(for: value)
+        let signIn = Self.signIn(value, store: profileStore)
+        let onWritable: @Sendable (Bool) -> Void = { writable in queue.push(.writabilityChanged(writable)) }
+        return { token in
+            let plan = makePlan()
+            if let direct = try await RexHostTransport.openOverTailnet(
+                plan: plan, signIn: signIn, reconnectToken: token, onWritable: onWritable
+            ) {
+                return direct
+            }
+            let connection = try await signIn()
+            do {
+                return try await RexHostTransport.open(
+                    connection: connection, plan: plan, signIn: signIn, reconnectToken: token, onWritable: onWritable
+                )
+            } catch {
+                connection.close()
+                throw error
+            }
+        }
+    }
+
+    /// The credential a sign-in to `value` offers: the password just typed,
+    /// else the saved one (approved with Face ID or the passcode), or the
+    /// device key (the same approval).
+    private static func authentication(
+        for value: SSHTerminalProfile, suppliedPassword: String?, store makeStore: @escaping @Sendable () -> SSHTerminalProfileStore
+    ) -> @Sendable () async throws -> SSHAuthentication {
+        {
+            switch value.authentication {
+            case .password:
+                if let suppliedPassword { return .password(suppliedPassword) }
+                let stored = try await makeStore().approvedPassword(for: value)
+                guard let stored else { throw SSHKeychainError.passwordRequired }
+                return .password(stored)
+            case .deviceKey:
+                return .deviceKey(try await SSHIdentityKeyStore.authenticatedIdentity())
+            }
+        }
+    }
+
+    private static func dial(_ value: SSHTerminalProfile) -> @Sendable () async throws -> Int32 {
+        { try await SSHDial.socket(host: value.host, port: value.port, whenNodeStopped: .direct) }
+    }
+
+    /// A later SSH sign-in to `value` for a Rex terminal's side commands: the
+    /// saved credential only, never a password typed for one connect, and the
+    /// host key as trusted then.
+    private static func signIn(
+        _ value: SSHTerminalProfile, store makeStore: @escaping @Sendable () -> SSHTerminalProfileStore
+    ) -> RexHostTransport.SignIn {
+        let authenticate = authentication(for: value, suppliedPassword: nil, store: makeStore)
+        let dial = dial(value)
+        return {
+            let savedKey = try SSHKnownHosts().savedKey(host: value.host, port: value.port)
+            return try await SSHConnection.open(
+                username: value.username, savedHostKey: savedKey, prepareAuthentication: authenticate, dial: dial
+            )
         }
     }
 

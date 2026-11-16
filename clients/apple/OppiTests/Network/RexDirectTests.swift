@@ -60,17 +60,33 @@ struct RexDirectTests {
         }
     }
 
-    /// Only an HTTPS URL on a tailnet name, with serving available, is taken;
-    /// serving off forgets what was remembered; an answer that is not a status
+    /// Rex's own Tailscale HTTPS serving is taken at any name it gives (a
+    /// Headscale tailnet's too); without it, a `tailnet://` listener on the
+    /// host's own Tailscale is taken at its first tailnet address, over plain
+    /// HTTP. A listener that admits anyone, or one off the tailnet, is not.
+    /// Serving off forgets what was remembered; an answer that is not a status
     /// changes nothing.
-    @Test func serverStatusSaysWhereRexServesOverTailscale() {
+    @Test func serverStatusSaysWhereRexServesOnTheTailnet() {
         let available = RexDirectDiscovery.outcome(statusJSON: Data(Self.status().utf8))
         #expect(available == .available(url: Self.rexURL, hostID: Self.rexHostID))
-        for https in [#"{"state":"unavailable"}"#, #"{"state":"available","url":"https://rex.example.com"}"#,
-                      #"{"state":"available","url":"http://rex.tail0000.ts.net"}"#,
+        let headscale = Self.status(https: #"{"state":"available","url":"https://rex.hs.example.com/"}"#)
+        #expect(RexDirectDiscovery.outcome(statusJSON: Data(headscale.utf8))
+            == .available(url: testUnwrap(URL(string: "https://rex.hs.example.com")), hostID: Self.rexHostID))
+        for https in [#"{"state":"unavailable"}"#, #"{"state":"available","url":"http://rex.tail0000.ts.net"}"#,
                       #"{"state":"available","url":"https://rex.tail0000.ts.net/elsewhere"}"#] {
             #expect(RexDirectDiscovery.outcome(statusJSON: Data(Self.status(https: https).utf8)) == .unavailable, "\(https)")
         }
+
+        func listening(_ listeners: String) -> RexDirectDiscovery.Outcome? {
+            RexDirectDiscovery.outcome(statusJSON: Data(#"{"pid":1,"host_id":"h","listeners":\#(listeners)}"#.utf8))
+        }
+        let unix = #"{"endpoint":"unix:///tmp/rex.sock","addresses":["/tmp/rex.sock"],"transport":"unix","admission":"peer_credentials","primary":true}"#
+        let tailnet = #"{"endpoint":"tailnet://:7297","addresses":["100.101.102.103:7297","[fd7a:115c:a1e0::1]:7297"],"transport":"tailscale","admission":"tailscale_owner"}"#
+        #expect(listening("[\(unix),\(tailnet)]") == .available(url: testUnwrap(URL(string: "http://100.101.102.103:7297")), hostID: "h"))
+        let anonymous = #"{"endpoint":"0.0.0.0:7297","addresses":["100.101.102.103:7297"],"transport":"tcp","admission":"anonymous"}"#
+        let offTailnet = #"{"endpoint":"tailnet://:7297","addresses":["192.168.1.5:7297"],"transport":"tailscale"}"#
+        #expect(listening("[\(unix),\(anonymous),\(offTailnet)]") == .unavailable)
+
         #expect(RexDirectDiscovery.outcome(statusJSON: Data(#"{"pid":1}"#.utf8)) == .unavailable, "a Rex without Tailscale")
         #expect(RexDirectDiscovery.outcome(statusJSON: Data("{}".utf8)) == nil)
         #expect(RexDirectDiscovery.outcome(statusJSON: Data("rex: command not found".utf8)) == nil)
@@ -120,9 +136,7 @@ struct RexDirectTests {
     /// The first open has no address: it goes over the bridge, which reads
     /// `server.status` and remembers where Rex serves. The next open goes
     /// straight to Rex over Tailscale, upgrading with Rex's own name (and port,
-    /// when the URL has one), and speaks the same control protocol there. A
-    /// direct open asks Rex who it is: another Rex at that name drops the
-    /// address, so the next open learns it again over SSH.
+    /// when the URL has one), and speaks the same control protocol there.
     @Test func theBridgeLearnsTheAddressAndTheNextOpenGoesDirect() async throws {
         let store = Self.store()
         let host = RexDirectHost(profile: Self.profile())
@@ -158,13 +172,32 @@ struct RexDirectTests {
         #expect(RexLink.hostHeader(testUnwrap(URL(string: "https://\(Self.rexName):8443"))) == "\(Self.rexName):8443")
         #expect(RexLink.hostHeader(Self.rexURL) == Self.rexName)
 
-        let impostor = FakeRex(status: Self.status(hostID: "another-rex"))
-        let (_, impostorControl) = try await RexLink.connect(
-            plan: RexRoutePlan(host: host, store: store, tailnetUsable: { true }, isCurrent: { true }, openDirect: { _, _, _, sink in impostor.open(sink) }),
-            openStream: { _, _, _ in throw SSHConnectionError.notConnected }, run: nil
-        )
-        #expect(try await Self.eventually { store.url(for: host) == nil }, "another Rex at that name: the address goes")
-        impostorControl.close()
+    }
+
+    /// With no SSH sign-in beside it, a direct connection is handed out only
+    /// once the Rex there says it is this host's: the same address and the
+    /// same `host_id`. Another Rex at that address, or an address learned with
+    /// no `host_id` to check, is asked nothing else, its address is dropped,
+    /// and the open goes over SSH.
+    @Test func aDirectConnectionIsUsedOnlyOnceRexSaysItIsThisHostsOwn() async throws {
+        for (learned, answering) in [(Self.rexHostID, "another-rex"), (nil, Self.rexHostID)] as [(String?, String)] {
+            // A host of its own each time: a failed attempt holds its host off Tailscale for a while.
+            let host = RexDirectHost(profile: Self.profile())
+            let store = Self.store()
+            store.apply(.available(url: Self.rexURL, hostID: learned), for: host)
+            let impostor = FakeRex(status: Self.status(hostID: answering))
+            let bridge = FakeRex()
+            let (link, control) = try await RexLink.connect(
+                plan: RexRoutePlan(
+                    host: host, store: store, tailnetUsable: { true }, isCurrent: { true },
+                    openDirect: { _, _, _, sink in impostor.open(sink) }
+                ),
+                openStream: { _, _, sink in bridge.open(sink) }, run: nil
+            )
+            #expect(link.route == .ssh, "learned \(learned ?? "no host id"): falls back to SSH")
+            #expect(impostor.host.requests.map(\.method) == ["server.status"], "nothing but who it is was asked of it")
+            control.close()
+        }
     }
 
     /// A control connection whose hello Rex never answers is closed, not left
@@ -312,6 +345,40 @@ struct RexDirectTests {
                 close: { [self] in state.withLock { $0.closed = true } }
             )
         }
+    }
+
+    /// A Rex at an IPv6 tailnet address is named in brackets in the upgrade's `Host`.
+    @Test func anUpgradeToAnIPv6AddressBracketsIt() {
+        #expect(RexLink.hostHeader(testUnwrap(URL(string: "http://[fd7a:115c:a1e0::1]:7297"))) == "[fd7a:115c:a1e0::1]:7297")
+        #expect(RexLink.hostHeader(testUnwrap(URL(string: "http://100.101.102.103:7297"))) == "100.101.102.103:7297")
+        #expect(RexLink.hostHeader(Self.rexURL) == Self.rexName)
+    }
+
+    /// Plain HTTP to Rex is safe only inside WireGuard: with no route onto the
+    /// tailnet nothing is dialled. HTTPS checks its certificate and is not
+    /// held to the route.
+    @Test func plainHTTPToRexNeedsARouteOntoTheTailnet() async throws {
+        let dialed = Mutex<[URL]>([])
+        func link(_ url: URL) -> RexLink {
+            RexLink(route: .tailscale(url), openStream: RexTailnetTransport.noBridge, openDirect: { url, _, _, _ in
+                dialed.withLock { $0.append(url) }
+                throw RexClientError.connectionClosed
+            }, tailnetUsable: { false })
+        }
+        let plain = testUnwrap(URL(string: "http://100.101.102.103:7297"))
+        await #expect(throws: RexClientError.noTailnetRoute) { _ = try await link(plain).connect() }
+        #expect(dialed.withLock { $0 }.isEmpty)
+        await #expect(throws: (any Error).self) { _ = try await link(Self.rexURL).connect() }
+        #expect(dialed.withLock { $0 } == [Self.rexURL])
+    }
+
+    /// Rex's route through Oppi's Tailscale never fails over to the device's
+    /// own network, where 100.64.0.0/10 can be a carrier's; other tailnet
+    /// traffic keeps failing over to a system Tailscale VPN.
+    @Test func rexsTailnetRouteNeverFailsOverToTheDevicesOwnNetwork() throws {
+        let proxy = TailnetSOCKSProxy(host: "127.0.0.1", port: 1080, credential: "secret")
+        #expect(try #require(TailnetTransportRoute.socksConfiguration(proxy, everyHost: true)).allowFailover == false)
+        #expect(try #require(TailnetTransportRoute.socksConfiguration(proxy)).allowFailover == true)
     }
 
     @Test func aTailscaleAddressIsOneInTheCGNATRange() {

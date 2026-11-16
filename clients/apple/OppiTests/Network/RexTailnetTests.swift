@@ -1,5 +1,7 @@
 import Foundation
 import LocalAuthentication
+import NIOCore
+import NIOPosix
 import Synchronization
 import Testing
 import UIKit
@@ -8,7 +10,7 @@ import UIKit
 @Suite("Rex on the tailnet without SSH", .serialized, .timeLimit(.minutes(1)))
 @MainActor
 struct RexTailnetTests {
-    static let rex = testUnwrap(RexTailnetHost(dnsName: "rex.tail0000.ts.net"))
+    static let rex = testUnwrap(RexTailnetHost(address: "rex.tail0000.ts.net"))
 
     static func peer(_ name: String, dns: String, os: String? = "macOS", online: Bool = true) -> TailnetPeer {
         TailnetPeer(id: name, hostName: name, dnsName: dns, os: os, tailscaleIPs: ["100.64.0.1"], isOnline: online)
@@ -61,19 +63,19 @@ struct RexTailnetTests {
     /// any spelling) is left to that host's section: one section, one link.
     @Test func aRexKnownSeveralWaysIsListedOnce() async throws {
         let store = Self.store()
-        store.saveTailnetHost(testUnwrap(RexTailnetHost(dnsName: Self.rex.dnsName, name: "Studio Rex")))
+        store.saveTailnetHost(testUnwrap(RexTailnetHost(address: Self.rex.address, name: "Studio Rex")))
         let discovery = RexTailnetDiscovery { $0.hasPrefix("rex.") || $0.hasPrefix("box.") ? .rex : .notRex }
-        let peers = [Self.peer("rex", dns: Self.rex.dnsName), Self.peer("box", dns: "box.tail0000.ts.net")]
+        let peers = [Self.peer("rex", dns: Self.rex.address), Self.peer("box", dns: "box.tail0000.ts.net")]
         let me = "oppi-ios.tail0000.ts.net"
         await discovery.discover(peers: peers, selfDNSName: me)
         let reach = RexTailnetReach.peers
         let section = RexTailnetSection(store: store, discovery: discovery, reach: { reach }, makeFollower: {
             RexTailnetFollower(host: $0, monitor: RexMonitor(tailnet: $0, openDirect: Self.refusing))
-        })
+        }, findsTailnetRex: { true })
         section.update(peers: peers, selfDNSName: me, sshRexHosts: [], active: false)
-        #expect(section.entries.map(\.dnsName) == [Self.rex.dnsName, "box.tail0000.ts.net"])
+        #expect(section.entries.map(\.address) == [Self.rex.address, "box.tail0000.ts.net"])
         #expect(section.listedFollowers.map(\.host.name) == ["Studio Rex", "box"])
-        let rows = SSHTerminalRexListRow.rows(hostName: Self.rex.dnsName, state: try #require(section.listedFollowers.first).listState)
+        let rows = SSHTerminalRexListRow.rows(hostName: Self.rex.address, state: try #require(section.listedFollowers.first).listState)
         #expect(rows.map(\.id) == ["header", "loading"], "a node not read yet is a host's section, loading")
 
         // An SSH host on the tab that reaches the same Rex lists it instead.
@@ -81,16 +83,74 @@ struct RexTailnetTests {
         let said = try #require(URL(string: "https://Rex.Tail0000.ts.net/"))
         store.apply(.available(url: said, hostID: "host-1"), for: RexDirectHost(profile: ssh))
         section.update(peers: peers, selfDNSName: me, sshRexHosts: [ssh], active: false)
-        #expect(section.entries.map(\.dnsName) == ["box.tail0000.ts.net"])
+        #expect(section.entries.map(\.address) == ["box.tail0000.ts.net"])
         #expect(section.follower(id: Self.rex.id) == nil, "its follower is dropped with it")
 
         // Forgotten, the saved name goes with its follower on the next update. A node
         // discovery still sees stays listed (it is on the tailnet), so this update is
         // one where discovery no longer finds it: the peers list without it.
-        store.forgetTailnetHost(dnsName: Self.rex.dnsName)
+        store.forgetTailnetHost(address: Self.rex.address)
         section.update(peers: [Self.peer("box", dns: "box.tail0000.ts.net")], selfDNSName: me, sshRexHosts: [], active: false)
-        #expect(!section.entries.contains { $0.dnsName == Self.rex.dnsName })
+        #expect(!section.entries.contains { $0.address == Self.rex.address })
         #expect(section.follower(id: Self.rex.id) == nil)
+    }
+
+    /// Find Rex on Your Tailnet is off to start, as Rex's own apps connect only
+    /// to the servers you add: the tab probes no computer, a pull to refresh asks
+    /// none either, and only the Rex added by name is listed, even with Oppi's own
+    /// machine list right there. Turned on, a pull asks them.
+    @Test func theTailnetIsAskedOnlyOnceFindingIsTurnedOn() async throws {
+        let store = Self.store()
+        store.saveTailnetHost(Self.rex)
+        let probed = Mutex<[String]>([])
+        let discovery = RexTailnetDiscovery { name in
+            probed.withLock { $0.append(name) }
+            return .rex
+        }
+        let peers = [Self.peer("box", dns: "box.tail0000.ts.net")]
+        let me = "oppi-ios.tail0000.ts.net"
+        let finds = Mutex(false)
+        let section = RexTailnetSection(store: store, discovery: discovery, reach: { .peers }, makeFollower: {
+            RexTailnetFollower(host: $0, monitor: RexMonitor(tailnet: $0, openDirect: Self.refusing))
+        }, findsTailnetRex: { finds.withLock { $0 } })
+        #expect(!AppPreferenceStore.Terminal.findsTailnetRexDefault, "off unless someone turns it on")
+
+        section.update(peers: peers, selfDNSName: me, sshRexHosts: [], active: true)
+        await section.refresh()
+        #expect(probed.withLock { $0 }.isEmpty, "no computer is asked")
+        #expect(section.entries.map(\.address) == [Self.rex.address])
+
+        finds.withLock { $0 = true }
+        await section.refresh()
+        #expect(probed.withLock { $0 } == ["box.tail0000.ts.net"])
+        section.update(peers: peers, selfDNSName: me, sshRexHosts: [], active: true)
+        #expect(section.entries.map(\.address) == [Self.rex.address, "box.tail0000.ts.net"])
+        section.clear()
+    }
+
+    /// Turning Find Rex on Your Tailnet off stops a pass that is asking the
+    /// tailnet's computers right now: no probe goes on after the switch.
+    @Test func turningFindingOffStopsAPassUnderWay() async throws {
+        let asked = Mutex(0)
+        let discovery = RexTailnetDiscovery { _ in
+            asked.withLock { $0 += 1 }
+            try? await Task.sleep(for: .seconds(30))
+            return .unreachable
+        }
+        let peers = (0..<8).map { Self.peer("m\($0)", dns: "m\($0).tail0000.ts.net") }
+        let me = "oppi-ios.tail0000.ts.net"
+        let finds = Mutex(true)
+        let section = RexTailnetSection(store: Self.store(), discovery: discovery, reach: { .peers }, makeFollower: {
+            RexTailnetFollower(host: $0, monitor: RexMonitor(tailnet: $0, openDirect: Self.refusing))
+        }, findsTailnetRex: { finds.withLock { $0 } })
+        section.update(peers: peers, selfDNSName: me, sshRexHosts: [], active: true)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { discovery.probing })
+
+        finds.withLock { $0 = false }
+        section.update(peers: peers, selfDNSName: me, sshRexHosts: [], active: true)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !discovery.probing }, "the pass stopped")
+        #expect(asked.withLock { $0 } == RexTailnetProbe.concurrency, "no computer was asked after the switch")
+        section.clear()
     }
 
     // MARK: - Opening a session without SSH
@@ -131,6 +191,93 @@ struct RexTailnetTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { session.channel !== channel && session.channel?.connected == true })
         #expect(session.channel?.rex?.shownTarget.blockID == "b2", "a reconnect reopens the pane shown last")
         #expect(!session.passwordPrompt && profiles().load().isEmpty)
+    }
+
+    // MARK: - A saved SSH host's Rex over Tailscale
+
+    /// A Rex pane of a saved SSH host whose Rex serves on the tailnet opens
+    /// there with no SSH sign-in at all, as Rex's own apps do: no password, no
+    /// Face ID, no host-key trust, and nothing dialled over SSH (the host here
+    /// cannot even be reached). Side commands wait to sign in until one runs.
+    @Test func aSavedHostsRexPaneOverTailscaleNeedsNoSSHSignIn() async throws {
+        let fake = RexFakeSession(sessionID: "session:1", panes: [.init(block: "b1", label: "shell", title: "zsh", screen: "pane")])
+        let registry = Self.registry()
+        defer { registry.closeAll(reason: "done") }
+        let profiles = Self.profiles()
+        let host = SSHTerminalProfile(host: "no-such-host.invalid", username: "alex", authentication: .password, opensRexSessions: true)
+        try profiles().save(host, password: nil, sudoPassword: nil)
+        profiles().rexDirect.apply(.available(url: Self.rex.url, hostID: "host-1"), for: RexDirectHost(profile: host))
+        fake.setStatus(url: Self.rex.url, hostID: "host-1")
+        let session = SSHTerminalConnectSession(
+            registry: registry, profileStore: profiles, openRexDirect: fake.openDirect(), rexTailnetUsable: { true }
+        )
+        session.rexPane = RexPaneTarget(sessionID: "session:1", blockID: "b1", label: "zsh")
+        session.connect(profile: host)
+        #expect(!session.passwordPrompt, "a password host is not asked for its password")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { session.showsTerminal })
+        #expect(session.failure == nil && session.hostFailure == nil)
+        let channel = try #require(session.channel)
+        #expect(channel.rex?.route == .tailscale(Self.rex.url))
+        #expect(channel.sideCommandsUnavailable == nil && channel.sideCommandsSignInPending, "side commands sign in when one runs")
+        #expect(fake.requests("session.attach").count == 1)
+
+        // A side command signs in then: here the host has no saved password, so
+        // it says so, and the terminal carries on over Tailscale.
+        await #expect(throws: SSHKeychainError.passwordRequired) { _ = try await channel.run("true") }
+        #expect(channel.connected)
+    }
+
+    /// The Terminal tab reads a saved host's Rex over Tailscale with no SSH
+    /// sign-in: a host that would need a password or Face ID shows its sessions,
+    /// not Tap to connect.
+    @Test func aSavedHostsRexListsOverTailscaleWithoutTapToConnect() async throws {
+        let world = RexFakeWorld(sessions: [.init(id: "session:1", label: "work", serverLabel: "work", windows: [
+            .init(id: "window:1", label: "Window 1", panes: [.init(block: "b1", title: "zsh")]),
+        ])])
+        let profile = SSHTerminalProfile(host: "mac-studio", username: "alex", authentication: .password, opensRexSessions: true)
+        let store = Self.store()
+        store.apply(.available(url: Self.rex.url, hostID: "host-1"), for: RexDirectHost(profile: profile))
+        world.setStatus(url: Self.rex.url, hostID: "host-1")
+        let plan = RexRoutePlan(
+            host: RexDirectHost(profile: profile), store: store, tailnetUsable: { true }, isCurrent: { true },
+            openDirect: { _, _, _, sink in world.host().open(sink: sink) }
+        )
+        let session = SSHTerminalConnectSession(registry: Self.registry(), profileStore: Self.profiles())
+        let follower = SSHTerminalRexFollower(
+            profile: profile, promptsAutomatically: false, session: session,
+            signsInSilently: { _ in false }, tailnetPlan: { _ in plan }
+        )
+        defer { follower.close() }
+        #expect(!follower.needsTap && !follower.wouldStartSignIn)
+        follower.sync(active: true)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { follower.monitor.snapshot?.sessions.count == 1 })
+        #expect(follower.isConnected && !follower.needsTap)
+        #expect(!session.connecting && session.rexSessions == nil, "no SSH sign-in")
+    }
+
+    /// Over Tailscale the SSH connection beside Rex carries only side commands:
+    /// when it drops, Rex's own connection stays up and the terminal with it.
+    @Test func anSSHDropDoesNotEndRexReachedOverTailscale() async throws {
+        let fake = RexFakeSession(sessionID: "session:1", panes: [.init(block: "b1", label: "shell", title: "zsh", screen: "pane")])
+        let profile = SSHTerminalProfile(host: "mac-studio", username: "alex", opensRexSessions: true)
+        let store = Self.store()
+        store.apply(.available(url: Self.rex.url, hostID: "host-1"), for: RexDirectHost(profile: profile))
+        fake.setStatus(url: Self.rex.url, hostID: "host-1")
+        let plan = RexRoutePlan(
+            host: RexDirectHost(profile: profile), store: store, tailnetUsable: { true }, isCurrent: { true },
+            openDirect: fake.openDirect()
+        )
+        var fds: [Int32] = [0, 0]
+        try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &fds) == 0)
+        defer { Darwin.close(fds[1]) }
+        let channel = try await ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton).withConnectedSocket(fds[0]).get()
+        let (transport, control) = try await RexHostTransport.open(connection: SSHConnection(channel: channel), plan: plan)
+        defer { transport.close() }
+        #expect(transport.route == .tailscale(Self.rex.url))
+
+        try await channel.close()
+        _ = try await control.call("session.view", ["session_id": "session:1"])
+        #expect(transport.sideCommandsSignInPending, "the next side command signs in again")
     }
 
     /// Without SSH there are no side commands: they fail at once with the

@@ -1,22 +1,27 @@
 import UIKit
 
 /// Settings › Terminal › Rex on Your Tailnet: the Rex nodes this device reaches
-/// by their Tailscale name alone, with no SSH host and no sign-in, and what limits
+/// by their Tailscale name or address alone, with no SSH host and no sign-in,
+/// whether the Terminal page also looks for Rex on the tailnet, and what limits
 /// that list.
 ///
 /// A node saved here shows on the Terminal page as a Rex section of its own, over
-/// its own Tailscale link; discovery finds the rest while that page shows. This page never connects and never probes: it lists what was saved and
+/// its own Tailscale link. Find Rex on Your Tailnet (off to start, as Rex's own
+/// apps connect only to the servers you add) lets that page find the rest while it
+/// shows. This page never connects and never probes: it lists what was saved and
 /// takes a name typed by hand (Add Rex by Tailscale Name), which is the only way
 /// in when Oppi has no Tailscale machine list of its own.
 final class SSHTerminalRexTailnetSettingsViewController: ListScreenController<
     SSHTerminalRexTailnetSettingsViewController.Section, SSHTerminalRexTailnetSettingsViewController.Item
 > {
-    enum Section: Hashable, Sendable { case names, add }
+    enum Section: Hashable, Sendable { case names, add, find }
 
     enum Item: Hashable, Sendable {
-        /// A saved node, by its MagicDNS name (the store's key).
+        /// A saved node, by its address (the store's key).
         case rex(String)
         case add
+        /// Find Rex on Your Tailnet (`SettingsCatalog.terminalFindsTailnetRex`).
+        case find
     }
 
     /// Where the nodes added by name live.
@@ -44,10 +49,16 @@ final class SSHTerminalRexTailnetSettingsViewController: ListScreenController<
             ListSection(
                 .names,
                 footer: footer,
-                items: store.tailnetHosts().map { Item.rex($0.dnsName) }
+                items: store.tailnetHosts().map { Item.rex($0.address) }
             ),
             ListSection(.add, items: [.add]),
+            ListSection(.find, footer: findFooter, items: [.find]),
         ]
+    }
+
+    private var findFooter: String {
+        let base = SettingsCatalog.terminalFindsTailnetRex.copy.footer ?? ""
+        return reach() == .peers ? base : base + " " + Self.listsNoMachines
     }
 
     override func showsHeader(for section: Section) -> Bool { false }
@@ -56,34 +67,36 @@ final class SSHTerminalRexTailnetSettingsViewController: ListScreenController<
         let base = String(localized: "A Rex shows on the Terminal page once its Tailscale serving is on (rex server tailscale on), and Rex admits this device by its Tailscale identity: the account that signed the Rex node in.")
         switch reach() {
         case .peers: return base
-        case .systemOnly: return base + " " + Self.listsNoMachines
+        case .systemOnly: return base + " " + Self.addByName
         case .none: return base + " " + Self.onNoTailnet
         }
     }
 
     /// What limits the list, for the footer here: Oppi has no machine list of its
     /// own, or the device is on no tailnet at all.
-    private static let listsNoMachines = String(localized: "Oppi's own Tailscale is off, so it cannot list your tailnet's machines. Add a Rex by its Tailscale name, or connect Tailscale in Settings to find Rex here.")
+    private static let listsNoMachines = String(localized: "Oppi's own Tailscale is off, so it cannot list your tailnet's machines.")
+    private static let addByName = String(localized: "Oppi's own Tailscale is off, so it cannot list your tailnet's machines. Add a Rex by its Tailscale name or address.")
     private static let onNoTailnet = String(localized: "This device is not on a tailnet. Connect Tailscale in Settings, or the Tailscale app, to reach Rex without SSH.")
 
     // MARK: - Rows
 
     override func inputs(of item: Item) -> AnyHashable {
         switch item {
-        case .rex: AnyHashable(store.tailnetHosts().map(\.dnsName))
+        case .rex: AnyHashable(store.tailnetHosts().map(\.address))
         case .add: AnyHashable(0)
+        case .find: settingInputs(SettingsCatalog.terminalFindsTailnetRex)
         }
     }
 
     private lazy var plainRow = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
-        guard let self, case .rex(let dnsName) = item else { return }
-        let host = store.tailnetHosts().first { $0.dnsName == dnsName }
+        guard let self, case .rex(let address) = item else { return }
+        let host = store.tailnetHosts().first { $0.address == address }
         var content = content(.subtitle)
-        content.text = host?.name ?? dnsName
-        content.secondaryText = dnsName
+        content.text = host?.name ?? address
+        content.secondaryText = address
         content.secondaryTextProperties.font = .preferredFont(forTextStyle: .footnote)
         cell.contentConfiguration = content
-        cell.accessibilityIdentifier = "settings.sshTerminal.rexTailnet.\(dnsName)"
+        cell.accessibilityIdentifier = "settings.sshTerminal.rexTailnet.\(address)"
     }
 
     private lazy var addRow = UICollectionView.CellRegistration<SettingsActionRowCell, Item> { [weak self] cell, _, _ in
@@ -94,8 +107,12 @@ final class SSHTerminalRexTailnetSettingsViewController: ListScreenController<
         ) { [weak self] in self?.promptForName() }
     }
 
+    private lazy var findRow = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, _ in
+        self?.settingToggleRow(cell, SettingsCatalog.terminalFindsTailnetRex)
+    }
+
     override func prepareRegistrations() {
-        _ = (plainRow, addRow)
+        _ = (plainRow, addRow, findRow)
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
@@ -104,11 +121,13 @@ final class SSHTerminalRexTailnetSettingsViewController: ListScreenController<
             collectionView.dequeueConfiguredReusableCell(using: plainRow, for: indexPath, item: item)
         case .add:
             collectionView.dequeueConfiguredReusableCell(using: addRow, for: indexPath, item: item)
+        case .find:
+            collectionView.dequeueConfiguredReusableCell(using: findRow, for: indexPath, item: item)
         }
     }
 
     override func rowActions(for item: Item) -> [ListRowAction] {
-        guard case .rex(let dnsName) = item else { return [] }
+        guard case .rex(let address) = item else { return [] }
         return [ListRowAction(
             title: String(localized: "Remove"),
             systemImage: "trash",
@@ -116,14 +135,14 @@ final class SSHTerminalRexTailnetSettingsViewController: ListScreenController<
             accessibilityLabel: String(localized: "Remove Rex"),
             performsWithFullSwipe: false
         ) { [weak self] done in
-            self?.remove(dnsName: dnsName)
+            self?.remove(address: address)
             done(true)
         }]
     }
 
     /// Removes one saved name: what its row's swipe runs.
-    private func remove(dnsName: String) {
-        store.forgetTailnetHost(dnsName: dnsName)
+    private func remove(address: String) {
+        store.forgetTailnetHost(address: address)
         setNeedsUpdateProperties()
     }
 
@@ -132,7 +151,7 @@ final class SSHTerminalRexTailnetSettingsViewController: ListScreenController<
     private func promptForName(message: String? = nil, text: String = "") {
         TextPrompt(
             title: String(localized: "Add Rex by Tailscale Name"),
-            message: message ?? String(localized: "The Rex's Tailscale name, as rex server tailscale pair shows it. Rex lets in the Tailscale account that signed it in."),
+            message: message ?? String(localized: "The Rex's Tailscale name, as rex server tailscale pair shows it, or the tailnet address or name, with its port, of a Rex listening on tailnet://. Rex lets in the Tailscale account that signed it in."),
             placeholder: "rex.tailnet-name.ts.net",
             text: text,
             actionTitle: String(localized: "Add"),
@@ -142,7 +161,7 @@ final class SSHTerminalRexTailnetSettingsViewController: ListScreenController<
         ).present(from: self) { [weak self] typed in
             guard let self, !addTailnetRex(named: typed) else { return }
             promptForName(
-                message: String(localized: "That is not a Tailscale name. Enter the full name, such as rex.tail1234.ts.net."),
+                message: String(localized: "That is not a tailnet name or address. Enter the full name, such as rex.tail1234.ts.net, or an address and port, such as 100.101.102.103:7297 or http://build.tail1234.ts.net:7297."),
                 text: typed
             )
         }

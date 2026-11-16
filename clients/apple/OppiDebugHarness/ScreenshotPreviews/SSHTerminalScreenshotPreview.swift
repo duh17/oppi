@@ -455,7 +455,7 @@ private struct PreviewRexHostConnection: SSHTerminalConnection {
     }
     func run(_ command: String, input: Data) async throws -> SSHExecResult { try await session.run(command, input: input) }
     func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
-        guard command == RexBridge.command else { throw SSHConnectionError.notConnected }
+        guard RexBridge.isBridge(command) else { throw SSHConnectionError.notConnected }
         return RexFakeHost.preview().open(sink: sink)
     }
     func checkAlive() async throws { try await session.checkAlive() }
@@ -476,7 +476,7 @@ private actor PreviewConnection: SSHTerminalConnection {
     func cancel() async {}
 
     func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
-        guard command == RexBridge.command else { throw SSHConnectionError.notConnected }
+        guard RexBridge.isBridge(command) else { throw SSHConnectionError.notConnected }
         return RexFakeHost.preview().open(sink: sink)
     }
     func run(_ command: String, input: Data) async throws -> SSHExecResult {
@@ -533,18 +533,42 @@ final class RexFakeHost: Sendable {
         var requests: [Request] = []
         var seq = 0
         var closed = false
+        var helloToken: String?
     }
 
     private let state = Mutex(State())
     private let responder: @Sendable (Request) -> Answer
     private let reportsClose: Bool
+    /// The welcome's `client` for the hello's reconnect token (nil without
+    /// one), as Rex's JSON; nil leaves `client` out.
+    private let welcomeClient: (@Sendable (String?) -> String?)?
 
     /// `reportsClose` false models a host whose close comes back late, as
     /// SSH's does (the channel is only closed once the peer answers): closing
     /// the stream reports nothing until `end(status:)`.
-    init(reportsClose: Bool = true, _ responder: @escaping @Sendable (Request) -> Answer) {
+    init(
+        reportsClose: Bool = true,
+        welcomeClient: (@Sendable (String?) -> String?)? = nil,
+        _ responder: @escaping @Sendable (Request) -> Answer
+    ) {
         self.reportsClose = reportsClose
+        self.welcomeClient = welcomeClient
         self.responder = responder
+    }
+
+    /// The reconnect token the client's hello carried, if any.
+    var helloToken: String? { state.withLock { $0.helloToken } }
+
+    /// The network under the stream went away: no close frame, the channel
+    /// just ends with a signal, as an SSH channel or a TLS stream reports it.
+    func drop() {
+        let sink = state.withLock { state -> SSHPTYByteSink? in
+            guard !state.closed else { return nil }
+            state.closed = true
+            return state.sink
+        }
+        sink?(.exitSignal("the network went away"))
+        sink?(.closed)
     }
 
     /// Every request received, in order.
@@ -650,7 +674,10 @@ final class RexFakeHost: Sendable {
                       let object = try? JSONSerialization.jsonObject(with: Data(payload)) as? [String: Any] else { continue }
                 switch object["type"] as? String {
                 case "hello":
-                    answers.append(Self.text(#"{"type":"welcome","protocol":"rex.control.v1","limits":{"max_message_bytes":1048576},"api_revision":7,"api_server_revision":7}"#))
+                    let token = object["reconnect_token"] as? String
+                    state.helloToken = token
+                    let client = welcomeClient?(token).map { #","client":\#($0)"# } ?? ""
+                    answers.append(Self.text(#"{"type":"welcome","protocol":"rex.control.v1","limits":{"max_message_bytes":1048576}\#(client),"api_revision":7,"api_server_revision":7}"#))
                 case "request":
                     guard let id = object["id"] as? String, let method = object["method"] as? String else { continue }
                     let body = (object["payload"] as? [String: Any]).flatMap {

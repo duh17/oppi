@@ -149,7 +149,7 @@ struct SSHTerminalExperimentTests {
         // The tab's Rex sections: gone while off, and back on when the nodes can be
         // read again. Adding a node is the store's own write now that the tab has no
         // Add row (`SSHTerminalRexTailnetSettingsViewController` writes it).
-        let node = try #require(RexTailnetHost(dnsName: "rex.tail0000.ts.net"))
+        let node = try #require(RexTailnetHost(address: "rex.tail0000.ts.net"))
         let rexStore = RexDirectStore(defaults: defaults)
         let section = RexTailnetSection(store: rexStore, reach: { .peers }, access: { access.value })
         rexStore.saveTailnetHost(node)

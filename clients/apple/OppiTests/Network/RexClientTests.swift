@@ -539,6 +539,103 @@ struct RexPipeSocketTests {
     }
 }
 
+@Suite("Rex bridge command", .serialized)
+struct RexBridgeCommandTests {
+    /// Runs `command` under `/bin/sh` with `home` as `HOME`, only the system
+    /// tools on `PATH`, and `environment`, as an SSH exec channel would, and
+    /// returns its output and exit status.
+    private func run(_ command: String, home: URL, environment: [String: String] = [:]) throws -> (output: String, status: Int32) {
+        var actions: posix_spawn_file_actions_t?
+        posix_spawn_file_actions_init(&actions)
+        defer { posix_spawn_file_actions_destroy(&actions) }
+        let out = home.appending(path: "out.txt").path
+        posix_spawn_file_actions_addopen(&actions, 1, out, O_WRONLY | O_CREAT | O_TRUNC, 0o600)
+        posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
+        let argv = ["/bin/sh", "-c", command]
+        let env = ["HOME=\(home.path)", "PATH=/usr/bin:/bin"] + environment.map { "\($0.key)=\($0.value)" }
+        var cArgs = argv.map { strdup($0) } + [nil]
+        var cEnv = env.map { strdup($0) } + [nil]
+        defer { (cArgs + cEnv).forEach { free($0) } }
+        var pid: pid_t = 0
+        try #require(posix_spawn(&pid, "/bin/sh", &actions, nil, &cArgs, &cEnv) == 0)
+        var status: Int32 = 0
+        waitpid(pid, &status, 0)
+        let output = (try? String(contentsOfFile: out, encoding: .utf8)) ?? ""
+        return (output, (status >> 8) & 0xFF)
+    }
+
+    /// A home with a stand-in `rex` at `relativePath` that lists `dial-stdio`,
+    /// logs each call, and bridges by printing `bridged`. Its
+    /// `autostart-status` decides as Rex's does: an explicit `--autostart`
+    /// wins, else `REX_AUTOSTART` (unset starts the server, `0` does not).
+    private func home(rexAt relativePath: String = ".local/bin/rex") throws -> URL {
+        let home = FileManager.default.temporaryDirectory.appending(path: "rex-bridge-\(UUID().uuidString)")
+        let rex = home.appending(path: relativePath)
+        try FileManager.default.createDirectory(at: rex.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let script = """
+        #!/bin/sh
+        echo "$*" >> "$HOME/calls.txt"
+        case "$2" in
+        --help) echo "  dial-stdio  Connect standard input and output to the Rex server" ;;
+        autostart-status)
+          case "$*" in
+          *--autostart=true*) exit 0 ;;
+          *--autostart=false*) exit 1 ;;
+          esac
+          case "${REX_AUTOSTART-}" in ""|1|true) exit 0 ;; *) exit 1 ;; esac ;;
+        dial-stdio) echo bridged ;;
+        esac
+        """
+        try Data(script.utf8).write(to: rex)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: rex.path)
+        return home
+    }
+
+    private func calls(_ home: URL) -> String {
+        (try? String(contentsOf: home.appending(path: "calls.txt"), encoding: .utf8)) ?? ""
+    }
+
+    /// The bridge is Rex's own: `autostart-status` first, which starts the
+    /// account's Rex when none runs, then `dial-stdio` carries the socket, with
+    /// no `nc` anywhere. It passes no `--autostart`, so the host's own setting
+    /// decides; a background read says `--autostart=false`.
+    @Test func theBridgeStartsRexAndDialsThroughRexsOwnBridge() throws {
+        let home = try home()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let started = try run(RexBridge.command, home: home)
+        #expect(started.status == 0 && started.output == "bridged\n")
+        #expect(calls(home) == "__internal --help\n__internal autostart-status\n__internal dial-stdio\n")
+
+        try FileManager.default.removeItem(at: home.appending(path: "calls.txt"))
+        let quiet = try run(RexBridge.commandWithoutAutostart, home: home)
+        #expect(calls(home).contains("autostart-status --autostart=false"))
+        #expect(RexBridge.failure(exitStatus: Int(quiet.status)) == .notRunning, "a background read starts nothing")
+    }
+
+    /// A host that sets `REX_AUTOSTART=0` keeps a stopped Rex stopped, as the
+    /// official client leaves it: the bridge says "not running" and dials nothing.
+    @Test func aHostThatTurnsAutostartOffIsNotStarted() throws {
+        let home = try home()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let result = try run(RexBridge.command, home: home, environment: ["REX_AUTOSTART": "0"])
+        #expect(RexBridge.failure(exitStatus: Int(result.status)) == .notRunning)
+        #expect(!calls(home).contains("dial-stdio"))
+    }
+
+    /// `rex` is looked for only where the official client looks over SSH,
+    /// `~/.local/bin` and the `PATH`: a copy inside an app bundle in the home
+    /// folder is never run, and the host reads as having no Rex.
+    @Test func aRexOnlyInsideAnAppBundleIsNotRun() throws {
+        let home = try home(rexAt: "Library/Application Support/com.superlogical.rex/RexServer/Versions/1/Rex Server.app/Contents/MacOS/rex")
+        defer { try? FileManager.default.removeItem(at: home) }
+        for command in [RexBridge.command, RexBridge.statusCommand] {
+            let result = try run(command, home: home)
+            #expect(result.status == 5, "\(command)")
+        }
+        #expect(calls(home).isEmpty, "nothing in the app bundle ran")
+    }
+}
+
 @Suite("Rex events")
 struct RexEventTests {
     private func parse(_ frame: String) throws -> RexEvent? {
@@ -1135,9 +1232,11 @@ struct RexSessionTerminalTests {
     /// `folders` the folder a pane's shell reported (`pwd`).
     /// `holding` panes' `data.connect` waits for `release`; the first pane's
     /// screen is then not waited for.
+    /// `reopen`: how the terminal opens Rex again after a lost connection;
+    /// none ends the terminal instead.
     func open(
         _ names: [String], first: String? = nil, reporting: [String: String] = [:], folders: [String: String] = [:],
-        holding: Set<String> = []
+        holding: Set<String> = [], reopen: ((RexFakeSession) -> RexSessionConnection.Reopen)? = nil
     ) async throws -> Rig {
         let fake = RexFakeSession(sessionID: Self.session, panes: names.map {
             .init(
@@ -1150,7 +1249,8 @@ struct RexSessionTerminalTests {
         let opening = first ?? names[0]
         let connection = try await RexSessionConnection.open(
             transport: transport, control: control,
-            target: RexPaneTarget(sessionID: Self.session, blockID: Self.block(opening), label: "shell"), queue: queue
+            target: RexPaneTarget(sessionID: Self.session, blockID: Self.block(opening), label: "shell"), queue: queue,
+            reopen: reopen?(fake)
         )
         let channel = try SSHTerminalChannel(answersTerminalQueries: false)
         let model = RexSessionModel(connection: connection)
@@ -1228,6 +1328,90 @@ struct RexSessionTerminalTests {
 
         // The host's own focus never moved.
         #expect(!rig.fake.requests.contains { $0.method.contains("focus") })
+        await rig.stop()
+    }
+
+    /// A gate a test opens: what waits on it goes on once it is open.
+    final class Gate: Sendable {
+        private let state = Mutex<(open: Bool, waiting: [CheckedContinuation<Void, Never>])>((false, []))
+        func wait() async {
+            await withCheckedContinuation { continuation in
+                let open = state.withLock { state -> Bool in
+                    if !state.open { state.waiting.append(continuation) }
+                    return state.open
+                }
+                if open { continuation.resume() }
+            }
+        }
+        func open() {
+            let waiting = state.withLock { state in
+                state.open = true
+                defer { state.waiting = [] }
+                return state.waiting
+            }
+            waiting.forEach { $0.resume() }
+        }
+    }
+
+    /// A lost connection comes back by itself, as Rex's own apps do: the
+    /// terminal stays connected and says it is reconnecting, typing waits for
+    /// the connection instead of failing, the hello carries the last welcome's
+    /// reconnect token so Rex continues this client (no second attach or take),
+    /// and the pane's stream resumes at the exact byte it stopped at, so its
+    /// screen carries on with no new snapshot.
+    @Test func aLostConnectionComesBackOnItsOwnAndPicksUpWhereItWas() async throws {
+        let gate = Gate()
+        let rig = try await open(["a", "b"], reopen: { fake in
+            { token in
+                await gate.wait()
+                return try await fake.connect(reconnectToken: token)
+            }
+        })
+        let a = Self.block("a")
+        let first = try #require(rig.fake.dataHosts.first { $0.block == a })
+        first.emit("before the drop\r\n")
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("before the drop") })
+        let sentBefore = try #require(first.resumePoint?.sent)
+
+        rig.fake.dropConnections()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.model.state.reconnecting })
+        #expect(rig.channel.connected, "a lost connection does not end the terminal")
+        rig.channel.send(Data("ls\r".utf8))
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(rig.fake.requests("com.superlogical.terminal.write").isEmpty, "typing waits for the connection")
+
+        gate.open()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !rig.model.state.reconnecting })
+        #expect(rig.fake.helloTokens == [nil, "token-1"], "the hello continues the client")
+        #expect(rig.fake.requests("session.attach").count == 1 && rig.fake.requests("session.own_block").count == 1)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            rig.fake.requests("com.superlogical.terminal.write").map { $0.string("block_id") } == [a]
+        }, "what was typed meanwhile goes once the connection is back")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.fake.dataHosts.contains { $0.resumedAt != nil && $0.isWelcomed } })
+        let resumed = try #require(rig.fake.dataHosts.first { $0.resumedAt != nil })
+        #expect(resumed.resumedAt == sentBefore, "RESUME counts every byte the pane's stream delivered")
+        #expect(rig.fake.requests("data.connect").count == 1, "the stream resumed: no ticket, no snapshot")
+
+        resumed.emit("after the drop\r\n")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("after the drop") && rig.shows("before the drop") })
+        #expect(rig.channel.connected)
+        await rig.stop()
+    }
+
+    /// When Rex no longer keeps the client or its streams (the grace ran out),
+    /// the terminal still comes back by itself: it attaches again, takes the
+    /// pane it shows again, and starts the pane's stream over from a snapshot.
+    @Test func aConnectionRexDidNotKeepAttachesAgainAndStartsOver() async throws {
+        let rig = try await open(["a", "b"], reopen: { fake in { token in try await fake.connect(reconnectToken: token) } })
+        let a = Self.block("a")
+        rig.fake.setResumes(clients: false, streams: false)
+        rig.fake.dropConnections()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            rig.fake.requests("session.attach").count == 2 && rig.fake.requests("data.connect").filter { $0.string("block_id") == a }.count == 2
+        })
+        #expect(rig.fake.requests("session.own_block").filter { $0.payload.contains(a) }.count == 2, "the shown pane is taken again")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !rig.model.state.reconnecting && rig.shows("screen of a") })
+        #expect(rig.channel.connected)
         await rig.stop()
     }
 

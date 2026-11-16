@@ -613,7 +613,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
     /// One Rex added by its Tailscale name, in the argument domain: a capture
     /// shows it and nothing is saved for the next launch.
     private static func seedTailnetRex() {
-        guard let host = RexTailnetHost(dnsName: "rex.tail1234.ts.net"),
+        guard let host = RexTailnetHost(address: "rex.tail1234.ts.net"),
               let data = try? JSONEncoder().encode([host]) else { return }
         ScreenshotVolatileDefaults.apply([RexDirectStore.tailnetHostsKey: data])
     }

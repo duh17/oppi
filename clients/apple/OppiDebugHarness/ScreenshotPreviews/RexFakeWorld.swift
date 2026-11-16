@@ -47,6 +47,8 @@ final class RexFakeWorld: Sendable {
         var created = 0
         /// Methods answered with a refusal, as `(code, message)`.
         var refusing: [String: (code: String, message: String)] = [:]
+        /// What `server.status` answers; none refuses it.
+        var serverStatus: String?
     }
 
     private let state: Mutex<State>
@@ -73,6 +75,11 @@ final class RexFakeWorld: Sendable {
         }
     }
 
+    /// `server.status` says this Rex serves at `url` as `hostID`.
+    func setStatus(url: URL, hostID: String) {
+        state.withLock { $0.serverStatus = rexFakeStatus(url: url, hostID: hostID) }
+    }
+
     /// A new connection to this server.
     func host() -> RexFakeHost {
         let host = RexFakeHost { [self] in answer($0) }
@@ -93,6 +100,9 @@ final class RexFakeWorld: Sendable {
             return session(id)?.windows.lazy.flatMap(\.panes).first { $0.block == block }
         }
         switch request.method {
+        case "server.status":
+            guard let answer = state.withLock({ $0.serverStatus }) else { return .refuse(code: "bad_request", message: "no status") }
+            return .result(answer)
         case "session.attach_all":
             let listed = state.withLock { $0.sessions }.map { #"{"session_id":\#(Self.quoted($0.id)),"label":\#(Self.quoted($0.label))}"# }
             return .result(#"{"sessions":[\#(listed.joined(separator: ","))]}"#)

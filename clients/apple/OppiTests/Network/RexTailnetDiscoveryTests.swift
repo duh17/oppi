@@ -6,7 +6,7 @@ import Testing
 @Suite("Finding Rex on the tailnet", .serialized, .timeLimit(.minutes(1)))
 @MainActor
 struct RexTailnetDiscoveryTests {
-    static let rex = testUnwrap(RexTailnetHost(dnsName: "rex.tail0000.ts.net"))
+    static let rex = testUnwrap(RexTailnetHost(address: "rex.tail0000.ts.net"))
     static let rexBody = Data("WebSocket protocol violation: Connection header \"\" does not contain Upgrade\n".utf8)
 
     static func peer(_ name: String, dns: String, os: String? = "macOS", online: Bool = true) -> TailnetPeer {
@@ -28,7 +28,7 @@ struct RexTailnetDiscoveryTests {
         #expect(RexTailnetProbe.classify(status: 404, body: Data("404 page not found\n".utf8)) == .notRex)
         #expect(RexTailnetProbe.classify(status: 200, body: Self.rexBody) == .notRex)
         #expect(RexTailnetProbe.classify(status: 403, body: Data(#"{"error":"not allowed"}"#.utf8)) == .notRex)
-        #expect(await RexTailnetProbe.probe(dnsName: "rex.example.com") == .notRex, "a name off the tailnet is never dialed")
+        #expect(await RexTailnetProbe.probe(address: "rex") == .notRex, "something that is no address is never dialed")
     }
 
     /// Probes run a few at a time, and every name gets exactly one verdict.
@@ -76,7 +76,7 @@ struct RexTailnetDiscoveryTests {
         let me = "oppi-ios.tail0000.ts.net"
         await discovery.discover(peers: peers, selfDNSName: me)
         #expect(Set(probed.withLock { $0 }) == ["rex.tail0000.ts.net", "web.tail0000.ts.net", "mac-mini.tail0000.ts.net"])
-        #expect(discovery.found(among: peers, selfDNSName: me) == [testUnwrap(RexTailnetHost(dnsName: "rex.tail0000.ts.net", name: "rex"))])
+        #expect(discovery.found(among: peers, selfDNSName: me) == [testUnwrap(RexTailnetHost(address: "rex.tail0000.ts.net", name: "rex"))])
 
         await discovery.discover(peers: peers, selfDNSName: me)
         #expect(probed.withLock { $0.count } == 3, "nothing is asked twice in a visit")
@@ -92,26 +92,54 @@ struct RexTailnetDiscoveryTests {
 
     // MARK: - Add by name
 
-    /// Add Rex by Tailscale Name takes a MagicDNS name on `ts.net`, typed as
-    /// it comes (scheme, slash, root dot, capitals), and nothing else.
-    @Test func addingByNameTakesOnlyATailnetName() {
-        for typed in ["rex.tail1234.ts.net", "https://Rex.Tail1234.ts.net/", " rex.tail1234.ts.net. "] {
+    /// Add Rex by Tailscale Name takes a tailnet name over HTTPS, a
+    /// Headscale tailnet's as well as `ts.net`, or a tailnet address or
+    /// `*.ts.net` name with a port over plain HTTP (Rex's `tailnet://`
+    /// listener), typed as it comes (scheme, slash, root dot, capitals). Plain
+    /// HTTP goes to nothing else, and nothing else is taken.
+    @Test func addingByNameTakesATailnetNameOrAddress() {
+        for typed in ["rex.tail1234.ts.net", "https://Rex.Tail1234.ts.net/", " rex.tail1234.ts.net. ", "https://rex.tail1234.ts.net:443"] {
             let host = RexTailnetHost.parse(typed)
-            #expect(host?.dnsName == "rex.tail1234.ts.net", "\(typed)")
+            #expect(host?.address == "rex.tail1234.ts.net", "\(typed)")
             #expect(host?.name == "rex")
             #expect(host?.url == URL(string: "https://rex.tail1234.ts.net"))
         }
-        for typed in ["", "rex", "ts.net", "tail.ts.net", "rex.example.com", "http://rex.tail0.ts.net",
-                      "https://rex.tail0.ts.net:8443", "https://rex.tail0.ts.net/api", "100.64.0.1",
-                      "user@rex.tail0.ts.net", "rex .tail0.ts.net", "rex.tail0.ts.net.example.com", "-rex.tail0.ts.net",
-                      "rex.beta.tailscale.net"] {
+        let accepted: [(String, String, String)] = [
+            ("rex.hs.example.com", "rex.hs.example.com", "https://rex.hs.example.com"),
+            ("https://rex.tail0.ts.net:8443", "rex.tail0.ts.net:8443", "https://rex.tail0.ts.net:8443"),
+            ("rex.beta.tailscale.net", "rex.beta.tailscale.net", "https://rex.beta.tailscale.net"),
+            ("tailnet://100.101.102.103:7297", "100.101.102.103:7297", "http://100.101.102.103:7297"),
+            ("100.64.0.1:7297", "100.64.0.1:7297", "http://100.64.0.1:7297"),
+            ("http://[FD7A:115C:A1E0::1]:7297/", "[fd7a:115c:a1e0::1]:7297", "http://[fd7a:115c:a1e0::1]:7297"),
+            // Rex's own example for a `tailnet://` listener: plain HTTP to the MagicDNS name.
+            ("http://Build.tail0.ts.net:7297", "http://build.tail0.ts.net:7297", "http://build.tail0.ts.net:7297"),
+            // Other spellings of a tailnet address reach the address that was checked.
+            ("1681915905:7297", "100.64.0.1:7297", "http://100.64.0.1:7297"),
+            ("100.64.1:7297", "100.64.0.1:7297", "http://100.64.0.1:7297"),
+            ("[fd7a:115c:a1e0:0:0:0:0:1]:7297", "[fd7a:115c:a1e0::1]:7297", "http://[fd7a:115c:a1e0::1]:7297"),
+        ]
+        for (typed, address, url) in accepted {
+            let host = RexTailnetHost.parse(typed)
+            #expect(host?.address == address, "\(typed)")
+            #expect(host?.url == URL(string: url), "\(typed)")
+        }
+        #expect(RexTailnetHost.parse("100.101.102.103:7297")?.name == "100.101.102.103", "an address is its own name")
+        for typed in ["", "rex", "https://rex.tail0.ts.net/api", "user@rex.tail0.ts.net", "rex .tail0.ts.net",
+                      "-rex.tail0.ts.net", "ftp://rex.tail0.ts.net", "rex.tail0.ts.net:0", "rex.tail0.ts.net:70000",
+                      // Plain HTTP only to a tailnet address or a ts.net name, each with its port.
+                      "http://rex.tail0.ts.net", "http://rex.hs.example.com:7297", "100.64.0.1", "https://100.64.0.1:7297",
+                      "192.168.1.5:7297", "100.128.0.1:7297", "[fd00::1]:7297", "http://[fd7a:115c:a1e0::1]",
+                      // A zone binds to a local interface; one scheme only; a port is digits.
+                      "[fd7a:115c:a1e0::1%en0]:7297", "[fd7a:115c:a1e0::1%25en0]:7297",
+                      "https://http://100.64.0.1:7297", "https://tailnet://100.64.0.1:7297",
+                      "rex.tail0.ts.net:+443", "100.64.0.1:+7297", "100.64.0.1:07297x"] {
             #expect(RexTailnetHost.parse(typed) == nil, "\(typed)")
         }
         let store = Self.store()
         store.saveTailnetHost(Self.rex)
-        store.saveTailnetHost(testUnwrap(RexTailnetHost(dnsName: Self.rex.dnsName, name: "Studio")))
+        store.saveTailnetHost(testUnwrap(RexTailnetHost(address: Self.rex.address, name: "Studio")))
         #expect(store.tailnetHosts().map(\.name) == ["Studio"], "the same name twice is one Rex")
-        store.forgetTailnetHost(dnsName: Self.rex.dnsName)
+        store.forgetTailnetHost(address: Self.rex.address)
         #expect(store.tailnetHosts().isEmpty)
     }
 }

@@ -18,16 +18,44 @@ final class RexFakeDataHost: Sendable {
         var block: String?
         var closed = false
         var snapshotted = false
+        /// The reconnect token of the last WELCOME.
+        var token: Data?
+        /// Stream bytes sent after WELCOME, across every connection of the stream.
+        var sent: UInt64 = 0
+        /// The count a RESUME carried, when this connection resumed a stream.
+        var resumedAt: UInt64?
     }
+
+    /// What a RESUME continues: the stream whose last WELCOME gave `token`, if
+    /// it is still kept and its count matches, as its pane and the bytes it sent.
+    typealias Resume = @Sendable (_ token: Data, _ received: UInt64) -> (block: String, sent: UInt64)?
 
     private let nonce: UInt64
     /// The pane a ticket was issued for, as `data.connect` recorded it.
     private let pane: @Sendable (Data) -> String?
+    private let resume: Resume?
     private let state = Mutex(State())
 
-    init(nonce: UInt64 = 42, pane: @escaping @Sendable (Data) -> String?) {
+    init(nonce: UInt64 = 42, pane: @escaping @Sendable (Data) -> String?, resume: Resume? = nil) {
         self.nonce = nonce
         self.pane = pane
+        self.resume = resume
+    }
+
+    /// The token of this connection's last WELCOME, and the stream bytes sent so far.
+    var resumePoint: (token: Data, sent: UInt64)? { state.withLock { state in state.token.map { ($0, state.sent) } } }
+    /// The count a RESUME carried, when this connection resumed a stream.
+    var resumedAt: UInt64? { state.withLock { $0.resumedAt } }
+
+    /// The network went away under this stream: no close frame.
+    func drop() {
+        let sink = state.withLock { state -> SSHPTYByteSink? in
+            guard !state.closed else { return nil }
+            state.closed = true
+            return state.sink
+        }
+        sink?(.exitSignal("the network went away"))
+        sink?(.closed)
     }
 
     /// The pane this connection serves: nil until HELLO's ticket names one.
@@ -64,17 +92,23 @@ final class RexFakeDataHost: Sendable {
     /// which ends it.
     func emitSnapshot(_ snapshot: Data, columns: Int = 80, rows: Int = 24) {
         state.withLock { $0.snapshotted = true }
-        deliver(Self.frame(0x02, snapshot + message(#"{"type":"resize","cols":\#(columns),"rows":\#(rows)}"#)))
+        stream(snapshot + message(#"{"type":"resize","cols":\#(columns),"rows":\#(rows)}"#))
     }
 
     /// The program's output.
     func emit(_ text: String) {
-        deliver(Self.frame(0x02, Data(text.utf8)))
+        stream(Data(text.utf8))
     }
 
     /// The program exited.
     func emitChildExit(code: Int) {
-        deliver(Self.frame(0x02, message(#"{"type":"child_exited","exit_code":\#(code)}"#)))
+        stream(message(#"{"type":"child_exited","exit_code":\#(code)}"#))
+    }
+
+    /// Stream bytes, counted as Rex counts them for a resume.
+    private func stream(_ bytes: Data) {
+        state.withLock { $0.sent += UInt64(bytes.count) }
+        deliver(Self.frame(0x02, bytes))
     }
 
     /// Rex closed the pane: WebSocket close 4000. The bridge is `exec nc -U`,
@@ -134,12 +168,33 @@ final class RexFakeDataHost: Sendable {
                 let mask = Array(bytes[offset..<(offset + 4)])
                 let payload = bytes[(offset + 4)..<(offset + 4 + length)].enumerated().map { $0.element ^ mask[$0.offset % 4] }
                 state.inbound.removeSubrange(..<(offset + 4 + length))
-                // HELLO: 0x01, then the 16-byte ticket. WELCOME: 0x81, a
-                // reconnect token, 60 s of keep, and the stream's nonce.
-                guard bytes[0] & 0x0F == 0x02, payload.first == 0x01, payload.count == 17 else { continue }
-                state.ticket = Data(payload[1...])
-                state.block = pane(Data(payload[1...]))
-                var welcome = Data([0x81]) + Data(repeating: 0, count: 19)
+                // HELLO: 0x01, then the 16-byte ticket. RESUME: 0x02, the
+                // last WELCOME's token, then the bytes received (64-bit, little
+                // endian). WELCOME: 0x81, a reconnect token, 60 s of keep, and
+                // the stream's nonce. REJECT: 0x82 and a reason.
+                guard bytes[0] & 0x0F == 0x02 else { continue }
+                let token: Data
+                if payload.first == 0x01, payload.count == 17 {
+                    state.ticket = Data(payload[1...])
+                    state.block = pane(Data(payload[1...]))
+                    token = Data(payload[1...])
+                } else if payload.first == 0x02, payload.count == 25 {
+                    let received = (0..<8).reduce(UInt64(0)) { $0 | UInt64(payload[17 + $1]) << ($1 * 8) }
+                    state.resumedAt = received
+                    guard let resumed = resume?(Data(payload[1..<17]), received) else {
+                        answers.append(Self.frame(0x02, Data([0x82, 0x01])))
+                        continue
+                    }
+                    state.ticket = Data(payload[1..<17])
+                    state.block = resumed.block
+                    state.sent = resumed.sent
+                    state.snapshotted = true
+                    token = Data(payload[1..<17].map { $0 ^ 0xFF })
+                } else {
+                    continue
+                }
+                state.token = token
+                var welcome = Data([0x81]) + token + Data(repeating: 0, count: 3)
                 welcome += Data([0x60, 0xEA, 0, 0])
                 welcome += Data((0..<8).map { UInt8((nonce >> ($0 * 8)) & 0xFF) })
                 answers.append(Self.frame(0x02, welcome))
@@ -204,6 +259,16 @@ final class RexFakeSession: Sendable {
         /// Limits `refusing` to requests that name one of these panes.
         var refusingBlocks: Set<String>?
         var directURLs: [URL] = []
+        /// Every control host, oldest first.
+        var controlHosts: [RexFakeHost] = []
+        /// The reconnect tokens the control welcomes gave, oldest first.
+        var clientTokens: [String] = []
+        /// A hello with the newest token continues the client.
+        var resumesClients = true
+        /// A RESUME of a kept stream continues it.
+        var resumesStreams = true
+        /// What `server.status` answers; none refuses it.
+        var serverStatus: String?
         /// Each pane's terminal size, in cells, once something sized it.
         var sizes: [String: Size] = [:]
         /// Each pane's owner, the client whose size it uses: a resize from the
@@ -377,8 +442,8 @@ final class RexFakeSession: Sendable {
         }
     }
 
-    /// Every request the terminal made, in order.
-    var requests: [RexFakeHost.Request] { host.withLock { $0 }?.requests ?? [] }
+    /// Every request the terminal made, in order, over every control connection.
+    var requests: [RexFakeHost.Request] { state.withLock { $0.controlHosts }.flatMap(\.requests) }
 
     /// The requests of `method`.
     func requests(_ method: String) -> [RexFakeHost.Request] { requests.filter { $0.method == method } }
@@ -422,11 +487,48 @@ final class RexFakeSession: Sendable {
     /// A transport and a welcomed control connection for
     /// `RexSessionConnection.open` over this session, both over the bridge:
     /// the control connection speaks to the fake host, and each data socket
-    /// the terminal opens is the next pane stream `data.connect` queued.
-    func connect() async throws -> (RexFakeTransport, RexControl) {
+    /// the terminal opens is the next pane stream `data.connect` queued. A
+    /// hello with `reconnectToken`, the newest one a welcome gave, continues
+    /// the client (unless `resumesClients` is off), as Rex does.
+    func connect(reconnectToken: String? = nil) async throws -> (RexFakeTransport, RexControl) {
         let fake = controlHost()
-        let control = try await RexLink(openStream: { _, _, sink in fake.open(sink: sink) }).connect()
+        let control = try await RexLink(openStream: { _, _, sink in fake.open(sink: sink) }).connect(reconnectToken: reconnectToken)
         return (RexFakeTransport(control: control, session: self), control)
+    }
+
+    /// `server.status` says this Rex serves at `url` as `hostID`, as a host's
+    /// own Rex does when Oppi checks who answered over Tailscale.
+    func setStatus(url: URL, hostID: String) {
+        state.withLock { $0.serverStatus = rexFakeStatus(url: url, hostID: hostID) }
+    }
+
+    /// The hellos' reconnect tokens, one per control connection, oldest first.
+    var helloTokens: [String?] { state.withLock { $0.controlHosts.map(\.helloToken) } }
+
+    /// Whether a hello with the newest token continues the client, and a
+    /// RESUME of a kept stream continues the stream.
+    func setResumes(clients: Bool, streams: Bool) {
+        state.withLock {
+            $0.resumesClients = clients
+            $0.resumesStreams = streams
+        }
+    }
+
+    /// The network goes away: the control connection and every pane stream
+    /// end without a close frame. Rex keeps the client and the streams.
+    func dropConnections() {
+        let (controls, streams) = state.withLock { ($0.controlHosts, $0.served) }
+        controls.last?.drop()
+        streams.forEach { $0.drop() }
+    }
+
+    private func welcomeClient(_ token: String?) -> String {
+        state.withLock { state in
+            let resumed = token != nil && token == state.clientTokens.last && state.resumesClients
+            let next = "token-\(state.clientTokens.count + 1)"
+            state.clientTokens.append(next)
+            return #"{"id":"\#(Self.terminalClient)","reconnect_token":"\#(next)"\#(resumed ? #","resumed":true"# : "")}"#
+        }
     }
 
     /// This session as a Rex reached over Tailscale is (`RexLink.OpenDirect`):
@@ -463,10 +565,12 @@ final class RexFakeSession: Sendable {
 
     /// A control host answering for this session; requests are recorded on the latest.
     private func controlHost() -> RexFakeHost {
-        let fake = RexFakeHost { [weak self] in
-            self?.answer($0) ?? .refuse(code: "gone", message: "the fake session is gone")
-        }
+        let fake = RexFakeHost(
+            welcomeClient: { [weak self] in self?.welcomeClient($0) },
+            { [weak self] in self?.answer($0) ?? .refuse(code: "gone", message: "the fake session is gone") }
+        )
         host.withLock { $0 = fake }
+        state.withLock { $0.controlHosts.append(fake) }
         return fake
     }
 
@@ -491,7 +595,8 @@ final class RexFakeSession: Sendable {
         Task { [weak self, weak data] in
             // Rex starts the stream after WELCOME, which answers HELLO.
             for _ in 0..<400 where data?.isWelcomed != true { try? await Task.sleep(for: .milliseconds(5)) }
-            guard let self, let data, let block = data.block,
+            // A resumed stream goes on where it was: no second snapshot.
+            guard let self, let data, data.resumedAt == nil, let block = data.block,
                   let pane = panes.first(where: { $0.block == block }),
                   let snapshot = try? Self.snapshot(of: pane.screen) else { return }
             // The `resize` after the snapshot is the pane's size now.
@@ -501,7 +606,14 @@ final class RexFakeSession: Sendable {
     }
 
     fileprivate func nextDataHost() -> RexFakeDataHost {
-        let host = RexFakeDataHost { [weak self] ticket in self?.state.withLock { $0.tickets[ticket] } }
+        let host = RexFakeDataHost(pane: { [weak self] ticket in self?.state.withLock { $0.tickets[ticket] } }, resume: { [weak self] token, received in
+            guard let self else { return nil }
+            let (resumes, served) = state.withLock { ($0.resumesStreams, $0.served) }
+            guard resumes,
+                  let old = served.first(where: { $0.resumePoint?.token == token && $0.resumePoint?.sent == received }),
+                  let block = old.block else { return nil }
+            return (block, received)
+        })
         state.withLock { $0.served.append(host) }
         return host
     }
@@ -561,6 +673,9 @@ final class RexFakeSession: Sendable {
             return .refuse(code: "not_found", message: "no such block")
         }
         switch request.method {
+        case "server.status":
+            guard let answer = state.withLock({ $0.serverStatus }) else { return .refuse(code: "bad_request", message: "no status") }
+            return .result(answer)
         case "session.attach":
             return .result(#"{"client_id":"\#(Self.terminalClient)","view":\#(state.withLock { $0.view })}"#)
         case "session.view":
@@ -635,5 +750,9 @@ final class RexFakeTransport: RexTransport {
     }
 
     func cancel() async { close() }
+}
+/// `server.status` as Rex answers it with Tailscale HTTPS serving at `url`.
+func rexFakeStatus(url: URL, hostID: String) -> String {
+    #"{"pid":1,"host_id":"\#(hostID)","tailscale":{"state":"running","https":{"state":"available","url":"\#(url.absoluteString)"}}}"#
 }
 #endif

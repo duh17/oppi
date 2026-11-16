@@ -318,7 +318,7 @@ final class SSHTerminalHostListViewController:
             }
             if tailnetRex.isShown {
                 for follower in tailnetRex.listedFollowers {
-                    let hostRows = SSHTerminalRexListRow.rows(hostName: follower.host.dnsName, state: follower.listState)
+                    let hostRows = SSHTerminalRexListRow.rows(hostName: follower.host.address, state: follower.listState)
                     let items = hostRows.map { Item.rexRow(host: follower.host.id, id: $0.id) }
                     for (item, row) in zip(items, hostRows) { rows[item] = row }
                     sections.append(ListSection(.rex(follower.host.id), items: items))

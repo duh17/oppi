@@ -8,7 +8,7 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Rex"
 
 /// Which way a host's Rex is reached.
 enum RexRoute: Equatable, Sendable {
-    /// The SSH bridge: `nc -U` to Rex's socket on the host.
+    /// The SSH bridge: Rex's own `dial-stdio` on the host (`RexBridge`).
     case ssh
     /// Rex's own Tailscale HTTPS serving at this URL, straight from this device.
     case tailscale(URL)
@@ -140,34 +140,40 @@ final class RexRoutePlan: Sendable {
         store.apply(RexDirectDiscovery.outcome(statusJSON: answer), for: host)
     }
 
-    /// Reads `server.status` over a direct connection and drops the address
-    /// if another Rex answered there, or its serving moved or stopped
-    /// (`RexDirectStore.confirm`).
-    func confirm(over control: RexControl) async {
-        guard let answer = try? await control.call("server.status", [:]) else { return }
-        store.confirm(RexDirectDiscovery.outcome(statusJSON: answer), for: host)
+    /// Reads `server.status` over a direct connection: true when the Rex there
+    /// is this host's (`RexDirectStore.verify`), which drops the address
+    /// otherwise.
+    func verify(over control: RexControl) async -> Bool {
+        guard let answer = try? await control.call("server.status", [:]) else { return false }
+        return store.verify(RexDirectDiscovery.outcome(statusJSON: answer), for: host)
     }
 
     /// The same from Rex's CLI on the host, for a host whose bridge cannot
-    /// run (no `nc` that speaks Unix sockets).
+    /// run (a `rex` without `dial-stdio`, and no `nc` that speaks Unix sockets).
     func discover(run: RexLink.Run) async {
         guard let result = try? await run(RexBridge.statusCommand), result.exitStatus == 0 else { return }
         store.apply(RexDirectDiscovery.outcome(statusJSON: result.output), for: host)
     }
 
     /// A control connection Rex welcomed over Tailscale within
-    /// `directDeadline`, or nil when this open does not try (`directCandidate`)
-    /// or the attempt failed, which is remembered.
+    /// `directDeadline`, and whose `server.status` says it is this host's Rex
+    /// (`verify`) before anyone uses it; nil when this open does not try
+    /// (`directCandidate`) or the attempt failed, which is remembered.
     func attemptDirect(
-        openStream: @escaping RexLink.OpenStream, onWritable: (@Sendable (Bool) -> Void)?
+        openStream: @escaping RexLink.OpenStream, onWritable: (@Sendable (Bool) -> Void)?, reconnectToken: String? = nil
     ) async throws -> (RexLink, RexControl)? {
         guard let url = directCandidate() else { return nil }
         let link = RexLink(route: .tailscale(url), openStream: openStream, openDirect: openDirect)
         let started = ContinuousClock.now
         do {
             let deadline = directDeadline
-            let control = try await Self.within(deadline) {
-                try await link.connect(timeout: deadline, onWritable: onWritable)
+            let control = try await Self.within(deadline) { [self] in
+                let control = try await link.connect(timeout: deadline, onWritable: onWritable, reconnectToken: reconnectToken)
+                guard await verify(over: control) else {
+                    control.close()
+                    throw RexClientError.unreadable("a Rex that is not this host's at its Tailscale address")
+                }
+                return control
             }
             // Cancelled while the welcome came in: nobody takes it.
             guard !Task.isCancelled else {
@@ -176,7 +182,6 @@ final class RexRoutePlan: Sendable {
             }
             directWorked()
             RexRouteLog.chosen(link.route, directMs: Int((ContinuousClock.now - started) / .milliseconds(1)))
-            Task { await confirm(over: control) }
             return (link, control)
         } catch {
             try Task.checkCancellation()
@@ -223,10 +228,10 @@ final class RexRoutePlan: Sendable {
 }
 
 extension RexBridge {
-    /// `rex api call server.status` with the CLI the bridge looks for.
+    /// `rex api call server.status` with the first CLI the bridge would look at.
     static let statusCommand = SSHTerminalRemoteShell.word(
-        "r=\"$HOME/Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS/rex\"; "
-            + "[ -x \"$r\" ] || r=rex; exec \"$r\" api call server.status"
+        "for r in \"$HOME/.local/bin/rex\" \"$(command -v rex)\"; do "
+            + "[ -x \"$r\" ] && exec \"$r\" api call server.status --autostart=false; done; exit 5"
     )
 }
 
@@ -243,12 +248,16 @@ extension RexLink {
         plan: RexRoutePlan?,
         openStream: @escaping OpenStream,
         run: Run?,
+        autostart: Bool = true,
+        reconnectToken: String? = nil,
         onWritable: (@Sendable (Bool) -> Void)? = nil
     ) async throws -> (RexLink, RexControl) {
-        if let direct = try await plan?.attemptDirect(openStream: openStream, onWritable: onWritable) { return direct }
-        let bridge = RexLink(openStream: openStream)
+        if let direct = try await plan?.attemptDirect(openStream: openStream, onWritable: onWritable, reconnectToken: reconnectToken) {
+            return direct
+        }
+        let bridge = RexLink(autostart: autostart, openStream: openStream)
         do {
-            let control = try await bridge.connect(onWritable: onWritable)
+            let control = try await bridge.connect(onWritable: onWritable, reconnectToken: reconnectToken)
             if let plan {
                 RexRouteLog.chosen(.ssh)
                 Task { await plan.discover(over: control) }
@@ -257,7 +266,9 @@ extension RexLink {
         } catch RexClientError.bridgeMissing {
             guard let plan, let run else { throw RexClientError.bridgeMissing }
             await plan.discover(run: run)
-            if let direct = try await plan.attemptDirect(openStream: openStream, onWritable: onWritable) { return direct }
+            if let direct = try await plan.attemptDirect(openStream: openStream, onWritable: onWritable, reconnectToken: reconnectToken) {
+                return direct
+            }
             throw RexClientError.bridgeMissing
         }
     }
@@ -281,18 +292,31 @@ enum RexRouteLog {
         ClientLog.info("Network", "Rex direct failed", metadata: metadata)
     }
 
+    /// A Rex terminal's connection was lost; it opens again by itself.
+    static func lost(_ route: RexRoute) {
+        logger.info("Rex connection lost route=\(route.tag, privacy: .public)")
+        ClientLog.info("Network", "Rex connection lost", metadata: ["route": route.tag])
+    }
+
+    static func reconnectFailed(_ error: any Error) {
+        logger.info("Rex reconnect failed (\(String(describing: type(of: error)), privacy: .public))")
+        ClientLog.info("Network", "Rex reconnect failed", metadata: ClientLog.networkErrorMetadata(error))
+    }
+
     /// A pane's snapshot arrived: how long from asking for its stream.
     static func snapshot(_ route: RexRoute, milliseconds: Int, bytes: Int) {
         logger.info("Rex snapshot route=\(route.tag, privacy: .public) ms=\(milliseconds, privacy: .public) bytes=\(bytes, privacy: .public)")
     }
 }
 
-/// A TLS byte stream to Rex's Tailscale HTTPS serving (`<name>.ts.net:443`),
-/// which Rex's WebSockets then run over with this side doing the framing
+/// A byte stream to Rex on a tailnet (`RexTailnetHost`): TLS to its
+/// Tailscale HTTPS serving (`<name>.ts.net:443`), or plain TCP to a
+/// `tailnet://` listener at a tailnet address, which WireGuard encrypts.
+/// Rex's WebSockets then run over it with this side doing the framing
 /// (`RexPipeSocket`, `RexWebSocketCodec`), exactly as over the SSH bridge:
 /// the same upgrade, extensions, and frames. It goes through Oppi's Tailscale
 /// node's SOCKS proxy while it runs (`TailnetTransportRoute`), else the system
-/// network (a Tailscale VPN). The certificate is checked against the system's
+/// network (a Tailscale VPN). A certificate is checked against the system's
 /// roots for that name; the tailnet identity is the sign-in, and Rex admits
 /// its owner's Tailscale user (or its tailnet's members, when it allows them).
 ///
@@ -326,23 +350,33 @@ final class RexTLSStream: Sendable {
         self.sink = sink
     }
 
-    /// Connects to `url`'s host and port (443 by default) within `timeout`.
+    /// Connects to `url`'s host and port (443 by default) within `timeout`:
+    /// TLS for `https`, plain TCP for `http` (only ever a tailnet address).
     static func open(
         _ url: URL, inboundFlow: SSHPTYInboundFlow?, timeout: Duration, sink: @escaping SSHPTYByteSink
     ) async throws -> SSHExecStream {
-        guard let host = url.host, !host.isEmpty, let port = NWEndpoint.Port(rawValue: UInt16(url.port ?? 443)) else {
+        guard let host = url.host, !host.isEmpty, url.scheme == "https" || url.scheme == "http",
+              let port = NWEndpoint.Port(rawValue: UInt16(url.port ?? 443)) else {
             throw RexClientError.unreadable("Rex's Tailscale address")
         }
-        let tls = NWProtocolTLS.Options()
-        // A WebSocket upgrade is HTTP/1.1.
-        sec_protocol_options_add_tls_application_protocol(tls.securityProtocolOptions, "http/1.1")
+        var tls: NWProtocolTLS.Options?
+        if url.scheme == "https" {
+            let options = NWProtocolTLS.Options()
+            // A WebSocket upgrade is HTTP/1.1.
+            sec_protocol_options_add_tls_application_protocol(options.securityProtocolOptions, "http/1.1")
+            tls = options
+        }
         let tcp = NWProtocolTCP.Options()
         tcp.enableKeepalive = true
         tcp.keepaliveIdle = 10
         tcp.keepaliveInterval = 10
         tcp.keepaliveCount = 3
         let parameters = NWParameters(tls: tls, tcp: tcp)
-        TailnetTransportRoute.apply(to: parameters, route: .forHost(host))
+        // Through Oppi's node whatever the name, while it runs: a Headscale
+        // name is not on its match list, and a tailnet address has no name.
+        // An HTTPS name off the tailnet still has to show its certificate;
+        // plain HTTP is refused without a tailnet route (`RexLink`).
+        TailnetTransportRoute.applyToEveryHost(parameters, proxy: TailnetTransportRoute.proxy)
         let queue = DispatchQueue(label: "Rex Tailscale stream")
         let stream = RexTLSStream(
             connection: NWConnection(host: NWEndpoint.Host(host), port: port, using: parameters),

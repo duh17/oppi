@@ -6,7 +6,9 @@ extension RexTailnetHost {
     /// node and carries `rexTailnet`, which routes its connect to Rex over
     /// Tailscale with no SSH; it is never saved in the SSH host list.
     var profile: SSHTerminalProfile {
-        SSHTerminalProfile(id: id, host: dnsName, port: 443, opensRexSessions: true, rexTailnet: url)
+        SSHTerminalProfile(
+            id: id, host: url.host ?? address, port: UInt16(url.port ?? 443), opensRexSessions: true, rexTailnet: url
+        )
     }
 }
 
@@ -36,7 +38,7 @@ enum RexTailnetAccess {
         let status = words.count > 1 ? Int(words[1]) : nil
         guard status == 401 || status == 403 else {
             let line = answer.split(separator: "{", maxSplits: 1).first.map { $0.trimmingCharacters(in: .whitespaces) } ?? answer
-            return "\(host.dnsName) did not open Rex: it answered \(line). Check that this is a Rex's Tailscale name."
+            return "\(host.address) did not open Rex: it answered \(line). Check that this is a Rex's Tailscale name or address."
         }
         var message = "This Rex only lets in the Tailscale account that signed it in. "
         if let signedInAs {
@@ -83,12 +85,13 @@ final class RexTailnetTransport: RexTransport {
     static func open(
         host: RexTailnetHost,
         openDirect: @escaping RexLink.OpenDirect = RexTLSStream.open,
+        reconnectToken: String? = nil,
         onWritable: (@Sendable (Bool) -> Void)? = nil
     ) async throws -> (RexTailnetTransport, RexControl) {
         let link = RexLink(route: .tailscale(host.url), openStream: noBridge, openDirect: openDirect)
         let started = ContinuousClock.now
         do {
-            let control = try await link.connect(timeout: RexTailnetHost.connectTimeout, onWritable: onWritable)
+            let control = try await link.connect(timeout: RexTailnetHost.connectTimeout, onWritable: onWritable, reconnectToken: reconnectToken)
             RexRouteLog.chosen(link.route, directMs: Int((ContinuousClock.now - started) / .milliseconds(1)))
             return (RexTailnetTransport(link: link, control: control), control)
         } catch {

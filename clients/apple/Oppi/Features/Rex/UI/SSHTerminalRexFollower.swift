@@ -6,7 +6,9 @@ import UIKit
 /// shell: it signs in with the host's sign-in (`SSHTerminalConnectSession`'s
 /// `listsRexSessions`), reads Rex through one `RexMonitor` stream
 /// (`RexMonitor.run(over:)`) while its screen shows, and drops both when the
-/// screen goes or Oppi leaves the foreground. A Rex host's sessions screen
+/// screen goes or Oppi leaves the foreground. When the host's Rex serves on
+/// the tailnet (`RexRoutePlan`), it reads Rex there with no SSH sign-in at all,
+/// as Rex's own apps do, and signs in over SSH only if Rex does not answer. A Rex host's sessions screen
 /// (`SSHTerminalRexSessionsViewController`) and the Terminal tab's Rex section
 /// (`SSHTerminalHostListViewController`) each hold one per Rex host; they own
 /// the screen, the connect chrome, and what is drawn, and this owns the
@@ -52,6 +54,13 @@ final class SSHTerminalRexFollower: SSHTerminalRexListFollowing {
     @ObservationIgnored private let signsInSilently: @MainActor (SSHTerminalProfile) -> Bool
     /// The experiments, read each time: Rex is read only while its switch is on.
     @ObservationIgnored private let access: @MainActor () -> SSHTerminalExperimentAccess
+    /// The host's Rex route over Tailscale, when it has one; nil signs in over SSH.
+    @ObservationIgnored private let tailnetPlan: @MainActor (SSHTerminalProfile) -> RexRoutePlan?
+    /// Rex is read over Tailscale, with no SSH connection.
+    private(set) var readsOverTailnet = false
+    /// The Tailscale route did not answer this visit: the list signs in over
+    /// SSH, as before, until the screen shows again.
+    @ObservationIgnored private var tailnetFailed = false
     /// The last answer, kept until something that can change it (`markNeedsConnection`,
     /// `appeared()`, a new profile, the foreground, `stopForNoRex`): the Keychain and
     /// the approval cache are read once per owed sign-in, not once per question.
@@ -67,6 +76,10 @@ final class SSHTerminalRexFollower: SSHTerminalRexListFollowing {
         monitor: RexMonitor? = nil,
         standIn: (any RexStreamHost)? = nil,
         signsInSilently: @escaping @MainActor (SSHTerminalProfile) -> Bool = { $0.connectsWithoutPrompt() },
+        tailnetPlan: @escaping @MainActor (SSHTerminalProfile) -> RexRoutePlan? = { profile in
+            let plan = RexRoutePlan(host: RexDirectHost(profile: profile))
+            return plan.directCandidate() == nil ? nil : plan
+        },
         access: @escaping @MainActor () -> SSHTerminalExperimentAccess = { .current },
         center: NotificationCenter = .default
     ) {
@@ -80,6 +93,7 @@ final class SSHTerminalRexFollower: SSHTerminalRexListFollowing {
         self.monitor = monitor
         self.standIn = standIn
         self.signsInSilently = signsInSilently
+        self.tailnetPlan = tailnetPlan
         monitor.openPane = { [weak session] pane in session?.openRexPane(pane) }
         // Backgrounding closes the connection even while a terminal covers the
         // screen, whose updates then stop. The experiment going off ends it, so no
@@ -115,7 +129,14 @@ final class SSHTerminalRexFollower: SSHTerminalRexListFollowing {
     private var streamHost: (any RexStreamHost)? { standIn ?? session.rexSessions }
 
     /// Rex is being read, or a sign-in is on its way: nothing to tap.
-    var isConnected: Bool { streamHost != nil }
+    var isConnected: Bool { streamHost != nil || readsOverTailnet }
+
+    /// The route over Tailscale this visit may still take: none is asked for
+    /// when the last try failed, or when a stand-in is the host.
+    private func pendingTailnetPlan() -> RexRoutePlan? {
+        guard standIn == nil, !tailnetFailed else { return nil }
+        return tailnetPlan(profile)
+    }
 
     /// A trust decision is waiting on the person (the host's key is unknown or changed).
     private var trustPending: Bool {
@@ -128,7 +149,7 @@ final class SSHTerminalRexFollower: SSHTerminalRexListFollowing {
     /// Signing in would ask the person for something, or a try failed: the
     /// Terminal tab shows a row to tap, which runs the normal connect.
     var needsTap: Bool {
-        guard !promptsAutomatically, !isConnected, !session.connecting else { return false }
+        guard !promptsAutomatically, !isConnected, !session.connecting, !hasTailnetRoute else { return false }
         // The password sheet is up for a tap that asked for it.
         if session.passwordPrompt, !holdsPrompts { return false }
         if session.passwordPrompt || trustPending || session.failure != nil { return true }
@@ -147,12 +168,22 @@ final class SSHTerminalRexFollower: SSHTerminalRexListFollowing {
 
     private var silentForDisplay: Bool { canSignInSilently() }
 
+    /// Rex can be read over Tailscale with nothing to sign in to (cached like
+    /// `canSignInSilently`).
+    private var hasTailnetRoute: Bool {
+        if let cached = tailnetCache { return cached }
+        let value = pendingTailnetPlan() != nil
+        tailnetCache = value
+        return value
+    }
+    @ObservationIgnored private var tailnetCache: Bool?
+
     /// Whether this follower's next pass would really dial: it owes a sign-in, has no
     /// connection or attempt, and signing in asks the person for nothing (a screen
     /// that may prompt always would). The page's connect budget charges only these, so
     /// a host waiting for a tap cannot take a grant from one that will use it.
     var wouldStartSignIn: Bool {
-        guard !isConnected, !session.connecting, needsListConnection, !trustPending else { return false }
+        guard !isConnected, !session.connecting, needsListConnection, !trustPending, !hasTailnetRoute else { return false }
         return promptsAutomatically || canSignInSilently()
     }
 
@@ -167,6 +198,7 @@ final class SSHTerminalRexFollower: SSHTerminalRexListFollowing {
 
     private func markNeedsConnection() {
         silentCache = nil
+        tailnetCache = nil
         needsListConnection = true
     }
 
@@ -183,10 +215,13 @@ final class SSHTerminalRexFollower: SSHTerminalRexListFollowing {
         _ = session.listsRexSessions
         guard active, access().rex else { return }
         if isConnected {
-            startReading()
-        } else if needsListConnection, standIn == nil, !session.connecting, !session.passwordPrompt, !trustPending,
-                  promptsAutomatically || canSignInSilently() {
-            connectList(automatic: true)
+            if !readsOverTailnet { startReading() }
+        } else if needsListConnection, standIn == nil, !session.connecting, !session.passwordPrompt, !trustPending {
+            if let plan = pendingTailnetPlan() {
+                readOverTailnet(plan)
+            } else if promptsAutomatically || canSignInSilently() {
+                connectList(automatic: true)
+            }
         }
     }
 
@@ -210,6 +245,7 @@ final class SSHTerminalRexFollower: SSHTerminalRexListFollowing {
     /// The screen shows again: sign in if the connection is gone.
     func appeared() {
         silentCache = nil
+        tailnetFailed = false
         manageFailure = nil
         if !isConnected { markNeedsConnection() }
     }
@@ -251,7 +287,7 @@ final class SSHTerminalRexFollower: SSHTerminalRexListFollowing {
     /// tries again on a host that had no `nc` or no Rex, and otherwise reads
     /// Rex once more over the stream that is open.
     func refresh() async {
-        guard standIn != nil || session.rexSessions?.channel.isActive == true else {
+        guard standIn != nil || readsOverTailnet || session.rexSessions?.channel.isActive == true else {
             session.closeRexSessions()
             return connectList(automatic: true)
         }
@@ -277,11 +313,31 @@ final class SSHTerminalRexFollower: SSHTerminalRexListFollowing {
         }
     }
 
+    /// Reads Rex over Tailscale with no SSH connection, until the screen goes
+    /// or the route stops answering; then the list signs in over SSH as before.
+    private func readOverTailnet(_ plan: RexRoutePlan) {
+        needsListConnection = false
+        readsOverTailnet = true
+        reader = Task { [weak self, monitor] in
+            let answered = await monitor.runOverTailnet(plan)
+            guard !Task.isCancelled, let self else { return }
+            self.reader = nil
+            self.readsOverTailnet = false
+            if !answered { self.tailnetFailed = true }
+            self.markNeedsConnection()
+        }
+    }
+
     /// The monitor stops; the connection stays, so the screen coming back
     /// reads Rex again over it.
     func stopReading() {
         reader?.cancel()
         reader = nil
+        // Over Tailscale the stream was the connection: the next sync opens it again.
+        if readsOverTailnet {
+            readsOverTailnet = false
+            needsListConnection = true
+        }
     }
 
     /// The connection does not outlive the foreground; it signs in again when

@@ -768,13 +768,13 @@ struct SSHTerminalRexSectionTests {
         #expect(plusItem(rig)?.accessibilityIdentifier == "sshTerminal.page.newSession")
 
         // A Rex by its Tailscale name, added while the page is up.
-        let node = try #require(RexTailnetHost(dnsName: "rex.tail1234.ts.net", name: "studio"))
+        let node = try #require(RexTailnetHost(address: "rex.tail1234.ts.net", name: "studio"))
         tailnetStore.saveTailnetHost(node)
         rig.list.updateProperties()
 
         let menu = try #require(plusItem(rig)?.menu, "two hosts to choose from: ＋ asks which")
         #expect(menu.children.count == 2, "the saved host and the node")
-        #expect(menu.children.map(\.title).contains(node.dnsName), "the node is one of the choices")
+        #expect(menu.children.map(\.title).contains(node.address), "the node is one of the choices")
     }
 
     /// A pull asks the hosts whose last read found no Rex, and it asks them the way any
@@ -1501,7 +1501,7 @@ private final class RexBridgeConnection: SSHTerminalConnection {
     func send(_ bytes: Data) async throws {}
     func resize(columns: Int, rows: Int, pixelWidth: Int, pixelHeight: Int) async throws {}
     func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
-        guard command == RexBridge.command else { throw SSHConnectionError.notConnected }
+        guard RexBridge.isBridge(command) else { throw SSHConnectionError.notConnected }
         return serve(sink)
     }
     func run(_ command: String, input: Data) async throws -> SSHExecResult { throw SSHConnectionError.commandRequestRejected }

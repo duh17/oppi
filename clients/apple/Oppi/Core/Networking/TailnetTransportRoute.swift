@@ -67,23 +67,38 @@ enum TailnetTransportRoute {
         configuration.proxyConfigurations = [socks]
     }
 
-    /// The same route for a Network framework connection (a raw TLS stream,
-    /// such as Rex's WebSockets over Tailscale, which frame themselves).
-    static func apply(to parameters: NWParameters, route: Snapshot) {
-        guard let socks = socksConfiguration(route.proxy) else { return }
+    /// Routes `configuration` through `proxy` for every destination, not just
+    /// `matchDomains`, with no failover (`socksConfiguration`): for a Rex probe
+    /// of the node's own peers, whose names may be a Headscale tailnet's.
+    static func applyToEveryHost(_ configuration: URLSessionConfiguration, proxy: TailnetSOCKSProxy?) {
+        guard let socks = socksConfiguration(proxy, everyHost: true) else { return }
+        configuration.proxyConfigurations = [socks]
+    }
+
+    /// The same route for a Network framework connection (Rex's WebSockets
+    /// over Tailscale, which frame themselves): every destination goes through
+    /// the node while it runs, as for `applyToEveryHost`. Without the node the
+    /// connection uses the device's own network, a Tailscale VPN's included.
+    static func applyToEveryHost(_ parameters: NWParameters, proxy: TailnetSOCKSProxy?) {
+        guard let socks = socksConfiguration(proxy, everyHost: true) else { return }
         let context = NWParameters.PrivacyContext(description: "Tailnet")
         context.proxyConfigurations = [socks]
         parameters.setPrivacyContext(context)
     }
 
-    private static func socksConfiguration(_ proxy: TailnetSOCKSProxy?) -> ProxyConfiguration? {
+    /// `everyHost` (Rex, which may speak plain HTTP that only WireGuard
+    /// encrypts) never fails over to the device's own network: should the
+    /// node's proxy go away mid-connection, the connection fails instead of
+    /// reaching whatever answers that address on Wi-Fi or cellular (carriers
+    /// use 100.64.0.0/10 too).
+    static func socksConfiguration(_ proxy: TailnetSOCKSProxy?, everyHost: Bool = false) -> ProxyConfiguration? {
         guard let proxy, let port = NWEndpoint.Port(rawValue: proxy.port) else { return nil }
         var socks = ProxyConfiguration(
             socksv5Proxy: .hostPort(host: NWEndpoint.Host(proxy.host), port: port)
         )
         socks.applyCredential(username: TailnetSOCKSProxy.username, password: proxy.credential)
-        socks.matchDomains = matchDomains
-        socks.allowFailover = true
+        if !everyHost { socks.matchDomains = matchDomains }
+        socks.allowFailover = !everyHost
         return socks
     }
 

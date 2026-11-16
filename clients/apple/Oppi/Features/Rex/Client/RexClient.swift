@@ -12,44 +12,13 @@ struct RexPaneTarget: Hashable, Sendable {
     let label: String
 }
 
-/// How Oppi reaches the host's Rex server: a command on the SSH connection
-/// whose stdin and stdout are Rex's local socket. Rex trusts a caller on that
-/// socket as the account it runs as, which is the SSH user, so it needs no
-/// sign-in or network access of its own. The fallback when Rex is not
-/// reached over Tailscale (`RexRoutePlan`).
-enum RexBridge {
-    /// Rex's socket: in the app's Application Support folder on macOS, in
-    /// `$XDG_RUNTIME_DIR/rex` or `~/.local/state/rex/run` elsewhere.
-    ///
-    /// With no socket the command says why, in its exit status, from the same
-    /// one exec (nothing extra is asked while Rex runs): 5 when `rex` is not on
-    /// the host either (the CLI inside the macOS app bundle, else on the
-    /// `PATH`), 4 when it is installed but no Rex server is listening. With a
-    /// socket it exits 126 when `nc` is missing or cannot speak Unix sockets:
-    /// Debian's `netcat-traditional` and BusyBox reject `-U` with exit 1, which
-    /// would read as a closed connection, so `nc -h` must list `-U` first.
-    static let command = SSHTerminalRemoteShell.word(
-        "for s in \"$HOME/Library/Application Support/rex/server.sock\" "
-            + "\"${XDG_RUNTIME_DIR:-/nonexistent}/rex/server.sock\" \"$HOME/.local/state/rex/run/server.sock\"; do "
-            + "[ -S \"$s\" ] && { nc -h 2>&1 | grep -q -e -U || exit 126; exec nc -U \"$s\"; }; done; "
-            + "[ -x \"$HOME/Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS/rex\" ] "
-            + "|| command -v rex >/dev/null || exit 5; exit 4"
-    )
-
-    static func failure(exitStatus: Int?) -> RexClientError {
-        switch exitStatus {
-        case 4: .notRunning
-        case 5: .notInstalled
-        case 126: .bridgeMissing
-        default: .connectionClosed
-        }
-    }
-}
-
 enum RexClientError: Error, Equatable, LocalizedError {
     case notRunning
     case notInstalled
     case bridgeMissing
+    /// Plain HTTP to Rex with no route onto the tailnet: it would cross
+    /// another network unencrypted, so nothing is sent.
+    case noTailnetRoute
     case connectionClosed
     /// The stream under the socket failed, and why (a network error, or the
     /// signal that ended the bridge).
@@ -63,7 +32,8 @@ enum RexClientError: Error, Equatable, LocalizedError {
         switch self {
         case .notRunning: "Rex is not running on this host."
         case .notInstalled: "Rex is not installed on this host."
-        case .bridgeMissing: "The host has no nc that can reach Rex's socket (nc -U)."
+        case .bridgeMissing: "The host's rex is too old to bridge to Rex (rex __internal dial-stdio), and it has no nc that can reach Rex's socket (nc -U)."
+        case .noTailnetRoute: "This device is not on the tailnet, and this Rex speaks plain HTTP that only Tailscale encrypts. Connect Tailscale, then try again."
         case .connectionClosed: "The connection to Rex closed."
         case .lost(let reason): "The connection to Rex was lost: \(reason)"
         case .timedOut: "Rex did not answer in time."
@@ -97,6 +67,8 @@ final class RexControl: Sendable {
         var ended: (any Error)?
         var onEnd: (@Sendable (any Error) -> Void)?
         var onEvent: (@Sendable ([String: Any]) -> Void)?
+        var reconnectToken: String?
+        var resumed = false
     }
 
     private static let welcomeID = "welcome"
@@ -132,14 +104,26 @@ final class RexControl: Sendable {
 
     /// Says hello on the attached socket. Returns once Rex welcomed this
     /// client, within `timeout` (the request timeout by default).
-    func open(timeout: Duration? = nil) async throws {
-        let hello = try Self.json([
+    /// `reconnectToken`, the newest one an earlier welcome gave, asks Rex to
+    /// continue that client (`resumed`): Rex keeps a client whose connection
+    /// dropped without a close frame for a grace period, still attached to its
+    /// sessions and owning its panes. The token is a secret, never logged.
+    func open(timeout: Duration? = nil, reconnectToken: String? = nil) async throws {
+        var hello: [String: Any] = [
             "type": "hello",
             "api_revision": Self.apiRevision,
             "client": ["kind": "app", "platform": "ios", "name": "Oppi"],
-        ])
-        _ = try await exchange(id: Self.welcomeID, message: hello, timeout: timeout ?? self.timeout)
+        ]
+        if let reconnectToken { hello["reconnect_token"] = reconnectToken }
+        _ = try await exchange(id: Self.welcomeID, message: try Self.json(hello), timeout: timeout ?? self.timeout)
     }
+
+    /// The token a later hello continues this client with: the newest welcome's.
+    var reconnectToken: String? { state.withLock { $0.reconnectToken } }
+    /// Rex continued an earlier client (`open(reconnectToken:)`): its sessions,
+    /// panes, and ownership are as that client left them; only the events sent
+    /// while it was away are lost.
+    var resumed: Bool { state.withLock { $0.resumed } }
 
     /// Calls a method and returns its result's JSON.
     func call(_ method: String, _ payload: [String: Any]) async throws -> Data {
@@ -167,6 +151,11 @@ final class RexControl: Sendable {
                   let type = object["type"] as? String else { return }
             switch type {
             case "welcome":
+                let client = object["client"] as? [String: Any]
+                state.withLock { state in
+                    state.reconnectToken = client?["reconnect_token"] as? String
+                    state.resumed = client?["resumed"] as? Bool ?? false
+                }
                 resolve(Self.welcomeID, .success(Data()))
             case "response":
                 guard let id = object["id"] as? String else { return }
@@ -256,76 +245,6 @@ final class RexControl: Sendable {
     }
 }
 
-/// A pane's data connection (`/api/data`, `rex.data.terminal.v1`) as a state
-/// machine: the socket's messages in, what the terminal gets out. The socket
-/// opens and upgrades while `data.connect` is still issuing its ticket; its
-/// owner sends `hello(ticket:)` once both are in. It reads WELCOME for the
-/// stream's nonce, then splits the stream (`RexTerminalStream`).
-struct RexDataStream {
-    enum Output: Equatable, Sendable {
-        /// The snapshot's screen (`RexTerminalStream.Piece.snapshot`).
-        case snapshot(Data)
-        /// Its records after READY (`RexTerminalStream.Piece.snapshotRecords`).
-        case snapshotRecords(Data)
-        case output(Data)
-        case exited(code: Int)
-        /// Rex closed the pane (close code 4000). Nothing follows it.
-        case paneClosed
-        /// The stream is over, and why. Nothing follows it.
-        case ended(String)
-    }
-
-    private var terminal: RexTerminalStream?
-    private var over = false
-
-    /// HELLO with the ticket `data.connect` issued: the first message on the open socket.
-    static func hello(ticket: Data) -> RexSocketMessage { .binary(RexDataHandshake.hello(ticket: ticket)) }
-
-    mutating func receive(_ message: RexSocketMessage) -> [Output] {
-        guard !over else { return [] }
-        do {
-            return try deliver(message)
-        } catch {
-            over = true
-            return [.ended(error.localizedDescription)]
-        }
-    }
-
-    private mutating func deliver(_ message: RexSocketMessage) throws -> [Output] {
-        switch message {
-        case .binary(let payload):
-            guard var stream = terminal else {
-                switch try RexDataHandshake.answer(payload) {
-                case .welcome(let welcome):
-                    terminal = RexTerminalStream(nonce: welcome.nonce)
-                    return []
-                case .reject(let code):
-                    throw RexDataHandshake.Failure.rejected(code)
-                }
-            }
-            let pieces = try stream.receive(payload)
-            terminal = stream
-            return pieces.compactMap { piece in
-                switch piece {
-                case .snapshot(let snapshot): .snapshot(snapshot)
-                case .snapshotRecords(let records): .snapshotRecords(records)
-                case .output(let output): .output(output)
-                case .message(.childExited(let code)): .exited(code: code)
-                // Resize and theme: who sizes the pane is followed by its owner
-                // (`block_owner_changed`), and this client keeps its own colors.
-                case .message: nil
-                }
-            }
-        case .close(let code, let reason):
-            over = true
-            if code == 4000 { return [.paneClosed] }
-            return [.ended(reason.isEmpty ? "Rex ended the pane's stream." : "Rex ended the pane's stream: \(reason).")]
-        case .text:
-            return []
-        }
-    }
-}
-
 /// How this device reaches one host's Rex, and opens its WebSockets: over the
 /// SSH bridge, an exec stream of `RexBridge.command` per socket, or over a TLS
 /// stream to Rex's Tailscale serving. Either way this side frames the
@@ -344,11 +263,22 @@ struct RexLink: Sendable {
     /// Opens an exec stream on the host's SSH connection.
     let openStream: OpenStream
     let openDirect: OpenDirect
+    /// The SSH bridge starts the host's Rex when none runs (`RexBridge`).
+    let autostart: Bool
+    /// Whether this device has a route onto the tailnet (`RexTailnetPath`):
+    /// plain HTTP to Rex goes nowhere without one.
+    let tailnetUsable: @Sendable () -> Bool
 
-    init(route: RexRoute = .ssh, openStream: @escaping OpenStream, openDirect: @escaping OpenDirect = RexTLSStream.open) {
+    init(
+        route: RexRoute = .ssh, autostart: Bool = true,
+        openStream: @escaping OpenStream, openDirect: @escaping OpenDirect = RexTLSStream.open,
+        tailnetUsable: @escaping @Sendable () -> Bool = { RexTailnetPath.usable() }
+    ) {
         self.route = route
+        self.autostart = autostart
         self.openStream = openStream
         self.openDirect = openDirect
+        self.tailnetUsable = tailnetUsable
     }
 
     /// Opens one of Rex's sockets within `timeout`; `onEvent` hears everything
@@ -361,13 +291,17 @@ struct RexLink: Sendable {
     ) async throws -> any RexSocket {
         switch route {
         case .ssh:
-            try await RexPipeSocket.open(
+            return try await RexPipeSocket.open(
                 endpoint, timeout: timeout,
-                openStream: { [openStream] sink in try await openStream(RexBridge.command, inboundFlow, sink) },
+                openStream: { [openStream, autostart] sink in
+                    try await openStream(autostart ? RexBridge.command : RexBridge.commandWithoutAutostart, inboundFlow, sink)
+                },
                 onEvent: onEvent
             )
         case .tailscale(let url):
-            try await RexPipeSocket.open(
+            // Plain HTTP is safe only inside WireGuard; HTTPS checks its certificate.
+            if url.scheme == "http", !tailnetUsable() { throw RexClientError.noTailnetRoute }
+            return try await RexPipeSocket.open(
                 endpoint, host: Self.hostHeader(url), timeout: timeout,
                 openStream: { [openDirect] sink in try await openDirect(url, inboundFlow, timeout, sink) },
                 onEvent: onEvent
@@ -381,7 +315,8 @@ struct RexLink: Sendable {
     /// so does a hello that fails: no bridge or stream is left behind.
     func connect(
         timeout: Duration = RexControl.requestTimeout,
-        onWritable: (@Sendable (Bool) -> Void)? = nil
+        onWritable: (@Sendable (Bool) -> Void)? = nil,
+        reconnectToken: String? = nil
     ) async throws -> RexControl {
         let control = RexControl()
         let socket = try await open(.control, timeout: timeout) { event in
@@ -391,7 +326,7 @@ struct RexLink: Sendable {
         control.attach(socket)
         do {
             try await withTaskCancellationHandler {
-                try await control.open(timeout: timeout)
+                try await control.open(timeout: timeout, reconnectToken: reconnectToken)
             } onCancel: {
                 socket.close()
             }
@@ -402,10 +337,11 @@ struct RexLink: Sendable {
         return control
     }
 
-    /// `Host` for an upgrade to Rex at `url`: its name, and its port when the
-    /// URL names one.
+    /// `Host` for an upgrade to Rex at `url`: its name (an IPv6 address in
+    /// brackets), and its port when the URL names one.
     static func hostHeader(_ url: URL) -> String {
-        let host = url.host ?? "localhost"
+        var host = url.host ?? "localhost"
+        if host.contains(":") { host = "[\(host)]" }
         return url.port.map { "\(host):\($0)" } ?? host
     }
 }
@@ -427,89 +363,13 @@ protocol RexTransport: Sendable {
     func cancel() async
     /// Why side commands cannot run, or nil on a host with SSH beside Rex.
     var sideCommandsUnavailable: String? { get }
+    /// Side commands would sign in to SSH first (`RexHostTransport`).
+    var sideCommandsSignInPending: Bool { get }
 }
 
 extension RexTransport {
     var sideCommandsUnavailable: String? { nil }
-}
-
-/// A Rex terminal's signed-in SSH connection, which runs no shell: Rex's
-/// control connection and each pane's data connection go over its `RexLink`,
-/// and side commands (uploads, the theme, keybindings) run beside them. It
-/// probes the peer as a shell's connection does (`SSHConnection.startKeepalive`).
-final class RexHostTransport: RexTransport {
-    let link: RexLink
-    var route: RexRoute { link.route }
-    private let connection: SSHConnection
-    private let control: RexControl
-
-    private init(connection: SSHConnection, link: RexLink, control: RexControl) {
-        self.connection = connection
-        self.link = link
-        self.control = control
-        // Ends with the connection.
-        connection.startKeepalive()
-        // Side commands need the SSH connection: when it goes, the terminal
-        // goes with it, whatever carries Rex.
-        connection.channel.closeFuture.whenComplete { _ in control.close() }
-    }
-
-    /// Opens Rex's control connection by `plan`'s route (the bridge on
-    /// `connection` without one) and says hello.
-    static func open(
-        connection: SSHConnection,
-        plan: RexRoutePlan? = nil,
-        onWritable: (@Sendable (Bool) -> Void)? = nil
-    ) async throws -> (RexHostTransport, RexControl) {
-        let (link, control) = try await RexLink.connect(
-            plan: plan,
-            openStream: { try await connection.openStream(command: $0, inboundFlow: $1, sink: $2) },
-            run: { try await connection.run($0, maximumOutputBytes: 64 * 1024, timeout: .seconds(10)) },
-            onWritable: onWritable
-        )
-        return (RexHostTransport(connection: connection, link: link, control: control), control)
-    }
-
-    func openData(
-        inboundFlow: SSHPTYInboundFlow?, onEvent: @escaping @Sendable (RexSocketEvent) -> Void
-    ) async throws -> any RexSocket {
-        try await link.open(.data, inboundFlow: inboundFlow, onEvent: onEvent)
-    }
-
-    func openStream(command: String, inboundFlow: SSHPTYInboundFlow?, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
-        try await connection.openStream(command: command, inboundFlow: inboundFlow, sink: sink)
-    }
-
-    func run(_ command: String, input: Data) async throws -> SSHExecResult {
-        // An upload over a slow link needs longer than an API call.
-        try await connection.run(
-            command, input: input, maximumOutputBytes: 2 * 1024 * 1024,
-            timeout: input.count > 64 * 1024 ? .seconds(120) : .seconds(10)
-        )
-    }
-
-    /// One SSH round trip, and over Tailscale one Rex round trip too: either
-    /// failing closes the connection, as a failed probe does.
-    func checkAlive() async throws {
-        try await connection.checkAlive()
-        guard case .tailscale = route else { return }
-        do {
-            _ = try await control.call("server.status", [:])
-        } catch {
-            close()
-            throw error
-        }
-    }
-
-    func close() {
-        control.close()
-        connection.close()
-    }
-
-    func cancel() async {
-        close()
-        _ = try? await connection.channel.closeFuture.get()
-    }
+    var sideCommandsSignInPending: Bool { false }
 }
 
 /// One Rex session shown as a terminal, over the connection to its host:
@@ -664,6 +524,15 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         var exitCodes: [String: Int] = [:]
         /// When a pane's stream was asked for, until its snapshot came.
         var snapshotAsked: [String: ContinuousClock.Instant] = [:]
+        /// The connection to Rex was lost and is being opened again (`lost`):
+        /// no lane opens, typing waits, and the screen says so.
+        var reconnecting = false
+        /// Each lane's stream as it was when the connection was lost, with the
+        /// RESUME that continues it on a new connection (`RexDataStream.resume`).
+        var suspended: [String: (parser: RexDataStream, resume: RexSocketMessage)] = [:]
+        /// Typing that waits for the connection to come back: true once it
+        /// has, false when the terminal ended instead.
+        var waiting: [CheckedContinuation<Bool, Never>] = []
 
         var layout: RexSessionLayout?
         var revision: Int?
@@ -724,8 +593,8 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         }
 
         var laneWork: Bool {
-            !lanesToOpen.isEmpty || !lanesToClose.isEmpty || paneToReclaim != nil
-                || !owned.subtracting(wantedLanes).isEmpty
+            !reconnecting && (!lanesToOpen.isEmpty || !lanesToClose.isEmpty || paneToReclaim != nil
+                || !owned.subtracting(wantedLanes).isEmpty)
         }
 
         /// Forgets `block`'s lane, queuing its socket and its reader for release
@@ -761,18 +630,33 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         }
     }
 
+    /// Opens Rex again after its connection was lost: a new transport, and a
+    /// control connection Rex welcomed with `reconnectToken`, the newest one
+    /// the last welcome gave (nil when there was none).
+    typealias Reopen = @Sendable (_ reconnectToken: String?) async throws -> (any RexTransport, RexControl)
+
+    /// The longest wait between two tries to open Rex again.
+    static let maximumReconnectDelay: Duration = .seconds(15)
+
     let sessionID: String
     /// The pane switcher and minimap, newest only. Ends with the connection.
     let updates: AsyncStream<RexSessionState>
     private let updateSink: AsyncStream<RexSessionState>.Continuation
-    private let transport: any RexTransport
-    private let control: RexControl
+    /// What carries Rex now: replaced when the connection comes back (`relink`).
+    private let link: Mutex<(transport: any RexTransport, control: RexControl)>
+    private var transport: any RexTransport { link.withLock { $0.transport } }
+    private var control: RexControl { link.withLock { $0.control } }
+    private let reopen: Reopen?
+    /// The wait before the next try to open Rex again; a network change cuts it short.
+    private let backoff = Mutex<Task<Void, Never>?>(nil)
     private let queue: SSHTerminalEventQueue
     private let core: Mutex<State>
 
-    private init(transport: any RexTransport, control: RexControl, target: RexPaneTarget, queue: SSHTerminalEventQueue) {
-        self.transport = transport
-        self.control = control
+    private init(
+        transport: any RexTransport, control: RexControl, target: RexPaneTarget, queue: SSHTerminalEventQueue, reopen: Reopen?
+    ) {
+        link = Mutex((transport, control))
+        self.reopen = reopen
         self.queue = queue
         sessionID = target.sessionID
         core = Mutex(State(requested: target.blockID, labels: [target.blockID: target.label]))
@@ -783,14 +667,20 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
     /// the pane's session (which starts its events, and answers with its
     /// view), and takes the pane. Cancelling it closes the connection, so a
     /// background cancel leaves nothing open.
+    ///
+    /// With `reopen`, a connection that is lost comes back by itself, as Rex's
+    /// own apps do (`lost`): the terminal stays up and says it is
+    /// reconnecting, and Rex continues this client and each pane's stream
+    /// where they were. Without it, a lost connection ends the terminal.
     static func open(
         transport: any RexTransport,
         control: RexControl,
         target: RexPaneTarget,
-        queue: SSHTerminalEventQueue
+        queue: SSHTerminalEventQueue,
+        reopen: Reopen? = nil
     ) async throws -> RexSessionConnection {
         try await withTaskCancellationHandler {
-            let connection = RexSessionConnection(transport: transport, control: control, target: target, queue: queue)
+            let connection = RexSessionConnection(transport: transport, control: control, target: target, queue: queue, reopen: reopen)
             control.onEvent { [weak connection] frame in
                 if let event = RexEvent(frame: frame) { connection?.receive(event) }
             }
@@ -813,7 +703,10 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
                 "session_id": target.sessionID, "block_ids": [target.blockID], "mode": "take",
             ])
             try Task.checkCancellation()
-            control.onEnd { [weak connection] error in connection?.end(error.localizedDescription) }
+            control.onEnd { [weak connection, weak control] error in
+                guard let connection, let control else { return }
+                connection.lost(control, reason: error.localizedDescription)
+            }
             Task { [weak connection] in
                 try? await Task.sleep(for: firstResizeWait)
                 connection?.arm()
@@ -1036,6 +929,9 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
 
     func send(_ bytes: Data) async throws {
         userActed()
+        // Typing while the connection comes back waits for it, in order.
+        guard await linked() else { throw RexClientError.connectionClosed }
+        let control = control
         do {
             _ = try await control.call("com.superlogical.terminal.write", blockCall([
                 // Keys, pastes, and SGR mouse reports are UTF-8; only legacy X10
@@ -1045,6 +941,9 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         } catch RexClientError.refused {
             // The pane closed before this terminal heard: it is leaving, and
             // the session goes on. Anything else is the connection failing.
+        } catch where reopen != nil {
+            // Rex may or may not have typed it: it is not sent twice.
+            lost(control, reason: error.localizedDescription)
         }
     }
 
@@ -1059,10 +958,13 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         // screen's size; a neighbour it never took keeps its owner's. Rex lays
         // out a pane at the size its owner asks for, and holds this one's for
         // a pane it does not own until it does.
-        let (targets, shown) = core.withLock { state -> ([String], String) in
+        let (targets, shown, reconnecting) = core.withLock { state -> ([String], String, Bool) in
             state.geometry = geometry
-            return ([state.requested] + state.owned.subtracting([state.requested]).sorted(), state.requested)
+            return ([state.requested] + state.owned.subtracting([state.requested]).sorted(), state.requested, state.reconnecting)
         }
+        // Kept for the panes once the connection is back (`openLane`, `reclaim`).
+        guard !reconnecting else { return }
+        let control = control
         // After the size is set, so a take back it starts sends this one.
         userActed()
         for target in targets {
@@ -1078,7 +980,9 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
                 // The pane on screen failing is this terminal failing, as it
                 // always was; a neighbour only loses its lane.
                 guard target == shown else { dropLane(target); continue }
-                throw error
+                guard reopen != nil else { throw error }
+                lost(control, reason: error.localizedDescription)
+                return
             }
         }
         arm()
@@ -1092,14 +996,32 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         try await transport.openStream(command: command, inboundFlow: nil, sink: sink)
     }
 
-    func checkAlive() async throws { try await transport.checkAlive() }
+    /// One round trip on what carries Rex (after a network change). With
+    /// `reopen`, a failure is the connection lost, which comes back by itself,
+    /// and a try waiting to open it again goes at once.
+    func checkAlive() async throws {
+        let (transport, control) = link.withLock { ($0.transport, $0.control) }
+        if core.withLock({ $0.reconnecting }) {
+            backoff.withLock { $0 }?.cancel()
+            return
+        }
+        do {
+            try await transport.checkAlive()
+        } catch {
+            guard reopen != nil else { throw error }
+            lost(control, reason: error.localizedDescription)
+        }
+    }
 
     var sideCommandsUnavailable: String? { transport.sideCommandsUnavailable }
+
+    var sideCommandsSignInPending: Bool { transport.sideCommandsSignInPending }
 
     func close() {
         let streams = endLanes()
         updateSink.finish()
         streams.forEach { $0?.close() }
+        backoff.withLock { $0 }?.cancel()
         transport.close()
     }
 
@@ -1107,6 +1029,7 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         let streams = endLanes()
         updateSink.finish()
         streams.forEach { $0?.close() }
+        backoff.withLock { $0 }?.cancel()
         await transport.cancel()
     }
 
@@ -1116,6 +1039,9 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
     private func endLanes() -> [(any RexSocket)?] {
         core.withLock { state in
             state.ended = true
+            for waiter in state.waiting { waiter.resume(returning: false) }
+            state.waiting = []
+            state.suspended = [:]
             state.nextGeneration += 1
             for block in Array(state.lanes.keys) { state.dropLane(block) }
             state.deadLanes = []
@@ -1165,7 +1091,7 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
                 case handBack([String])
             }
             let work = core.withLock { state -> Work in
-                guard !state.ended, state.armed else {
+                guard !state.ended, state.armed, !state.reconnecting else {
                     state.switching = false
                     return .done
                 }
@@ -1227,14 +1153,14 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
     /// neighbour, as it always has, and anything else is the connection
     /// failing. A pane off screen only loses its lane.
     private func recover(from error: any Error, opening block: String) -> Bool {
-        enum Recovery { case carryOn, ended, failed }
+        enum Recovery { case carryOn, ended, failed, lost }
         let recovery = core.withLock { state -> Recovery in
             state.dropLane(block)
             state.deadLanes.insert(block)
             // A pane off screen only loses its lane, whatever went wrong: the
             // terminal goes on showing the pane it has.
-            guard state.requested == block else { return .carryOn }
-            guard case RexClientError.refused = error, !state.ended else { return .failed }
+            guard state.requested == block, !state.reconnecting else { return .carryOn }
+            guard case RexClientError.refused = error, !state.ended else { return reopen == nil ? .failed : .lost }
             state.closedBlocks.insert(block)
             // Back to the pane that was on screen if it is still there, else the
             // nearest one by strip order, preferring a pane whose lane is open
@@ -1259,6 +1185,10 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         case .ended:
             core.withLock { $0.switching = false }
             end("The pane closed in Rex.")
+            return false
+        case .lost:
+            core.withLock { $0.switching = false }
+            lost(control, reason: error.localizedDescription)
             return false
         case .failed:
             core.withLock { $0.switching = false }
@@ -1313,6 +1243,10 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
             }
         }
         guard wanted() else { return }
+        // A stream the lost connection carried goes on where it was.
+        if let suspended = core.withLock({ $0.suspended.removeValue(forKey: block) }) {
+            return try await resumeLane(block, parser: suspended.parser, message: suspended.resume)
+        }
         core.withLock { state in
             state.snapshotAsked[block] = .now
             state.attempts[block, default: 0] += 1
@@ -1487,11 +1421,31 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
                     closed(block, reason: "The pane closed in Rex.")
                 case .ended(let reason):
                     laneEnded(block, generation: mine, reason: reason)
+                case .resumeRefused:
+                    // Rex did not keep the stream: a new one starts, with a snapshot.
+                    let start = core.withLock { state -> Bool in
+                        guard state.lanes[block]?.generation == mine else { return false }
+                        state.retired.insert(mine)
+                        state.dropLane(block)
+                        state.attempts[block] = nil
+                        return startSwitching(&state)
+                    }
+                    reap()
+                    if start { Task { await runLanes() } }
                 }
             }
         case .ended(let error):
-            let current = core.withLock { !$0.ended && $0.lanes[block]?.generation == mine && !$0.retired.contains(mine) }
-            if current { laneEnded(block, generation: mine, reason: error.localizedDescription) }
+            let (current, shown) = core.withLock { state in
+                (!state.ended && state.lanes[block]?.generation == mine && !state.retired.contains(mine), state.requested == block)
+            }
+            guard current else { return }
+            // The shown pane's stream dropping is the connection lost, which
+            // comes back by itself; a neighbour's only loses its lane.
+            if shown, reopen != nil {
+                lost(control, reason: error.localizedDescription)
+            } else {
+                laneEnded(block, generation: mine, reason: error.localizedDescription)
+            }
         case .writable:
             break
         }
@@ -1516,11 +1470,182 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         let first = core.withLock { state -> Bool in
             guard !state.ended else { return false }
             state.ended = true
+            for waiter in state.waiting { waiter.resume(returning: false) }
+            state.waiting = []
             return true
         }
         guard first else { return }
+        backoff.withLock { $0 }?.cancel()
         updateSink.finish()
         queue.end(reason)
+    }
+
+    // MARK: - Coming back after a lost connection
+
+    /// The connection `lostControl` carried is gone (the network dropped, the
+    /// SSH connection under the bridge closed, a probe failed). Without
+    /// `reopen` that ends the terminal, as it always did. With it the terminal
+    /// stays, says it is reconnecting, keeps each pane's stream to resume,
+    /// and opens Rex again (`reconnect`). Once per loss: a connection already
+    /// replaced, or one being replaced, is not lost again.
+    private func lost(_ lostControl: RexControl, reason: String) {
+        guard link.withLock({ $0.control === lostControl }) else { return }
+        guard reopen != nil else { return end(reason) }
+        let start = core.withLock { state -> Bool in
+            guard !state.ended, !state.reconnecting else { return false }
+            state.reconnecting = true
+            for (block, lane) in state.lanes {
+                var parser = lane.parser
+                if let resume = parser.resume() { state.suspended[block] = (parser, resume) }
+            }
+            for block in Array(state.lanes.keys) { state.dropLane(block) }
+            publish(state)
+            return true
+        }
+        reap()
+        guard start else { return }
+        RexRouteLog.lost(route)
+        transport.close()
+        Task { [weak self] in await self?.reconnect() }
+    }
+
+    /// Opens Rex again until it answers or the terminal ends: at once, then
+    /// after 1 s, doubling to `maximumReconnectDelay`; a network change goes
+    /// at once (`checkAlive`). Each hello carries the newest reconnect token,
+    /// so Rex continues this client.
+    private func reconnect() async {
+        guard let reopen else { return }
+        var token = control.reconnectToken
+        var failures = 0
+        while !core.withLock({ $0.ended }) {
+            do {
+                let (transport, control) = try await reopen(token)
+                // A welcome replaces the token, even if the rest fails.
+                token = control.reconnectToken ?? token
+                if await relink(transport, control) { return }
+            } catch is CancellationError {
+                return
+            } catch {
+                RexRouteLog.reconnectFailed(error)
+            }
+            failures += 1
+            let delay = min(Self.maximumReconnectDelay, .milliseconds(500) * (1 << min(failures, 5)))
+            let wait = Task<Void, Never> { _ = try? await Task.sleep(for: delay) }
+            backoff.withLock { $0 = wait }
+            if core.withLock({ $0.ended }) { wait.cancel() }
+            await wait.value
+        }
+    }
+
+    /// Carries the session over a control connection Rex welcomed again. A
+    /// continued client (`RexControl.resumed`) is still attached and owns its
+    /// panes: only the view is read, since the events sent while it was away
+    /// are lost. A new client attaches again and takes the shown pane as it
+    /// opens. Then the lanes open: each stream that was kept resumes, the rest
+    /// start over. False to try again; true when done, or when Rex says the
+    /// session is gone, which ends the terminal.
+    private func relink(_ transport: any RexTransport, _ control: RexControl) async -> Bool {
+        link.withLock { $0 = (transport, control) }
+        control.onEvent { [weak self] frame in
+            if let event = RexEvent(frame: frame) { self?.receive(event) }
+        }
+        control.onEnd { [weak self, weak control] error in
+            guard let self, let control else { return }
+            self.lost(control, reason: error.localizedDescription)
+        }
+        let view: RexView?
+        do {
+            if control.resumed {
+                let answer = try await control.call("session.view", ["session_id": sessionID])
+                view = try? JSONDecoder().decode(RexView.self, from: answer)
+            } else {
+                let attached = try await control.call("session.attach", ["session_id": sessionID])
+                struct Attached: Decodable { let client_id: String?; let view: RexView? }
+                let decoded = try? JSONDecoder().decode(Attached.self, from: attached)
+                core.withLock { state in
+                    state.me = decoded?.client_id
+                    state.owned = []
+                    state.sized = [:]
+                }
+                view = decoded?.view
+            }
+        } catch RexClientError.refused(_, let message) {
+            end("Rex no longer has this session: \(message)")
+            return true
+        } catch {
+            transport.close()
+            return false
+        }
+        let (installed, gone, start) = core.withLock { state -> (Bool, (String, [String], Set<String>)?, Bool) in
+            guard !state.ended else { return (false, nil, false) }
+            state.reconnecting = false
+            // Every pane gets its stream again, those that failed on the way down too.
+            state.deadLanes = []
+            state.attempts = [:]
+            for waiter in state.waiting { waiter.resume(returning: true) }
+            state.waiting = []
+            let gone = view.flatMap { apply(view: $0, to: &state) }
+            publish(state)
+            return (true, gone, startSwitching(&state))
+        }
+        guard installed else {
+            transport.close()
+            return true
+        }
+        if start { Task { await runLanes() } }
+        if let gone { leave(gone.0, order: gone.1, surviving: gone.2, reason: "The pane closed in Rex.") }
+        return true
+    }
+
+    /// Typing waits here while the connection comes back: true once it is
+    /// back, false when the terminal ended instead.
+    private func linked() async -> Bool {
+        await withCheckedContinuation { continuation in
+            let now = core.withLock { state -> Bool? in
+                if state.ended { return false }
+                guard state.reconnecting else { return true }
+                state.waiting.append(continuation)
+                return nil
+            }
+            if let now { continuation.resume(returning: now) }
+        }
+    }
+
+    /// Continues `block`'s stream on a new connection with RESUME: Rex sends
+    /// what the pane wrote since, from the first byte this side has not used,
+    /// with no ticket and no snapshot, so the pane's screen and history carry
+    /// on as they were. A refusal starts the stream over (`resumeRefused`).
+    private func resumeLane(_ block: String, parser: RexDataStream, message: RexSocketMessage) async throws {
+        let flow = queue.makeFlow()
+        let generation = core.withLock { state -> Int in
+            state.nextGeneration += 1
+            state.lanes[block] = Lane(stream: nil, parser: parser, generation: state.nextGeneration, flow: flow)
+            return state.nextGeneration
+        }
+        let stream: any RexSocket
+        do {
+            stream = try await transport.openData(inboundFlow: flow) { [weak self] event in
+                self?.receiveData(event, block: block, generation: generation)
+            }
+        } catch {
+            core.withLock { state in
+                guard state.lanes[block]?.generation == generation else { return }
+                state.dropLane(block)
+            }
+            reap()
+            throw error
+        }
+        let kept = core.withLock { state -> Bool in
+            guard !state.ended, state.lanes[block]?.generation == generation else { return false }
+            state.lanes[block]?.stream = stream
+            state.deadLanes.remove(block)
+            return true
+        }
+        guard kept else {
+            stream.close()
+            return
+        }
+        try await stream.send(message)
     }
 
     /// `block` is gone from the host. If it is the pane on screen, move to its
@@ -1707,8 +1832,10 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         return RexSessionState(
             panes: panes,
             shown: state.requested,
-            live: Set(state.lanes.keys),
-            minimap: state.layout?.minimap(around: state.requested) ?? []
+            // The streams a lost connection carried come back with their screens.
+            live: Set(state.lanes.keys).union(state.suspended.keys),
+            minimap: state.layout?.minimap(around: state.requested) ?? [],
+            reconnecting: state.reconnecting
         )
     }
 

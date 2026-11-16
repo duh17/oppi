@@ -175,8 +175,8 @@ struct SSHTerminalSettingsTests {
         defer { page.window.isHidden = true }
         #expect(try #require(page.element("settings.sshTerminal.rexTailnet")).accessibilityValue == "None added")
 
-        hosts.rexStore.saveTailnetHost(try #require(RexTailnetHost(dnsName: "rex.tail0000.ts.net")))
-        hosts.rexStore.saveTailnetHost(try #require(RexTailnetHost(dnsName: "build.tail0000.ts.net")))
+        hosts.rexStore.saveTailnetHost(try #require(RexTailnetHost(address: "rex.tail0000.ts.net")))
+        hosts.rexStore.saveTailnetHost(try #require(RexTailnetHost(address: "build.tail0000.ts.net")))
         page.reload()
         #expect(try #require(page.element("settings.sshTerminal.rexTailnet")).accessibilityValue == "2 Rex")
     }
@@ -238,23 +238,23 @@ struct SSHTerminalSettingsTests {
         #expect(page.page.addTailnetRex(named: "https://Rex.tail0000.ts.net/"))
         page.reload()
         #expect(page.identifiers.contains("settings.sshTerminal.rexTailnet.rex.tail0000.ts.net"))
-        #expect(hosts.rexStore.tailnetHosts().map(\.dnsName) == ["rex.tail0000.ts.net"])
+        #expect(hosts.rexStore.tailnetHosts().map(\.address) == ["rex.tail0000.ts.net"])
 
-        #expect(!page.page.addTailnetRex(named: "rex.example.com"), "a name off the tailnet is refused")
+        #expect(!page.page.addTailnetRex(named: "192.168.1.5:7297"), "an address off the tailnet is refused")
     }
 
     /// A saved name can be swiped away: the swipe's own handler leaves the store
     /// empty and the row gone, and the Add row has no swipe.
     @Test func aSavedNameCanBeRemovedAndTheAddRowCannot() throws {
         defer { hosts.removeSuites() }
-        let name = try #require(RexTailnetHost(dnsName: "rex.tail0000.ts.net"))
+        let name = try #require(RexTailnetHost(address: "rex.tail0000.ts.net"))
         hosts.rexStore.saveTailnetHost(name)
         let page = try mountTailnet()
         defer { page.window.isHidden = true }
-        let row = "settings.sshTerminal.rexTailnet.\(name.dnsName)"
+        let row = "settings.sshTerminal.rexTailnet.\(name.address)"
         #expect(page.identifiers.contains(row))
         #expect(page.page.trailingSwipeActions(for: .add) == nil)
-        let swipe = try #require(page.page.trailingSwipeActions(for: .rex(name.dnsName)))
+        let swipe = try #require(page.page.trailingSwipeActions(for: .rex(name.address)))
         #expect(swipe.actions.map(\.style) == [.destructive])
 
         // The swipe's own handler, which is the action a person's swipe runs: the

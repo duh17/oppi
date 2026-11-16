@@ -554,11 +554,13 @@ extension SSHConnection: RexStreamHost {
 /// exists only to show Rex) answers with different advice. The bridge's own
 /// exit status says which (`RexBridge`), at no cost beyond the one exec.
 enum RexAbsence: Equatable, Sendable {
-    /// The host has no `nc`, or one without Unix sockets (`-U`) (exit 126).
+    /// The host's `rex` is too old for `dial-stdio`, and it has no `nc`, or
+    /// one without Unix sockets (`-U`) (exit 126).
     case noNc
     /// `rex` is not on the host (exit 5).
     case notInstalled
-    /// `rex` is installed and no Rex server is listening (exit 4).
+    /// `rex` is installed, no Rex server is listening, and none was started
+    /// (the host turns autostart off, or this read does not start one) (exit 4).
     case notRunning
     /// A Rex reached over Tailscale alone did not let this device in, with
     /// what to tell the person (`RexTailnetAccess.refusal`).
@@ -573,11 +575,11 @@ enum RexAbsence: Equatable, Sendable {
     var advice: String {
         switch self {
         case .noNc:
-            "This host has no nc that supports Unix sockets (nc -U), which Oppi uses to reach Rex. Install one, such as netcat-openbsd, then pull down to try again."
+            "This host's rex is too old to bridge to Rex (rex __internal dial-stdio), and the host has no nc that supports Unix sockets (nc -U). Update Rex, then pull down to try again."
         case .notInstalled:
-            "Rex is not installed on this host. Install it, then pull down to try again."
+            "Oppi found no rex in ~/.local/bin or on the PATH that SSH commands see on this host. Install Rex there (on a Mac, put the Rex app's rex on that PATH), then pull down to try again."
         case .notRunning:
-            "Rex is not running on this host. Start it (rex server start) and this list fills in."
+            "Rex is not running on this host, and Oppi did not start it. Start it (rex server start) and this list fills in."
         case .refused(let message):
             message
         }
@@ -691,6 +693,10 @@ final class RexMonitor {
     /// `destroy`) go over: it is attached to every session (`session.attach_all`),
     /// which Rex needs of a caller that destroys one.
     @ObservationIgnored private var control: RexControl?
+    /// Its SSH bridge starts the host's Rex when none runs, as a Rex list or
+    /// pane the person opened does. A shell terminal reading Rex in the
+    /// background leaves a stopped Rex stopped.
+    let autostart: Bool
 
     var available: Bool { snapshot != nil }
     /// `run` has stopped for good (no `nc`, no Rex), until `retry()`.
@@ -705,12 +711,14 @@ final class RexMonitor {
     init(
         directHost: RexDirectHost? = nil,
         tailnet: RexTailnetHost? = nil,
+        autostart: Bool = true,
         openDirect: @escaping RexLink.OpenDirect = RexTLSStream.open,
         publishDelay: Duration = .milliseconds(150),
         retryDelay: @escaping @MainActor (Retry, Int) -> Duration = { Retry.delay($0, failures: $1) }
     ) {
         self.directHost = directHost
         self.tailnet = tailnet
+        self.autostart = autostart
         self.openDirect = openDirect
         self.publishDelay = publishDelay
         self.retryDelay = retryDelay
@@ -719,7 +727,7 @@ final class RexMonitor {
     /// The monitor a terminal of `profile` follows its Rex with: straight over
     /// Tailscale for a Rex reached that way alone, else through the host.
     static func forTerminal(of profile: SSHTerminalProfile?) -> RexMonitor {
-        if let profile, profile.rexTailnet != nil, let host = RexTailnetHost(dnsName: profile.host) {
+        if let host = profile?.rexTailnet.flatMap({ RexTailnetHost(url: $0) }) {
             return RexMonitor(tailnet: host)
         }
         return RexMonitor(directHost: profile.map(RexDirectHost.init))
@@ -744,9 +752,27 @@ final class RexMonitor {
             try await RexLink.connect(
                 plan: plan,
                 openStream: { @MainActor command, _, sink in try await host.openStream(command: command, sink: sink) },
-                run: { @MainActor command in try await host.run(command, input: Data()) }
+                run: { @MainActor command in try await host.run(command, input: Data()) },
+                autostart: autostart
             )
         })
+    }
+
+    /// Subscribes to a saved host's Rex over Tailscale with no SSH connection,
+    /// by `plan`, until the task is cancelled or the route stops answering.
+    /// False when Rex never answered there, so the caller signs in over SSH.
+    func runOverTailnet(_ plan: RexRoutePlan) async -> Bool {
+        var unanswered = false
+        var answered = false
+        await follow(while: { !unanswered }, connect: {
+            guard let direct = try await plan.attemptDirect(openStream: RexTailnetTransport.noBridge, onWritable: nil) else {
+                unanswered = true
+                throw RexClientError.timedOut
+            }
+            answered = true
+            return direct
+        })
+        return answered && !unanswered
     }
 
     /// Subscribes to a Rex reached over Tailscale alone until the task is

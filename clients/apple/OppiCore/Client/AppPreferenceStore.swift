@@ -329,6 +329,17 @@ enum AppPreferenceStore {
         static func tapMode(in defaults: UserDefaults = .standard) -> TapMode {
             defaults.string(forKey: tapModeKey).flatMap(TapMode.init(rawValue:)) ?? tapModeDefault
         }
+
+        /// Whether the Terminal tab asks the tailnet's computers if they run Rex
+        /// (`RexTailnetDiscovery`). Off unless someone turns it on: like Rex's own
+        /// apps, Oppi connects only to the Rex servers you add.
+        static let findsTailnetRexKey = "\(AppIdentifiers.subsystem).sshTerminal.findsTailnetRex"
+        /// What nothing stored means; `SettingsCatalog.terminalFindsTailnetRex` uses this same constant.
+        static let findsTailnetRexDefault = false
+
+        static func findsTailnetRex(in defaults: UserDefaults = .standard) -> Bool {
+            defaults.object(forKey: findsTailnetRexKey) == nil ? findsTailnetRexDefault : defaults.bool(forKey: findsTailnetRexKey)
+        }
     }
 
     // MARK: - Durable Sessions

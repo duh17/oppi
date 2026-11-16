@@ -130,6 +130,8 @@ struct RexSessionState: Equatable, Sendable {
     var live: Set<String> = []
     /// The shown pane's window, one cell per pane.
     var minimap: [RexSessionLayout.Cell]
+    /// The connection to Rex was lost and is opening again by itself.
+    var reconnecting = false
 
     var shownName: String { panes.first { $0.blockID == shown }?.name ?? "Terminal" }
 

@@ -1,0 +1,1 @@
+- **Client:** The Terminal tab no longer asks every computer on your tailnet whether it runs Rex unless you turn on **Find Rex on Your Tailnet** in **Terminal Settings → Rex on Your Tailnet**. Like Rex's own apps, Oppi otherwise connects only to the Rex servers you add or reach through a saved host. See [Rex without SSH](docs/ssh-terminal.md#rex-without-ssh).

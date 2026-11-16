@@ -318,6 +318,8 @@ struct SSHTerminalProfileStore {
     /// Which of these hosts Rex was seen on, kept in the same defaults and
     /// removed with the host (`delete`).
     var rexHosts: SSHTerminalRexHostStore { SSHTerminalRexHostStore(defaults: defaults) }
+    /// Where each host's Rex answers over Tailscale, kept beside the hosts.
+    var rexDirect: RexDirectStore { RexDirectStore(defaults: defaults) }
 
     /// Which of a host's Rex sessions are expanded on the Terminal page, in the same
     /// defaults.
