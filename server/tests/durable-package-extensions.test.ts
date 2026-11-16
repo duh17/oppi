@@ -1135,7 +1135,9 @@ describe("plugins on the extension list", () => {
       "  })],",
       "  sections: [",
       '    section("huge", () => "x".repeat(40 * 1024)),',
-      '    section("slow", () => { const end = Date.now() + 400; while (Date.now() < end) {} return "Slow."; }),',
+      // Just past the 200 ms budget in CPU time, which the budget counts; a wall-clock wait could be
+      // mostly descheduled on a busy machine.
+      '    section("slow", () => { const start = process.threadCpuUsage(); while (process.threadCpuUsage(start).user < 250_000) {} return "Slow."; }),',
       '    section("after-slow", () => "Never rendered."),',
       "  ],",
       "});",
@@ -1149,7 +1151,7 @@ describe("plugins on the extension list", () => {
     expect(answer.body.toolDefinitions).toEqual([
       { name: "large_tool", description: "Takes one of many values.", from: "plugin" },
     ]);
-    // The slow render spent the time budget, so it and every section after it are per conversation.
+    // The slow render spent the CPU budget, so it and every section after it are per conversation.
     expect(answer.body.promptSections).toEqual([
       { name: "huge", perConversation: true },
       { name: "slow", perConversation: true },

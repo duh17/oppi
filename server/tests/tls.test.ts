@@ -975,7 +975,7 @@ describe("prepareTlsForServer", () => {
       const fakeTailscalePath = join(fakeBinDir, "tailscale");
       writeFileSync(
         fakeTailscalePath,
-        `#!/bin/sh\nset -eu\nif [ "$1" = "status" ]; then\n  printf '%s\\n' '{"Self":{"DNSName":"node.tail00000.ts.net."}}'\n  exit 0\nfi\nprintf '%s\\n' "$OPPI_TEST_WORKER" >> "$OPPI_TEST_RENEWAL_STATE/arrivals"\nowns_active=0\nif mkdir "$OPPI_TEST_RENEWAL_STATE/active" 2>/dev/null; then\n  owns_active=1\nelse\n  : > "$OPPI_TEST_RENEWAL_STATE/overlap"\nfi\nsleep "$OPPI_TEST_CERT_SLEEP"\nif [ "$owns_active" -eq 1 ]; then\n  rmdir "$OPPI_TEST_RENEWAL_STATE/active"\nfi\nshift\ncert_file=''\nkey_file=''\nwhile [ "$#" -gt 0 ]; do\n  case "$1" in\n    --cert-file) cert_file="$2"; shift 2 ;;\n    --key-file) key_file="$2"; shift 2 ;;\n    --min-validity) shift 2 ;;\n    *) host="$1"; shift ;;\n  esac\ndone\nopenssl req -x509 -newkey rsa:2048 -nodes -keyout "$key_file" -out "$cert_file" -days 30 -subj "/CN=$host" -addext "subjectAltName=DNS:$host" >/dev/null 2>&1\n`,
+        `#!/bin/sh\nset -eu\nif [ "$1" = "status" ]; then\n  printf '%s\\n' '{"Self":{"DNSName":"node.tail00000.ts.net."}}'\n  exit 0\nfi\nprintf '%s\\n' "$OPPI_TEST_WORKER" >> "$OPPI_TEST_RENEWAL_STATE/arrivals"\nowns_active=0\nif mkdir "$OPPI_TEST_RENEWAL_STATE/active" 2>/dev/null; then\n  owns_active=1\nelse\n  : > "$OPPI_TEST_RENEWAL_STATE/overlap"\nfi\nwhile [ ! -e "$OPPI_TEST_RENEWAL_STATE/release-$OPPI_TEST_WORKER" ]; do sleep 0.05; done\nif [ "$owns_active" -eq 1 ]; then\n  rmdir "$OPPI_TEST_RENEWAL_STATE/active"\nfi\nshift\ncert_file=''\nkey_file=''\nwhile [ "$#" -gt 0 ]; do\n  case "$1" in\n    --cert-file) cert_file="$2"; shift 2 ;;\n    --key-file) key_file="$2"; shift 2 ;;\n    --min-validity) shift 2 ;;\n    *) host="$1"; shift ;;\n  esac\ndone\nopenssl req -x509 -newkey rsa:2048 -nodes -keyout "$key_file" -out "$cert_file" -days 30 -subj "/CN=$host" -addext "subjectAltName=DNS:$host" >/dev/null 2>&1\n`,
         { mode: 0o755 },
       );
       const workerPath = join(tmpDir, "long-queue-worker.ts");
@@ -992,8 +992,17 @@ describe("prepareTlsForServer", () => {
         OPPI_TEST_RENEWAL_STATE: stateDir,
       };
       const tsxPath = join(process.cwd(), "node_modules", ".bin", "tsx");
+      // Each worker holds the lock until the test releases it: a fixed hold raced the next
+      // worker's startup, and a slow start found the holder already gone.
+      const release = (worker: string) => writeFileSync(join(stateDir, `release-${worker}`), "");
+      const ticketCount = () =>
+        existsSync(lockDir)
+          ? readdirSync(lockDir).filter((entry) => entry.endsWith(".ticket")).length
+          : 0;
+      const resolved = resolveTlsConfig(tailscaleConfig(), tmpDir);
+      const lockDir = renewalLockDir(resolved);
       const first = execFileAsync(tsxPath, [workerPath], {
-        env: { ...baseEnv, OPPI_TEST_WORKER: "A", OPPI_TEST_CERT_SLEEP: "2" },
+        env: { ...baseEnv, OPPI_TEST_WORKER: "A" },
         timeout: 20_000,
       }).then(
         (result) => ({ result }),
@@ -1002,30 +1011,24 @@ describe("prepareTlsForServer", () => {
       await waitForCondition(() => existsSync(join(stateDir, "active")));
 
       const second = execFileAsync(tsxPath, [workerPath], {
-        env: {
-          ...baseEnv,
-          OPPI_TEST_WORKER: "B",
-          OPPI_TEST_CERT_SLEEP: "4",
-        },
+        env: { ...baseEnv, OPPI_TEST_WORKER: "B" },
         timeout: 20_000,
       }).then(
         (result) => ({ result }),
         (error: unknown) => ({ error }),
       );
-      const resolved = resolveTlsConfig(tailscaleConfig(), tmpDir);
-      const lockDir = renewalLockDir(resolved);
-      await waitForCondition(
-        () =>
-          existsSync(lockDir) &&
-          readdirSync(lockDir).filter((entry) => entry.endsWith(".ticket")).length >= 2,
-      );
+      await waitForCondition(() => ticketCount() >= 2);
+      release("C");
       const third = execFileAsync(tsxPath, [workerPath], {
-        env: { ...baseEnv, OPPI_TEST_WORKER: "C", OPPI_TEST_CERT_SLEEP: "1" },
+        env: { ...baseEnv, OPPI_TEST_WORKER: "C" },
         timeout: 20_000,
       }).then(
         (result) => ({ result }),
         (error: unknown) => ({ error }),
       );
+      // C queues behind A and B before A lets go.
+      await waitForCondition(() => ticketCount() >= 3);
+      release("A");
 
       await waitForCondition(
         () =>
@@ -1051,6 +1054,9 @@ describe("prepareTlsForServer", () => {
       expect(activeTicket).toBeDefined();
       const oldQueueTime = new Date(Date.now() - 120_000);
       utimesSync(activeTicket!, oldQueueTime, oldQueueTime);
+      // C keeps polling the aged active ticket for a while; it must not take the lock from B.
+      await new Promise((resolveWait) => setTimeout(resolveWait, 1_000));
+      release("B");
 
       const results = await Promise.all([first, second, third]);
       const failures = results.flatMap((result) => ("error" in result ? [result.error] : []));

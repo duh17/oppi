@@ -33,7 +33,7 @@ export interface ServerPromptSection {
   text?: string;
   /**
    * Written for each conversation: the trial render read the conversation, returned a promise,
-   * threw, returned nothing, or was over the cap or the time budget.
+   * threw, returned nothing, or was over the cap or the CPU budget.
    */
   perConversation: boolean;
 }
@@ -47,11 +47,19 @@ const MAX_SCHEMA_JSON = 64 * 1024;
 const MAX_GUIDELINES = 64;
 const MAX_GUIDELINE = MAX_DESCRIPTION;
 /**
- * How long one extension's trial renders may take together. A synchronous render cannot be
- * interrupted, so this bounds the route by sections, not by the clock: a render that finishes past
- * it is per conversation, and so is every section after it, unrendered.
+ * How much CPU time one extension's trial renders may spend together. A synchronous render cannot
+ * be interrupted, so this bounds the route by sections, not by the clock: a render that finishes past
+ * it is per conversation, and so is every section after it, unrendered. It is the calling thread's
+ * CPU time, not wall time: on a busy machine the thread can sit descheduled for longer than the
+ * budget between two cheap renders, and that must not turn a static section per conversation.
  */
-const SECTION_PROBE_BUDGET_MS = 200;
+const SECTION_PROBE_BUDGET_US = 200_000;
+
+/** CPU time this thread has spent, in microseconds. */
+function threadCpuMicros(): number {
+  const { user, system } = process.threadCpuUsage();
+  return user + system;
+}
 
 /** A plugin's tools as its loaded extension defines them. A tool that cannot be read is left out. */
 export function pluginToolDefinitions(extension: DurableExtension): ServerToolDefinition[] {
@@ -105,7 +113,7 @@ export function classicToolDefinitions(
  * conversation. Anything else is per conversation; no rejection or exception escapes.
  */
 export function promptSections(extension: DurableExtension): ServerPromptSection[] {
-  const deadline = Date.now() + SECTION_PROBE_BUDGET_MS;
+  const deadline = threadCpuMicros() + SECTION_PROBE_BUDGET_US;
   const sections: ServerPromptSection[] = [];
   for (const section of extension.sections ?? []) {
     let name: string;
@@ -114,9 +122,9 @@ export function promptSections(extension: DurableExtension): ServerPromptSection
     } catch {
       continue;
     }
-    const text = Date.now() < deadline ? trialRender(section) : undefined;
+    const text = threadCpuMicros() < deadline ? trialRender(section) : undefined;
     sections.push(
-      text === undefined || Date.now() >= deadline
+      text === undefined || threadCpuMicros() >= deadline
         ? { name, perConversation: true }
         : { name, text, perConversation: false },
     );

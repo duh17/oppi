@@ -863,19 +863,22 @@ describe("server durable managed runtime", () => {
     const conversation = (await harness.conversation(id, context))!;
     const observed = observe(f.manager, f.session.id);
     const request = observed.next((m) => m.type === "extension_ui_request" && m.method === "ask");
-    await f.manager.sendPrompt(f.session.id, "Hold a working turn");
-    await request;
     // The phrase alone: the app's working row shows the turn's time.
     const asking = /^(Waiting on you|Your move|Need a nod|Holding for you)$/;
     // Matches the classic working-message extension: an activity phrase, no
     // status pill, and Pi's default indicator (earlier slots are cleared).
-    const working = await observed.next(
+    // Watched before the prompt: the phrase arrives right behind the ask request,
+    // before code awaiting the request resumes, and `next` only sees later messages.
+    const workingPhrase = observed.next(
       (m) =>
         m.type === "extension_ui_notification" &&
         m.method === "setWorkingMessage" &&
         typeof m.message === "string" &&
         asking.test(m.message),
     );
+    await f.manager.sendPrompt(f.session.id, "Hold a working turn");
+    await request;
+    const working = await workingPhrase;
     expect(working).toMatchObject({ method: "setWorkingMessage" });
     const notifications = f.manager
       .getPendingUIRequestMessages(f.session.id)
