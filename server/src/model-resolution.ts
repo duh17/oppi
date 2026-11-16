@@ -395,14 +395,45 @@ export function formatAvailableModels(
   return `${visible.join(", ")}, … (${ids.length - visible.length} more)`;
 }
 
+/**
+ * Catalog ids a few edits away from `requestedModel`, nearest first: a typo, a retired version
+ * (`-5-1` for `-5-2`), or the wrong provider for the right model id.
+ */
+export function closeModelMatches(
+  requestedModel: string,
+  candidates: readonly Pick<ModelResolutionCandidate, "canonicalId" | "modelId">[],
+  limit = 3,
+): string[] {
+  const query = stripModelThinkingLevel(requestedModel).model.toLowerCase();
+  const queryModelId = splitCanonicalModelId(query)?.modelId ?? query;
+  return candidates
+    .map((candidate) => {
+      const modelId = candidate.modelId.toLowerCase();
+      const distance = Math.min(
+        levenshteinDistance(query, candidate.canonicalId.toLowerCase()),
+        levenshteinDistance(queryModelId, modelId),
+      );
+      const length = Math.max(queryModelId.length, modelId.length);
+      return { id: candidate.canonicalId, distance, close: Math.max(2, Math.floor(length / 6)) };
+    })
+    .filter((entry) => entry.distance <= entry.close)
+    .sort((lhs, rhs) => lhs.distance - rhs.distance)
+    .slice(0, limit)
+    .map((entry) => entry.id);
+}
+
 export function modelUnavailableMessage(
   requestedModel: string,
-  candidates: readonly Pick<ModelResolutionCandidate, "canonicalId">[],
+  candidates: readonly Pick<ModelResolutionCandidate, "canonicalId" | "modelId">[],
 ): string {
   const requested = requestedModel.trim();
   if (!requested) return "Model cannot be empty.";
   if (candidates.length === 0) {
     return `Model "${requested}" is not available. No enabled models are available from Pi settings.`;
+  }
+  const close = closeModelMatches(requested, candidates);
+  if (close.length > 0) {
+    return `Model "${requested}" is not in the model catalog. Close matches: ${close.join(", ")}`;
   }
   return `Model "${requested}" is not available. Available models: ${formatAvailableModels(candidates)}`;
 }

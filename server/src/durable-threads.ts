@@ -31,7 +31,11 @@ import { durableStoreId } from "./session-runtime-capabilities.js";
 import { DURABLE_THREAD_KEY_PREFIX } from "./reserved-launch-keys.js";
 import { mintSessionId } from "./id.js";
 import { safeErrorMessage } from "./log-utils.js";
-import { resolveSessionSeedModel } from "./sdk-backend.js";
+import {
+  modelCandidatesFromRegistry,
+  modelUnavailableMessage,
+  resolveModelRequest,
+} from "./model-resolution.js";
 import type { Storage } from "./storage.js";
 import { isThinkingLevel, type ThinkingLevel } from "./thinking-levels.js";
 import type { SubagentWorktree, SubagentWorktreeState } from "../plugins/subagents/contract.js";
@@ -325,7 +329,12 @@ export class DurableThreads {
     };
   }
 
-  /** A model and thinking level a spawn names, validated; rejects with a message for the model. */
+  /**
+   * A model and thinking level a spawn names, validated; rejects with a message for the model.
+   * The model must be in the catalog the app and `oppi session create` offer (Pi's enabled
+   * models), as they resolve it; Pi's registry also lists models that catalog leaves out, such
+   * as retired versions, and a child spawned on one only failed at its first request.
+   */
   private async modelChoice(
     model: string | undefined,
     thinking: string | undefined,
@@ -336,12 +345,12 @@ export class DurableThreads {
     if (model === undefined) return { ...(thinkingLevel ? { thinkingLevel } : {}) };
     const { models } = await this.deps.runtime.ensureShared();
     const settings = SettingsManager.create(homedir(), getAgentDir(), { projectTrusted: false });
-    const found = resolveSessionSeedModel(
+    const candidates = modelCandidatesFromRegistry(
       new ModelRegistry(models),
-      model,
       settings.getEnabledModels(),
     );
-    if (!found) throw new Error(`Model is unavailable: ${model}`);
+    const found = resolveModelRequest(model, candidates)?.candidate.model;
+    if (!found) throw new Error(modelUnavailableMessage(model, candidates));
     return {
       model: { provider: found.provider, modelId: found.id },
       ...(thinkingLevel ? { thinkingLevel } : {}),

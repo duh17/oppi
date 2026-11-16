@@ -432,7 +432,7 @@ describe("WsMessageHandler", () => {
         requestId: "req-missing",
         success: false,
         error:
-          'Model "openai-codex/gpt-6.1-sol" is not available. Available models: openai/gpt-6.1-sol',
+          'Model "openai-codex/gpt-6.1-sol" is not in the model catalog. Close matches: openai/gpt-6.1-sol',
       },
     ]);
   });

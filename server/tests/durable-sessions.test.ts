@@ -3239,6 +3239,63 @@ describe("durable-native threads", () => {
     );
   });
 
+  it("refuses a spawn whose model is not in the catalog, naming close matches; accepts an alias", async () => {
+    const f = await fixture(
+      model(async ({ last, text }) => {
+        if (last.role === "toolResult") return fauxAssistantMessage("DONE");
+        if (text.includes("Retired"))
+          return spawnCall({ name: "Old", task: "T", model: "faux/faux-2", wait: true });
+        if (text.includes("Typo"))
+          return spawnCall({ name: "Typo", task: "T", model: "faux/fuax-1", wait: true });
+        if (text.includes("Alias"))
+          return spawnCall({ name: "Alias", task: "T", model: "faux-1:low", wait: true });
+        return fauxAssistantMessage("CHILD_DONE");
+      }),
+    );
+    // The catalog is Pi's enabled models: faux-2 stays in the registry, as a retired model does.
+    vi.mocked(SettingsManager.create).mockImplementation(() =>
+      SettingsManager.inMemory({
+        defaultProvider: "faux",
+        defaultModel: "faux-1",
+        enabledModels: ["faux/faux-1"],
+        compaction: { enabled: false },
+      }),
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    let results = 0;
+    const call = async (prompt: string): Promise<ToolResult> => {
+      await f.manager.sendPrompt(f.parent.id, prompt);
+      results += 1;
+      await until(
+        async () =>
+          (await toolResults(harness, parentConversation)).length === results &&
+          (await harness.snapshot(LiveDoc, parentConversation, context))?.run === undefined,
+        prompt,
+      );
+      return (await toolResults(harness, parentConversation))[results - 1]!;
+    };
+
+    for (const [prompt, requested] of [
+      ["Retired", "faux/faux-2"],
+      ["Typo", "faux/fuax-1"],
+    ]) {
+      const refused = await call(prompt!);
+      expect(refused).toMatchObject({ isError: true });
+      expect(refused.text).toContain(
+        `Model "${requested}" is not in the model catalog. Close matches: faux/faux-1`,
+      );
+    }
+    expect(f.storage.listSessions().map((session) => session.name)).toEqual(["Parent"]);
+
+    expect(await call("Alias")).toMatchObject({ text: "CHILD_DONE" });
+    const child = f.storage.listSessions().find((session) => session.name === "Alias")!;
+    expect(
+      await harness.snapshot(AgentDoc, conversationOf(f.storage, child), context),
+    ).toMatchObject({ model: { provider: "faux", modelId: "faux-1" } });
+  });
+
   it("does not start new host turns from a background report once its parent is stopped", async () => {
     const childGate = gate();
     const f = await fixture(
