@@ -1037,7 +1037,6 @@ async function runDurable(
   options: WorldOptions,
   responses: FauxResponseStep[],
   script: (world: DurableWorld) => Promise<void>,
-  providerOptions: { slow?: boolean } = {},
 ): Promise<LifecycleScenario> {
   const dir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-wire-durable-"));
   const agentDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-wire-agent-"));
@@ -1052,10 +1051,7 @@ async function runDurable(
       modelsStorePath: join(dir, "models-cache.json"),
       refreshOnCreate: false,
     });
-    // Slow enough that a turn is still running when a step acts on it.
-    const faux = fauxProvider(
-      providerOptions.slow ? { tokensPerSecond: 20, tokenSize: { min: 1, max: 1 } } : {},
-    );
+    const faux = fauxProvider();
     faux.setResponses(responses);
     models.registerNativeProvider(faux.provider);
     await models.setRuntimeApiKey("faux", "test-only-faux-credential");
@@ -1129,6 +1125,19 @@ const readySummary = (frame: { type: string; summary?: unknown }, channel: strin
 
 const LONG_ANSWER = Array.from({ length: 80 }, (_, index) => `word${index}`).join(" ");
 
+/**
+ * A model that answers only once aborted, so the turn stays running until a step stops it and
+ * records no partial answer whose length depends on timing: the stream sees the abort before
+ * its first token.
+ */
+const ANSWER_ONCE_ABORTED: FauxResponseStep = (_context, options) =>
+  new Promise((resolve) => {
+    const answer = () => resolve(fauxAssistantMessage(LONG_ANSWER));
+    if (!options?.signal) throw new Error("the faux model needs an abort signal");
+    if (options.signal.aborted) answer();
+    else options.signal.addEventListener("abort", answer, { once: true });
+  });
+
 async function startDurable(world: DurableWorld): Promise<void> {
   const { recorder, manager, workspace } = world;
   await recorder.step("start", () => manager.startSession(SESSION_ID, workspace));
@@ -1142,8 +1151,7 @@ async function startDurableRun(world: DurableWorld, prompt: string): Promise<voi
     const started = untilFrame(recorder, "agent_start", focusedType("agent_start"));
     await manager.sendPrompt(SESSION_ID, prompt);
     await started;
-    // A few streamed tokens, so the turn is mid-answer, not just begun.
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await recorder.untilQuiet();
   });
 }
 
@@ -1173,9 +1181,9 @@ export const DURABLE_SCENARIOS: Array<() => Promise<LifecycleScenario>> = [
         id: "durable.abort_mid_turn",
         engine: "durable",
         description:
-          "Abort a durable turn mid-answer: stopping, stop_confirmed at agent_end, ready at agent_settled.",
+          "Abort a running durable turn: stopping, stop_confirmed at agent_end, ready at agent_settled.",
       },
-      [fauxAssistantMessage(LONG_ANSWER)],
+      [ANSWER_ONCE_ABORTED],
       async (world) => {
         const { recorder, manager } = world;
         await startDurable(world);
@@ -1187,7 +1195,6 @@ export const DURABLE_SCENARIOS: Array<() => Promise<LifecycleScenario>> = [
           await recorder.untilQuiet();
         });
       },
-      { slow: true },
     ),
   () =>
     runDurable(
@@ -1197,7 +1204,7 @@ export const DURABLE_SCENARIOS: Array<() => Promise<LifecycleScenario>> = [
         description:
           "Stop a durable session mid-turn: stopping, then stop_confirmed and session_ended with the row stopped.",
       },
-      [fauxAssistantMessage(LONG_ANSWER)],
+      [ANSWER_ONCE_ABORTED],
       async (world) => {
         const { recorder, manager } = world;
         await startDurable(world);
@@ -1209,7 +1216,6 @@ export const DURABLE_SCENARIOS: Array<() => Promise<LifecycleScenario>> = [
           await recorder.untilQuiet();
         });
       },
-      { slow: true },
     ),
   () =>
     runDurable(
@@ -1219,17 +1225,7 @@ export const DURABLE_SCENARIOS: Array<() => Promise<LifecycleScenario>> = [
         description:
           "A prompt the store committed whose agent_start the session has not seen yet: the row is still ready while the backend runs. The CLI wait is not idle, and an abort stops the run.",
       },
-      // The model answers only once aborted, so the run records no partial answer whose length
-      // depends on timing.
-      [
-        (_context, options) =>
-          new Promise((resolve) => {
-            const answer = () => resolve(fauxAssistantMessage(LONG_ANSWER));
-            if (!options?.signal) throw new Error("the faux model needs an abort signal");
-            if (options.signal.aborted) answer();
-            else options.signal.addEventListener("abort", answer, { once: true });
-          }),
-      ],
+      [ANSWER_ONCE_ABORTED],
       async (world) => {
         const { recorder, manager } = world;
         await startDurable(world);
@@ -1265,7 +1261,6 @@ export const DURABLE_SCENARIOS: Array<() => Promise<LifecycleScenario>> = [
           await recorder.untilQuiet();
         });
       },
-      { slow: true },
     ),
   () =>
     runDurable(
