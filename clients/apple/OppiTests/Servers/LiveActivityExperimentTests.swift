@@ -63,7 +63,10 @@ struct LiveActivityExperimentTests {
         // The page's own server settings answer as a server that refuses them: not this test's subject.
         let routes = TestURLProtocol.routeScope(mockPageRoutes { request in
             guard let url = request.url,
-                  ["/server/durable-sessions/settings", "/server/mobile-output-guide"].contains(url.path),
+                  [
+                      "/server/durable-sessions/settings", "/server/mobile-output-guide",
+                      "/server/oppi-docs-prompt", "/server/oppi-cli-prompt",
+                  ].contains(url.path),
                   let response = HTTPURLResponse(url: url, statusCode: 404, httpVersion: nil, headerFields: nil)
             else { return nil }
             return (Data(#"{"error":"not_found"}"#.utf8), response)

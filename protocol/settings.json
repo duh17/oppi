@@ -4,7 +4,7 @@
     "scope": "server = one value for the whole server; workspace = one value per workspace; device = one value per paired device, stored on the server.",
     "storage": "config = config.json; settings-file = <dataDir>/settings/*.json; workspace = the workspace record; pi = Pi's settings.json (the terminal sees it too); push-registration = the device's stored push registration.",
     "default": "null means no value to default to: derived when the workspace is created, owned by Pi, or required on write.",
-    "revisioned": "true means the stored value carries a revision the API returns. serverMetrics, durableSessions and mobileOutputGuide save with an optional baseRevision (mobileOutputGuide requires it); a stale one answers 409 { error, code: \"revision_conflict\", current } and leaves the setting unchanged. The dictionaries keep their own contract: PUT carries `revision`, a stale one answers 409 { error }."
+    "revisioned": "true means the stored value carries a revision the API returns. serverMetrics, durableSessions, mobileOutputGuide, oppiDocsPrompt and oppiCliPrompt save with an optional baseRevision (mobileOutputGuide requires it); a stale one answers 409 { error, code: \"revision_conflict\", current } and leaves the setting unchanged. The dictionaries keep their own contract: PUT carries `revision`, a stale one answers 409 { error }."
   },
   "settings": [
     {
@@ -32,6 +32,24 @@
       "type": "{ enabled: boolean }",
       "default": { "enabled": false },
       "validation": "PUT /server/mobile-output-guide takes exactly enabled (boolean) and baseRevision.",
+      "revisioned": true
+    },
+    {
+      "key": "oppiDocsPrompt",
+      "scope": "server",
+      "storage": "config",
+      "type": "{ enabled: boolean }",
+      "default": { "enabled": false },
+      "validation": "PUT /server/oppi-docs-prompt takes enabled as a boolean. The default is a new server's; a config.json written before the hint was opt-in, without a saved value, loads it as on and saves that.",
+      "revisioned": true
+    },
+    {
+      "key": "oppiCliPrompt",
+      "scope": "server",
+      "storage": "config",
+      "type": "{ enabled: boolean }",
+      "default": { "enabled": false },
+      "validation": "PUT /server/oppi-cli-prompt takes enabled as a boolean. The default is a new server's; a config.json written before the hint was opt-in, without a saved value, loads it as on and saves that.",
       "revisioned": true
     },
     {

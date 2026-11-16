@@ -28,8 +28,8 @@ describe("Storage config validation", () => {
     expect(result.config?.maxSessionsPerWorkspace).toBe(100);
     expect(result.config?.maxSessionsGlobal).toBe(200);
     expect(result.config?.runtimePathEntries?.length).toBeGreaterThan(0);
-    expect(result.config?.oppiDocsPrompt?.enabled).toBe(true);
-    expect(result.config?.oppiCliPrompt?.enabled).toBe(true);
+    expect(result.config?.oppiDocsPrompt?.enabled).toBe(false);
+    expect(result.config?.oppiCliPrompt?.enabled).toBe(false);
     // New configs leave TLS undecided; first `init`/`serve`/`pair` chooses it.
     expect(result.config?.tls?.mode).toBe("disabled");
     expect(result.config?.images?.autoResize).toBe(true);

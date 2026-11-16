@@ -1,8 +1,8 @@
 import UIKit
 
 /// Server Settings for one server: a summary of it, one index row per focused
-/// page, its badge, the Mobile Output Guide, Server Metrics, and Durable Sessions
-/// switches, this device's Notifications for it, its lock, and Remove Server.
+/// page, its badge, the Mobile Output Guide, prompt hint, Server Metrics, and Durable
+/// Sessions switches, this device's Notifications for it, its lock, and Remove Server.
 ///
 /// The page is pinned to the server it was made for: its `SettingsStore`, its
 /// `ServerSettingsModel`, its Notifications controller, the switcher's current
@@ -16,14 +16,16 @@ import UIKit
 @MainActor
 final class ServerSettingsViewController: ListScreenController<ServerSettingsViewController.Section, ServerSettingsViewController.Item> {
     enum Section: Hashable, Sendable {
-        case summary, pages, badge, mobileOutputGuide, serverMetrics, durableSessions, startDurable
+        case summary, pages, badge, mobileOutputGuide, oppiDocsPrompt, oppiCliPrompt
+        case serverMetrics, durableSessions, startDurable
         case notifications, lock, remove
     }
 
     enum Item: Hashable, Sendable {
         case summary
         case modelProviders, workspaces, features, dictionary, pairedDevices, about
-        case mobileOutputGuide, serverMetrics, durableSessions, startDurable, settingFailure(String)
+        case mobileOutputGuide, oppiDocsPrompt, oppiCliPrompt
+        case serverMetrics, durableSessions, startDurable, settingFailure(String)
         case pushSwitch, pushWorking, pushError
         case liveActivitySwitch, liveActivityWorking, liveActivityError, liveActivitySystemOff
         case badge, lock, remove
@@ -96,6 +98,8 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
             let hasFeatures = coordinator.serverHasFeatureSwitches(server.id)
             Task {
                 _ = await settings.reload(SettingsCatalog.mobileOutputGuideEnabled)
+                _ = await settings.reload(SettingsCatalog.oppiDocsPromptEnabled)
+                _ = await settings.reload(SettingsCatalog.oppiCliPromptEnabled)
                 _ = await settings.reload(SettingsCatalog.serverMetricsEnabled)
                 _ = await settings.reload(SettingsCatalog.durableSessionsEnabled)
                 // One read brings every switch: they share the route's document.
@@ -133,6 +137,8 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
         guard asked, let settings else { return }
         _ = await settings.reload(SettingsCatalog.serverMetricsEnabled)
         _ = await settings.reload(SettingsCatalog.mobileOutputGuideEnabled)
+        _ = await settings.reload(SettingsCatalog.oppiDocsPromptEnabled)
+        _ = await settings.reload(SettingsCatalog.oppiCliPromptEnabled)
         _ = await settings.reload(SettingsCatalog.durableSessionsEnabled)
         if coordinator.serverHasFeatureSwitches(server.id) {
             _ = await settings.reload(SettingsCatalog.feature(.agents))
@@ -203,6 +209,16 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
                 .mobileOutputGuide,
                 footer: SettingsCatalog.mobileOutputGuideEnabled.copy.footer,
                 items: settingRows(SettingsCatalog.mobileOutputGuideEnabled, .mobileOutputGuide) { .settingFailure($0) }
+            ),
+            ListSection(
+                .oppiDocsPrompt,
+                footer: SettingsCatalog.oppiDocsPromptEnabled.copy.footer,
+                items: settingRows(SettingsCatalog.oppiDocsPromptEnabled, .oppiDocsPrompt) { .settingFailure($0) }
+            ),
+            ListSection(
+                .oppiCliPrompt,
+                footer: SettingsCatalog.oppiCliPromptEnabled.copy.footer,
+                items: settingRows(SettingsCatalog.oppiCliPromptEnabled, .oppiCliPrompt) { .settingFailure($0) }
             ),
             ListSection(
                 .serverMetrics,
@@ -302,6 +318,10 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
             return AnyHashable(0)
         case .mobileOutputGuide:
             return settingInputs(SettingsCatalog.mobileOutputGuideEnabled)
+        case .oppiDocsPrompt:
+            return settingInputs(SettingsCatalog.oppiDocsPromptEnabled)
+        case .oppiCliPrompt:
+            return settingInputs(SettingsCatalog.oppiCliPromptEnabled)
         case .serverMetrics:
             return settingInputs(SettingsCatalog.serverMetricsEnabled)
         case .durableSessions:
@@ -401,7 +421,8 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
             collectionView.dequeueConfiguredReusableCell(using: noticeRow, for: indexPath, item: item)
         case .remove:
             collectionView.dequeueConfiguredReusableCell(using: actionRow, for: indexPath, item: item)
-        case .mobileOutputGuide, .serverMetrics, .durableSessions, .startDurable, .pushSwitch, .liveActivitySwitch, .lock:
+        case .mobileOutputGuide, .oppiDocsPrompt, .oppiCliPrompt, .serverMetrics, .durableSessions, .startDurable,
+             .pushSwitch, .liveActivitySwitch, .lock:
             super.dequeue(item, at: indexPath)
         }
     }
@@ -411,6 +432,10 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
         switch item {
         case .mobileOutputGuide:
             settingToggleRow(cell, SettingsCatalog.mobileOutputGuideEnabled)
+        case .oppiDocsPrompt:
+            settingToggleRow(cell, SettingsCatalog.oppiDocsPromptEnabled)
+        case .oppiCliPrompt:
+            settingToggleRow(cell, SettingsCatalog.oppiCliPromptEnabled)
         case .serverMetrics:
             settingToggleRow(cell, SettingsCatalog.serverMetricsEnabled)
         case .durableSessions:

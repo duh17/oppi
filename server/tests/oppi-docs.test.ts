@@ -69,6 +69,7 @@ describe("Oppi documentation prompt hint", () => {
         name: "Replacement Agent",
         instructions: { mode: "replace", text: "Saved-Agent replacement authority." },
       },
+      getPromptHints: () => ({ oppiDocsPrompt: { enabled: true } }),
       getMobileOutputGuideSettings: () => ({ enabled: true, revision: 1 }),
       onEvent: () => {},
       onEnd: () => {},
@@ -107,7 +108,10 @@ describe("Oppi documentation prompt hint", () => {
         hostMount: cwd,
         systemPrompt: "Workspace-specific note.",
       } as Workspace,
-      serverConfig: { oppiCliPrompt: { enabled: true } },
+      getPromptHints: () => ({
+        oppiDocsPrompt: { enabled: true },
+        oppiCliPrompt: { enabled: true },
+      }),
       getMobileOutputGuideSettings: () => ({ enabled: true, revision: 1 }),
       onEvent: () => {},
       onEnd: () => {},
@@ -125,75 +129,6 @@ describe("Oppi documentation prompt hint", () => {
         "Workspace-specific note.",
         buildMobileOutputGuide(),
       ]);
-    } finally {
-      await backend.dispose();
-    }
-  });
-
-  it("adds the concise CLI hint only when its experiment is enabled", async () => {
-    cwd = mkdtempSync(join(tmpdir(), "oppi-cli-prompt-"));
-    mkdirSync(cwd, { recursive: true });
-
-    const backend = await SdkBackend.create({
-      session: makeSession(),
-      workspace: {
-        id: "w1",
-        name: "CLI Prompt Test",
-        runtime: "host",
-        hostMount: cwd,
-      } as Workspace,
-      onEvent: () => {},
-      onEnd: () => {},
-      serverConfig: { oppiDocsPrompt: { enabled: false }, oppiCliPrompt: { enabled: true } },
-    });
-
-    try {
-      const resourceLoader = (
-        backend as unknown as {
-          runtime: { services: { resourceLoader: PiSdk.ResourceLoader } };
-        }
-      ).runtime.services.resourceLoader;
-
-      expect(resourceLoader.getAppendSystemPrompt()).toEqual([OPPI_CLI_SYSTEM_PROMPT_HINT]);
-      expect(OPPI_CLI_SYSTEM_PROMPT_HINT).toContain(
-        "prompts an idle session and steers a busy session",
-      );
-      expect(OPPI_CLI_SYSTEM_PROMPT_HINT).toContain("--follow-up");
-      expect(OPPI_CLI_SYSTEM_PROMPT_HINT).toContain(
-        "This is a message from session <caller-id>:",
-      );
-      expect(OPPI_CLI_SYSTEM_PROMPT_HINT).not.toContain("alias");
-    } finally {
-      await backend.dispose();
-    }
-  });
-
-  it("does not add the docs hint when disabled in server settings", async () => {
-    cwd = mkdtempSync(join(tmpdir(), "oppi-docs-disabled-"));
-    mkdirSync(cwd, { recursive: true });
-
-    const backend = await SdkBackend.create({
-      session: makeSession(),
-      workspace: {
-        id: "w1",
-        name: "Docs Disabled Test",
-        runtime: "host",
-        hostMount: cwd,
-        systemPrompt: "Workspace-specific note.",
-      } as Workspace,
-      onEvent: () => {},
-      onEnd: () => {},
-      serverConfig: { oppiDocsPrompt: { enabled: false } },
-    });
-
-    try {
-      const resourceLoader = (
-        backend as unknown as {
-          runtime: { services: { resourceLoader: PiSdk.ResourceLoader } };
-        }
-      ).runtime.services.resourceLoader;
-
-      expect(resourceLoader.getAppendSystemPrompt()).toEqual(["Workspace-specific note."]);
     } finally {
       await backend.dispose();
     }

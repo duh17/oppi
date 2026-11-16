@@ -213,11 +213,13 @@ function createDefaultConfig(dataDir: string): ServerConfig {
 
     runtimePathEntries: defaultRuntimePathEntries(),
     runtimeEnv: {},
+    // Prompt hints are opt-in: a new server adds nothing to a session's prompt. A config.json
+    // without them is from before that, and keeps them on (`normalizeConfig`).
     oppiDocsPrompt: {
-      enabled: true,
+      enabled: false,
     },
     oppiCliPrompt: {
-      enabled: true,
+      enabled: false,
     },
     // Explicit opt-in: off means no sampler timer, no host reads, no files.
     serverMetrics: {
@@ -515,58 +517,14 @@ function normalizeConfig(
     changed = true;
   }
 
-  if (!("oppiDocsPrompt" in obj)) {
-    changed = true;
-  } else if (isRecord(obj.oppiDocsPrompt)) {
-    const docsPrompt = obj.oppiDocsPrompt;
-    const allowedDocsPromptKeys = new Set(["enabled"]);
-
-    if (strictUnknown) {
-      for (const key of Object.keys(docsPrompt)) {
-        if (!allowedDocsPromptKeys.has(key)) {
-          errors.push(`config.oppiDocsPrompt.${key}: unknown key`);
-        }
-      }
-    }
-
-    if ("enabled" in docsPrompt) {
-      if (typeof docsPrompt.enabled === "boolean") {
-        config.oppiDocsPrompt = { enabled: docsPrompt.enabled };
-      } else {
-        errors.push("config.oppiDocsPrompt.enabled: expected boolean");
-        changed = true;
-      }
-    }
-  } else {
-    errors.push("config.oppiDocsPrompt: expected object");
-    changed = true;
-  }
-
-  if (!("oppiCliPrompt" in obj)) {
-    changed = true;
-  } else if (isRecord(obj.oppiCliPrompt)) {
-    const cliPrompt = obj.oppiCliPrompt;
-    const allowedCliPromptKeys = new Set(["enabled"]);
-
-    if (strictUnknown) {
-      for (const key of Object.keys(cliPrompt)) {
-        if (!allowedCliPromptKeys.has(key)) {
-          errors.push(`config.oppiCliPrompt.${key}: unknown key`);
-        }
-      }
-    }
-
-    if ("enabled" in cliPrompt) {
-      if (typeof cliPrompt.enabled === "boolean") {
-        config.oppiCliPrompt = { enabled: cliPrompt.enabled };
-      } else {
-        errors.push("config.oppiCliPrompt.enabled: expected boolean");
-        changed = true;
-      }
-    }
-  } else {
-    errors.push("config.oppiCliPrompt: expected object");
-    changed = true;
+  // The prompt hints were on until they became opt-in. A config.json without a saved value is
+  // from a server that never chose: it keeps the hints on, and the load's rewrite saves that as
+  // its choice, once. Only a new config.json (`createDefaultConfig`) starts with them off.
+  for (const key of ["oppiDocsPrompt", "oppiCliPrompt"] as const) {
+    const saved =
+      key in obj ? readEnabledSetting(obj[key], `config.${key}`, strictUnknown, errors) : undefined;
+    if (!saved) changed = true;
+    config[key] = saved ?? { enabled: true };
   }
 
   if (!("serverMetrics" in obj)) {

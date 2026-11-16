@@ -77,8 +77,8 @@ export function buildOppiSystemPromptAppend(docsPath = getOppiDocsPath()): strin
  * section, ahead of their instructions.
  *
  * - The docs and CLI hints reach host sessions only: a sandbox prompt never names host paths, and
- *   an Oppi Control prompt already names both. `oppiDocsPrompt` is on unless turned off;
- *   `oppiCliPrompt` is opt-in.
+ *   an Oppi Control prompt already names both. Both are opt-in (`oppiDocsPrompt`,
+ *   `oppiCliPrompt`): only a saved `enabled: true` adds one.
  * - Oppi Control sessions have no workspace prompt.
  * - The guide follows its setting in every managed session, Oppi Control included, but never
  *   after a saved Agent's replacement prompt. A terminal-owned session gets only the workspace
@@ -88,7 +88,7 @@ export function buildOppiSystemPromptAppend(docsPath = getOppiDocsPath()): strin
  */
 export function oppiAppendSystemPrompt(options: {
   target: "host" | "sandbox" | "control" | "terminal";
-  serverConfig: Pick<ServerConfig, "oppiDocsPrompt" | "oppiCliPrompt"> | undefined;
+  promptHints: Pick<ServerConfig, "oppiDocsPrompt" | "oppiCliPrompt"> | undefined;
   workspacePrompt: string | undefined;
   /** The Mobile Output Guide setting. */
   mobileOutputGuide: boolean;
@@ -97,16 +97,16 @@ export function oppiAppendSystemPrompt(options: {
   /** A sandbox session's tools that run on the host, outside its VM. */
   hostTools?: readonly string[];
 }): string[] {
-  const { target, serverConfig, workspacePrompt } = options;
+  const { target, promptHints, workspacePrompt } = options;
   const prompts: string[] = [];
   if (target === "sandbox" && options.hostTools?.length)
     prompts.push(sandboxHostToolsNote(options.hostTools));
   const docs =
-    target === "host" && serverConfig?.oppiDocsPrompt?.enabled !== false
+    target === "host" && promptHints?.oppiDocsPrompt?.enabled === true
       ? buildOppiSystemPromptAppend()
       : undefined;
   if (docs) prompts.push(docs);
-  if (target === "host" && serverConfig?.oppiCliPrompt?.enabled === true)
+  if (target === "host" && promptHints?.oppiCliPrompt?.enabled === true)
     prompts.push(OPPI_CLI_SYSTEM_PROMPT_HINT);
   if (workspacePrompt && target !== "control") prompts.push(workspacePrompt);
   if (options.mobileOutputGuide && target !== "terminal" && !options.replace)

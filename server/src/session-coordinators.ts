@@ -158,7 +158,6 @@ export function createSessionCoordinatorBundle(
   const startCoordinator = new SessionStartCoordinator({
     storage: deps.storage,
     runtimeManager: deps.runtimeManager,
-    config: deps.config,
     durableHarness: deps.durableHarness,
     durableSessionsAvailable: deps.durableSessionsAvailable,
     eventRingCapacity: deps.eventRingCapacity,

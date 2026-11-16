@@ -1,0 +1,1 @@
+- **Server:** Updating keeps your prompt hints as they were. If `config.json` has no saved value for `oppiDocsPrompt` or `oppiCliPrompt`, the first start saves it as on, which is what earlier versions did; a value you set stays. Only a new server starts with both off. The new **Server Settings** switches need a server of this release; with an older server they show an error.

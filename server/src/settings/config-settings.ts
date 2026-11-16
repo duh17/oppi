@@ -1,7 +1,8 @@
 /**
  * Save contract for the settings stored in `config.json` and revisioned: Server Metrics
- * (`serverMetrics.enabled`), Durable Sessions (`experimental.serverDurable`), and the Mobile
- * Output Guide (`mobileOutputGuide.enabled`). A write is
+ * (`serverMetrics.enabled`), Durable Sessions (`experimental.serverDurable`), the Mobile
+ * Output Guide (`mobileOutputGuide.enabled`), and the prompt hints (`oppiDocsPrompt.enabled`,
+ * `oppiCliPrompt.enabled`). A write is
  * validated through its registry definition by the route, then applied here under the config
  * lock. A `baseRevision` that is not the saved revision is refused and leaves the setting as it
  * is; omitting it keeps last-writer-wins.
@@ -22,13 +23,19 @@ export const DEFAULT_MOBILE_OUTPUT_GUIDE_SETTINGS: Readonly<RevisionedEnabled> =
   revision: 0,
 });
 
-export type RevisionedConfigKey = "serverMetrics" | "durableSessions" | "mobileOutputGuide";
+export type RevisionedConfigKey =
+  "serverMetrics" | "durableSessions" | "mobileOutputGuide" | "oppiDocsPrompt" | "oppiCliPrompt";
+
+/** The settings saved as their own `{ enabled, revision }` block of config.json. */
+type EnabledBlockKey = Exclude<RevisionedConfigKey, "durableSessions">;
 
 /** What a conflict names in `error`: `<name> setting changed`. */
 const CONFLICT_LABELS: Record<RevisionedConfigKey, string> = {
   serverMetrics: "Server Metrics",
   durableSessions: "Durable Sessions",
   mobileOutputGuide: "Mobile Output Guide",
+  oppiDocsPrompt: "Oppi Docs Hint",
+  oppiCliPrompt: "Oppi CLI Hint",
 };
 
 export type ConfigSettingResult =
@@ -55,9 +62,7 @@ export function readConfigSetting(
       revision: experimental?.serverDurableRevision ?? 0,
     };
   }
-  const saved = (key === "mobileOutputGuide" ? config.mobileOutputGuide : config.serverMetrics) ?? {
-    enabled: false,
-  };
+  const saved = config[key] ?? { enabled: false };
   return { enabled: saved.enabled, revision: saved.revision ?? 0 };
 }
 
@@ -76,8 +81,9 @@ function storedFields(
       },
     };
   }
-  const stored = { enabled: value.enabled, revision: value.revision };
-  return key === "mobileOutputGuide" ? { mobileOutputGuide: stored } : { serverMetrics: stored };
+  const fields: Partial<Pick<ServerConfig, EnabledBlockKey>> = {};
+  fields[key] = { enabled: value.enabled, revision: value.revision };
+  return fields;
 }
 
 /** `baseRevision` from a request body: absent is last-writer-wins, anything else must be a count. */

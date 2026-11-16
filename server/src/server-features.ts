@@ -5,7 +5,8 @@
  * in `/server/info` and `GET /server/features`.
  *
  * Readers: the app hides an off feature's entry points (sidebar, pane launcher, chat bar, links);
- * the server stops loading MCP tools into new sessions while `mcp` is off and lists a plugin
+ * the server stops loading MCP tools into new sessions while `mcp` is off, leaves the `godot_*`
+ * tools and their guideline out of durable sessions while `godotPane` is off, and lists a plugin
  * sidebar entry only while its feature is on (`plugin-screens.ts`, `screens-stream.ts`).
  */
 import type { ServerConfig, ServerFeature } from "./types.js";

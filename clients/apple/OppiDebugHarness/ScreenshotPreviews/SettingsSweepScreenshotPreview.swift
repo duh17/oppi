@@ -654,6 +654,8 @@ final class SettingsSweepPreviewController: PreviewRootController {
             ])),
             "/server/metrics/settings": Data(#"{"enabled":true,"revision":3}"#.utf8),
             "/server/mobile-output-guide": Data(#"{"enabled":true,"revision":3}"#.utf8),
+            "/server/oppi-docs-prompt": Data(#"{"enabled":true,"revision":1}"#.utf8),
+            "/server/oppi-cli-prompt": Data(#"{"enabled":false,"revision":2}"#.utf8),
             // Server Settings' pages: the server's facts, its providers and its
             // devices. `paired-devices-offline` and `about-failed` drop one.
             "/auth/devices": Data(#"{"devices":[{"id":"dev-iphone","name":"Alex's iPhone","scope":"device","createdAt":1770000000000,"lastUsedAt":1770000900000,"revokedAt":null,"keyEnrolled":true},{"id":"dev-ipad","name":"Alex's iPad","scope":"device","createdAt":1769000000000,"lastUsedAt":1769900000000,"revokedAt":null,"keyEnrolled":true}]}"#.utf8),

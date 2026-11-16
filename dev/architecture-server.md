@@ -97,9 +97,9 @@ Untrusted JSON (parsed files, wire payloads, Pi and provider events) narrows thr
 
 `server/src/settings/registry.ts` declares every server-owned setting (key, scope, storage, default, `revisioned`, `validate`). Routes and stores validate through the definition; `validate` throws `SettingValidationError` (400). `server/tests/settings-registry.test.ts` holds `protocol/settings.json` to the registry; a new setting adds both together.
 
-Revisioned saves: responses carry `revision`; a stale `baseRevision` answers `409 { code: "revision_conflict", current }` and changes nothing. The config-stored settings (Server Metrics, Durable Sessions, Mobile Output Guide) save through `applySetting` in `settings/config-settings.ts`, under the config lock; without `baseRevision` that is last-writer-wins, but the Mobile Output Guide route requires it. `oppi config set` does not bump a revision.
+Revisioned saves: responses carry `revision`; a stale `baseRevision` answers `409 { code: "revision_conflict", current }` and changes nothing. The config-stored settings (Server Metrics, Durable Sessions, Mobile Output Guide, the prompt hints) save through `applySetting` in `settings/config-settings.ts`, under the config lock; without `baseRevision` that is last-writer-wins, but the Mobile Output Guide route requires it. `oppi config set` does not bump a revision.
 
-Feature switches (`server-features.ts`) are unrevisioned; a change calls `RouteContext.featuresChanged`. Server readers: `mcpEnabled` in both session backends, and plugin sidebar entries.
+Feature switches (`server-features.ts`) are unrevisioned; a change calls `RouteContext.featuresChanged`. Server readers: `mcpEnabled` in both session backends, `godotEnabled` in the durable one, and plugin sidebar entries.
 
 ### Route registry
 

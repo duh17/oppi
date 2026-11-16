@@ -25,7 +25,7 @@ import type { SessionNotifyPort } from "./session-push-notifier.js";
 import { applyLifecycle } from "./session-lifecycle-state.js";
 import type { SessionMessageQueueStore } from "./session-queue.js";
 import type { Storage } from "./storage.js";
-import type { ServerConfig, Session, Workspace } from "./types.js";
+import type { Session, Workspace } from "./types.js";
 import type { WorkspaceRuntime, WorkspaceSessionIdentity } from "./workspace-runtime.js";
 import type { InlineExtension } from "@earendil-works/pi-coding-agent";
 
@@ -44,7 +44,6 @@ export interface SessionStartActiveSession extends Omit<
 export interface SessionStartCoordinatorDeps {
   storage: Storage;
   runtimeManager: WorkspaceRuntime;
-  config: ServerConfig;
   eventRingCapacity: number;
   getSkillPathResolver: () => ((skillNames: string[]) => Promise<string[]>) | null;
   getNotifyPort: () => SessionNotifyPort | null;
@@ -172,7 +171,7 @@ export class SessionStartCoordinator {
                     this.deps.storage.getMobileOutputGuideSettings(),
                   mcpEnabled: () => featureOn(this.deps.storage.getConfig(), "mcp"),
                   metrics: this.deps.metrics,
-                  serverConfig: this.deps.config,
+                  getPromptHints: () => this.deps.storage.getConfig(),
                   onUIBridgeReady: (bridge) => this.deps.onUIBridgeReady?.(key, bridge),
                   hasUI: () => this.deps.hasUI?.(key) ?? false,
                   notify: this.deps.getNotifyPort() ?? undefined,
@@ -296,9 +295,10 @@ export class SessionStartCoordinator {
       onUIBridgeReady: (bridge) => this.deps.onUIBridgeReady?.(key, bridge),
       hasUI: () => this.deps.hasUI?.(key) ?? false,
       metrics: this.deps.metrics,
-      serverConfig: this.deps.config,
+      getPromptHints: () => this.deps.storage.getConfig(),
       getMobileOutputGuideSettings: () => this.deps.storage.getMobileOutputGuideSettings(),
       mcpEnabled: () => featureOn(this.deps.storage.getConfig(), "mcp"),
+      godotEnabled: () => featureOn(this.deps.storage.getConfig(), "godotPane"),
     });
   }
 

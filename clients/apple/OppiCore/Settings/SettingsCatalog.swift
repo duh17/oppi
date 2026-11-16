@@ -8,6 +8,10 @@ enum SettingEndpoint: String, Hashable, Sendable, CaseIterable {
     case serverMetrics = "/server/metrics/settings"
     /// `GET`/`PUT /server/mobile-output-guide`: `{ enabled, revision }`; a write carries `baseRevision`.
     case mobileOutputGuide = "/server/mobile-output-guide"
+    /// `GET`/`PUT /server/oppi-docs-prompt`: `{ enabled, revision }`; a write may carry `baseRevision`.
+    case oppiDocsPrompt = "/server/oppi-docs-prompt"
+    /// `GET`/`PUT /server/oppi-cli-prompt`: `{ enabled, revision }`; a write may carry `baseRevision`.
+    case oppiCliPrompt = "/server/oppi-cli-prompt"
     /// `GET`/`PUT /server/durable-sessions/settings`: `{ enabled, revision }` (`experimental.serverDurable`).
     case durableSessions = "/server/durable-sessions/settings"
     /// `GET`/`PUT /server/features`: one boolean per feature switch; a write names only the
@@ -21,6 +25,8 @@ enum SettingEndpoint: String, Hashable, Sendable, CaseIterable {
         switch self {
         case .serverMetrics: "serverMetrics"
         case .mobileOutputGuide: "mobileOutputGuide"
+        case .oppiDocsPrompt: "oppiDocsPrompt"
+        case .oppiCliPrompt: "oppiCliPrompt"
         case .durableSessions: "durableSessions"
         case .features: "features"
         }
@@ -414,6 +420,34 @@ enum SettingsCatalog {
         )
     )
 
+    // MARK: - Prompt hints
+
+    /// Whether new and reloaded host sessions on the server get the hint that points at
+    /// Oppi's packaged docs (`oppiDocsPrompt` in `protocol/settings.json`). Opt-in.
+    static let oppiDocsPromptEnabled = SettingDeclaration<Bool>(
+        id: "server.oppiDocsPrompt.enabled",
+        key: "enabled",
+        storage: .server(.oppiDocsPrompt, revisioned: true),
+        default: false,
+        copy: SettingCopy(
+            title: String(localized: "Oppi Docs Hint"),
+            footer: String(localized: "Tells new sessions where Oppi's own documentation is, so they can answer questions about Oppi.")
+        )
+    )
+
+    /// Whether new and reloaded host sessions on the server get the hint on driving other
+    /// sessions with the `oppi` command (`oppiCliPrompt` in `protocol/settings.json`). Opt-in.
+    static let oppiCliPromptEnabled = SettingDeclaration<Bool>(
+        id: "server.oppiCliPrompt.enabled",
+        key: "enabled",
+        storage: .server(.oppiCliPrompt, revisioned: true),
+        default: false,
+        copy: SettingCopy(
+            title: String(localized: "Oppi CLI Hint"),
+            footer: String(localized: "Tells new sessions how to start, message, and stop other sessions with the oppi command.")
+        )
+    )
+
     // MARK: - Durable Sessions
 
     /// Whether the server offers durable sessions to new creates, for every device that uses
@@ -477,6 +511,8 @@ enum SettingsCatalog {
         calendarEventsHiddenCalendars.descriptor,
         serverMetricsEnabled.descriptor,
         mobileOutputGuideEnabled.descriptor,
+        oppiDocsPromptEnabled.descriptor,
+        oppiCliPromptEnabled.descriptor,
         durableSessionsEnabled.descriptor,
         startSessionsAsDurable.descriptor,
         autoSave.descriptor,

@@ -129,14 +129,15 @@ import { MAIN_WORKTREE_ID } from "./worktrees.js";
 import { GODOT_EXTENSION, workspaceHasGodot } from "./godot/godot-sessions.js";
 
 /**
- * The built-ins without `oppi.godot` unless the workspace has a Godot project, so a session pays
- * for the `godot_*` tools and their guideline only where they can work. Asked again on every attach.
+ * The built-ins without `oppi.godot` unless the Godot Pane switch is on and the workspace has a
+ * Godot project, so a session pays for the `godot_*` tools and their guideline only where they can
+ * work and the owner wants them. Asked again on every attach.
  */
 function offeredGodot(
   extensions: readonly Extension[],
-  workspaceId: string | undefined,
+  options: Pick<DurableBackendOptions, "godotEnabled" | "workspace">,
 ): Extension[] {
-  return workspaceHasGodot(workspaceId)
+  return options.godotEnabled?.() !== false && workspaceHasGodot(options.workspace?.id)
     ? [...extensions]
     : extensions.filter((extension) => extension.name !== GODOT_EXTENSION);
 }
@@ -165,12 +166,14 @@ interface DurableBackendOptions {
   onUIBridgeReady?: (bridge: SdkUiBridge | undefined) => void;
   metrics?: ServerTelemetry;
   hasUI?: () => boolean;
-  /** Server settings that gate Oppi's prompt appends, as for SDK sessions. */
-  serverConfig?: Pick<ServerConfig, "oppiDocsPrompt" | "oppiCliPrompt">;
+  /** The prompt hint switches, read on every attach and `/reload`, as for SDK sessions. */
+  getPromptHints?: () => Pick<ServerConfig, "oppiDocsPrompt" | "oppiCliPrompt">;
   /** Read on every attach and `/reload`, as an SDK session reads it per runtime rebuild. */
   getMobileOutputGuideSettings?: () => RevisionedEnabled;
   /** The server's MCP switch (`features.mcp`), read at each attach: off opens no MCP servers. */
   mcpEnabled?: () => boolean;
+  /** The server's Godot Pane switch (`features.godotPane`), read at each attach. Absent means on. */
+  godotEnabled?: () => boolean;
 }
 
 /**
@@ -408,7 +411,7 @@ export class DurableBackend implements AgentBackend {
     const loadResources = async (): Promise<PresentedResources> => {
       const appends = oppiAppendSystemPrompt({
         target: control ? "control" : sandbox ? "sandbox" : "host",
-        serverConfig: options.serverConfig,
+        promptHints: options.getPromptHints?.(),
         workspacePrompt: workspace?.systemPrompt,
         mobileOutputGuide: (
           options.getMobileOutputGuideSettings?.() ?? DEFAULT_MOBILE_OUTPUT_GUIDE_SETTINGS
@@ -527,7 +530,7 @@ export class DurableBackend implements AgentBackend {
       ...(session.launch?.tools ? { policy: session.launch.tools } : {}),
       runtime,
       base: [
-        ...offeredGodot(host.runtime.builtInsFor(runtime), options.workspace?.id),
+        ...offeredGodot(host.runtime.builtInsFor(runtime), options),
         ...host.runtime.packageExtensionsFor(runtime, target.hostExtensionIds),
       ],
       loaded: host.runtime.loadedPackages,
@@ -579,7 +582,7 @@ export class DurableBackend implements AgentBackend {
     const codemode = launched?.doc?.extensions?.codemode !== false;
     const attached = host.runtime.attachedBuiltIns(spawn, notifies);
     const builtIns = [
-      ...offeredGodot(attached, workspace?.id),
+      ...offeredGodot(attached, options),
       ...(codemode ? [host.runtime.codemode] : []),
     ];
     const unofferedGodot = attached.filter((extension) => !builtIns.includes(extension));

@@ -10,6 +10,9 @@ extension APIClient: SettingsServerTransport {
             return try await serverMetricsSettings().settingsDocument
         case .mobileOutputGuide:
             return try await getMobileOutputGuideConfiguration().settingsDocument
+        case .oppiDocsPrompt, .oppiCliPrompt:
+            let data = try await get(endpoint.rawValue)
+            return try JSONDecoder().decode(RevisionedEnabled.self, from: data).settingsDocument
         case .durableSessions:
             return try await durableSessionsSettings().settingsDocument
         case .features:
@@ -42,6 +45,19 @@ extension APIClient: SettingsServerTransport {
             }
             do {
                 return try await setMobileOutputGuideConfiguration(enabled: enabled, baseRevision: baseRevision).settingsDocument
+            } catch let APIError.codedServer(status, _, code) where status == 409 && code == "revision_conflict" {
+                throw SettingsError.revisionConflict
+            }
+        case .oppiDocsPrompt, .oppiCliPrompt:
+            guard let enabled = fields["enabled"]?.boolValue else {
+                throw SettingsError.invalidStoredValue(String(localized: "A prompt hint needs an on or off value."))
+            }
+            do {
+                let data = try await put(
+                    endpoint.rawValue,
+                    body: EnabledSettingWrite(enabled: enabled, baseRevision: baseRevision)
+                )
+                return try JSONDecoder().decode(RevisionedEnabled.self, from: data).settingsDocument
             } catch let APIError.codedServer(status, _, code) where status == 409 && code == "revision_conflict" {
                 throw SettingsError.revisionConflict
             }
@@ -104,6 +120,16 @@ extension APIClient: SettingsServerTransport {
 private struct EnabledSettingWrite: Encodable {
     let enabled: Bool
     let baseRevision: Int?
+}
+
+/// A config-stored on/off setting as its route answers it: the prompt hints.
+private struct RevisionedEnabled: Decodable {
+    let enabled: Bool
+    let revision: Int
+
+    var settingsDocument: SettingsServerDocument {
+        SettingsServerDocument(fields: ["enabled": .bool(enabled)], revision: revision)
+    }
 }
 
 private extension Dictionary where Key == String, Value == Bool {

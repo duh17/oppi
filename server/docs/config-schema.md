@@ -50,15 +50,18 @@ Configure the machine-wide fallback in Pi settings, for example in `~/.pi/agent/
 
 Use `sessionIdleTimeoutMs` in config files. `workspaceIdleTimeoutMs` is retired: it never stopped anything. A file that still sets it validates, and the server removes the key the next time it loads the file.
 
-### Oppi docs prompt
+### Prompt hints
 
-| Setting                  | Type    | Default | Description                                                                                                                                            |
-| ------------------------ | ------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `oppiDocsPrompt.enabled` | boolean | `true`  | When `true`, Oppi-owned host sessions append a local packaged-docs hint to the Pi system prompt. Terminal-owned `pi-tui` and sandbox sessions skip it. |
+| Setting                  | Type    | Default | Description                                                                                                                                                         |
+| ------------------------ | ------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `oppiDocsPrompt.enabled` | boolean | `false` | When `true`, new and reloaded Oppi-owned host sessions get a hint that names the packaged Oppi docs. Sandbox, Oppi Control, and terminal-owned `pi-tui` sessions skip it. |
+| `oppiCliPrompt.enabled`  | boolean | `false` | When `true`, the same sessions get a hint on driving other sessions with `oppi session`.                                                                              |
+
+The defaults are a new server's. A `config.json` without a saved value comes from a version where both hints were on: the server reads it as `true` and saves that on its first start, so an update changes nothing. The app's **Server Settings** saves both through `PUT /server/oppi-docs-prompt` and `PUT /server/oppi-cli-prompt`, which apply to the next session without a restart.
 
 ```bash
-oppi config set oppiDocsPrompt.enabled false
 oppi config set oppiDocsPrompt.enabled true
+oppi config set oppiCliPrompt.enabled false
 ```
 
 ### Runtime environment
@@ -194,7 +197,8 @@ Extensions own approval behavior. When a session needs approval before an action
   "maxSessionsGlobal": 200,
   "runtimePathEntries": ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"],
   "runtimeEnv": {},
-  "oppiDocsPrompt": { "enabled": true },
+  "oppiDocsPrompt": { "enabled": false },
+  "oppiCliPrompt": { "enabled": false },
   "tls": { "mode": "tailscale" },
   "images": { "autoResize": true }
 }
@@ -211,7 +215,7 @@ oppi config get asr.sttEndpoint
 oppi config set asr.sttEndpoint http://127.0.0.1:7936
 oppi config set asr.liveVoiceBackend yuwp
 oppi config set images.autoResize false
-oppi config set oppiDocsPrompt.enabled false
+oppi config set oppiDocsPrompt.enabled true
 oppi config set runtimeEnv.TTS_BASE_URL http://127.0.0.1:7937
 oppi config validate
 ```

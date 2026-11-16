@@ -706,8 +706,8 @@ export interface SdkBackendConfig {
   metrics?: ServerTelemetry;
   /** Saved Agent definition used to configure this runtime. */
   agentDefinition?: AgentDefinition;
-  /** Server settings that affect Oppi-owned SDK sessions. */
-  serverConfig?: Pick<ServerConfig, "oppiDocsPrompt" | "oppiCliPrompt">;
+  /** The prompt hint switches, read at each resource load: absent adds no hint. */
+  getPromptHints?: () => Pick<ServerConfig, "oppiDocsPrompt" | "oppiCliPrompt">;
   /** Reads one atomic Mobile Output Guide snapshot for each managed runtime rebuild. */
   getMobileOutputGuideSettings?: () => RevisionedEnabled;
   /**
@@ -1284,7 +1284,7 @@ export class SdkBackend implements AgentBackend {
       const buildCurrentAppendSystemPrompt = (base: string[]): string[] => {
         const oppi = oppiAppendSystemPrompt({
           target: !managedSession ? "terminal" : sandboxMode ? "sandbox" : "host",
-          serverConfig: config.serverConfig,
+          promptHints: config.getPromptHints?.(),
           workspacePrompt: workspace?.systemPrompt,
           mobileOutputGuide: mobileOutputGuideSettingsHolder.snapshot.enabled,
           replace,

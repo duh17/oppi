@@ -1,7 +1,7 @@
 {
   "_meta": {
     "description": "Every HTTP and WebSocket route server/src/routes/registry.ts declares: method, path template, path params, operationId, surface, auth, and transport. Generated from the registry by server/tests/route-fixtures.ts; server/tests/route-fixtures.test.ts fails when the committed bytes differ. The Apple client's APIClientRouteContractTests requires every request an APIClient endpoint method builds to match a row, so a client path the server does not serve fails there.",
-    "routeCount": 212
+    "routeCount": 216
   },
   "routes": [
     {
@@ -360,6 +360,42 @@
       "path": "/server/mobile-output-guide",
       "params": [],
       "operationId": "setMobileOutputGuide",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/server/oppi-docs-prompt",
+      "params": [],
+      "operationId": "getOppiDocsPrompt",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "PUT",
+      "path": "/server/oppi-docs-prompt",
+      "params": [],
+      "operationId": "setOppiDocsPrompt",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/server/oppi-cli-prompt",
+      "params": [],
+      "operationId": "getOppiCliPrompt",
+      "surface": "admin",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "PUT",
+      "path": "/server/oppi-cli-prompt",
+      "params": [],
+      "operationId": "setOppiCliPrompt",
       "surface": "admin",
       "auth": "owner",
       "transport": "http"

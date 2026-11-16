@@ -129,14 +129,25 @@ export interface ServerConfig {
   /** Additional runtime environment variables. */
   runtimeEnv?: Record<string, string>;
 
-  /** Prompt hint that points Oppi-owned sessions at packaged Oppi docs. */
+  /**
+   * Points Oppi-owned host sessions at the packaged Oppi docs (the app's Oppi Docs Hint switch).
+   * Opt-in: a new config.json saves it off; one written before it was opt-in loads it as on and
+   * saves that. Read at each session build, so a save applies to the next session.
+   */
   oppiDocsPrompt?: {
     enabled: boolean;
+    /** Counts saves made through `PUT /server/oppi-docs-prompt`; absent reads as 0. */
+    revision?: number;
   };
 
-  /** Experimental one-line Oppi CLI management hint for Oppi-owned sessions. */
+  /**
+   * Tells Oppi-owned host sessions how to drive other sessions with the `oppi` CLI (the app's
+   * Oppi CLI Hint switch). Opt-in, saved and read like `oppiDocsPrompt`.
+   */
   oppiCliPrompt?: {
     enabled: boolean;
+    /** Counts saves made through `PUT /server/oppi-cli-prompt`; absent reads as 0. */
+    revision?: number;
   };
 
   /**

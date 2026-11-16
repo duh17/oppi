@@ -42,7 +42,10 @@ export interface ServerSettingDefinition<T> {
   validate(value: unknown): T;
 }
 
-/** A config-stored on/off setting's write: Server Metrics, Durable Sessions, Mobile Output Guide. */
+/**
+ * A config-stored on/off setting's write: Server Metrics, Durable Sessions, Mobile Output Guide,
+ * and the prompt hints.
+ */
 export interface EnabledPatch {
   enabled: boolean;
 }
@@ -261,6 +264,21 @@ const SETTINGS = {
     validate: validateEnabledPatch,
   },
   mobileOutputGuide: {
+    scope: "server",
+    storage: "config",
+    default: { enabled: false } as EnabledPatch,
+    revisioned: true,
+    validate: validateEnabledPatch,
+  },
+  // A new server's value; a config.json from before the hints were opt-in keeps them on.
+  oppiDocsPrompt: {
+    scope: "server",
+    storage: "config",
+    default: { enabled: false } as EnabledPatch,
+    revisioned: true,
+    validate: validateEnabledPatch,
+  },
+  oppiCliPrompt: {
     scope: "server",
     storage: "config",
     default: { enabled: false } as EnabledPatch,

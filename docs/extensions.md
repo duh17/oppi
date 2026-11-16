@@ -52,6 +52,17 @@ Older iOS builds keep working: `POST /control-sessions` accepts their `domain`, 
 - It is an append, so a global `SYSTEM.md` replacement does not suppress it. It comes last among Oppi's appends: after the Oppi docs hint, the `oppi` CLI hint, and the workspace prompt. A saved Agent whose instructions replace the system prompt does not get it.
 - It does not change standalone Pi or terminal-owned Mirror sessions. A stopped Mirror session reads the current guide only if you promote it to Oppi-managed.
 
+## Prompt hints
+
+Oppi adds nothing to a session's prompt unless you turn it on. Besides the Mobile Output Guide, two switches in **Server Settings** add one short hint each to new and reloaded managed host sessions:
+
+- **Oppi Docs Hint** (`oppiDocsPrompt`) names the folder of Oppi's packaged docs, so an agent can answer questions about Oppi from them.
+- **Oppi CLI Hint** (`oppiCliPrompt`) tells an agent how to list, start, message, and stop other sessions with `oppi session`.
+
+Both are off on a new server. A server that ran an earlier version had both on, and keeps them on after the update; the first start saves that as its setting. Sandbox sessions, Oppi Control sessions, and terminal-owned sessions never get them. `oppi config set oppiDocsPrompt.enabled true` sets one from the host.
+
+A workspace's own prompt (**Workspace Settings → Instructions**) and a saved Agent's instructions are text you wrote, and are always sent. Tools that Oppi offers carry their own descriptions and guidelines, as every tool does; turning the tool's feature or extension off removes them. In durable sessions, the `godot_*` tools and their guideline follow the **Godot Pane** feature switch.
+
 ## When a change takes effect
 
 - A new managed session uses the latest Mobile Output Guide setting. An active session keeps its prompt resources until `/reload`, which rebuilds it through Pi's full `AgentSession.reload()` (extensions, skills, prompts, themes, system-prompt files, and the guide) before the next turn.

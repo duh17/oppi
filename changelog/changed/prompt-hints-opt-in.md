@@ -1,0 +1,2 @@
+- **Server:** A new server adds nothing to a session's prompt unless you turn it on. The Oppi docs hint and the `oppi` CLI hint are now off by default, with their own switches, **Oppi Docs Hint** and **Oppi CLI Hint**, in **Server Settings** next to the Mobile Output Guide. See [Prompt hints](docs/extensions.md#prompt-hints).
+- **Server:** In durable sessions, the `godot_*` tools and their prompt guideline now follow the **Godot Pane** feature switch: with it off, sessions no longer get them.

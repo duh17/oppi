@@ -753,6 +753,15 @@ describe("durable built-in selection", () => {
       expect(reattached.tools.filter((tool) => tool.startsWith("game_"))).toEqual([]);
       expect(reattached.sections).not.toContain("godot-guidelines");
       await f.manager.stopSession(session.id);
+
+      // The game is back but the Godot Pane switch is off: still no tools or guideline.
+      gamesIn = workspace.id;
+      f.storage.mutateConfig(() => ({ features: { godotPane: false } }));
+      await f.manager.startSession(session.id, workspace);
+      const switchedOff = await selection(f, session.id);
+      expect(switchedOff.extensions).not.toContain("oppi.godot");
+      expect(switchedOff.sections).not.toContain("godot-guidelines");
+      await f.manager.stopSession(session.id);
     } finally {
       serveGodotToSessions(undefined);
     }
@@ -864,6 +873,8 @@ describe("durable prompt appends", () => {
     await ended;
   }
 
+  const HINTS_ON = { oppiDocsPrompt: { enabled: true }, oppiCliPrompt: { enabled: true } };
+
   function setGuide(f: Fixture, enabled: boolean) {
     const current = f.storage.getMobileOutputGuideSettings();
     expect(applySetting(f.storage, "mobileOutputGuide", { enabled }, current.revision).ok).toBe(
@@ -881,7 +892,7 @@ describe("durable prompt appends", () => {
   it("renders the docs hint, CLI hint, workspace prompt, then the guide on the host; a sandbox gets no hints", async () => {
     expect(DOCS).toEqual(expect.any(String));
     const { prompts, steps } = capturing(2);
-    const f = await fixture(steps, undefined, { oppiCliPrompt: { enabled: true } });
+    const f = await fixture(steps, undefined, HINTS_ON);
     vi.spyOn(SdkBackend, "ensureSandboxWorkspaceVm").mockResolvedValue(vm);
     setGuide(f, true);
     const host = withWorkspacePrompt(f, "host");
@@ -908,7 +919,7 @@ describe("durable prompt appends", () => {
 
   it("keeps the docs and CLI hints and the workspace prompt but drops the guide under a saved Agent's replacement prompt", async () => {
     const { prompts, steps } = capturing(1);
-    const f = await fixture(steps, undefined, { oppiCliPrompt: { enabled: true } });
+    const f = await fixture(steps, undefined, HINTS_ON);
     setGuide(f, true);
     const agent = f.storage.getAgentDefinitionStore().createAgent({
       name: "Replacer",
@@ -965,7 +976,7 @@ describe("durable prompt appends", () => {
 
   it("gives an Oppi Control session the guide under the same setting, and no hints", async () => {
     const { prompts, steps } = capturing(2);
-    const f = await fixture(steps, undefined, { oppiCliPrompt: { enabled: true } });
+    const f = await fixture(steps, undefined, HINTS_ON);
     const control = saveControlRow(f.storage, { model: "faux/faux-1" });
     setGuide(f, true);
     await f.manager.startSession(control.id);

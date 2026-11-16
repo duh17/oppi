@@ -53,6 +53,7 @@ function makeDeps(session: Session): SessionStartCoordinatorDeps & {
     getSession: vi.fn(() => session),
     listSessions: vi.fn(() => [session]),
     getDataDir: vi.fn(() => TEST_CONFIG.dataDir),
+    getConfig: vi.fn(() => TEST_CONFIG),
     getMobileOutputGuideSettings: vi.fn((): RevisionedEnabled => ({
       enabled: false,
       revision: 0,
@@ -74,7 +75,6 @@ function makeDeps(session: Session): SessionStartCoordinatorDeps & {
   const deps: SessionStartCoordinatorDeps & { persistedStatuses: Session["status"][] } = {
     storage,
     runtimeManager,
-    config: TEST_CONFIG,
     eventRingCapacity: 20,
     getSkillPathResolver: vi.fn(() => null),
     getNotifyPort: vi.fn(() => null),

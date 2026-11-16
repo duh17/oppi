@@ -33,7 +33,7 @@ export const SETTABLE_CONFIG_KEYS: Record<string, SettableConfigPath> = {
     type: "boolean",
     desc: "Append packaged Oppi docs hint to Oppi sessions",
   },
-  oppiCliPrompt: { type: "json", desc: "Oppi CLI prompt experiment JSON object" },
+  oppiCliPrompt: { type: "json", desc: "Oppi CLI prompt config JSON object" },
   "oppiCliPrompt.enabled": {
     type: "boolean",
     desc: "Append a concise Oppi CLI management hint to Oppi sessions",
