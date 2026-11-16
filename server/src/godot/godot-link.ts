@@ -21,6 +21,7 @@ import type {
   GodotPlayerState,
   GodotProject,
   GodotRelease,
+  GodotSourceLocation,
 } from "../types.js";
 import { asRecord } from "../json-shape.js";
 import {
@@ -159,8 +160,15 @@ export class GodotLinkBroker {
   }
 
   /** A server entry in the project's log ring. */
-  serverLog(projectId: string, level: GodotLogLevel, message: string): void {
-    this.append(this.link(projectId), "server", undefined, [{ level, message }]);
+  serverLog(
+    projectId: string,
+    level: GodotLogLevel,
+    message: string,
+    source?: GodotSourceLocation,
+  ): void {
+    this.append(this.link(projectId), "server", undefined, [
+      { level, message, ...(source ? { source } : {}) },
+    ]);
   }
 
   logs(

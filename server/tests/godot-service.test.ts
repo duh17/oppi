@@ -3,6 +3,7 @@ import { Readable } from "node:stream";
 import {
   existsSync,
   mkdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -257,6 +258,50 @@ describe("game releases from discovery", () => {
     );
     expect(await release("three")).toMatchObject({ seq: 3, reload: "restart" });
     expect((await release("four"))?.reload).toBe("scene");
+  });
+
+  it("logs each use of an API the device engine leaves out as an error of the release", async () => {
+    // Real Godot 4.7.2 exports of one script: `Image.create` (line 7) and `Color8` (line 10),
+    // with the same names in a comment, strings, a node path and a method of its own; the clean
+    // export uses `Image.create_empty` and `Color.from_rgba8`. Text and compressed binary tokens.
+    const fixture = (name: string) =>
+      readFileSync(join(import.meta.dirname, "fixtures", "godot", name));
+    const root = makeTempDir("oppi-games-checkout-");
+    const dir = join(root, "probe");
+    godotProject(dir, "Probe");
+    mkdirSync(join(dir, "build"));
+    const games = service([workspaceAt(root)]);
+    const [project] = await games.list();
+    const id = project?.id ?? "";
+    const errorsOf = async (pack: string) => {
+      const since = games.logs(id).next;
+      writeFileSync(join(dir, "build", "probe.pck"), fixture(pack));
+      await games.scan();
+      return games
+        .logs(id, { since, level: "error" })
+        .entries.map((entry) => [entry.source?.file, entry.source?.line, entry.message]);
+    };
+
+    const text = await errorsOf("deprecated-text.pck");
+    expect(games.describe(id)?.release?.seq).toBe(1);
+    expect(text).toEqual([
+      [
+        "res://main.gd",
+        7,
+        expect.stringMatching(/^Release 1: Image\.create\(\) is deprecated.*create_empty\(\)/),
+      ],
+      [
+        "res://main.gd",
+        10,
+        expect.stringMatching(/^Release 1: Color8\(\) is deprecated.*Color\.from_rgba8\(\)/),
+      ],
+    ]);
+    expect(await errorsOf("clean-binary.pck")).toEqual([]);
+    expect(games.describe(id)?.release?.seq).toBe(2);
+    expect((await errorsOf("deprecated-binary.pck")).map(([file, line]) => [file, line])).toEqual([
+      ["res://main.gd", 7],
+      ["res://main.gd", 10],
+    ]);
   });
 
   it("keeps the newest five releases", async () => {

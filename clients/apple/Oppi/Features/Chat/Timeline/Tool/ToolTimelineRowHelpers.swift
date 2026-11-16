@@ -1077,6 +1077,10 @@ enum ToolTimelineRowUIHelpers {
             "swift": "lang-swift",
             "zig": "lang-zig",
             "markdown": "lang-markdown",
+            // `SyntaxLanguage` display names of Godot's files; credit in Resources/GodotLogo-LICENSE.txt.
+            "gdscript": "lang-godot",
+            "godot resource": "lang-godot",
+            "godot shader": "lang-godot",
         ]
         if let assetName = assetMap[normalized],
            let image = UIImage(named: assetName) {

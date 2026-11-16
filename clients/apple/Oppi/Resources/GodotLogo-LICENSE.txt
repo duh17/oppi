@@ -1,0 +1,12 @@
+Oppi's file icons and chat tool rows show the Godot logo for GDScript, Godot
+scene and resource files, and Godot shaders (Assets.xcassets/lang-godot.imageset).
+It is drawn in one color, with the eyes, nose and mouth band cut out, and
+converted from SVG to PDF.
+
+# Godot Engine Logo
+Godot Engine Logo, copyright (c) 2017 Andrea Calabró, is licensed under the
+Creative Commons Attribution 4.0 International License (CC BY 4.0):
+https://creativecommons.org/licenses/by/4.0/
+
+Source: https://github.com/godotengine/godot/blob/master/misc/logo/icon.svg
+Press kit: https://godotengine.org/press/

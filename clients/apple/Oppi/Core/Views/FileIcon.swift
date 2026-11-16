@@ -116,6 +116,10 @@ struct FileIcon: Equatable, Sendable {
              ".babelrc", ".browserslistrc":
             return Self(symbolName: "gearshape.fill", tint: .comment)
 
+        // Godot's export presets (other .cfg files stay config)
+        case "export_presets.cfg":
+            return Self(symbolName: "gamecontroller.fill", tint: .comment, assetName: "lang-godot")
+
         // License
         case "license", "licence", "license.md", "licence.md",
              "license.txt", "licence.txt":
@@ -202,13 +206,13 @@ struct FileIcon: Equatable, Sendable {
         case "zig":
             return Self(symbolName: "z.square.fill", tint: .orange, assetName: "lang-zig")
 
-        // Godot
+        // Godot (logo credit in Resources/GodotLogo-LICENSE.txt)
         case "gd":
-            return Self(symbolName: "gamecontroller.fill", tint: .blue)
-        case "tscn", "tres", "godot":
-            return Self(symbolName: "gamecontroller.fill", tint: .comment)
+            return Self(symbolName: "gamecontroller.fill", tint: .blue, assetName: "lang-godot")
+        case "tscn", "tres", "godot", "import":
+            return Self(symbolName: "gamecontroller.fill", tint: .comment, assetName: "lang-godot")
         case "gdshader", "gdshaderinc":
-            return Self(symbolName: "wand.and.stars", tint: .purple)
+            return Self(symbolName: "wand.and.stars", tint: .purple, assetName: "lang-godot")
 
         // HTML / XML / markup
         case "html", "htm", "xml", "xhtml", "svg", "plist", "xib",
@@ -291,7 +295,7 @@ struct FileIcon: Equatable, Sendable {
             return Self(symbolName: "point.3.connected.trianglepath.dotted", tint: .purple)
 
         // Env / INI
-        case "env", "ini", "cfg", "conf", "import":
+        case "env", "ini", "cfg", "conf":
             return Self(symbolName: "gearshape.fill", tint: .comment)
 
         // Log

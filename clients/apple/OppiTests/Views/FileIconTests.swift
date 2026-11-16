@@ -63,6 +63,21 @@ struct FileIconTests {
         #expect(icon.assetName == "lang-ruby")
     }
 
+    @MainActor
+    @Test func godotFilesShowTheGodotLogoInFileRowsAndToolBadges() throws {
+        let logo = try #require(UIImage(named: "lang-godot")?.pngData())
+        let paths = ["core/player.gd", "main.tscn", "theme.tres", "project.godot", "icon.png.import",
+                     "export_presets.cfg", "water.gdshader"]
+        for path in paths {
+            let icon = FileIcon.forPath(path)
+            #expect(icon.assetName == "lang-godot", "\(path)")
+            #expect(icon.isAssetImage, "\(path)")
+            // A read row's badge is the file's syntax language name (ToolPresentationBuilder).
+            let badge = FileKind.detect(from: path).syntaxLanguage?.displayName
+            #expect(ToolTimelineRowUIHelpers.languageBadgeImage(for: badge)?.pngData() == logo, "\(path)")
+        }
+    }
+
     @Test func shellUsesTerminal() {
         for ext in ["sh", "bash", "zsh", "fish"] {
             let icon = FileIcon.forPath("script.\(ext)")

@@ -57,6 +57,7 @@ import {
   type DiscoveredGodotProject,
   type FoundGodotPack,
 } from "./godot-discovery.js";
+import { deprecatedApiMessage, findDeprecatedApiUses } from "./godot-deprecated-check.js";
 import { GodotLinkBroker, type GodotLinkHandle, type GodotLinkPeer } from "./godot-link.js";
 import { commandTimeoutMs, parseCommandInput, parseReleaseRequest } from "./godot-messages.js";
 import {
@@ -85,6 +86,8 @@ const RESCAN_WHEN_OLDER_MS = 30_000;
 const SWEEP_INTERVAL_MS = 60_000;
 const SETTLE_TRIES = 40;
 const LEVELS: ReadonlySet<string> = new Set(["debug", "info", "warn", "error"]);
+/** Uses of left-out APIs logged one by one per release; the rest are counted. */
+const DEPRECATED_REPORT_MAX = 20;
 
 export interface GodotServiceStorage {
   listWorkspaces(): Workspace[];
@@ -378,6 +381,42 @@ export class GodotService implements SessionGodot {
         : `${Math.ceil(packInfo.size / 1024)} KB`;
     this.broker.announce(project.id, release, `${pack.relative} (${size})`);
     log.info("godot.release", { projectId: project.id, seq: release.seq, size: packInfo.size });
+    await this.reportDeprecatedApi(project.id, release);
+  }
+
+  /**
+   * Log each use of an API the device engine leaves out as an error of the release, with its file
+   * and line. The release still plays: a hit is a name match and can be a false positive, and the
+   * device reports a real failure itself.
+   */
+  private async reportDeprecatedApi(id: string, release: GodotRelease): Promise<void> {
+    const packs: string[] = [];
+    for (const pack of release.packs) {
+      const stored = await this.store.packInfo(id, pack.sha256);
+      if (stored) packs.push(stored.path);
+    }
+    let uses;
+    try {
+      uses = await findDeprecatedApiUses(packs);
+    } catch (error: unknown) {
+      log.warn("godot.deprecated_check_failed", { projectId: id, error: safeErrorMessage(error) });
+      return;
+    }
+    for (const use of uses.slice(0, DEPRECATED_REPORT_MAX)) {
+      this.broker.serverLog(
+        id,
+        "error",
+        `Release ${release.seq}: ${deprecatedApiMessage(use.api)}`,
+        { file: use.file, line: use.line },
+      );
+    }
+    if (uses.length > DEPRECATED_REPORT_MAX) {
+      this.broker.serverLog(
+        id,
+        "error",
+        `Release ${release.seq}: ${uses.length - DEPRECATED_REPORT_MAX} more uses of APIs the device engine leaves out.`,
+      );
+    }
   }
 
   // --- Reading ----------------------------------------------------------------------------------
@@ -620,6 +659,7 @@ export class GodotService implements SessionGodot {
       ? this.broker.waitForApplied(id, release.seq, GODOT_FIRST_FRAME_WAIT_MS)
       : undefined;
     this.broker.announce(id, release, `published${label ? ` (${label})` : ""}`);
+    await this.reportDeprecatedApi(id, release);
     return waiting ? { release, applied: await waiting } : { release };
   }
 

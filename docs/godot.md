@@ -124,6 +124,18 @@ A durable session has six tools for the games in its workspace while the workspa
 
 To put a change in the pane, export a pack with `mkdir -p build && godot --headless --path . --export-pack "<preset>" build/<name>.pck` from the project folder. The pane reloads by itself.
 
+### APIs the device does not have
+
+The pane's engine is built without the APIs that Godot's class reference marks deprecated, and desktop Godot still has them. A script that runs clean on the Mac can therefore fail to parse on the device. For example, `Image.create` does not exist there; use `Image.create_empty`.
+
+For each new release, from an export or a publish, the server reads the GDScript files in its packs (text or binary tokens) and looks for these APIs. It logs each use as an error with its file and line, what was used, and what the class reference says to use instead:
+
+```text
+#14 [oppi] Release 3: Image.create() is deprecated in Godot 4.7.2-stable; the device engine leaves deprecated APIs out, so this script may fail on the device. Class reference: "Use create_empty()." (res://main.gd:7)
+```
+
+`godot_status` lists these errors with the latest errors, and `godot_logs` with `level: "error"` shows them. The release still plays, because the check matches names, not types: a method of your own that has the name of a deprecated engine method can be reported too. Comments and strings are skipped. The check does not read scripts built into scenes, or packs whose file list is encrypted.
+
 `godot_input` steps:
 
 ```json
@@ -187,6 +199,6 @@ Commands are `reload`, `run`, `stop`, `pause`, `resume`, `step`, `capture`, `inp
 
 ## Safety
 
-- The server checks a pack's hash, size, and header only. It never opens or runs a game. Only `godot_export` opens a project in Godot, and only in a workspace that is not sandboxed.
+- The server checks a pack's hash, size, and header, and reads the GDScript files in it to find [APIs the device does not have](#apis-the-device-does-not-have). It never runs a game. Only `godot_export` opens a project in Godot, and only in a workspace that is not sandboxed.
 - Only the owner and paired devices can publish, play, or read a game, its logs, and its captures. The one exception is a web build's play link: it opens that one build for 24 hours to anyone who has the link.
 - Discovery never follows a link out of a checkout, and a pack an `oppi-godot.json` names must stay inside the checkout.
