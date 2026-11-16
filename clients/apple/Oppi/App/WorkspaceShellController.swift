@@ -565,6 +565,7 @@ final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDele
         // toolbar button both settle here.
         if open, !isOpen {
             AppHaptics.impact(style: .light, intensity: 0.65)
+            refreshPins()
         }
         isOpen = open
         setNeedsStatusBarAppearanceUpdate()
@@ -581,6 +582,15 @@ final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDele
             UIView.animate(springDuration: 0.28, bounce: 0.06, animations: animations)
         }
         UIAccessibility.post(notification: .screenChanged, argument: nil)
+    }
+
+    /// The drawer's sidebar loads once and never appears again, and a pinned
+    /// place deleted on disk sends no event: its pins read their status
+    /// again each time the drawer opens.
+    private func refreshPins() {
+        guard let connection = root.windowConnection, connection.pinsAvailable,
+              let api = connection.apiClient else { return }
+        Task { await connection.pins.refresh(api: api) }
     }
 
     private func track(_ pan: UIPanGestureRecognizer) {
