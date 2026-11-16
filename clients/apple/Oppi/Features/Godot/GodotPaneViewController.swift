@@ -17,6 +17,8 @@ import UIKit
 ///   game shows the last frame it had and Play Here.
 /// - A pane a relaunch restored waits for Play. A pane nobody sees pauses
 ///   the game; focus elsewhere keeps keys and controllers away from it.
+///   Closing the last pane on the game ends it, and the next pane opened on
+///   it starts it over (`GodotEngineHost.paneClosed`).
 /// - The newest error from the game's own code shows over it with its file
 ///   and line (`GodotErrorOverlayView`); its Ask Agent, and the bar's
 ///   Snapshot to Chat, hand the game to the chat beside it as a draft
@@ -103,6 +105,7 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
         // Rightmost first: Snapshot, Reload, Mute, Play from the leading
         // side, and Play Full Screen at the trailing edge.
         navigationItem.rightBarButtonItems = [fullScreenItem, playItem, muteItem, reloadItem, snapshotItem]
+        host.paneOpened(gameSlot)
     }
 
     @available(*, unavailable)
@@ -113,6 +116,8 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
         fetchTask?.cancel()
         player?.stop()
         for task in commandTasks.values { task.cancel() }
+        // The pane closed: the last one on its game ends the game.
+        host.paneClosed(gameSlot)
     }
 
     override func viewDidLoad() {
@@ -287,18 +292,22 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
         failure = nil
         project = .connecting
         view.setNeedsUpdateProperties()
-        let id = gameSlot.project
+        let slot = gameSlot
+        let root = root
+        // The waits hold no reference to the pane: a pane closed while its
+        // server is away goes, and with it the game (`GodotEngineHost.paneClosed`).
         followTask = Task { [weak self] in
-            guard let link = await self?.waitForLink(), let self else { return }
-            self.link = link
+            guard let link = await Self.waitForLink(slot.serverId, root: root) else { return }
+            self?.link = link
             do {
-                self.received(try await link.project(id))
+                let project = try await link.project(slot.project)
+                self?.received(project)
             } catch {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, let self else { return }
                 self.failure = String(localized: "Oppi couldn’t reach the server’s Godot projects: \(error.localizedDescription)")
                 self.view.setNeedsUpdateProperties()
             }
-            self.attachPlayer(link)
+            self?.attachPlayer(link)
         }
     }
 
@@ -344,9 +353,9 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
     }
 
     /// The server's link once it is connected.
-    private func waitForLink() async -> GodotLinkClient? {
+    private static func waitForLink(_ serverId: String, root: AppRootEnvironment?) async -> GodotLinkClient? {
         while !Task.isCancelled {
-            if let root, let link = PaneEntries.godotLink(gameSlot.serverId, coordinator: root.coordinator) {
+            if let root, let link = PaneEntries.godotLink(serverId, coordinator: root.coordinator) {
                 return link
             }
             try? await Task.sleep(for: .milliseconds(500))

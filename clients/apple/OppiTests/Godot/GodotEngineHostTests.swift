@@ -7,7 +7,8 @@ import UIKit
 /// starts the engine, ending any other game; a new build of it goes in by the
 /// tier the policy picks, a fresh engine included; a game that quit or failed
 /// to start plays again; one pane holds the game's view, and a second pane on
-/// the same game offers Play Here.
+/// the same game offers Play Here. The engine ends once the last pane on its
+/// game closes.
 @MainActor
 @Suite("GodotEngineHost")
 struct GodotEngineHostTests {
@@ -233,6 +234,73 @@ struct GodotEngineHostTests {
         #expect(runtime.touches.last?.index == 0, "The lifted finger's number is free again")
     }
 
+    @Test func closingTheOnlyPaneEndsTheGameAndOpeningItAgainStartsItOver() async {
+        let runtime = FakeGodotRuntime()
+        let host = GodotEngineHost(runtime: runtime)
+        let files: [String: UInt8] = ["project.binary": 1, "main.gd": 2]
+        var pane: FakeGodotPane? = FakeGodotPane(tide, on: host)
+        await host.play(build(tide, files), in: pane!)
+        host.setPausedByPerson(true)
+        pane = nil
+        #expect(host.engine == .idle)
+        #expect(runtime.events == [.start("games~tide"), .stop])
+        #expect(host.loaded == nil)
+        #expect(!host.isPausedByPerson, "The closed pane's pause goes with it")
+
+        let reopened = FakeGodotPane(tide, on: host)
+        #expect(await host.play(build(tide, files), in: reopened) == .start)
+        #expect(runtime.events == [.start("games~tide"), .stop, .start("games~tide")])
+        #expect(phase(host, reopened) == .running)
+    }
+
+    @Test func theGameLivesUntilTheLastPaneOnItCloses() async {
+        let runtime = FakeGodotRuntime()
+        let host = GodotEngineHost(runtime: runtime)
+        let files: [String: UInt8] = ["project.binary": 1, "main.gd": 2]
+        var holder: FakeGodotPane? = FakeGodotPane(tide, on: host)
+        var second: FakeGodotPane? = FakeGodotPane(tide, on: host)
+        await host.play(build(tide, files), in: holder!)
+        holder = nil
+        #expect(host.engine == .running(tide), "The second pane keeps the game")
+        #expect(phase(host, second!) == .elsewhere, "It offers Play Here")
+        #expect(await host.play(build(tide, files), in: second!) == .unchanged)
+        #expect(host.holdsSurface(second!), "Play Here takes the running game")
+        second = nil
+        #expect(host.engine == .idle)
+        #expect(runtime.events == [.start("games~tide"), .stop])
+    }
+
+    @Test func aPaneOnAnotherGameDoesNotKeepTheGame() async {
+        let runtime = FakeGodotRuntime()
+        let host = GodotEngineHost(runtime: runtime)
+        var pane: FakeGodotPane? = FakeGodotPane(tide, on: host)
+        let other = FakeGodotPane(reef, on: host)
+        await host.play(build(tide, ["project.binary": 1]), in: pane!)
+        pane = nil
+        #expect(host.engine == .idle)
+        #expect(runtime.events == [.start("games~tide"), .stop])
+        #expect(phase(host, other) == .ready)
+    }
+
+    @Test func aPaneClosedWhileItsGameStartsEndsItOnceStarted() async {
+        let runtime = FakeGodotRuntime()
+        let host = GodotEngineHost(runtime: runtime)
+        var pane: FakeGodotPane? = FakeGodotPane(tide, on: host)
+        let starting = Task { [pane, build = build(tide, ["project.binary": 1])] in
+            await host.play(build, in: pane!)
+        }
+        pane = nil
+        while host.engine == .idle { await Task.yield() }
+        #expect(host.engine == .starting(tide))
+        #expect(await starting.value == .start)
+        // The start held the pane; it goes once the play returns it.
+        for _ in 0..<100 where host.engine != .idle {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(host.engine == .idle)
+        #expect(runtime.events == [.start("games~tide"), .stop])
+    }
+
     @Test func aScriptErrorGoesToTheLinkWithItsSourceAndFrames() {
         let entry = GodotEngineLog(
             kind: .script, message: "Invalid call.", file: "core/variant.cpp", line: 3, function: "_runtime_error",
@@ -279,10 +347,18 @@ private final class FakeGodotPane: GodotSurfaceOwner {
     private(set) var leftCount = 0
     /// Keeps the slot in a window, as a shown pane's is.
     private let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 375, height: 600))
+    /// The host it opened on and tells when it closes, as a pane does.
+    private let host: GodotEngineHost?
 
-    init(_ slot: GodotSlot) {
+    init(_ slot: GodotSlot, on host: GodotEngineHost? = nil) {
         gameSlot = slot
+        self.host = host
         window.addSubview(surfaceSlot)
+        host?.paneOpened(slot)
+    }
+
+    isolated deinit {
+        host?.paneClosed(gameSlot)
     }
 
     func surfaceDidLeave(lastFrame: UIImage?) {

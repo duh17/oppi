@@ -53,7 +53,12 @@ enum GodotPauseReason: Hashable, Sendable {
 ///   `GodotPauseReason` holds.
 /// - Audio follows `GodotAudioPolicy`; the error overlay shows the latest
 ///   error the game's own code raised (`GodotEngineLog.isGameError`).
-/// - A memory warning keeps the engine: ending it would lose the game's state.
+/// - The engine lives while a pane on its game exists: closing the last one
+///   (`paneClosed`, the pane controller going away) ends the game so its
+///   memory returns, and opening the game again starts it over. Hidden,
+///   covered, resized or full screen, a pane keeps it; so does a second pane
+///   on the game that only shows its last frame. A memory warning alone
+///   does not end the game, and backgrounding only pauses it.
 @MainActor @Observable
 final class GodotEngineHost {
     static let shared = GodotEngineHost(runtime: GodotRuntimes.make())
@@ -86,6 +91,8 @@ final class GodotEngineHost {
 
     @ObservationIgnored private let runtime: (any GodotEngineRuntime)?
     @ObservationIgnored private weak var owner: (any GodotSurfaceOwner)?
+    /// How many panes are open on each game: the engine lives while its game has one.
+    @ObservationIgnored private var openPanes: [GodotSlot: Int] = [:]
     /// Bumped whenever another pane takes the surface, so panes re-read.
     private(set) var ownerGeneration = 0
     @ObservationIgnored let audio = GodotAudioPolicy()
@@ -270,6 +277,28 @@ final class GodotEngineHost {
     }
 
     // MARK: Panes
+
+    /// A pane on `slot` opened; it calls `paneClosed` with the same slot as it goes away.
+    func paneOpened(_ slot: GodotSlot) {
+        openPanes[slot, default: 0] += 1
+    }
+
+    /// A pane on `slot` went away: with no pane left on the running game,
+    /// the game ends. A start holds the pane it starts in until it returns,
+    /// so a pane closed mid-start ends its game here once the start is done.
+    func paneClosed(_ slot: GodotSlot) {
+        let open = (openPanes[slot] ?? 0) - 1
+        openPanes[slot] = open > 0 ? open : nil
+        guard open <= 0, engine == .running(slot), let runtime else { return }
+        stopEngine(runtime)
+        engine = .idle
+        startedAt = nil
+        failure = nil
+        gameError = nil
+        // A pause belonged to the game that ended; the next one starts playing.
+        pauseReasons.remove(.person)
+        logger.info("Godot ended: no pane shows \(slot.project, privacy: .public)")
+    }
 
     /// Moves the game's view into `owner`'s pane. The pane that had it keeps
     /// the last frame it showed.

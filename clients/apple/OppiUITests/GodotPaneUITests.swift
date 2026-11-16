@@ -398,6 +398,34 @@ final class GodotPaneUITests: XCTestCase, PreviewUITestCase {
         capture("play-here-moved")
     }
 
+    /// Closing the game's only pane ends the game; opening it again starts it
+    /// over in the new pane rather than offering Play Here for a pane that
+    /// is gone.
+    func testClosingTheGamesPaneEndsItAndReopeningStartsItOver() throws {
+        try openChat(orientation: .landscapeLeft)
+        try open(tideRunner)
+        hold(for: 1)
+        let pane = app.descendants(matching: .any)["godot.pane"]
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane.grip.' AND label ENDSWITH '2 of 2'")).firstMatch.tap()
+        let close = app.buttons["pane.menu.close"]
+        XCTAssertTrue(close.waitUntilExists(timeout: 5), "The game's grip offers Close Pane")
+        close.tap()
+        XCTAssertTrue(waitFor(!pane.exists), "The game's pane closed")
+
+        try openGodotList()
+        app.cells[tideRunner].tap()
+        let play = app.buttons["godot.play"]
+        let state = app.descendants(matching: .any)["godot.state"]
+        XCTAssertTrue(
+            waitFor((play.value as? String) == "running" || (state.value as? String) == "elsewhere", timeout: 30),
+            "The reopened pane settled (play: \(play.value ?? "nil"), state: \(state.value ?? "nil"))"
+        )
+        XCTAssertEqual(play.value as? String, "running", "The game started over in the reopened pane")
+        XCTAssertEqual(pane.value as? String, "release 1", "The reopened pane holds the game")
+        hold(for: 1)
+        capture("reopened")
+    }
+
     /// Settings › Experiments offers Godot Pane.
     func testExperimentsOfferGodotPane() throws {
         launchPreview(
