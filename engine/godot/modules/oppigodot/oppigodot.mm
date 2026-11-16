@@ -30,6 +30,7 @@
 #include "scene/main/window.h"
 #include "scene/resources/packed_scene.h"
 #include "servers/audio/audio_server.h"
+#include "servers/rendering/rendering_server.h"
 
 #import <QuartzCore/QuartzCore.h>
 #import <UIKit/UIKit.h>
@@ -716,6 +717,19 @@ void oppigodot_focus(bool focused) {
 	} else {
 		instance->focus_out();
 	}
+}
+
+void oppigodot_redraw(void) {
+	if (!instance || !instance->is_started() || !rendering_layer) {
+		return;
+	}
+	// Only the renderer: no process, physics or input, so the game's time
+	// stands still. The viewport and its stretch took the size at resize.
+	libgodot_ios_start_rendering_layer(rendering_layer);
+	RenderingServer::get_singleton()->sync();
+	RenderingServer::get_singleton()->draw(true, 0.0);
+	Engine::get_singleton()->increment_frames_drawn();
+	libgodot_ios_stop_rendering_layer(rendering_layer);
 }
 
 void oppigodot_set_muted(bool p_muted) {

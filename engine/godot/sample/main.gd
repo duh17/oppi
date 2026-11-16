@@ -5,7 +5,8 @@ extends Node2D
 ## landed, which shows the touch mapping; arrow keys and WASD move the ring
 ## too. VERSION and BALL_COLOR are what a reload test edits; `taps` and the
 ## ring's place are the state script reload must keep. MODE_3D adds 400 lit
-## cubes, for measuring a heavier scene.
+## cubes, for measuring a heavier scene. The game argument --keep letterboxes
+## it (stretch aspect keep) instead of expanding it to the pane.
 
 const VERSION := "sample"
 const MODE_3D := false
@@ -21,6 +22,10 @@ const TAP_SLOP := 12.0
 const KEY_SPEED := 320.0
 
 func _ready() -> void:
+	# --keep: the stretch aspect a letterboxing project chooses, for the
+	# pane's fit tests.
+	if "--keep" in OS.get_cmdline_user_args():
+		get_tree().root.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP
 	label = Label.new()
 	label.position = Vector2(16, 16)
 	label.add_theme_font_size_override("font_size", 22)

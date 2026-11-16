@@ -74,6 +74,11 @@ void oppigodot_resize(double width, double height, double scale);
 bool oppigodot_start(const OppiGodotConfig *config);
 // One engine frame. Returns false once the game asked to quit.
 bool oppigodot_iterate(void);
+// Draws the current scene again without running the game (no process,
+// physics or input): a paused game shows itself at the size the last
+// oppigodot_resize gave, not its old frame stretched. Only while the host
+// may draw (the app in the foreground).
+void oppigodot_redraw(void);
 void oppigodot_stop(void);
 bool oppigodot_is_running(void);
 void oppigodot_pause(void);

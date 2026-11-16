@@ -94,6 +94,8 @@ final class GodotEngineHost {
     @ObservationIgnored private var startedAt: CFTimeInterval?
     @ObservationIgnored private var frameTimes = GodotFrameTimes()
     @ObservationIgnored private var engineSize: (CGSize, CGFloat)?
+    /// The engine took a new size while paused and has not drawn at it.
+    @ObservationIgnored private var frameIsStale = false
 
     @ObservationIgnored private(set) lazy var surface: GodotSurfaceView = {
         let surface = GodotSurfaceView()
@@ -323,6 +325,22 @@ final class GodotEngineHost {
     private func resize(_ size: CGSize, scale: CGFloat) {
         engineSize = (size, scale)
         runtime?.resize(to: size, scale: scale)
+        if case .running = engine, !pauseReasons.isEmpty { frameIsStale = true }
+        redrawIfStale()
+    }
+
+    /// A paused game draws no frame, so its last one would show stretched
+    /// to a new size (a letterboxed game's bars too): once it is in sight it
+    /// draws once at its size, its time standing still. Hidden or in the
+    /// background it waits until it shows.
+    private func redrawIfStale() {
+        guard frameIsStale, case .running = engine, let runtime else { return }
+        if pauseReasons.isEmpty {
+            frameIsStale = false
+        } else if pauseReasons.isDisjoint(with: [.hidden, .background]) {
+            frameIsStale = false
+            runtime.redraw()
+        }
     }
 
     // MARK: Frames
@@ -330,6 +348,7 @@ final class GodotEngineHost {
     private func setPaused(_ reason: GodotPauseReason, _ paused: Bool) {
         let before = pauseReasons
         if paused { pauseReasons.insert(reason) } else { pauseReasons.remove(reason) }
+        redrawIfStale()
         guard pauseReasons.isEmpty != before.isEmpty else { return }
         applyPause()
     }
@@ -394,6 +413,7 @@ final class GodotEngineHost {
         surface.input.cancelAll()
         runtime.stop()
         loaded = nil
+        frameIsStale = false
         frameTimes = GodotFrameTimes()
         GodotPackCache.unpinAll()
     }

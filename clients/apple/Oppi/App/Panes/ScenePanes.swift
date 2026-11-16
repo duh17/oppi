@@ -34,7 +34,12 @@ protocol PaneChatScrollReporting: AnyObject {
 final class ScenePanes {
     /// The tree. The routed leaf's stack here is a placeholder; `layout(…)`
     /// fills it from the shell's routes.
-    private(set) var tree: PaneLayout
+    private(set) var tree: PaneLayout {
+        didSet {
+            // Any other change of the zoom ends full screen.
+            if let fullScreen, cellLayout.zoomed != fullScreen.cell { self.fullScreen = nil }
+        }
+    }
     /// The routed leaf: the shell's stack.
     private(set) var routedLeafID: PaneID
     /// The share of the width the next companion opens at: the last one a
@@ -523,6 +528,37 @@ final class ScenePanes {
     /// The cell that fills the window by the person's choice, if any.
     var zoomedCell: PaneID? { cellLayout.zoomed }
 
+    /// A cell playing full screen: the tree's zoom of it, with the window's
+    /// chrome put away (the status bar, home indicator, sidebar, the cell's
+    /// bar and grip). Not saved; any other change of the zoom ends it.
+    private var fullScreen: (cell: PaneID, zoomedBefore: PaneID?, focusBefore: PaneID)?
+
+    /// The cell playing full screen now.
+    var fullScreenCell: PaneID? { fullScreen?.cell }
+
+    /// Zooms `id` full screen. False when it cannot zoom (it is the only cell).
+    @discardableResult
+    func enterFullScreen(_ id: PaneID) -> Bool {
+        let before = cellLayout
+        guard changeCells({ try $0.zoom(id) }), cellLayout.zoomed == id else { return false }
+        fullScreen = (id, before.zoomed, before.focus)
+        return true
+    }
+
+    /// Ends full screen: the zoom and focus go back to what they were, so the
+    /// split shows exactly as it did.
+    func exitFullScreen() {
+        guard let fullScreen else { return }
+        self.fullScreen = nil
+        changeCells { cells in
+            var restored = try cells.zoom(fullScreen.zoomedBefore)
+            if restored.leaf(fullScreen.focusBefore) != nil, fullScreen.zoomedBefore == nil || fullScreen.zoomedBefore == fullScreen.focusBefore {
+                restored = try restored.focusing(fullScreen.focusBefore)
+            }
+            return restored
+        }
+    }
+
     /// Whether the routed stack about to show is the person's navigation,
     /// not the stack a relaunch restored. The first change away from the
     /// restored stack ends the restore's exemption.
@@ -829,6 +865,8 @@ final class ScenePanes {
         var layout = layout(navigation: navigation, rootServerId: rootServerId)
         // A zoom the window's width forced is redrawn from the width.
         if companionZoomIsFit, layout.zoomed == companionID { layout.zoomed = nil }
+        // Full screen is not restored: the split comes back as it was.
+        if let fullScreen, layout.zoomed == fullScreen.cell { layout.zoomed = fullScreen.zoomedBefore }
         layout.root = layout.root.mapLeaves { leaf in
             var leaf = leaf
             leaf.stack = leaf.stack.map { entry in

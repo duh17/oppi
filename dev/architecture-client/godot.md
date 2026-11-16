@@ -8,6 +8,7 @@ The Godot pane plays a Godot project from a paired server beside the chat (exper
 - One game runs at a time; the engine stops and starts again in the process (patch 0005). `GodotPackPolicy` (OppiCore) decides how each build applies.
 - `GodotPanePhase.resolve` (OppiCore) is the one answer to what a pane shows.
 - One pane at a time holds the one `GodotSurfaceView`, which moves between panes and is never rebuilt. A publish never takes it from the pane being played.
+- Full screen: `ScenePanes.fullScreenCell`, a zoom.
 - Each Godot pane reads its project over HTTP and attaches as a player on the project's link (`GodotPlayerLink`, `protocol/godot.json`; the connection makes it, with the `StreamAuthRenewer` every stream uses): releases and controllers' commands arrive there, and the pane reports its state, the game's log and command results. Commands act on the running game from whichever pane receives them, and never move its view.
 - `GodotChatHandoff` hands a game to a chat as an unsent composer draft (`ChatViewController.stageInComposer`).
 - `GodotEngineRuntime` is the surface the host drives. `GodotRuntime` wraps `engine/godot`'s C API (`OppiGodot.h`) and compiles only when `canImport(OppiGodot)`.

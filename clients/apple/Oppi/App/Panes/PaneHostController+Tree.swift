@@ -398,7 +398,8 @@ extension PaneHostController {
         let cells = panes.cellLayout
         let order = cells.leaves.map(\.id)
         let zoomed = cells.zoomed
-        let hasPanes = order.count > 1
+        // Full screen puts the grips and the chip away with their strip.
+        let hasPanes = order.count > 1 && panes.fullScreenCell == nil
         var shown: Set<PaneID> = []
         for id in order {
             reserveGripStrip(inCell: id, height: hasPanes ? PaneStripSlot.height : 0)
@@ -540,7 +541,7 @@ extension PaneHostController {
     /// The chip sits in the shown pane's strip under its bar, as a grip does.
     private func layoutChip(_ cells: PaneLayout, _ presentation: PanePresentation) {
         let order = cells.leaves.map(\.id)
-        guard showsChip(cells), let index = order.firstIndex(of: cells.focus),
+        guard showsChip(cells), panes.fullScreenCell == nil, let index = order.firstIndex(of: cells.focus),
               var frame = presentation.frames[cells.focus] else {
             chip.isHidden = true
             return
@@ -838,6 +839,27 @@ extension PaneHostController {
     /// Zooms `id` to the whole window; nil restores every pane.
     func zoom(_ id: PaneID?) {
         panes.zoom(id)
+        relayoutCells()
+        updateVisibility()
+        announceLayoutChange()
+    }
+
+    /// Plays `id` full screen: its zoom, with no grip or chip, while the
+    /// window puts its own chrome away (`ScenePanes.fullScreenCell`). False
+    /// when it cannot zoom.
+    @discardableResult
+    func enterFullScreen(_ id: PaneID) -> Bool {
+        guard panes.enterFullScreen(id) else { return false }
+        relayoutCells()
+        updateVisibility()
+        announceLayoutChange()
+        return true
+    }
+
+    /// Back to the panes exactly as they were before full screen.
+    func exitFullScreen() {
+        guard panes.fullScreenCell != nil else { return }
+        panes.exitFullScreen()
         relayoutCells()
         updateVisibility()
         announceLayoutChange()

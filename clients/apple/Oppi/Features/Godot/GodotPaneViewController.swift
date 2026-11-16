@@ -26,7 +26,7 @@ import UIKit
 ///   as the browser pane's page does. A heat notice takes its own row
 ///   between the bar and the game (`GodotNoticeBanner`); a paused game
 ///   dims under a Play button (`GodotPauseCover`).
-final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVisibilityObserving, PaneLiveResizing {
+final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVisibilityObserving, PaneLiveResizing, NavigationBarHiding {
     let gameSlot: GodotSlot
     let surfaceSlot = UIView()
 
@@ -73,6 +73,23 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
     private lazy var snapshotItem = barItem("camera.viewfinder", String(localized: "Snapshot to Chat"), "godot.snapshot") {
         $0.handOffToChat(error: nil)
     }
+    private lazy var fullScreenItem = barItem(
+        "arrow.up.left.and.arrow.down.right", String(localized: "Play Full Screen"), "godot.fullScreen"
+    ) { $0.playFullScreen() }
+    /// Full screen's one control over the game: back to the panes.
+    private lazy var exitFullScreenButton: UIButton = {
+        var config = UIButton.Configuration.glass()
+        config.image = UIImage(systemName: "arrow.down.right.and.arrow.up.left")
+        config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(textStyle: .footnote, scale: .medium)
+        config.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10)
+        let button = UIButton(configuration: config, primaryAction: UIAction { [weak self] _ in self?.exitFullScreen() })
+        button.accessibilityLabel = String(localized: "Exit Full Screen")
+        button.accessibilityIdentifier = "godot.exitFullScreen"
+        button.isHidden = true
+        return button
+    }()
+    /// Whether this pane plays full screen, as last drawn.
+    private var drawnFullScreen = false
 
     init(serverId: String, project: String, restored: Bool, root: AppRootEnvironment?) {
         gameSlot = GodotSlot(serverId: serverId, project: project)
@@ -83,8 +100,9 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
         super.init(nibName: nil, bundle: nil)
         title = project
         navigationItem.largeTitleDisplayMode = .never
-        // Rightmost first: Snapshot, Reload, Mute, Play from the leading side.
-        navigationItem.rightBarButtonItems = [playItem, muteItem, reloadItem, snapshotItem]
+        // Rightmost first: Snapshot, Reload, Mute, Play from the leading
+        // side, and Play Full Screen at the trailing edge.
+        navigationItem.rightBarButtonItems = [fullScreenItem, playItem, muteItem, reloadItem, snapshotItem]
     }
 
     @available(*, unavailable)
@@ -101,7 +119,7 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
         super.viewDidLoad()
         view.accessibilityIdentifier = "godot.pane"
         view.backgroundColor = root?.themeStore.backgroundColor ?? .systemBackground
-        for subview in [surfaceSlot, lastFrameView, lastFrameMaterial, pauseCover, stateView, errorOverlay, notice] as [UIView] {
+        for subview in [surfaceSlot, lastFrameView, lastFrameMaterial, pauseCover, stateView, errorOverlay, notice, exitFullScreenButton] as [UIView] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(subview)
         }
@@ -146,6 +164,9 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
             errorOverlay.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -8),
             errorOverlay.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -8),
             errorOverlay.heightAnchor.constraint(lessThanOrEqualTo: surfaceSlot.heightAnchor, multiplier: 0.4),
+            // Clear of the screen's rounded corner.
+            exitFullScreenButton.topAnchor.constraint(equalTo: guide.topAnchor, constant: 16),
+            exitFullScreenButton.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -16),
         ] + fill(lastFrameView) + fill(lastFrameMaterial) + fill(pauseCover))
         follow()
     }
@@ -162,6 +183,7 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
         view.accessibilityValue = holds ? buildRelease.map { "release \($0.seq)" } : nil
         updateState(phase)
         updateBar(phase)
+        updateFullScreen(phase, holds: holds)
         let frozen = phase == .elsewhere && lastFrameView.image != nil
         lastFrameView.isHidden = !frozen
         lastFrameMaterial.isHidden = !frozen
@@ -585,6 +607,46 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
         lastFrameView.image = lastFrame
         view.setNeedsUpdateProperties()
     }
+
+    // MARK: Full screen
+
+    /// The pane host and this pane's cell in it.
+    private var paneCell: (host: PaneHostController, cell: PaneID)? {
+        guard let paneHost = PaneHostController.containing(self), let cell = paneHost.cell(holding: self) else { return nil }
+        return (paneHost, cell)
+    }
+
+    /// Whether this pane plays full screen now (`ScenePanes.fullScreenCell`).
+    /// Play Full Screen: the pane's zoom, with the window's chrome and this
+    /// bar put away, and the game's view resizing to the whole window.
+    private func playFullScreen() {
+        guard let paneCell else { return }
+        paneCell.host.enterFullScreen(paneCell.cell)
+        view.setNeedsUpdateProperties()
+    }
+
+    private func exitFullScreen() {
+        PaneHostController.containing(self)?.exitFullScreen()
+        view.setNeedsUpdateProperties()
+    }
+
+    /// Full screen shows the game alone, with one small way back (keys, Esc included, stay the game's);
+    /// Play Full Screen offers it while the game plays here in a pane that
+    /// can fill the window (a split pane beside another).
+    private func updateFullScreen(_ phase: GodotPanePhase, holds: Bool) {
+        let paneCell = paneCell
+        let fullScreen = paneCell.map { $0.host.panes.fullScreenCell == $0.cell } ?? false
+        let canFill = paneCell.map { $0.host.splitLeaves[$0.cell] != nil && $0.host.panes.cellLayout.leaves.count > 1 } ?? false
+        fullScreenItem.isHidden = fullScreen || !canFill || !holds || !(phase == .running || phase == .paused)
+        exitFullScreenButton.isHidden = !fullScreen
+        view.bringSubviewToFront(exitFullScreenButton)
+        guard fullScreen != drawnFullScreen else { return }
+        drawnFullScreen = fullScreen
+        navigationController?.updateNavigationBar(for: self, animated: false)
+    }
+
+    /// Full screen puts the pane's bar away.
+    var hidesNavigationBar: Bool { drawnFullScreen }
 
     // MARK: Pane
 

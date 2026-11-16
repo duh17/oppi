@@ -106,6 +106,66 @@ final class GodotPaneUITests: XCTestCase, PreviewUITestCase {
         capture("running-third")
     }
 
+    /// The game fills its pane at several split sizes and in both
+    /// orientations, plays full screen from its bar with the window's chrome
+    /// put away, and its exit control brings the split back as it was.
+    func testTheGameFillsItsPaneAndPlaysFullScreen() throws {
+        try openChat(orientation: .landscapeLeft)
+        try open(tideRunner)
+        let surface = app.descendants(matching: .any)["godot.surface"]
+        let pane = app.descendants(matching: .any)["godot.pane"]
+        let composer = app.descendants(matching: .any)["chat.input"]
+        let window = app.windows.firstMatch
+        func same(_ a: CGRect, _ b: CGRect) -> Bool {
+            abs(a.minX - b.minX) < 1 && abs(a.minY - b.minY) < 1 && abs(a.width - b.width) < 1 && abs(a.height - b.height) < 1
+        }
+        func fillsPane() -> Bool {
+            abs(surface.frame.minX - pane.frame.minX) < 1 && abs(surface.frame.maxX - pane.frame.maxX) < 1
+                && abs(surface.frame.maxY - pane.frame.maxY) < 1 && surface.frame.minY > pane.frame.minY
+        }
+        hold(for: 1.5)
+        XCTAssertTrue(fillsPane(), "Half: the game fills its pane (\(surface.frame) in \(pane.frame))")
+        capture("fit-landscape-half")
+
+        let divider = app.descendants(matching: .any)["pane.divider.1"]
+        XCTAssertTrue(divider.waitUntilExists(timeout: 5), "A divider sits between the chat and the game")
+        for (name, x) in [("wide", 0.36), ("narrow", 0.64)] {
+            let before = surface.frame.width
+            divider.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+                .press(forDuration: 0.1, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: x, dy: 0.5)))
+            XCTAssertTrue(waitFor(abs(surface.frame.width - before) > 50), "The divider resized the game (\(name))")
+            hold(for: 1.5)
+            XCTAssertTrue(fillsPane(), "\(name): the game fills its pane (\(surface.frame) in \(pane.frame))")
+            capture("fit-landscape-\(name)")
+        }
+
+        XCUIDevice.shared.orientation = .portrait
+        hold(for: 2)
+        XCTAssertTrue(fillsPane(), "Portrait: the game fills its pane (\(surface.frame) in \(pane.frame))")
+        capture("fit-portrait")
+
+        for orientation in [UIDeviceOrientation.landscapeLeft, .portrait] {
+            XCUIDevice.shared.orientation = orientation
+            hold(for: 2)
+            let name = orientation == .portrait ? "portrait" : "landscape"
+            let split = surface.frame
+            let fullScreen = app.buttons["godot.fullScreen"]
+            XCTAssertTrue(fullScreen.waitUntilExists(timeout: 5), "The pane's bar offers Play Full Screen")
+            fullScreen.tap()
+            XCTAssertTrue(waitFor(same(surface.frame, window.frame)), "\(name): the game takes the window (\(surface.frame))")
+            XCTAssertFalse(app.buttons["godot.play"].exists, "The pane's bar is put away")
+            XCTAssertFalse(composer.isHittable, "The chat is behind the game")
+            XCTAssertEqual(pane.value as? String, "release 1")
+            hold(for: 1.5)
+            capture("fullscreen-\(name)")
+            app.buttons["godot.exitFullScreen"].tap()
+            XCTAssertTrue(waitFor(same(surface.frame, split)), "\(name): the split is back (\(surface.frame), was \(split))")
+            XCTAssertTrue(app.buttons["godot.play"].waitUntilExists(timeout: 5), "The bar is back")
+            hold(for: 1.5)
+            capture("fullscreen-\(name)-exited")
+        }
+    }
+
     /// A project with no exported pack says so.
     func testAProjectWithNoBuildSaysSo() throws {
         try openChat(orientation: .landscapeLeft)

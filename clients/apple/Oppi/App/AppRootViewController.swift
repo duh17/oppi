@@ -61,6 +61,11 @@ final class AppRootViewController: UIViewController {
         navigation.showQuickSession ? nil : content
     }
 
+    /// The content decides whether the status bar and home indicator hide (a
+    /// pane playing full screen in the shell).
+    override var childForStatusBarHidden: UIViewController? { childForStatusBarStyle }
+    override var childForHomeIndicatorAutoHidden: UIViewController? { childForStatusBarStyle }
+
     override func viewDidLoad() {
         super.viewDidLoad()
 #if DEBUG

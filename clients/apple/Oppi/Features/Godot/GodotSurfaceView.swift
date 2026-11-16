@@ -53,6 +53,9 @@ final class GodotSurfaceView: UIView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
+        // A hold belongs to a resize in the window the view was in; its
+        // settle skips a pane out of the window, so it ends here.
+        releaseHold()
         settleIfChanged()
         claimKeyboardIfWanted()
         onWindowChange?()
@@ -94,10 +97,21 @@ final class GodotSurfaceView: UIView {
     }
 
     func settleSize() {
-        guard heldSize != nil else { return }
-        heldSize = nil
+        guard releaseHold() else { return }
         setNeedsLayout()
         layoutIfNeeded()
+    }
+
+    /// Drops a hold and its stretch; false when nothing was held.
+    @discardableResult
+    private func releaseHold() -> Bool {
+        guard heldSize != nil else { return false }
+        heldSize = nil
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.sublayerTransform = CATransform3DIdentity
+        CATransaction.commit()
+        return true
     }
 
     /// The engine's layer sits at the top left at the held size; this maps

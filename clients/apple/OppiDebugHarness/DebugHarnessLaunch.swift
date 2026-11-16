@@ -167,6 +167,10 @@ final class HarnessRootViewController: UIViewController {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    /// The content decides, as under `AppRootViewController`.
+    override var childForStatusBarHidden: UIViewController? { content }
+    override var childForHomeIndicatorAutoHidden: UIViewController? { content }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         PreviewHost.fill(self, with: content)

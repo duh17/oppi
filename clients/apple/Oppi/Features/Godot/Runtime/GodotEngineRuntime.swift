@@ -44,6 +44,9 @@ protocol GodotEngineRuntime: AnyObject {
     func stop()
     /// One frame; false once the game asked to quit.
     func iterate() -> Bool
+    /// Draws the current scene again without running the game: a paused
+    /// game at a new size. Only while the app may draw.
+    func redraw()
     func pause()
     func resume()
     func focus(_ focused: Bool)

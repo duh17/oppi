@@ -63,6 +63,12 @@ final class WorkspaceShellController: UIViewController {
     /// The lock cover while it covers the layout, else the mounted layout.
     override var childForStatusBarStyle: UIViewController? { lockCover ?? layout }
 
+    /// A pane playing full screen (`ScenePanes.fullScreenCell`) hides the
+    /// status bar and the home indicator.
+    override var prefersStatusBarHidden: Bool { lockCover == nil && navigation.panes.fullScreenCell != nil }
+    override var prefersHomeIndicatorAutoHidden: Bool { prefersStatusBarHidden }
+    private var drawnFullScreen = false
+
     override func viewDidLoad() {
         super.viewDidLoad()
         registerForTraitChanges([UITraitHorizontalSizeClass.self, UITraitVerticalSizeClass.self]) { (shell: Self, _: UITraitCollection) in
@@ -123,6 +129,12 @@ final class WorkspaceShellController: UIViewController {
             applyPresentation(measured: true)
         }
         wasMediaOverlayActive = mediaOverlayActive
+        let fullScreen = navigation.panes.fullScreenCell != nil
+        if fullScreen != drawnFullScreen {
+            drawnFullScreen = fullScreen
+            setNeedsStatusBarAppearanceUpdate()
+            setNeedsUpdateOfHomeIndicatorAutoHidden()
+        }
 
         // A locked active server covers everything under it: lists, sidebar,
         // pushed pages, and settings that follow the active host. The layout
@@ -337,7 +349,9 @@ final class WorkspaceSplitController: UISplitViewController, UISplitViewControll
         overrideUserInterfaceStyle = root.themeStore.userInterfaceStyle
         view.backgroundColor = root.themeStore.backgroundColor
         area?.stack.setRoutes(navigation.splitDetailColumn.routes, rootPlacement: .splitDetailRoot)
-        applyColumnVisibility(navigation.splitColumnVisibility)
+        // A pane playing full screen takes the sidebar's room too; the
+        // sidebar comes back as the person left it.
+        applyColumnVisibility(navigation.panes.fullScreenCell != nil ? .detailOnly : navigation.splitColumnVisibility)
     }
 
     private func applyColumnVisibility(_ visibility: SplitColumnVisibility) {

@@ -322,6 +322,7 @@ private final class FakeGodotRuntime: GodotEngineRuntime {
         frames += 1
         return !quits
     }
+    func redraw() {}
     func pause() {}
     func resume() {}
     func focus(_ focused: Bool) {}

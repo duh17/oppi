@@ -58,6 +58,7 @@ final class GodotRuntime: GodotEngineRuntime {
 
     func stop() { oppigodot_stop() }
     func iterate() -> Bool { oppigodot_iterate() }
+    func redraw() { oppigodot_redraw() }
     func pause() { oppigodot_pause() }
     func resume() { oppigodot_resume() }
     func focus(_ focused: Bool) { oppigodot_focus(focused) }

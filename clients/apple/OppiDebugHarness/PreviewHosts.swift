@@ -100,6 +100,11 @@ class PreviewRootController: UIViewController {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    /// The content decides, as under `AppRootViewController` (a pane playing
+    /// full screen in the shell).
+    override var childForStatusBarHidden: UIViewController? { children.first }
+    override var childForHomeIndicatorAutoHidden: UIViewController? { children.first }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = themeStore.backgroundColor

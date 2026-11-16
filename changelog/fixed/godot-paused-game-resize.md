@@ -1,0 +1,1 @@
+- **Client:** A paused game in the Godot pane draws itself again at the new size when you drag a divider, rotate, or resize the window, without moving on, instead of showing its last frame stretched. A pane that leaves the window during a resize also comes back at its own size rather than stretched.

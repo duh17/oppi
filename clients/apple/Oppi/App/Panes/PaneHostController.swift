@@ -229,6 +229,8 @@ final class PaneHostController: UIViewController {
     }
 
     override var childForStatusBarStyle: UIViewController? { primary }
+    override var childForStatusBarHidden: UIViewController? { primary }
+    override var childForHomeIndicatorAutoHidden: UIViewController? { primary }
 
     /// True while the shell moves the host into another layout.
     private var isMovingBetweenLayouts = false
