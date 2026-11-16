@@ -9,10 +9,16 @@ import Observation
 /// new range cancels the one in flight, and an answer for a range no longer wanted is
 /// dropped. A failed refresh keeps what is shown.
 ///
-/// Nothing here retries a failed load on its own. A load starts when the screen appears,
-/// the person asks (pull, Retry, another week, Run Now, Pause), the connection gains its
-/// API client, or a minute passes while the server still owes a run: an occurrence that
-/// came due with no run yet, or a run whose dispatch has not finished.
+/// The last answer outlives the screen in the connection's `ScheduleCalendarCache`: a
+/// screen opened again draws it at once and asks again behind it, and a view switch (Day,
+/// Week, Month) draws what is loaded without asking unless the answer is older than
+/// `freshFor` or does not cover the view's range.
+///
+/// Nothing here retries a failed load on its own. A load starts when a view appears on an
+/// answer that is stale or missing, the person asks (pull, Retry, another week, Run Now,
+/// Pause), the connection gains its API client, or a minute passes while the server still
+/// owes a run: an occurrence that came due with no run yet, or a run whose dispatch has
+/// not finished.
 @MainActor
 @Observable
 final class ScheduleCalendarModel {
@@ -56,18 +62,33 @@ final class ScheduleCalendarModel {
     /// server's call: a phone running ahead must not poll for runs the server does not owe.
     @ObservationIgnored private var serverClockOffset: TimeInterval = 0
     @ObservationIgnored private var hadClient = false
+    /// When `response` landed, by this device's clock.
+    @ObservationIgnored private var fetchedAt: Date?
+    @ObservationIgnored private let cache: ScheduleCalendarCache
+
+    /// How long an answer serves a view that appears without asking the server again. The
+    /// minute tick still asks while the server owes a run.
+    static let freshFor: TimeInterval = 60
 
     init(
         calendar: Calendar = .autoupdatingCurrent,
         clock: @escaping @MainActor () -> Date = ScheduleCalendarModel.systemClock,
+        cache: ScheduleCalendarCache = ScheduleCalendarCache(),
         fetch: @escaping @MainActor (Date, Date) async throws -> ScheduleCalendarResponse
     ) {
         self.calendar = calendar
         self.clock = clock
+        self.cache = cache
         let start = clock()
         now = start
         selectedDay = start
         self.fetch = fetch
+        if let cached = cache.answer {
+            response = cached.response
+            loadedRange = cached.range
+            fetchedAt = cached.fetchedAt
+            serverClockOffset = cached.response.now.timeIntervalSince(cached.fetchedAt)
+        }
     }
 
     /// The device's clock, or under a screenshot preview the time it poses.
@@ -160,9 +181,12 @@ final class ScheduleCalendarModel {
             do {
                 let answer = try await fetch(range.start, range.end)
                 guard !Task.isCancelled, let self else { return }
+                let landed = clock()
                 response = answer
                 loadedRange = range
-                serverClockOffset = answer.now.timeIntervalSince(clock())
+                fetchedAt = landed
+                cache.answer = .init(range: range, response: answer, fetchedAt: landed)
+                serverClockOffset = answer.now.timeIntervalSince(landed)
                 isLoading = false
                 // By key, never by comparing clocks: a phone ahead of the server would
                 // keep a ghost row.
@@ -182,11 +206,16 @@ final class ScheduleCalendarModel {
         await loadTask?.value
     }
 
-    /// The screen came on: the clock is read and the range fetched, since runs and their
-    /// sessions moved on while it was away.
+    /// A view came on: the clock is read, and the range fetched when the answer is older than
+    /// `freshFor` (runs and their sessions moved on while it was away) or missing. A switch
+    /// between views of a range already loaded draws it as it is.
     func appear() {
         now = clock()
-        if !isLoading { reload() }
+        if let fetchedAt, now.timeIntervalSince(fetchedAt) < Self.freshFor {
+            loadIfNeeded()
+        } else if !isLoading {
+            reload()
+        }
     }
 
     /// Whether the connection has its API client, told on every pass of the container. Only
@@ -265,6 +294,20 @@ final class ScheduleCalendarModel {
               let to = calendar.date(byAdding: .day, value: 7, to: last) else { return nil }
         return DateInterval(start: from, end: to)
     }
+}
+
+/// The calendar's last answer for one connection: kept past the Schedules screen, so the next
+/// one draws it while its own load is out.
+@MainActor
+final class ScheduleCalendarCache {
+    struct Answer {
+        let range: DateInterval
+        let response: ScheduleCalendarResponse
+        /// When it landed, by this device's clock.
+        let fetchedAt: Date
+    }
+
+    var answer: Answer?
 }
 
 /// One timer for a calendar view on screen, on each minute boundary of the model's clock:

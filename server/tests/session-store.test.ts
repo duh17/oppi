@@ -482,6 +482,85 @@ describe("durable store sessions", () => {
   });
 });
 
+describe("child sessions", () => {
+  it("lists the sessions launched from a parent, follows a re-parented row, and survives a reopen", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-children-"));
+    let sqliteStore = new SessionSqliteStore(dataDir);
+
+    try {
+      const session = (id: string, parentSessionId?: string): Session => ({
+        id,
+        status: "stopped",
+        createdAt: 1,
+        lastActivity: 1,
+        messageCount: 0,
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+        ...(parentSessionId ? { launch: { parentSessionId, agentId: "reviewer" } } : {}),
+      });
+      sqliteStore.upsertSession(session("parent"));
+      sqliteStore.upsertSession(session("kid-a", "parent"));
+      sqliteStore.upsertSession(session("kid-b", "parent"));
+      sqliteStore.upsertSession(session("grandkid", "kid-a"));
+      sqliteStore.upsertSession(session("moved", "parent"));
+      sqliteStore.upsertSession(session("moved", "other"));
+
+      const children = (parent: string) =>
+        sqliteStore
+          .listChildSessions(parent)
+          .map((found) => found.id)
+          .sort();
+      expect(children("parent")).toEqual(["kid-a", "kid-b"]);
+      expect(children("kid-a")).toEqual(["grandkid"]);
+      expect(children("other")).toEqual(["moved"]);
+      expect(children("grandkid")).toEqual([]);
+      expect(sqliteStore.listChildSessions("parent")[0]?.launch?.agentId).toBe("reviewer");
+
+      sqliteStore.close();
+      sqliteStore = new SessionSqliteStore(dataDir);
+      expect(children("parent")).toEqual(["kid-a", "kid-b"]);
+    } finally {
+      sqliteStore.close();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("opens, writes, and lists children around a row whose launch JSON is malformed", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-children-corrupt-"));
+    let sqliteStore = new SessionSqliteStore(dataDir);
+    const session = (id: string, parentSessionId?: string): Session => ({
+      id,
+      status: "stopped",
+      createdAt: 1,
+      lastActivity: 1,
+      messageCount: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+      ...(parentSessionId ? { launch: { parentSessionId } } : {}),
+    });
+
+    try {
+      sqliteStore.upsertSession(session("broken", "parent"));
+      sqliteStore.close();
+      // A store from before the parent index, holding a broken launch record: the next open
+      // builds the index over it.
+      const raw = openDatabase(join(dataDir, "session-state.db"));
+      raw.exec("DROP INDEX session_state_sessions_launch_parent_idx");
+      raw
+        .prepare("UPDATE session_state_sessions SET launch_metadata_json = ? WHERE id = ?")
+        .run('{"parentSessionId":', "broken");
+      raw.close();
+
+      sqliteStore = new SessionSqliteStore(dataDir);
+      sqliteStore.upsertSession(session("kid", "parent"));
+      expect(sqliteStore.listChildSessions("parent").map((found) => found.id)).toEqual(["kid"]);
+    } finally {
+      sqliteStore.close();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("workspace session snapshots", () => {
   function baseSession(id: string, workspaceId: string, lastActivity: number): Session {
     return {

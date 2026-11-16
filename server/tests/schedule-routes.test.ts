@@ -114,7 +114,14 @@ describe("schedule routes", () => {
         if (index >= 0) sessions[index] = session;
         else sessions.push(session);
       }),
-      listSessions: vi.fn(() => sessions),
+      // Every stored session: no schedule route may read them all, or its cost grows with
+      // every session ever made.
+      listSessions: vi.fn(() => {
+        throw new Error("A schedule route read every stored session");
+      }),
+      listChildSessions: vi.fn((parentId: string) =>
+        sessions.filter((session) => session.launch?.parentSessionId === parentId),
+      ),
       findSessionByLaunchIdempotencyKey: vi.fn((key: string) =>
         sessions.find((session) => session.launch?.idempotencyKey === key),
       ),
@@ -609,6 +616,55 @@ describe("schedule routes", () => {
     expect(calendar.entries).toEqual(
       hours.map((at) => ({ scheduleId: schedule.id, slotKey: `every:${at}`, at })),
     );
+  });
+
+  it("joins a run's session and its children by parent, never reading every session", async () => {
+    const schedule = store.createSchedule(
+      {
+        name: "Night shift",
+        trigger: { type: "every", intervalMs: 3_600_000, timeZone: "UTC" },
+        action: { type: "new_session", workspaceId: workspace.id, prompt: "go" },
+      },
+      0,
+    );
+    const ranAt = 7_200_000;
+    store.createDueRun(schedule.id, `every:${ranAt}`, ranAt);
+    const [claimed] = store.claimReadyRuns({ now: ranAt, ownerId: "t", leaseMs: 60_000, limit: 1 });
+    if (!claimed) throw new Error("no run to claim");
+    await store.dispatchClaimedRun(
+      claimed.id,
+      {
+        launchNewSession: async () => ({ sessionId: "sess-night", promptDispatch: "delivered" }),
+        sendExistingSessionInput: async () => ({
+          sessionId: "sess-night",
+          promptDispatch: "delivered",
+        }),
+      },
+      { leaseOwner: "t", now: ranAt },
+    );
+    sessions.push(
+      makeSession({ id: "sess-night", cost: 2 }),
+      makeSession({ id: "kid", createdAt: ranAt + 1, launch: { parentSessionId: "sess-night" } }),
+      makeSession({ id: "grandkid", createdAt: ranAt + 2, launch: { parentSessionId: "kid" } }),
+      makeSession({ id: "stranger", launch: { parentSessionId: "elsewhere" } }),
+    );
+    const dispatch = createScheduleRoutes(ctx, helpers);
+
+    await dispatch({
+      method: "GET",
+      path: "/schedules/calendar",
+      url: new URL(`https://localhost/schedules/calendar?from=0&to=${ranAt + 1}`),
+      req: requestBody({}),
+      res: {} as ServerResponse,
+    });
+
+    expect(errors).toEqual([]);
+    const calendar = responses[0]?.data as {
+      entries: Array<{ run?: { session?: { id: string; descendants?: Array<{ id: string }> } } }>;
+    };
+    const session = calendar.entries.find((entry) => entry.run)?.run?.session;
+    expect(session?.id).toBe("sess-night");
+    expect(session?.descendants?.map((descendant) => descendant.id)).toEqual(["kid", "grandkid"]);
   });
 
   it("rejects malformed run history queries", async () => {

@@ -86,8 +86,12 @@ struct ScheduleCalendarModelTests {
         )
     }
 
-    private func model(_ server: Server, _ clock: TestClock) -> ScheduleCalendarModel {
-        ScheduleCalendarModel(calendar: Self.calendar, clock: { clock.now }, fetch: { from, to in
+    private func model(
+        _ server: Server,
+        _ clock: TestClock,
+        cache: ScheduleCalendarCache = ScheduleCalendarCache()
+    ) -> ScheduleCalendarModel {
+        ScheduleCalendarModel(calendar: Self.calendar, clock: { clock.now }, cache: cache, fetch: { from, to in
             try await server.fetch(from: from, to: to)
         })
     }
@@ -227,6 +231,67 @@ struct ScheduleCalendarModelTests {
         server.release()
         await pull.value
         #expect(pulled && !model.isLoading && server.calls.count == 3)
+    }
+
+    @Test("switching Day, Week, and Month draws what is loaded; only a wider range or an old answer asks")
+    func viewSwitchesReuseTheAnswer() async {
+        let clock = TestClock(Self.morning)
+        let server = Server { Self.response($0, now: clock.now) }
+        let model = model(server, clock)
+        model.appear()
+        await settle(model)
+        #expect(server.calls.count == 1)
+
+        // Day to Week: the same weeks.
+        clock.now += 5
+        model.appear()
+        await settle(model)
+        #expect(server.calls.count == 1)
+
+        // To Month: its weeks are more than the Day's.
+        model.span = .month
+        model.appear()
+        await settle(model)
+        #expect(server.calls.count == 2)
+
+        // Back to the Day: the month's answer holds its week.
+        model.span = .week
+        model.appear()
+        await settle(model)
+        #expect(server.calls.count == 2)
+        #expect(model.isSelectedDayLoaded)
+
+        // A view that appears on an answer older than a minute asks again.
+        clock.now += ScheduleCalendarModel.freshFor
+        model.appear()
+        await settle(model)
+        #expect(server.calls.count == 3)
+    }
+
+    @Test("a screen opened again draws the connection's last answer while it asks, and keeps it if that fails")
+    func reopenedScreenDrawsTheCachedAnswer() async {
+        let clock = TestClock(Self.morning)
+        let server = Server { Self.response($0, now: clock.now, entries: [Self.nineOClock()]) }
+        let cache = ScheduleCalendarCache()
+        let first = model(server, clock, cache: cache)
+        first.appear()
+        await settle(first)
+
+        clock.now += 600
+        server.holds = true
+        let again = model(server, clock, cache: cache)
+        #expect(again.isSelectedDayLoaded, "The last answer is on screen before any load")
+        again.appear()
+        #expect(again.isLoading)
+        #expect(again.agenda(live: [:])?.items.count == 1, "Drawn while the refresh is out")
+
+        // The refresh times out: the answer stays, with no failure screen over it.
+        server.answer = { _ in throw Offline() }
+        await until { server.heldCount == 1 }
+        server.release()
+        await settle(again)
+        #expect(again.failure != nil)
+        #expect(again.isSelectedDayLoaded && again.agenda(live: [:])?.items.count == 1)
     }
 
     // MARK: - Another week

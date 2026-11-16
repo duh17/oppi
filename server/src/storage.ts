@@ -353,6 +353,11 @@ export class Storage {
     return this.withWorkspaceNames(this.sessionStore.listSessions());
   }
 
+  /** Sessions launched from `parentSessionId`; an indexed lookup. */
+  listChildSessions(parentSessionId: string): Session[] {
+    return this.withWorkspaceNames(this.sessionStore.listChildSessions(parentSessionId));
+  }
+
   listAllWorkspaceSessionSnapshots(workspaceId: string, worktreeId?: string): Session[] {
     return this.withWorkspaceNames(
       this.sessionStore.listAllWorkspaceSessionSnapshots(workspaceId, worktreeId),

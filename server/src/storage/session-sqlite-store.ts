@@ -106,6 +106,15 @@ export interface HeldInput {
   heldAt: number;
 }
 
+/**
+ * A session's parent, read from its launch JSON: what `listChildSessions` asks and its index
+ * holds, spelled once so the query always matches the index. `json_valid` first: an index on a
+ * bare `json_extract` fails every write of a row with malformed launch JSON, and fails building
+ * the index at startup when such a row is already stored.
+ */
+const LAUNCH_PARENT_EXPR = `(CASE WHEN json_valid(launch_metadata_json)
+  THEN json_extract(launch_metadata_json, '$.parentSessionId') END)`;
+
 /** Everything `buildSession` decodes. The launch CAS columns are read only by their queries. */
 const SESSION_COLUMNS = `
   id,
@@ -141,6 +150,7 @@ export class SessionSqliteStore {
   private stmtList!: SqliteStatement;
   private stmtFindDurable!: SqliteStatement;
   private stmtListDurableStore!: SqliteStatement;
+  private stmtListChildren!: SqliteStatement;
   private stmtDelete!: SqliteStatement;
 
   constructor(dataDir: string, dbPathOrOptions?: string | SessionSqliteStoreOptions) {
@@ -227,6 +237,15 @@ export class SessionSqliteStore {
    */
   listDurableStoreSessions(storeId: string): Session[] {
     const rows = this.stmtListDurableStore.all(storeId) as Array<{ id: string }>;
+    return rows.flatMap((row) => this.getSession(row.id) ?? []);
+  }
+
+  /**
+   * Sessions whose `launch.parentSessionId` is `parentSessionId`, by the parent index: a
+   * session's children without reading every stored session.
+   */
+  listChildSessions(parentSessionId: string): Session[] {
+    const rows = this.stmtListChildren.all(parentSessionId) as Array<{ id: string }>;
     return rows.flatMap((row) => this.getSession(row.id) ?? []);
   }
 
@@ -524,6 +543,9 @@ export class SessionSqliteStore {
         ON session_state_sessions (durable_store_id, durable_conversation_id)
         WHERE durable_store_id IS NOT NULL;
 
+      CREATE INDEX IF NOT EXISTS session_state_sessions_launch_parent_idx
+        ON session_state_sessions ${LAUNCH_PARENT_EXPR};
+
       CREATE TABLE IF NOT EXISTS session_restart_resume (
         session_id TEXT PRIMARY KEY,
         was_busy INTEGER NOT NULL,
@@ -612,6 +634,11 @@ export class SessionSqliteStore {
       SELECT id
       FROM session_state_sessions
       WHERE durable_store_id = ? AND durable_conversation_id IS NOT NULL
+    `);
+    this.stmtListChildren = this.db.prepare(`
+      SELECT id
+      FROM session_state_sessions
+      WHERE ${LAUNCH_PARENT_EXPR} = ?
     `);
     this.stmtDelete = this.db.prepare("DELETE FROM session_state_sessions WHERE id = ?");
   }

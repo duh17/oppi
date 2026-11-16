@@ -49,6 +49,7 @@ final class SchedulesViewController: UIViewController {
     private var calendar: CalendarViews?
     private var listError: String?
     private var calendarError: String?
+    private var hasAppeared = false
 
     /// One connection's calendar: one model shared by the Day, the Week, and the Month.
     private struct CalendarViews {
@@ -139,6 +140,11 @@ final class SchedulesViewController: UIViewController {
     override func viewIsAppearing(_ animated: Bool) {
         super.viewIsAppearing(animated)
         agents.load(connection.apiClient, refresh: true)
+        // Back on screen (from a pushed detail, another tab), the list reads again. A switch
+        // between the list and a calendar view is not an appearance of this screen, so it
+        // shows what is loaded.
+        if hasAppeared, mode == .list { list.setNeedsLoad() }
+        hasAppeared = true
     }
 
     override func viewDidLayoutSubviews() {
@@ -246,7 +252,7 @@ final class SchedulesViewController: UIViewController {
         let connection = connection
         let id = ObjectIdentifier(connection)
         if let calendar, calendar.connection == id { return calendar }
-        let model = ScheduleCalendarModel { from, to in
+        let model = ScheduleCalendarModel(cache: connection.scheduleCalendarCache) { from, to in
             guard let apiClient = connection.apiClient else {
                 throw LoadFailure.noConnection(connection.availability)
             }

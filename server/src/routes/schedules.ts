@@ -349,7 +349,7 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
           listSchedules: () => schedules.listSchedules(),
           listRunsCreatedBetween: (from, to) => schedules.listRunsCreatedBetween(from, to),
           getSession: (sessionId) => ctx.storage.getSession(sessionId),
-          listSessions: () => ctx.storage.listSessions(),
+          listChildSessions: (sessionId) => ctx.storage.listChildSessions(sessionId),
           agentDefaultModel: (agentId) =>
             agents.getAgent(agentId)?.definition.sessionDefaults?.model,
         },

@@ -371,6 +371,8 @@ final class ServerConnection {
     var extensionToast: String?
     /// Per-session extension `notify` chip. App-originated `extensionToast` stays a sheet.
     let extensionNotifyChipStore = ExtensionNotifyChipStore()
+    /// The Schedules calendar's last answer, so the screen opens on it while it asks again.
+    let scheduleCalendarCache = ScheduleCalendarCache()
     /// Observed per session, not as one value: see `SessionExtensionSurface`.
     let extensionSurfaces = ExtensionSurfaceStore()
     /// Server, workspace, and session locks: hide ask text, forget deleted sessions.

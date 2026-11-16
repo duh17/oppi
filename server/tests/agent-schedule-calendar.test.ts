@@ -57,7 +57,8 @@ describe("schedule calendar", () => {
       listSchedules: () => store.listSchedules(),
       listRunsCreatedBetween: (from, to) => store.listRunsCreatedBetween(from, to),
       getSession: (id) => sessions.get(id),
-      listSessions: () => [...sessions.values()],
+      listChildSessions: (id) =>
+        [...sessions.values()].filter((candidate) => candidate.launch?.parentSessionId === id),
       agentDefaultModel: (agentId) => (agentId === "agent-1" ? "anthropic/agent-model" : undefined),
     };
   });

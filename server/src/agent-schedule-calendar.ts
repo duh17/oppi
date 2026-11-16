@@ -106,8 +106,11 @@ export interface ScheduleCalendarSources {
   listSchedules(): AgentSchedule[];
   listRunsCreatedBetween(from: number, to: number): AgentScheduleRun[];
   getSession(sessionId: string): Session | undefined;
-  /** Every stored session: the calendar finds each run's descendants among them. */
-  listSessions(): Session[];
+  /**
+   * Sessions launched from `sessionId`, by an index. The calendar walks a run's descendants
+   * through it, so its cost follows the runs in range, never every stored session.
+   */
+  listChildSessions(sessionId: string): Session[];
   agentDefaultModel(agentId: string): string | undefined;
 }
 
@@ -141,7 +144,6 @@ export function buildScheduleCalendar(
   const named = new Map<string, ScheduleCalendarSchedule>();
   const entries: ScheduleCalendarEntry[] = [];
   const takenSlots = new Set<string>();
-  const descendants = descendantFinder(sources);
 
   for (const run of sources.listRunsCreatedBetween(from, to)) {
     const schedule = schedules.get(run.scheduleId);
@@ -152,7 +154,7 @@ export function buildScheduleCalendar(
       scheduleId: run.scheduleId,
       slotKey: run.slotKey,
       at: slotTime(run),
-      run: calendarRun(run, sources, descendants),
+      run: calendarRun(run, sources),
     });
   }
 
@@ -261,15 +263,11 @@ function calendarSchedule(
   };
 }
 
-function calendarRun(
-  run: AgentScheduleRun,
-  sources: ScheduleCalendarSources,
-  descendants: (sessionId: string) => Session[],
-): ScheduleCalendarRun {
+function calendarRun(run: AgentScheduleRun, sources: ScheduleCalendarSources): ScheduleCalendarRun {
   const summary = runSummary(run);
   const session = summary.sessionId ? sources.getSession(summary.sessionId) : undefined;
   const launched =
-    session && run.actionSnapshot.type === "new_session" ? descendants(session.id) : [];
+    session && run.actionSnapshot.type === "new_session" ? descendants(sources, session.id) : [];
   return {
     id: run.id,
     kind: run.kind,
@@ -287,34 +285,21 @@ function calendarRun(
  * `sessionId`'s descendants by `launch.parentSessionId`, oldest first. The walk does not enter a
  * session a schedule launched (`launch.schedule`): that session is another run's, and its row
  * counts it and its own descendants. Each session is listed once, so a parent cycle ends the walk.
- * The parent index is built on the first call, so a range without sessions reads none.
+ * One indexed child lookup per session in the tree.
  */
-function descendantFinder(sources: ScheduleCalendarSources): (sessionId: string) => Session[] {
-  let childrenByParent: Map<string, Session[]> | undefined;
-  return (sessionId) => {
-    if (!childrenByParent) {
-      childrenByParent = new Map();
-      for (const session of sources.listSessions()) {
-        const parentId = session.launch?.parentSessionId;
-        if (!parentId) continue;
-        const siblings = childrenByParent.get(parentId);
-        if (siblings) siblings.push(session);
-        else childrenByParent.set(parentId, [session]);
-      }
+function descendants(sources: ScheduleCalendarSources, sessionId: string): Session[] {
+  const found: Session[] = [];
+  const seen = new Set([sessionId]);
+  const queue = [sessionId];
+  for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+    for (const child of sources.listChildSessions(next)) {
+      if (child.launch?.schedule || seen.has(child.id)) continue;
+      seen.add(child.id);
+      found.push(child);
+      queue.push(child.id);
     }
-    const found: Session[] = [];
-    const seen = new Set([sessionId]);
-    const queue = [sessionId];
-    for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
-      for (const child of childrenByParent.get(next) ?? []) {
-        if (child.launch?.schedule || seen.has(child.id)) continue;
-        seen.add(child.id);
-        found.push(child);
-        queue.push(child.id);
-      }
-    }
-    return found.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
-  };
+  }
+  return found.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
 }
 
 function calendarSession(session: Session, descendants: Session[]): ScheduleCalendarSession {

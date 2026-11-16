@@ -136,16 +136,18 @@ final class ScheduleListViewController: ListScreenController<ScheduleListViewCon
 
     // MARK: - Load
 
-    /// Like the SwiftUI `.task` it replaces, a load each time it shows.
-    override var loadPolicy: LoadPolicy { .eachAppearance }
+    /// Once per Schedules screen: a switch back from Day, Week, or Month shows what is loaded.
+    /// The container asks again when the screen itself comes back (`setNeedsLoad`).
+    override var loadPolicy: LoadPolicy { .onceUntilSubjectChanges }
 
     /// The active server's connection: the base reloads the page by itself when it
     /// installs an API client again after a rebuild.
     override func loadConnection() -> ServerConnection? { root.windowConnectionOrStandIn }
 
     /// The active server's schedules, and the calendar's runs around now where the server
-    /// has one: the base runs it on every appearance, on pull to refresh, after a Retry,
-    /// and when the server or its client changes. Throws the reason the list's state row
+    /// has one: the base runs it on the first appearance (and the next after a failure), on
+    /// pull to refresh, after a Retry, when the container asks, and when the server or its
+    /// client changes. Throws the reason the list's state row
     /// shows; a calendar that fails to load leaves the cards without their runs.
     override func load() async throws {
         let apiClient = try requireAPIClient()
