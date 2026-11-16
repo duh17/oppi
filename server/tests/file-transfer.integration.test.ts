@@ -36,6 +36,10 @@ describe("file transfer through the running server", () => {
   let bigPath = "";
   const BIG_SIZE = 800 * 1024 * 1024;
   const MARK = randomBytes(1024 * 1024);
+  /** The 10k-entry folder's names, in the order a listing pages them. */
+  const MANY: string[] = [];
+  for (let i = 0; i < 10_000; i++) MANY.push(`file-${String(i).padStart(5, "0")}.txt`);
+  for (let i = 0; i < 50; i++) MANY.push(`folder-${String(i).padStart(2, "0")}`);
 
   beforeAll(async () => {
     dataDir = realpathSync(mkdtempSync(join(tmpdir(), "oppi-file-transfer-")));
@@ -61,6 +65,16 @@ describe("file transfer through the running server", () => {
     symlinkSync(outside, join(sandboxRoot, "escape-dir"));
     symlinkSync(join(outside, "secret.txt"), join(sandboxRoot, "escape.txt"));
 
+    // Made before the server starts: it shares this process, and seconds of synchronous
+    // writes while it runs outlast its keep-alive timeout, so the next request goes out on a
+    // pooled socket the server is closing ("socket hang up").
+    const many = join(hostRoot, "many");
+    mkdirSync(many);
+    for (const name of MANY) {
+      if (name.startsWith("folder-")) mkdirSync(join(many, name));
+      else writeFileSync(join(many, name), "x");
+    }
+
     const storage = new Storage(join(dataDir, "data"));
     token = storage.ensurePaired();
     storage.mutateConfig(() => ({ host: "127.0.0.1", port: 0, tls: { mode: "tailscale" } }));
@@ -78,7 +92,8 @@ describe("file transfer through the running server", () => {
     } finally {
       process.env.PATH = originalPath;
     }
-  });
+    // The 10k-entry folder takes seconds on a busy machine.
+  }, 60_000);
 
   afterAll(async () => {
     await server?.stop().catch(() => {});
@@ -293,16 +308,6 @@ describe("file transfer through the running server", () => {
       "pages a 10k-entry folder: every entry once, in name order",
       { timeout: 60_000 },
       async () => {
-        const folder = join(dataDir, "host-ws", "many");
-        mkdirSync(folder);
-        const expected: string[] = [];
-        for (let i = 0; i < 10_000; i++) expected.push(`file-${String(i).padStart(5, "0")}.txt`);
-        for (let i = 0; i < 50; i++) expected.push(`folder-${String(i).padStart(2, "0")}`);
-        for (const name of expected) {
-          if (name.startsWith("folder-")) mkdirSync(join(folder, name));
-          else writeFileSync(join(folder, name), "x");
-        }
-
         const names: string[] = [];
         const pageSizes: number[] = [];
         let after: string | null = null;
@@ -324,10 +329,10 @@ describe("file transfer through the running server", () => {
         } while (after !== null);
 
         expect(pageSizes).toEqual([...Array<number>(10).fill(1000), 50]);
-        expect(names).toEqual(expected);
+        expect(names).toEqual(MANY);
         // The cursor travels as an ordinary query value whatever the name holds.
         const odd = "a&b=c d#e";
-        writeFileSync(join(folder, odd), "");
+        writeFileSync(join(dataDir, "host-ws", "many", odd), "");
         const res = await get(
           `/workspaces/${hostWorkspace.id}/contents/many/?after=${encodeURIComponent("a")}`,
         );

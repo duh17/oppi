@@ -37,6 +37,13 @@ beforeEach(async () => {
     asr: { sttEndpoint: "http://127.0.0.1:9/unused" },
   }));
   storage.ensurePaired();
+  // The game a link test attaches to. It exists before the server starts: game discovery
+  // walks the workspaces once, a second after start, and a list answers from that walk for
+  // 30 s, so a workspace created later is missing from it when the test is slow.
+  const game = join(makeTempDir("oppi-renew-game-"), "tide");
+  mkdirSync(game, { recursive: true });
+  writeFileSync(join(game, "project.godot"), 'config/name="Tide"\n');
+  storage.createWorkspace({ name: "Games", hostMount: dirname(game) });
   server = new Server(storage);
   await server.start();
   baseUrl = `https://127.0.0.1:${server.port}`;
@@ -187,12 +194,8 @@ async function sessionStreamPath(device: Device): Promise<string> {
   return `/workspaces/${workspace.id}/sessions/${created.session.id}/stream`;
 }
 
-/** A follower link to a game the server found in a workspace. */
+/** A follower link to the game the server found in the Games workspace. */
 async function gameLinkPath(device: Device): Promise<string> {
-  const folder = join(makeTempDir("oppi-renew-game-"), "tide");
-  mkdirSync(folder, { recursive: true });
-  writeFileSync(join(folder, "project.godot"), 'config/name="Tide"\n');
-  storage.createWorkspace({ name: "Games", hostMount: dirname(folder) });
   const list = await new Promise<{ projects: Array<{ id: string }> }>((resolve, reject) => {
     const req = httpsRequest(
       `${baseUrl}/godot`,
