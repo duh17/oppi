@@ -28,7 +28,14 @@ extension ComposerBarController {
             colors: colors
         )
 
-        sendProgressView.apply(text: content.sendProgressText, isSending: content.isSending, colors: colors)
+        let activeUploads = content.attachmentUploads.flatMap { $0.batch.isActive ? $0.batch : nil }
+        sendProgressView.apply(
+            text: content.sendProgressText,
+            isSending: content.isSending,
+            colors: colors,
+            fraction: activeUploads?.fraction,
+            isPaused: activeUploads?.isPaused == true
+        )
         if let failure = ComposerShared.captureFailure(content.voiceInputManager, owner: .inlineComposer) {
             failureView.apply(message: failure.message, colors: colors)
             failureView.setHiddenIfChanged(false)
@@ -39,7 +46,8 @@ extension ComposerBarController {
         attachmentStrip.apply(
             attachments: content.pendingAttachments,
             colors: colors,
-            allowsMutation: !content.isSending
+            allowsMutation: !content.isSending,
+            uploads: content.attachmentUploads
         )
         attachmentStripWrapper.setHiddenIfChanged(content.pendingAttachments.isEmpty)
         filePillStrip.apply(pointers: content.pendingRepoPointers, colors: colors)

@@ -335,10 +335,16 @@ extension ChatViewController: ChatComposerSource {
         let reviewing = model.activeReviewCommentRequest != nil
         let ask = composerAskRequest
         let pickers = ComposerAction.Chrome.pickers(for: traitCollection)
+        let attachments = composerVisibleAttachments
+        let uploads = model.attachmentUploads.map { batch in
+            var batch = batch
+            batch.keep(only: Set(attachments.map(\.id)))
+            return batch
+        }
         return ComposerBarContent(
             text: composerDraftController.text,
             textBeforeRecording: model.composerTextBeforeRecording,
-            pendingAttachments: composerVisibleAttachments,
+            pendingAttachments: attachments,
             pendingRepoPointers: composerDraftController.repoPointers,
             isBusy: sessionManager.isBusy,
             busyStreamingBehavior: model.busyStreamingBehavior,
@@ -346,7 +352,7 @@ extension ChatViewController: ChatComposerSource {
             pendingReviewCommentCount: reviewing ? 0 : reviewComments.stagedCount,
             placeholderOverride: reviewing ? "Comment…" : nil,
             allowsEmptySubmit: false,
-            sendProgressText: model.attachmentPreparationText ?? actionHandler.sendProgressText,
+            sendProgressText: uploads?.statusLine ?? actionHandler.sendProgressText,
             isStopping: isStopping,
             // `ChatComposerOwner` drops the mic while a call holds it (`ComposerShared.dictation`).
             voiceInputManager: voiceInputManager,
@@ -376,7 +382,14 @@ extension ChatViewController: ChatComposerSource {
             focusRequestID: 0,
             keyboardLanguage: nil,
             keyStripHeight: 0,
-            mediaImportEpoch: 0
+            mediaImportEpoch: 0,
+            attachmentUploads: uploads.map { batch in
+                ComposerAttachmentUploads(
+                    batch: batch,
+                    onCancel: { [weak self] in self?.cancelAttachmentUploads() },
+                    onRetry: { [weak self] in self?.retryAttachmentUploads() }
+                )
+            }
         )
     }
 

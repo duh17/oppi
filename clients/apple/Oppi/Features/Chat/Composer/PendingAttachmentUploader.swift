@@ -14,34 +14,9 @@ struct AttachmentUploadProgress: Equatable, Sendable {
 
     let attachmentId: String
     let name: String
-    /// 1-based position in this send's local uploads, of `count`.
-    let index: Int
-    let count: Int
     var sentBytes: Int64
     var totalBytes: Int64
     var phase: Phase
-
-    var fraction: Double {
-        guard totalBytes > 0 else { return phase == .uploaded ? 1 : 0 }
-        return min(1, Double(sentBytes) / Double(totalBytes))
-    }
-
-    /// "Uploading 1 of 4 · clip.mp4 · 412 MB of 860 MB (48%)"
-    var statusText: String {
-        let position = count > 1 ? "\(index) of \(count) · " : ""
-        let sent = ByteCountFormatter.string(fromByteCount: sentBytes, countStyle: .file)
-        let total = ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file)
-        switch phase {
-        case .uploading:
-            return "Uploading \(position)\(name) · \(sent) of \(total) (\(Int(fraction * 100))%)"
-        case .retrying(let attempt, let maxAttempts, let reason):
-            return "Retrying \(position)\(name) (try \(attempt) of \(maxAttempts)): \(reason)"
-        case .uploaded:
-            return "Uploaded \(position)\(name)"
-        case .failed(let reason):
-            return "Couldn't upload \(name): \(reason)"
-        }
-    }
 }
 
 /// An upload that failed for good, after its retries, with the reason in words.
@@ -73,7 +48,8 @@ enum PendingAttachmentUploader {
         api: @escaping @MainActor () -> APIClient?,
         scope: SessionRouteScope,
         sessionId: String,
-        onProgress: (@MainActor (AttachmentUploadProgress) -> Void)? = nil
+        onProgress: (@MainActor (AttachmentUploadProgress) -> Void)? = nil,
+        onUploaded: (@MainActor (_ attachmentId: String, ChatAttachmentRef) -> Void)? = nil
     ) async throws -> [ChatAttachmentRef] {
         let localAttachments = sourceAttachments.filter {
             $0.source == .image || $0.source == .localFile
@@ -102,8 +78,6 @@ enum PendingAttachmentUploader {
             var progress = AttachmentUploadProgress(
                 attachmentId: pending.id,
                 name: body.name,
-                index: uploadIndex,
-                count: localAttachments.count,
                 sentBytes: 0,
                 totalBytes: Int64(body.sizeBytes),
                 phase: .uploading
@@ -120,6 +94,7 @@ enum PendingAttachmentUploader {
             progress.sentBytes = progress.totalBytes
             progress.phase = .uploaded
             onProgress?(progress)
+            onUploaded?(pending.id, attachment)
             uploaded.append(attachment)
         }
         return uploaded

@@ -73,6 +73,18 @@ struct ComposerBarContent {
     var keyboardLanguage: String?
     var keyStripHeight: CGFloat
     var mediaImportEpoch: UInt64
+    /// The send's uploads on its attachments; nil when no send uploaded (Quick
+    /// Session and the other composers send without it).
+    var attachmentUploads: ComposerAttachmentUploads? = nil
+}
+
+/// What the attachment strip and the batch line show of a send's uploads, and the
+/// actions on them: Cancel on a file in flight, Retry on a failed or cancelled one.
+@MainActor
+struct ComposerAttachmentUploads {
+    var batch: AttachmentUploadBatch
+    var onCancel: () -> Void
+    var onRetry: () -> Void
 }
 
 @MainActor

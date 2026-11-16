@@ -78,7 +78,7 @@ The iOS share extension accepts text, URLs, images, and files. Choose a workspac
 
 ## Files and photos
 
-Attach files from the Files picker, photos and videos from the library, or a camera capture. An attachment uploads with the session turn; canceling before send uploads nothing. Videos upload as files, not as model image input.
+Attach files from the Files picker, photos and videos from the library, or a camera capture. An attachment uploads with the session turn; canceling before send uploads nothing. Videos upload as files, not as model image input. While a send uploads, each attachment shows its progress and a line above the composer shows the whole send. Tap the X on an uploading file to stop the send; a failed or stopped file offers Retry and Remove, and the message stays in the composer until it is sent. There is no fixed size limit ([Attachment uploads](server-configuration.md#attachment-uploads)).
 
 Assistant output opens markdown, code, diffs, and other documents in full-screen viewers. See [Document viewers](document-viewers.md).
 

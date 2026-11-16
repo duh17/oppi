@@ -573,16 +573,55 @@ extension ChatViewController {
         guard let routeScope = focusedRouteScope else {
             throw TreeNavigationError.sessionNotReady
         }
+        // A file that finished in a send that then stopped is not sent again.
+        let uploadedRefs = model.uploadedAttachmentRefs
+        let attachments = sourceAttachments.map { pending in
+            uploadedRefs[pending.id].map { PendingAttachment.uploaded($0) } ?? pending
+        }
+        model.attachmentUploads = AttachmentUploadBatch(attachments.compactMap { pending in
+            guard pending.source == .image || pending.source == .localFile else { return nil }
+            return (pending.id, pending.displayName, Int64(pending.composerDraftMetadata.sizeBytes))
+        })
+        // Through the in-app Tailscale node an upload stops while Oppi is in the
+        // background; say so instead of showing a transfer that is not moving.
+        let pausesInBackground = !(connection.apiClient?.fileUploadsContinueInBackground ?? true)
+        let lifecycle = pausesInBackground ? observeUploadPauses() : []
+        defer { lifecycle.forEach(NotificationCenter.default.removeObserver) }
+
         // Each try takes the connection's current client: a retry after the route
         // changed (LAN to Tailscale) goes the new way.
         let connection = connection
         return try await PendingAttachmentUploader.upload(
-            sourceAttachments,
+            attachments,
             api: { connection.apiClient },
             scope: routeScope,
             sessionId: sessionId,
-            onProgress: { [weak self] in self?.model.attachmentPreparationText = $0.statusText }
+            onProgress: { [weak self] in self?.model.attachmentUploads?.apply($0) },
+            onUploaded: { [weak self] id, reference in self?.model.uploadedAttachmentRefs[id] = reference }
         )
+    }
+
+    private func observeUploadPauses() -> [NSObjectProtocol] {
+        let center = NotificationCenter.default
+        return [
+            center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.model.attachmentUploads?.isPaused = true }
+            },
+            center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.model.attachmentUploads?.isPaused = false }
+            },
+        ]
+    }
+
+    /// Stops the send's uploads; the draft keeps its text and attachments, and Send
+    /// picks up from the files that did not finish.
+    func cancelAttachmentUploads() {
+        model.uploadSendTask?.cancel()
+    }
+
+    /// Sends the draft again after an upload failed or was cancelled.
+    func retryAttachmentUploads() {
+        sendPrompt()
     }
 
     private func uploadPreparationErrorMessage(_ error: Error) -> String {
@@ -841,7 +880,7 @@ extension ChatViewController {
         let sessionManagerRef = sessionManager
         let scrollRef = scrollController
 
-        Task { @MainActor [weak self] in
+        model.uploadSendTask = Task { @MainActor [weak self] in
             guard let self else { return }
             let (outcome, nextState) = await Self.sendPrompt(
                 draftController: self.composerDraftController,
@@ -850,21 +889,27 @@ extension ChatViewController {
                 actionIsSending: self.actionHandler.isSending,
                 upload: { [weak self] sourceAttachments in
                     guard let self else { return [] }
-                    let pendingLocalAttachments = sourceAttachments.filter {
-                        $0.source == .image || $0.source == .localFile
-                    }
-                    self.model.attachmentPreparationText = pendingLocalAttachments.isEmpty ? nil : "Uploading attachments…"
                     return try await self.uploadPendingLocalAttachments(sourceAttachments)
                 }
             )
             self.model.isPreparingAttachments = nextState.isPreparingAttachments
-            self.model.attachmentPreparationText = nil
+            self.model.uploadSendTask = nil
             switch outcome {
             case .ignored:
                 return
             case .failed(let error):
-                self.reducer.process(.error(sessionId: self.sessionId, message: self.uploadPreparationErrorMessage(error)))
+                // The draft keeps its text and attachments; each attachment shows how far it got.
+                if error is CancellationError {
+                    self.model.attachmentUploads?.cancel()
+                } else {
+                    let message = self.uploadPreparationErrorMessage(error)
+                    self.model.attachmentUploads?.fail(message)
+                    self.reducer.process(.error(sessionId: self.sessionId, message: message))
+                }
             case .uploaded(let submission, let attachments, let sourceAttachments):
+                // Sent: the next message starts with no upload state.
+                self.model.attachmentUploads = nil
+                self.model.uploadedAttachmentRefs = [:]
                 let optimisticDisplayText = UserMessageAttachmentPresentation.makeDisplayText(
                     text: reviewText,
                     pendingAttachments: sourceAttachments,

@@ -40,7 +40,12 @@ final class ChatScreenModel {
     var composerTextBeforeRecording: String?
     var busyStreamingBehavior: StreamingBehavior = .steer
     var isPreparingAttachments = false
-    var attachmentPreparationText: String?
+    /// The last send's uploads, per attachment: progress while it uploads, and a
+    /// failed or cancelled file until the draft is sent or the file removed.
+    var attachmentUploads: AttachmentUploadBatch?
+    /// Files of a stopped send that did reach the server; the next send skips them.
+    @ObservationIgnored var uploadedAttachmentRefs: [String: ChatAttachmentRef] = [:]
+    @ObservationIgnored var uploadSendTask: Task<Void, Never>?
     var messageQueueError: String?
 
     /// The chat's one open panel (`showPanel`): beside the chat in its
