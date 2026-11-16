@@ -673,6 +673,108 @@ struct ChatSessionManagerTests {
         manager.cleanup()
     }
 
+    /// A frame over the socket's inbound limit fails it with EMSGSIZE. The server sends the same
+    /// frame (a conversation snapshot) to every new socket, so the chat must not reconnect on its
+    /// own: it stops and shows why, and an explicit send or reopen tries again.
+    @Test func oversizedFrameStopsReconnectingAndShowsError() async throws {
+        let sessionId = "oversized"
+        let sockets = ScriptedFocusedWebSocketFactory()
+        let connection = ServerConnection()
+        connection._focusedWebSocketFactoryForTesting = { request in sockets.makeTransport(for: request) }
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
+        let client = try #require(connection.wsClient)
+        client.setStreamURL(URL(string: "ws://127.0.0.1:7749/session/stream")!)
+        let frames = client.connect()
+
+        let manager = ChatSessionManager(sessionId: sessionId)
+        manager._streamEventsForTesting = { _ in
+            AsyncStream { continuation in
+                let relay = Task { @MainActor in
+                    for await frame in frames {
+                        continuation.yield(SessionStreamEvent(
+                            sessionId: frame.sessionId ?? sessionId,
+                            message: frame.message,
+                            meta: frame.meta
+                        ))
+                    }
+                    continuation.finish()
+                }
+                continuation.onTermination = { _ in relay.cancel() }
+            }
+        }
+        manager._loadHistoryForTesting = { _, _ in nil }
+        let sessionStore = connection.sessionStore
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, sessionStore: sessionStore)
+        }
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) { sockets.sockets.count == 1 })
+        let socket = try #require(sockets.sockets.first)
+        socket.yield(.string("""
+        {"type":"connected","session":{"id":"\(sessionId)","status":"ready",\
+        "createdAt":1800000000000,"lastActivity":1800000000000,"messageCount":0,\
+        "tokens":{"input":0,"output":0},"cost":0}}
+        """))
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) { manager.entryState == .streaming })
+        socket.fail(
+            NSError(domain: NSPOSIXErrorDomain, code: Int(EMSGSIZE)),
+            responseStatusCode: 101,
+            closeCode: .invalid
+        )
+        await connectTask.value
+
+        #expect(manager.entryState == .disconnected(reason: .fatalError))
+        #expect(manager.reducer.items.contains { item in
+            if case .error(_, let message) = item { return message == ChatSessionManager.oversizedMessageError }
+            return false
+        })
+        // Past the first reconnect backoff (500 ms, +25% jitter): nothing reopened.
+        try await Task.sleep(for: .milliseconds(900))
+        #expect(sockets.sockets.count == 1)
+        #expect(manager.connectionGeneration == 0)
+
+        manager.cleanup()
+    }
+
+    /// The chat learns the socket is gone only when its session stream ends. After an oversized
+    /// frame the socket does not reconnect by itself, so the connection must end that stream;
+    /// left open, the chat waited on a dead socket behind a stale timeline.
+    @Test func oversizedFrameEndsTheSessionStream() async throws {
+        let sessionId = "oversized-route"
+        let sockets = ScriptedFocusedWebSocketFactory()
+        let connection = ServerConnection()
+        connection._focusedWebSocketFactoryForTesting = { request in sockets.makeTransport(for: request) }
+        _ = await configureTestConnection(connection, credentials: makeTestCredentials())
+
+        let stream = try #require(await connection.streamSession(sessionId, workspaceId: "w1"))
+        let ended = Task { @MainActor in
+            for await _ in stream {}
+        }
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) { sockets.sockets.count == 1 })
+        let socket = try #require(sockets.sockets.first)
+        socket.yield(.string(#"{"type":"stream_connected","userName":"alex","serverDictationAvailable":false}"#))
+        socket.yield(.string("""
+        {"type":"connected","session":{"id":"\(sessionId)","workspaceId":"w1","status":"ready",\
+        "createdAt":1800000000000,"lastActivity":1800000000000,"messageCount":0,\
+        "tokens":{"input":0,"output":0},"cost":0}}
+        """))
+        socket.fail(
+            NSError(domain: NSPOSIXErrorDomain, code: Int(EMSGSIZE)),
+            responseStatusCode: 101,
+            closeCode: .invalid
+        )
+
+        let closed = await waitForMainActorCondition(timeout: .seconds(2)) {
+            connection.sessionEventContinuations[sessionId] == nil
+        }
+        #expect(closed)
+        if !closed { ended.cancel() }
+        // The chat's loop over the stream returns.
+        await ended.value
+        #expect(connection.wsClient?.closedForOversizedMessage == true)
+        #expect(sockets.sockets.count == 1)
+    }
+
     /// A stop that won the start this stream opened: the server sends the stopped row and closes
     /// 1008. The socket must not reopen (a reopen starts the session again) and the chat must not
     /// schedule its own reconnect.

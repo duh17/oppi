@@ -301,6 +301,8 @@ final class ServerConnection {
     /// Test seam: observe app-event stream start without opening a real socket.
     var _startAppEventStreamForTesting: ((URL) -> Void)?
     var _appEventWebSocketFactoryForTesting: ((URLRequest) -> PersistentWebSocketTransport)?
+    /// Test seam: the focused session socket's transport, used from the next transport setup.
+    var _focusedWebSocketFactoryForTesting: ((URLRequest) -> PersistentWebSocketTransport)?
 
     /// Test seam: override the cache actor used by list refresh paths.
     var _cacheForTesting: TimelineCache?
@@ -711,6 +713,14 @@ final class ServerConnection {
             await MainActor.run { [weak self] in
                 guard let self, self.streamConsumptionGeneration == generation else { return }
                 self.streamConsumptionTask = nil
+                // The socket will not come back on its own, and a reconnect would get the same
+                // oversized frame. End the session streams so their chat sees the stream end
+                // and says why, instead of waiting on a dead socket.
+                if wsClient.closedForOversizedMessage {
+                    for sessionId in Array(self.sessionEventContinuations.keys) {
+                        self.closeSessionStreamContinuations(sessionId)
+                    }
+                }
             }
         }
     }
@@ -2249,6 +2259,11 @@ extension ServerConnection: ServerRouteHost {
 
         // WebSocket composition is created only after authenticated bootstrap
         // succeeds and the exact winning API client is installed.
+        #if DEBUG
+        let focusedWebSocketFactory = _focusedWebSocketFactoryForTesting
+        #else
+        let focusedWebSocketFactory: ((URLRequest) -> PersistentWebSocketTransport)? = nil
+        #endif
         let wsClient = WebSocketClient(
             credentials: credentials,
             preferredEndpoint: selection,
@@ -2258,7 +2273,8 @@ extension ServerConnection: ServerRouteHost {
             tlsServerName: selection.tlsServerName,
             authSession: httpAuthSession,
             authRenewer: .ifSupported(by: serverCapabilities, session: httpAuthSession, streamRole: "focused_session"),
-            tailnetRoute: route.configuredTailnetRoute
+            tailnetRoute: route.configuredTailnetRoute,
+            webSocketFactory: focusedWebSocketFactory
         )
         wsClient.onTransportHealthFailure = { @MainActor [weak self, weak wsClient] failure in
             guard let self,

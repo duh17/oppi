@@ -527,6 +527,10 @@ final class ChatSessionManager {
         return .retryable
     }
 
+    /// Shown when the server sent a message over the socket's inbound limit
+    /// (`WebSocketClient.maximumMessageSize`).
+    static let oversizedMessageError = "This session sent more than the app can receive at once (over 16 MB), so live updates stopped. Reopen the chat or send a message to try again. If it keeps happening, update the Oppi server."
+
     private func failFocusedStreamSetup(message: String) {
         clearFocusedStreamRecovery()
         transitionTo(.disconnected(reason: .fatalError))
@@ -1293,6 +1297,16 @@ final class ChatSessionManager {
         guard generation == connectionGeneration else { return }
         if Task.isCancelled {
             transitionTo(.disconnected(reason: .cancelled))
+        } else if focusedStreamPort.closedForOversizedMessage {
+            // Every reconnect would get the same message and fail the same way, so stop and
+            // say so, like a fatal setup error. A send or reopening the chat tries again.
+            focusedStreamPort.fatalSetupError = true
+            effectsStatePort.recordLog(
+                .error,
+                message: "Session stream closed: message too large",
+                metadata: ["sessionId": sessionId]
+            )
+            failFocusedStreamSetup(message: Self.oversizedMessageError)
         } else {
             switch entryState {
             case .disconnected(reason: .cancelled), .disconnected(reason: .generationChanged):

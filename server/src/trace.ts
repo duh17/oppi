@@ -47,8 +47,8 @@ import { validatedNestedCalls } from "./tool-nested-calls.js";
 import {
   sessionAttachmentDetailsForToolCall,
   sessionAttachmentMediaDetailsForToolResult,
-  storeUserMessageImages,
-  type StoredUserMessageImage,
+  storeMessageImages,
+  type StoredMessageImage,
 } from "./session-attachments.js";
 import { projectAssistantTimelineBlocks } from "./session-protocol.js";
 import {
@@ -412,7 +412,7 @@ export interface TraceEvent {
   /**
    * For user: image attachments the server stores for this message. Their bytes are in
    * `session-attachments`, not in `text`, which lists them as data URIs only when they could
-   * not be stored (`storeUserMessageImages`). Same shape as a tool `details.media[]` entry.
+   * not be stored (`storeMessageImages`). Same shape as a tool `details.media[]` entry.
    */
   media?: Record<string, unknown>[];
   /**
@@ -953,7 +953,7 @@ function textFromPresentation(presentation: TraceEventPresentation): string {
  */
 function userMessageMedia(
   content: unknown,
-  stored: StoredUserMessageImage[],
+  stored: StoredMessageImage[],
 ): Record<string, unknown>[] {
   if (stored.length === 0 || !Array.isArray(content)) return stored.map((image) => image.details);
   const byIndex = new Map(stored.map((image) => [image.blockIndex, image.details]));
@@ -996,7 +996,7 @@ function emitMessageEvents(
     // on every delivery. An image that cannot be stored keeps its data URI in `text`.
     const storedImages =
       options.attachmentDataDir && options.attachmentSessionId
-        ? storeUserMessageImages({
+        ? storeMessageImages({
             dataDir: options.attachmentDataDir,
             sessionId: options.attachmentSessionId,
             content,
@@ -1072,6 +1072,16 @@ function emitMessageEvents(
     const rawMsg = msg as Record<string, unknown>;
     const rawDetails =
       rawMsg.details !== undefined && rawMsg.details !== null ? rawMsg.details : undefined;
+    // Like a user message's, a tool result's images move into the session attachment store
+    // at read time, so history lists them in `details.media` instead of carrying their bytes.
+    if (options.attachmentDataDir && options.attachmentSessionId && msg.toolCallId) {
+      storeMessageImages({
+        dataDir: options.attachmentDataDir,
+        sessionId: options.attachmentSessionId,
+        content,
+        toolCallId: msg.toolCallId,
+      });
+    }
     const mediaDetails =
       options.attachmentDataDir && options.attachmentSessionId
         ? sessionAttachmentMediaDetailsForToolResult(

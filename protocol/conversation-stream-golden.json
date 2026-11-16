@@ -26,7 +26,7 @@
             "edit",
             "bash"
           ],
-          "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-8dNmey"
+          "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-yll8Z7"
         },
         "pi.usage": {
           "models": {},
@@ -45,7 +45,7 @@
             {
               "role": "user",
               "content": "List the files",
-              "timestamp": 1793636797757
+              "timestamp": 1794807192283
             }
           ]
         },
@@ -55,7 +55,7 @@
           "model": [
             {
               "role": "system",
-              "timestamp": 1793636797761
+              "timestamp": 1794807192288
             }
           ]
         }
@@ -108,10 +108,10 @@
                 },
                 {
                   "type": "text",
-                  "text": ""
+                  "text": "Listing the file"
                 }
               ],
-              "timestamp": 1793636797757,
+              "timestamp": 1794807192283,
               "stopReason": "pending"
             }
           ]
@@ -146,7 +146,7 @@
                   }
                 }
               ],
-              "timestamp": 1793636797757,
+              "timestamp": 1794807192283,
               "stopReason": "toolUse"
             }
           ],
@@ -196,7 +196,7 @@
                   "text": "README.md\nsrc\n"
                 }
               ],
-              "timestamp": 1793636797984,
+              "timestamp": 1794807192498,
               "toolCallId": "call-list",
               "toolName": "bash",
               "isError": false
@@ -271,7 +271,7 @@
                   "text": "There are two entries: README.md and src."
                 }
               ],
-              "timestamp": 1793636797757,
+              "timestamp": 1794807192283,
               "stopReason": "stop"
             }
           ]
@@ -364,7 +364,7 @@
                   }
                 }
               ],
-              "timestamp": 1793636798386
+              "timestamp": 1794807192901
             }
           ]
         }
@@ -417,7 +417,7 @@
                   }
                 }
               ],
-              "timestamp": 1793636797757,
+              "timestamp": 1794807192283,
               "stopReason": "toolUse"
             }
           ],
@@ -473,7 +473,7 @@
                   "text": "boom\nCommand exited with code 3"
                 }
               ],
-              "timestamp": 1793636798473,
+              "timestamp": 1794807193035,
               "toolCallId": "call-fail",
               "toolName": "bash",
               "isError": true
@@ -556,7 +556,7 @@
                   "text": "The command failed with exit code 3."
                 }
               ],
-              "timestamp": 1793636797757,
+              "timestamp": 1794807192283,
               "stopReason": "stop"
             }
           ]
@@ -623,6 +623,297 @@
       "entries": [
         {
           "id": 25,
+          "kind": "pi.user",
+          "model": [
+            {
+              "role": "user",
+              "content": "Read the screenshot",
+              "timestamp": 1794807193422
+            }
+          ]
+        }
+      ],
+      "docs": {
+        "pi.live": [
+          [
+            "s",
+            [
+              "run"
+            ],
+            {
+              "taskId": 27,
+              "inputs": [
+                26
+              ],
+              "turns": 0,
+              "first": 25
+            }
+          ],
+          [
+            "s",
+            [
+              "generation"
+            ],
+            {
+              "attempt": 1
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "conversationId": 2,
+      "entries": [
+        {
+          "id": 28,
+          "kind": "pi.assistant",
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-shot",
+                  "name": "read",
+                  "arguments": {
+                    "path": "shot.png"
+                  }
+                }
+              ],
+              "timestamp": 1794807192283,
+              "stopReason": "toolUse"
+            }
+          ],
+          "toolCalls": {
+            "call-shot": {
+              "callSegments": [
+                {
+                  "text": "read ",
+                  "style": "bold"
+                },
+                {
+                  "text": "shot.png",
+                  "style": "accent"
+                }
+              ],
+              "inputPresentation": {
+                "fields": {
+                  "path": {
+                    "role": "filePath"
+                  },
+                  "offset": {
+                    "role": "lineOffset"
+                  },
+                  "limit": {
+                    "role": "lineLimit"
+                  }
+                }
+              },
+              "outputPresentation": {
+                "kind": "fileContent",
+                "provenance": "result"
+              }
+            }
+          }
+        },
+        {
+          "id": 30,
+          "kind": "pi.tool-result",
+          "toolResult": {
+            "outputPresentation": {
+              "kind": "fileContent",
+              "provenance": "result"
+            },
+            "outputAvailability": {
+              "complete": true
+            }
+          },
+          "model": [
+            {
+              "role": "toolResult",
+              "content": [
+                {
+                  "type": "image",
+                  "mimeType": "image/png",
+                  "attachment": {
+                    "kind": "image",
+                    "id": "att_call-shot_QxztaRaiohoVbjhw",
+                    "mimeType": "image/png",
+                    "fileName": "tool-image-1.png",
+                    "sizeBytes": 68,
+                    "storageKey": "golden-session/att_call-shot_QxztaRaiohoVbjhw.png",
+                    "sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+                    "width": 1,
+                    "height": 1
+                  }
+                }
+              ],
+              "timestamp": 1794807193473,
+              "toolCallId": "call-shot",
+              "toolName": "read",
+              "isError": false,
+              "details": {
+                "media": [
+                  {
+                    "kind": "image",
+                    "id": "att_call-shot_QxztaRaiohoVbjhw",
+                    "mimeType": "image/png",
+                    "fileName": "tool-image-1.png",
+                    "sizeBytes": 68,
+                    "storageKey": "golden-session/att_call-shot_QxztaRaiohoVbjhw.png",
+                    "sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+                    "width": 1,
+                    "height": 1
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "docs": {
+        "pi.live": [
+          [
+            "s",
+            [
+              "run",
+              "taskId"
+            ],
+            31
+          ],
+          [
+            "s",
+            [
+              "run",
+              "turns"
+            ],
+            1
+          ]
+        ],
+        "pi.usage": [
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "output"
+            ],
+            60
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "cacheRead"
+            ],
+            2969
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "cacheWrite"
+            ],
+            809
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "totalTokens"
+            ],
+            3838
+          ]
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "conversationId": 2,
+      "entries": [
+        {
+          "id": 32,
+          "kind": "pi.assistant",
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The screenshot is a single pixel."
+                }
+              ],
+              "timestamp": 1794807192283,
+              "stopReason": "stop"
+            }
+          ]
+        }
+      ],
+      "docs": {
+        "pi.live": [
+          [
+            "d",
+            [
+              "run"
+            ]
+          ],
+          [
+            "d",
+            [
+              "generation"
+            ]
+          ]
+        ],
+        "pi.usage": [
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "output"
+            ],
+            69
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "cacheRead"
+            ],
+            3778
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "cacheWrite"
+            ],
+            842
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "totalTokens"
+            ],
+            4689
+          ]
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "conversationId": 2,
+      "entries": [
+        {
+          "id": 33,
           "kind": "oppi.notice",
           "card": {
             "kind": "custom",
@@ -647,7 +938,7 @@
       "conversationId": 2,
       "entries": [
         {
-          "id": 27,
+          "id": 35,
           "kind": "pi.user",
           "card": {
             "kind": "custom",
@@ -680,12 +971,12 @@
               "run"
             ],
             {
-              "taskId": 29,
+              "taskId": 37,
               "inputs": [
-                28
+                36
               ],
               "turns": 0,
-              "first": 27
+              "first": 35
             }
           ],
           [
@@ -705,7 +996,7 @@
       "conversationId": 2,
       "entries": [
         {
-          "id": 30,
+          "id": 38,
           "kind": "pi.assistant",
           "model": [
             {
@@ -716,7 +1007,7 @@
                   "text": "Thanks for the job report."
                 }
               ],
-              "timestamp": 1793636797757,
+              "timestamp": 1794807192283,
               "stopReason": "stop"
             }
           ]
@@ -745,7 +1036,7 @@
               "faux/faux-1",
               "output"
             ],
-            61
+            76
           ],
           [
             "s",
@@ -754,7 +1045,7 @@
               "faux/faux-1",
               "cacheRead"
             ],
-            2969
+            4620
           ],
           [
             "s",
@@ -763,7 +1054,7 @@
               "faux/faux-1",
               "cacheWrite"
             ],
-            808
+            858
           ],
           [
             "s",
@@ -772,7 +1063,7 @@
               "faux/faux-1",
               "totalTokens"
             ],
-            3838
+            5554
           ]
         ]
       }
@@ -782,13 +1073,13 @@
       "conversationId": 2,
       "entries": [
         {
-          "id": 31,
+          "id": 39,
           "kind": "oppi.agent-message",
           "model": [
             {
               "role": "user",
               "content": "[Report from session Child]\n\nChild finished: 3 files changed.",
-              "timestamp": 1793636799529
+              "timestamp": 1794807194532
             }
           ],
           "origin": {
@@ -808,12 +1099,12 @@
               "run"
             ],
             {
-              "taskId": 33,
+              "taskId": 41,
               "inputs": [
-                32
+                40
               ],
               "turns": 0,
-              "first": 31
+              "first": 39
             }
           ],
           [
@@ -833,7 +1124,7 @@
       "conversationId": 2,
       "entries": [
         {
-          "id": 34,
+          "id": 42,
           "kind": "pi.assistant",
           "model": [
             {
@@ -844,7 +1135,7 @@
                   "text": "Noted the child's report."
                 }
               ],
-              "timestamp": 1793636797757,
+              "timestamp": 1794807192283,
               "stopReason": "stop"
             }
           ]
@@ -873,7 +1164,7 @@
               "faux/faux-1",
               "output"
             ],
-            68
+            83
           ],
           [
             "s",
@@ -882,7 +1173,7 @@
               "faux/faux-1",
               "cacheRead"
             ],
-            3777
+            5478
           ],
           [
             "s",
@@ -891,7 +1182,7 @@
               "faux/faux-1",
               "cacheWrite"
             ],
-            834
+            885
           ],
           [
             "s",
@@ -900,7 +1191,7 @@
               "faux/faux-1",
               "totalTokens"
             ],
-            4679
+            6446
           ]
         ]
       }
@@ -917,7 +1208,7 @@
             ],
             [
               {
-                "taskId": 35,
+                "taskId": 43,
                 "trigger": "manual",
                 "blocking": false,
                 "attempt": 1
@@ -930,11 +1221,11 @@
     {
       "type": "snapshot",
       "conversationId": 2,
-      "head": 36,
+      "head": 44,
       "hasOlder": true,
       "entries": [
         {
-          "id": 36,
+          "id": 44,
           "kind": "pi.compaction",
           "model": [
             {
@@ -945,18 +1236,18 @@
                   "text": "The conversation history before this point was compacted into the following summary:\n\n<summary>\nSummary of the work so far: listed files, ran a failing command.\n</summary>"
                 }
               ],
-              "timestamp": 1793636800037
+              "timestamp": 1794807195042
             }
           ]
         },
         {
-          "id": 31,
+          "id": 39,
           "kind": "oppi.agent-message",
           "model": [
             {
               "role": "user",
               "content": "[Report from session Child]\n\nChild finished: 3 files changed.",
-              "timestamp": 1793636799529
+              "timestamp": 1794807194532
             }
           ],
           "origin": {
@@ -968,7 +1259,7 @@
           "textOffset": 29
         },
         {
-          "id": 34,
+          "id": 42,
           "kind": "pi.assistant",
           "model": [
             {
@@ -979,7 +1270,7 @@
                   "text": "Noted the child's report."
                 }
               ],
-              "timestamp": 1793636797757,
+              "timestamp": 1794807192283,
               "stopReason": "stop"
             }
           ]
@@ -1002,16 +1293,16 @@
             "edit",
             "bash"
           ],
-          "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-8dNmey"
+          "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-yll8Z7"
         },
         "pi.usage": {
           "models": {
             "faux/faux-1": {
-              "input": 467,
-              "output": 84,
-              "cacheRead": 3777,
-              "cacheWrite": 834,
-              "totalTokens": 5162,
+              "input": 516,
+              "output": 99,
+              "cacheRead": 5478,
+              "cacheWrite": 885,
+              "totalTokens": 6978,
               "cost": {
                 "input": 0,
                 "output": 0,
@@ -1030,23 +1321,23 @@
       "conversationId": 2,
       "entries": [
         {
-          "id": 38,
+          "id": 46,
           "kind": "pi.user",
           "model": [
             {
               "role": "user",
               "content": "Explain it at length",
-              "timestamp": 1793636800339
+              "timestamp": 1794807195345
             }
           ]
         },
         {
-          "id": 41,
+          "id": 49,
           "kind": "pi.system",
           "model": [
             {
               "role": "system",
-              "timestamp": 1793636800340
+              "timestamp": 1794807195346
             }
           ]
         }
@@ -1059,12 +1350,12 @@
               "run"
             ],
             {
-              "taskId": 40,
+              "taskId": 48,
               "inputs": [
-                39
+                47
               ],
               "turns": 0,
-              "first": 38
+              "first": 46
             }
           ],
           [
@@ -1098,7 +1389,7 @@
                   "text": "partial0 partial1 partial2 parti"
                 }
               ],
-              "timestamp": 1793636797757,
+              "timestamp": 1794807192283,
               "stopReason": "pending"
             }
           ]
@@ -1115,12 +1406,12 @@
             "r",
             {
               "run": {
-                "taskId": 40,
+                "taskId": 48,
                 "inputs": [
-                  39
+                  47
                 ],
                 "turns": 0,
-                "first": 38
+                "first": 46
               },
               "generation": {
                 "attempt": 1,
@@ -1132,7 +1423,7 @@
                       "text": "partial0 partial1 partial2 parti"
                     }
                   ],
-                  "timestamp": 1793636797757,
+                  "timestamp": 1794807192283,
                   "stopReason": "pending"
                 }
               }
@@ -1162,7 +1453,7 @@
                 "edit",
                 "bash"
               ],
-              "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-8dNmey"
+              "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-yll8Z7"
             }
           ]
         ],
@@ -1172,11 +1463,11 @@
             {
               "models": {
                 "faux/faux-1": {
-                  "input": 467,
-                  "output": 84,
-                  "cacheRead": 3777,
-                  "cacheWrite": 834,
-                  "totalTokens": 5162,
+                  "input": 516,
+                  "output": 99,
+                  "cacheRead": 5478,
+                  "cacheWrite": 885,
+                  "totalTokens": 6978,
                   "cost": {
                     "input": 0,
                     "output": 0,
@@ -1198,7 +1489,7 @@
       "conversationId": 2,
       "entries": [
         {
-          "id": 43,
+          "id": 51,
           "kind": "pi.assistant",
           "model": [
             {
@@ -1209,7 +1500,7 @@
                   "text": "A complete answer after the restart."
                 }
               ],
-              "timestamp": 1793636800483,
+              "timestamp": 1794807195489,
               "stopReason": "stop"
             }
           ]
@@ -1238,7 +1529,7 @@
               "faux/faux-1",
               "output"
             ],
-            241
+            256
           ],
           [
             "s",
@@ -1247,7 +1538,7 @@
               "faux/faux-1",
               "cacheRead"
             ],
-            5231
+            6932
           ],
           [
             "s",
@@ -1256,7 +1547,7 @@
               "faux/faux-1",
               "cacheWrite"
             ],
-            910
+            961
           ],
           [
             "s",
@@ -1265,7 +1556,7 @@
               "faux/faux-1",
               "totalTokens"
             ],
-            6849
+            8665
           ]
         ]
       }
@@ -1281,7 +1572,7 @@
             {
               "role": "user",
               "content": "List the files",
-              "timestamp": 1793636797757
+              "timestamp": 1794807192283
             }
           ]
         },
@@ -1291,7 +1582,7 @@
           "model": [
             {
               "role": "system",
-              "timestamp": 1793636797761
+              "timestamp": 1794807192288
             }
           ]
         },
@@ -1319,7 +1610,7 @@
                   }
                 }
               ],
-              "timestamp": 1793636797757,
+              "timestamp": 1794807192283,
               "stopReason": "toolUse"
             }
           ],
@@ -1369,7 +1660,7 @@
                   "text": "README.md\nsrc\n"
                 }
               ],
-              "timestamp": 1793636797984,
+              "timestamp": 1794807192498,
               "toolCallId": "call-list",
               "toolName": "bash",
               "isError": false
@@ -1388,7 +1679,7 @@
                   "text": "There are two entries: README.md and src."
                 }
               ],
-              "timestamp": 1793636797757,
+              "timestamp": 1794807192283,
               "stopReason": "stop"
             }
           ]
@@ -1421,7 +1712,7 @@
                   }
                 }
               ],
-              "timestamp": 1793636798386
+              "timestamp": 1794807192901
             }
           ]
         },
@@ -1441,7 +1732,7 @@
                   }
                 }
               ],
-              "timestamp": 1793636797757,
+              "timestamp": 1794807192283,
               "stopReason": "toolUse"
             }
           ],
@@ -1497,7 +1788,7 @@
                   "text": "boom\nCommand exited with code 3"
                 }
               ],
-              "timestamp": 1793636798473,
+              "timestamp": 1794807193035,
               "toolCallId": "call-fail",
               "toolName": "bash",
               "isError": true
@@ -1516,13 +1807,147 @@
                   "text": "The command failed with exit code 3."
                 }
               ],
-              "timestamp": 1793636797757,
+              "timestamp": 1794807192283,
               "stopReason": "stop"
             }
           ]
         },
         {
           "id": 25,
+          "kind": "pi.user",
+          "model": [
+            {
+              "role": "user",
+              "content": "Read the screenshot",
+              "timestamp": 1794807193422
+            }
+          ]
+        },
+        {
+          "id": 28,
+          "kind": "pi.assistant",
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-shot",
+                  "name": "read",
+                  "arguments": {
+                    "path": "shot.png"
+                  }
+                }
+              ],
+              "timestamp": 1794807192283,
+              "stopReason": "toolUse"
+            }
+          ],
+          "toolCalls": {
+            "call-shot": {
+              "callSegments": [
+                {
+                  "text": "read ",
+                  "style": "bold"
+                },
+                {
+                  "text": "shot.png",
+                  "style": "accent"
+                }
+              ],
+              "inputPresentation": {
+                "fields": {
+                  "path": {
+                    "role": "filePath"
+                  },
+                  "offset": {
+                    "role": "lineOffset"
+                  },
+                  "limit": {
+                    "role": "lineLimit"
+                  }
+                }
+              },
+              "outputPresentation": {
+                "kind": "fileContent",
+                "provenance": "result"
+              }
+            }
+          }
+        },
+        {
+          "id": 30,
+          "kind": "pi.tool-result",
+          "toolResult": {
+            "outputPresentation": {
+              "kind": "fileContent",
+              "provenance": "result"
+            },
+            "outputAvailability": {
+              "complete": true
+            }
+          },
+          "model": [
+            {
+              "role": "toolResult",
+              "content": [
+                {
+                  "type": "image",
+                  "mimeType": "image/png",
+                  "attachment": {
+                    "kind": "image",
+                    "id": "att_call-shot_QxztaRaiohoVbjhw",
+                    "mimeType": "image/png",
+                    "fileName": "tool-image-1.png",
+                    "sizeBytes": 68,
+                    "storageKey": "golden-session/att_call-shot_QxztaRaiohoVbjhw.png",
+                    "sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+                    "width": 1,
+                    "height": 1
+                  }
+                }
+              ],
+              "timestamp": 1794807193473,
+              "toolCallId": "call-shot",
+              "toolName": "read",
+              "isError": false,
+              "details": {
+                "media": [
+                  {
+                    "kind": "image",
+                    "id": "att_call-shot_QxztaRaiohoVbjhw",
+                    "mimeType": "image/png",
+                    "fileName": "tool-image-1.png",
+                    "sizeBytes": 68,
+                    "storageKey": "golden-session/att_call-shot_QxztaRaiohoVbjhw.png",
+                    "sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+                    "width": 1,
+                    "height": 1
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": 32,
+          "kind": "pi.assistant",
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The screenshot is a single pixel."
+                }
+              ],
+              "timestamp": 1794807192283,
+              "stopReason": "stop"
+            }
+          ]
+        },
+        {
+          "id": 33,
           "kind": "oppi.notice",
           "card": {
             "kind": "custom",
@@ -1541,7 +1966,7 @@
           }
         },
         {
-          "id": 27,
+          "id": 35,
           "kind": "pi.user",
           "card": {
             "kind": "custom",
@@ -1566,7 +1991,7 @@
           "inputCard": true
         },
         {
-          "id": 30,
+          "id": 38,
           "kind": "pi.assistant",
           "model": [
             {
@@ -1577,7 +2002,7 @@
                   "text": "Thanks for the job report."
                 }
               ],
-              "timestamp": 1793636797757,
+              "timestamp": 1794807192283,
               "stopReason": "stop"
             }
           ]
@@ -1590,19 +2015,19 @@
     {
       "id": "8",
       "type": "user",
-      "timestamp": "2026-11-02T16:26:37.757Z",
+      "timestamp": "2026-11-16T05:33:12.283Z",
       "text": "List the files"
     },
     {
       "id": "12-think-0",
       "type": "thinking",
-      "timestamp": "2026-11-02T16:26:37.757Z",
+      "timestamp": "2026-11-16T05:33:12.283Z",
       "thinking": "The user wants a file listing."
     },
     {
       "id": "12-text-1",
       "type": "assistant",
-      "timestamp": "2026-11-02T16:26:37.757Z",
+      "timestamp": "2026-11-16T05:33:12.283Z",
       "text": "Listing the files.",
       "contentIndex": 1,
       "runOrdinal": 0
@@ -1610,7 +2035,7 @@
     {
       "id": "call-list",
       "type": "toolCall",
-      "timestamp": "2026-11-02T16:26:37.757Z",
+      "timestamp": "2026-11-16T05:33:12.283Z",
       "tool": "bash",
       "args": {
         "command": "printf 'README.md\\nsrc\\n'"
@@ -1640,7 +2065,7 @@
     {
       "id": "result-14",
       "type": "toolResult",
-      "timestamp": "2026-11-02T16:26:37.984Z",
+      "timestamp": "2026-11-16T05:33:12.498Z",
       "toolCallId": "call-list",
       "toolName": "bash",
       "output": "README.md\nsrc\n",
@@ -1655,7 +2080,7 @@
     {
       "id": "16-text-0",
       "type": "assistant",
-      "timestamp": "2026-11-02T16:26:37.757Z",
+      "timestamp": "2026-11-16T05:33:12.283Z",
       "text": "There are two entries: README.md and src.",
       "contentIndex": 0,
       "runOrdinal": 0
@@ -1663,7 +2088,7 @@
     {
       "id": "17",
       "type": "user",
-      "timestamp": "2026-11-02T16:26:38.386Z",
+      "timestamp": "2026-11-16T05:33:12.901Z",
       "text": "Run the failing command for this image",
       "media": [
         {
@@ -1683,7 +2108,7 @@
     {
       "id": "call-fail",
       "type": "toolCall",
-      "timestamp": "2026-11-02T16:26:37.757Z",
+      "timestamp": "2026-11-16T05:33:12.283Z",
       "tool": "bash",
       "args": {
         "command": "echo boom >&2; exit 3"
@@ -1713,7 +2138,7 @@
     {
       "id": "result-22",
       "type": "toolResult",
-      "timestamp": "2026-11-02T16:26:38.473Z",
+      "timestamp": "2026-11-16T05:33:13.035Z",
       "toolCallId": "call-fail",
       "toolName": "bash",
       "output": "boom\nCommand exited with code 3",
@@ -1734,13 +2159,94 @@
     {
       "id": "24-text-0",
       "type": "assistant",
-      "timestamp": "2026-11-02T16:26:37.757Z",
+      "timestamp": "2026-11-16T05:33:12.283Z",
       "text": "The command failed with exit code 3.",
       "contentIndex": 0,
       "runOrdinal": 0
     },
     {
       "id": "25",
+      "type": "user",
+      "timestamp": "2026-11-16T05:33:13.422Z",
+      "text": "Read the screenshot"
+    },
+    {
+      "id": "call-shot",
+      "type": "toolCall",
+      "timestamp": "2026-11-16T05:33:12.283Z",
+      "tool": "read",
+      "args": {
+        "path": "shot.png"
+      },
+      "callSegments": [
+        {
+          "text": "read ",
+          "style": "bold"
+        },
+        {
+          "text": "shot.png",
+          "style": "accent"
+        }
+      ],
+      "inputPresentation": {
+        "fields": {
+          "path": {
+            "role": "filePath"
+          },
+          "offset": {
+            "role": "lineOffset"
+          },
+          "limit": {
+            "role": "lineLimit"
+          }
+        }
+      },
+      "outputPresentation": {
+        "kind": "fileContent",
+        "provenance": "result"
+      }
+    },
+    {
+      "id": "result-30",
+      "type": "toolResult",
+      "timestamp": "2026-11-16T05:33:13.473Z",
+      "toolCallId": "call-shot",
+      "toolName": "read",
+      "output": "",
+      "isError": false,
+      "details": {
+        "media": [
+          {
+            "kind": "image",
+            "id": "att_call-shot_QxztaRaiohoVbjhw",
+            "mimeType": "image/png",
+            "fileName": "tool-image-1.png",
+            "sizeBytes": 68,
+            "storageKey": "golden-session/att_call-shot_QxztaRaiohoVbjhw.png",
+            "sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+            "width": 1,
+            "height": 1
+          }
+        ]
+      },
+      "outputPresentation": {
+        "kind": "fileContent",
+        "provenance": "result"
+      },
+      "outputAvailability": {
+        "complete": true
+      }
+    },
+    {
+      "id": "32-text-0",
+      "type": "assistant",
+      "timestamp": "2026-11-16T05:33:12.283Z",
+      "text": "The screenshot is a single pixel.",
+      "contentIndex": 0,
+      "runOrdinal": 0
+    },
+    {
+      "id": "33",
       "type": "system",
       "timestamp": "2026-10-10T16:33:20.000Z",
       "text": "Deploy finished\nstaging\n\nAll checks passed.\nDuration: 42s",
@@ -1760,7 +2266,7 @@
       }
     },
     {
-      "id": "27",
+      "id": "35",
       "type": "system",
       "timestamp": "2026-10-10T16:33:21.000Z",
       "text": "Background job 1\n\nmake build\nResult: Exit 0",
@@ -1778,23 +2284,23 @@
         "accent": "success",
         "output": {
           "kind": "terminal",
-          "entryId": "27",
+          "entryId": "35",
           "command": "make build"
         }
       }
     },
     {
-      "id": "30-text-0",
+      "id": "38-text-0",
       "type": "assistant",
-      "timestamp": "2026-11-02T16:26:37.757Z",
+      "timestamp": "2026-11-16T05:33:12.283Z",
       "text": "Thanks for the job report.",
       "contentIndex": 0,
       "runOrdinal": 0
     },
     {
-      "id": "31",
+      "id": "39",
       "type": "user",
-      "timestamp": "2026-11-02T16:26:39.529Z",
+      "timestamp": "2026-11-16T05:33:14.532Z",
       "text": "Child finished: 3 files changed.",
       "origin": {
         "kind": "session",
@@ -1804,29 +2310,29 @@
       }
     },
     {
-      "id": "34-text-0",
+      "id": "42-text-0",
       "type": "assistant",
-      "timestamp": "2026-11-02T16:26:37.757Z",
+      "timestamp": "2026-11-16T05:33:12.283Z",
       "text": "Noted the child's report.",
       "contentIndex": 0,
       "runOrdinal": 0
     },
     {
-      "id": "36",
+      "id": "44",
       "type": "compaction",
-      "timestamp": "2026-11-02T16:26:40.037Z",
+      "timestamp": "2026-11-16T05:33:15.042Z",
       "text": "Context compacted: Summary of the work so far: listed files, ran a failing command."
     },
     {
-      "id": "38",
+      "id": "46",
       "type": "user",
-      "timestamp": "2026-11-02T16:26:40.339Z",
+      "timestamp": "2026-11-16T05:33:15.345Z",
       "text": "Explain it at length"
     },
     {
-      "id": "43-text-0",
+      "id": "51-text-0",
       "type": "assistant",
-      "timestamp": "2026-11-02T16:26:40.483Z",
+      "timestamp": "2026-11-16T05:33:15.489Z",
       "text": "A complete answer after the restart.",
       "contentIndex": 0,
       "runOrdinal": 0

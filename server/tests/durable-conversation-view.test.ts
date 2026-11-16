@@ -14,6 +14,7 @@ import {
   type ToolPresenter,
 } from "../src/durable-conversation-view.js";
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
+import { getSessionAttachment } from "../src/session-attachments.js";
 
 const PNG_1X1 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
@@ -136,6 +137,83 @@ describe("conversation entry view: user message images", () => {
       readFileSync(join(dataDir, "session-attachments", "s-view", "manifest.json"), "utf8"),
     ) as { attachments: unknown[] };
     expect(manifest.attachments).toHaveLength(1);
+  });
+});
+
+describe("conversation entry view: tool result images", () => {
+  let dataDir: string;
+
+  beforeEach(() => {
+    dataDir = mkdtempSync(join(tmpdir(), "oppi-conversation-view-"));
+  });
+  afterEach(() => {
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  function toolResultEntry(content: unknown[], details?: unknown): EntryRecord {
+    return {
+      id: 12,
+      conversationId: 3,
+      kind: "pi.tool-result",
+      model: [
+        {
+          role: "toolResult",
+          toolCallId: "call-shot",
+          toolName: "read",
+          content,
+          isError: false,
+          ...(details !== undefined ? { details } : {}),
+          timestamp: 1_791_650_000_000,
+        } as never,
+      ],
+    };
+  }
+
+  // A snapshot of the newest entries inlined every screenshot a tool returned; a few dozen
+  // of them outgrew the client's 16 MiB message limit and the session could not open.
+  it("sends a stored reference and lists it in details.media instead of the bytes", async () => {
+    const view = projectEntry(
+      toolResultEntry([
+        { type: "image", data: PNG_1X1, mimeType: "image/png" },
+        { type: "text", text: "Read image file [image/png]" },
+      ]),
+      new MobileRendererRegistry(),
+      tools,
+      {},
+      { dataDir, sessionId: "s-view" },
+    );
+
+    expect(JSON.stringify(view)).not.toContain(PNG_1X1);
+    const message = view.model?.[0] as {
+      content: Array<Record<string, unknown>>;
+      details?: unknown;
+    };
+    const attachment = message.content[0]?.attachment as Record<string, unknown>;
+    expect(message.content[0]).toEqual({ type: "image", mimeType: "image/png", attachment });
+    expect(attachment).toMatchObject({ kind: "image", mimeType: "image/png", width: 1, height: 1 });
+    // The id the live tool event stores the image under, so both reach the same record.
+    expect(String(attachment.id)).toMatch(/^att_call-shot_/);
+    expect(message.content[1]).toEqual({ type: "text", text: "Read image file [image/png]" });
+    expect(message.details).toEqual({ media: [attachment] });
+
+    // The session attachment route serves the bytes.
+    const stored = await getSessionAttachment(dataDir, "s-view", String(attachment.id));
+    expect(stored && readFileSync(stored.path).toString("base64")).toBe(PNG_1X1);
+  });
+
+  it("keeps the tool's own details beside the stored media", () => {
+    const view = projectEntry(
+      toolResultEntry([{ type: "image", data: PNG_1X1, mimeType: "image/png" }], {
+        expandedText: "one pixel",
+      }),
+      new MobileRendererRegistry(),
+      tools,
+      {},
+      { dataDir, sessionId: "s-view" },
+    );
+    const details = (view.model?.[0] as { details?: Record<string, unknown> }).details;
+    expect(details?.expandedText).toBe("one pixel");
+    expect(details?.media).toHaveLength(1);
   });
 });
 

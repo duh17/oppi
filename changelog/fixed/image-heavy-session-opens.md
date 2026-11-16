@@ -1,0 +1,2 @@
+- **Server:** A durable session whose tools returned many images, such as a run of screenshots, opens again. The server sends each tool image as a stored attachment that the app loads when the row shows it; before, the server sent every image's data when the chat opened, and a few dozen screenshots were more than the app accepts in one message.
+- **Client:** If a session ever sends more than the app can receive at once, the chat says so and stops reconnecting, instead of waiting on a stale timeline that never updates. Reopen the chat or send a message to try again.

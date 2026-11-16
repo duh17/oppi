@@ -25,7 +25,10 @@ import { normalizeAudioPresentationDetails } from "./audio-presentation.js";
 import { clientToolResult } from "./durable-tool-result-content.js";
 import { formatCacheMissNotice, type CacheMissNotice } from "./cache-miss.js";
 import { resolveToolDisplay, type MobileRendererRegistry } from "./mobile-renderer.js";
-import { storeUserMessageImages } from "./session-attachments.js";
+import {
+  sessionAttachmentMediaDetailsForToolResult,
+  storeMessageImages,
+} from "./session-attachments.js";
 import { resolveToolArguments } from "./tool-call-arguments.js";
 import { durableNestedCalls, validatedNestedCalls } from "./tool-nested-calls.js";
 import type {
@@ -198,8 +201,8 @@ const CLIENT_MESSAGE_FIELDS = new Map<string, readonly string[]>([
  * Content block fields clients read, by block type. Thinking and text signatures are
  * provider replay state. A tool call's arguments are resolved here from `arguments` and
  * `partialJson`, so clients get one answer and never the raw stream text. Block types not
- * listed (audio) arrive whole. A user message's image block leaves as either its bytes or,
- * once stored, a reference (`attachment`) to them.
+ * listed (audio) arrive whole. An image block of a user message or tool result leaves as either
+ * its bytes or, once stored, a reference (`attachment`) to them.
  */
 const CLIENT_BLOCK_FIELDS = new Map<string, readonly string[]>([
   ["text", ["type", "text"]],
@@ -208,8 +211,8 @@ const CLIENT_BLOCK_FIELDS = new Map<string, readonly string[]>([
   ["image", ["type", "data", "mimeType", "attachment"]],
 ]);
 
-/** Where a user message's image bytes are stored: the session's attachment store. */
-export interface UserImageStoreScope {
+/** Where the image bytes of user messages and tool results are stored: the session's attachment store. */
+export interface MessageImageStoreScope {
   dataDir: string;
   sessionId: string;
 }
@@ -224,7 +227,7 @@ function pick(source: Record<string, unknown>, fields: readonly string[]): Recor
 function projectBlock(block: unknown, attachment?: Record<string, unknown>): unknown {
   const record = asRecord(block);
   if (record && attachment) {
-    // A stored user image: the client renders it from the session attachment route.
+    // A stored image: the client renders it from the session attachment route.
     return {
       type: "image",
       ...(typeof record.mimeType === "string" ? { mimeType: record.mimeType } : {}),
@@ -247,7 +250,7 @@ type BlockProjector = (block: unknown, attachment?: Record<string, unknown>) => 
 /** `message` with only the fields clients read (`CLIENT_MESSAGE_FIELDS`). */
 function projectMessage(
   message: Message,
-  images?: UserImageStoreScope,
+  images?: MessageImageStoreScope,
   project: BlockProjector = projectBlock,
 ): ConversationMessageView {
   const record = message as unknown as ConversationMessageView;
@@ -255,15 +258,22 @@ function projectMessage(
   if (!fields) return record;
   const view = pick(record, fields) as ConversationMessageView;
   if (!Array.isArray(view.content)) return view;
-  // A user message's images move into the session attachment store at projection time, so
-  // the stream carries a reference and never the bytes (the model still gets them).
+  // The images of a user message or tool result move into the session attachment store at
+  // projection time, so the stream carries a reference and never the bytes (the model still
+  // gets them). One screenshot is megabytes of base64: a snapshot inlining a few dozen of
+  // them outgrew what a client accepts in one WebSocket message.
+  const toolCallId =
+    record.role === "toolResult" && typeof record.toolCallId === "string"
+      ? record.toolCallId
+      : undefined;
   const storedByIndex =
-    record.role === "user" && images
+    images && (record.role === "user" || toolCallId)
       ? new Map(
-          storeUserMessageImages({
+          storeMessageImages({
             dataDir: images.dataDir,
             sessionId: images.sessionId,
             content: view.content,
+            ...(toolCallId ? { toolCallId } : {}),
           }).map((stored) => [stored.blockIndex, stored.details]),
         )
       : undefined;
@@ -370,7 +380,7 @@ export function projectEntry(
   renderers: MobileRendererRegistry,
   tools: ToolPresenter,
   presentation: EntryPresentation = {},
-  images?: UserImageStoreScope,
+  images?: MessageImageStoreScope,
 ): ConversationEntryView {
   const view: ConversationEntryView = { id: entry.id, kind: entry.kind };
   if (presentation.hidden) return { ...view, hidden: true };
@@ -389,7 +399,19 @@ export function projectEntry(
         message.details === undefined
           ? undefined
           : normalizeAudioPresentationDetails(message.details);
-      const details = raw === undefined ? undefined : sanitizeToolResultDetails(raw).details;
+      const sanitized = raw === undefined ? undefined : sanitizeToolResultDetails(raw).details;
+      // Stored media is listed in `details.media`, as trace history lists it, which is where
+      // a tool row looks for the images it paints.
+      const media = images
+        ? sessionAttachmentMediaDetailsForToolResult(
+            images.dataDir,
+            images.sessionId,
+            message.toolCallId,
+            message.content,
+            message.details,
+          )
+        : [];
+      const details = media.length ? { ...(asRecord(sanitized) ?? {}), media } : sanitized;
       if (details !== undefined) projected.details = details;
       view.toolResult = renderToolResult(renderers, message, raw, details);
     }

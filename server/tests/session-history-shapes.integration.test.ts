@@ -178,7 +178,7 @@ describe.each(clients)("session history shapes for a client with $name", ({ head
    * request opens the store or the idle close releases it, and `readdirSync(…, { recursive: true })`
    * throws ENOENT when that directory goes away between listing it and opening it.
    *
-   * `storeUserMessageImages` writes this manifest before the history response is built, so the
+   * `storeMessageImages` writes this manifest before the history response is built, so the
    * records are on disk by the time a route's trace assertions above have run.
    */
   function storedAttachments(sessionId: string): Array<Record<string, unknown>> {

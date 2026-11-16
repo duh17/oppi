@@ -81,8 +81,8 @@ export interface MaterializeToolMediaContentOptions {
 /** Attachment id key for the images of a user message: no tool call names them. */
 const USER_MESSAGE_IMAGE_ID_KEY = "user";
 
-/** One image block of a user message that the store now owns. */
-export interface StoredUserMessageImage {
+/** One image block of a user message or tool result that the store now owns. */
+export interface StoredMessageImage {
   /** Index of the image block in the message content array. */
   blockIndex: number;
   details: Record<string, unknown>;
@@ -827,23 +827,27 @@ function imageBytesFromBlock(block: Record<string, unknown>, maxBytes: number): 
 }
 
 /**
- * Move the image blocks of a user message into the session attachment store and return their
- * attachment details by block index. Content-addressed and idempotent: the same image always
- * gets the same id, and a record the manifest already holds is reused without touching its
- * bytes or the manifest. It runs at projection time, so history from before the phone and
- * images pasted in a terminal are covered too; the stored session log keeps its base64 for
- * the model.
+ * Move the image blocks of a user message, or of a tool result when `toolCallId` is given, into
+ * the session attachment store and return their attachment details by block index.
+ * Content-addressed and idempotent: the same image always gets the same id, and a record the
+ * manifest already holds is reused without touching its bytes or the manifest. A tool result's
+ * image gets the id its live event stored it under (`materializeToolMediaContentBlocks`), so
+ * `sessionAttachmentMediaDetailsForToolResult` finds it. It runs at projection time, so history
+ * from before the phone and images pasted in a terminal are covered too; the stored session
+ * log keeps its base64 for the model.
  *
  * Blocks it cannot store (no base64, a bad decode, an empty or oversized image, a write
  * failure) are left out, so the caller keeps them inline exactly as before.
  */
-export function storeUserMessageImages(options: {
+export function storeMessageImages(options: {
   dataDir: string;
   sessionId: string;
   content: unknown;
+  /** The tool call whose result holds `content`; absent for a user message. */
+  toolCallId?: string;
   /** Cap for one image; defaults to the store's own `MAX_SESSION_ATTACHMENT_BYTES`. */
   maxImageBytes?: number;
-}): StoredUserMessageImage[] {
+}): StoredMessageImage[] {
   if (!Array.isArray(options.content)) return [];
   const maxBytes = Math.min(
     options.maxImageBytes ?? MAX_SESSION_ATTACHMENT_BYTES,
@@ -859,11 +863,13 @@ export function storeUserMessageImages(options: {
   }
   if (candidates.length === 0) return [];
 
+  const toolCallId = options.toolCallId;
+  const idKey = toolCallId ?? USER_MESSAGE_IMAGE_ID_KEY;
   // Read the manifest once, and only when there is an image to store.
   let byId: Map<string, SessionAttachmentRecord> | undefined;
-  const stored: StoredUserMessageImage[] = [];
+  const stored: StoredMessageImage[] = [];
   for (const candidate of candidates) {
-    const id = attachmentIdFor(USER_MESSAGE_IMAGE_ID_KEY, candidate.bytes);
+    const id = attachmentIdFor(idKey, candidate.bytes);
     byId ??= new Map(
       readManifest(options.dataDir, options.sessionId).attachments.map((record) => [
         record.id,
@@ -876,10 +882,14 @@ export function storeUserMessageImages(options: {
         record = storeAttachment({
           dataDir: options.dataDir,
           sessionId: options.sessionId,
-          idKey: USER_MESSAGE_IMAGE_ID_KEY,
+          ...(toolCallId ? { toolCallId } : { idKey }),
           kind: "image",
           mimeType: candidate.mimeType,
-          fileName: safeFileName("user-image", candidate.mimeType, "image"),
+          fileName: safeFileName(
+            toolCallId ? `tool-image-${candidate.blockIndex + 1}` : "user-image",
+            candidate.mimeType,
+            "image",
+          ),
           bytes: candidate.bytes,
         });
       } catch {
@@ -887,11 +897,14 @@ export function storeUserMessageImages(options: {
       }
       byId.set(id, record);
     }
-    // The owning session travels with the reference: a conversation can be bound to more
-    // than one session, and only this one holds the bytes.
+    // A user image's owning session travels with the reference: a conversation can be bound
+    // to more than one session, and only this one holds the bytes. A tool result's media is
+    // read through its session's tool media, as trace history lists it (`details.media`).
     stored.push({
       blockIndex: candidate.blockIndex,
-      details: { ...attachmentDetails(record), sessionId: options.sessionId },
+      details: toolCallId
+        ? attachmentDetails(record)
+        : { ...attachmentDetails(record), sessionId: options.sessionId },
     });
   }
   return stored;

@@ -131,6 +131,8 @@ final class IOSChatSessionRuntimeAdapter:
 
     var isBindTerminal: Bool { connection?.isFocusedStreamBindTerminal() == true }
 
+    var closedForOversizedMessage: Bool { connection?.wsClient?.closedForOversizedMessage == true }
+
     var conversationStreamAvailable: Bool { connection?.conversationStreamAvailable == true }
 
     var conversationStreamLiveTailsAvailable: Bool { connection?.conversationStreamLiveTailsAvailable == true }

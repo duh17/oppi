@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -82,7 +82,8 @@ export async function buildConversationStreamGolden(): Promise<string> {
       context,
     );
   const renderers = new MobileRendererRegistry();
-  // User-message images are stored under the session, like the server does at projection time.
+  // User-message and tool-result images are stored under the session, like the server does at
+  // projection time.
   const images = { dataDir: dir, sessionId: "golden-session" };
   const frames: ConversationStreamServerMessage[] = [];
   const record = (frame: ConversationStreamServerMessage) =>
@@ -146,6 +147,11 @@ export async function buildConversationStreamGolden(): Promise<string> {
         { stopReason: "toolUse" },
       ),
       fauxAssistantMessage("The command failed with exit code 3."),
+      // A tool result holding an image: it leaves as a stored reference, never its bytes.
+      fauxAssistantMessage([fauxToolCall("read", { path: "shot.png" }, { id: "call-shot" })], {
+        stopReason: "toolUse",
+      }),
+      fauxAssistantMessage("The screenshot is a single pixel."),
       fauxAssistantMessage("Thanks for the job report."),
       fauxAssistantMessage("Noted the child's report."),
       fauxAssistantMessage("Summary of the work so far: listed files, ran a failing command."),
@@ -160,6 +166,8 @@ export async function buildConversationStreamGolden(): Promise<string> {
         { type: "image", data: PNG_1X1, mimeType: "image/png" },
       ],
     });
+    writeFileSync(join(dir, "shot.png"), Buffer.from(PNG_1X1, "base64"));
+    await turn({ type: "input", content: "Read the screenshot" });
 
     // A display card: an entry without model messages whose data carries a card.
     await conversation.commit(async (tx) => {

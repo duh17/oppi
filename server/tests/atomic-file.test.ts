@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FileLiveActivityStateStore } from "../src/live-activity-state-store.js";
 import {
   materializeToolMediaContentBlocks,
-  storeUserMessageImages,
+  storeMessageImages,
 } from "../src/session-attachments.js";
 import { writeFileAtomic, type AtomicWriteStep } from "../src/storage/atomic-file.js";
 import { extractAutoTitle } from "../src/storage/auto-title-extension-migration.js";
@@ -144,7 +144,7 @@ function extractAutoTitleOf(dataDir: string): void {
 }
 
 const storeAttachment = (dataDir: string) =>
-  storeUserMessageImages({
+  storeMessageImages({
     dataDir,
     sessionId: "s",
     content: [{ type: "image", data: "cG5n", mimeType: "image/png" }],

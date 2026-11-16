@@ -18,7 +18,7 @@ import {
   sessionAttachmentDetailsForToolCall,
   sessionAttachmentMediaDetailsForToolCall,
   sessionAttachmentMediaDetailsForToolResult,
-  storeUserMessageImages,
+  storeMessageImages,
   streamSessionAttachment,
 } from "../src/session-attachments.js";
 
@@ -864,7 +864,7 @@ describe("user message images", () => {
   }
 
   it("stores a user message image with a deterministic id and reports its details", () => {
-    const stored = storeUserMessageImages({
+    const stored = storeMessageImages({
       dataDir: root,
       sessionId: "s-user",
       content: [{ type: "text", text: "look" }, imageBlock(png)],
@@ -890,14 +890,14 @@ describe("user message images", () => {
   });
 
   it("is idempotent: a second projection reuses the record without rewriting it", () => {
-    const first = storeUserMessageImages({
+    const first = storeMessageImages({
       dataDir: root,
       sessionId: "s-idem",
       content: [imageBlock(png)],
     });
     const manifestPath = join(root, "session-attachments", "s-idem", "manifest.json");
     const before = readFileSync(manifestPath, "utf8");
-    const second = storeUserMessageImages({
+    const second = storeMessageImages({
       dataDir: root,
       sessionId: "s-idem",
       content: [imageBlock(png)],
@@ -910,7 +910,7 @@ describe("user message images", () => {
 
   it("dedupes identical images in one message and stores distinct ones once", () => {
     const other = Buffer.from("another-image");
-    const stored = storeUserMessageImages({
+    const stored = storeMessageImages({
       dataDir: root,
       sessionId: "s-dedupe",
       content: [imageBlock(png), imageBlock(other), imageBlock(png)],
@@ -923,17 +923,17 @@ describe("user message images", () => {
   });
 
   it("leaves no temp files behind when it writes bytes and the manifest", () => {
-    storeUserMessageImages({
+    storeMessageImages({
       dataDir: root,
       sessionId: "s-atomic",
       content: [imageBlock(png), imageBlock(Buffer.from("second"))],
     });
-    storeUserMessageImages({
+    storeMessageImages({
       dataDir: root,
       sessionId: "s-atomic",
       content: [imageBlock(png)],
     });
-    storeUserMessageImages({
+    storeMessageImages({
       dataDir: root,
       sessionId: "s-atomic",
       content: [imageBlock(Buffer.from("third"))],
@@ -946,7 +946,7 @@ describe("user message images", () => {
   });
 
   it("skips images it cannot store, leaving them for the inline fallback", () => {
-    const stored = storeUserMessageImages({
+    const stored = storeMessageImages({
       dataDir: root,
       sessionId: "s-fallback",
       maxImageBytes: 8,
@@ -965,7 +965,7 @@ describe("user message images", () => {
   });
 
   it("reports stored images of a tool result without matching user images", () => {
-    const stored = storeUserMessageImages({
+    const stored = storeMessageImages({
       dataDir: root,
       sessionId: "s-scope",
       content: [imageBlock(png)],

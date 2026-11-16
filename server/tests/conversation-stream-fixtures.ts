@@ -37,7 +37,7 @@ const userEntry: ConversationEntryView = {
     {
       role: "user",
       // A user message with a photo: the server stores the image and the stream carries the
-      // reference, never the bytes (see `storeUserMessageImages`).
+      // reference, never the bytes (see `storeMessageImages`).
       content: [
         { type: "text", text: "List the files" },
         {

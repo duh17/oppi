@@ -86,13 +86,22 @@ enum WebSocketRecoveryPolicy {
         case .protocolError,
              .unsupportedData,
              .invalidFramePayloadData,
-             .policyViolation,
-             .messageTooBig:
+             .policyViolation:
             return true
         default:
-            let nsError = error as NSError
-            return nsError.domain == NSPOSIXErrorDomain && nsError.code == Int(EMSGSIZE)
+            return isMessageTooBig(error, closeCode: closeCode)
         }
+    }
+
+    /// An inbound frame over `maximumMessageSize` (`EMSGSIZE`, no close code), or a peer that
+    /// closed with 1009.
+    nonisolated static func isMessageTooBig(
+        _ error: Error,
+        closeCode: URLSessionWebSocketTask.CloseCode
+    ) -> Bool {
+        if closeCode == .messageTooBig { return true }
+        let nsError = error as NSError
+        return nsError.domain == NSPOSIXErrorDomain && nsError.code == Int(EMSGSIZE)
     }
 
     nonisolated static func isRecoverableReceiveError(

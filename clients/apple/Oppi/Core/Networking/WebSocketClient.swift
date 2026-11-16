@@ -22,6 +22,9 @@ final class WebSocketClient {
 
     private(set) var status: Status = .disconnected
     private(set) var lastHTTPStatusCode: Int?
+    /// The last socket ended because the server sent a frame over `maximumMessageSize`.
+    /// Reconnecting would get the same frame, so the session's owner stops and says so.
+    private(set) var closedForOversizedMessage = false
 
     /// Monotonic ID incremented on each `connect()` call.
     /// Used to prevent stale `onTermination` handlers from killing newer connections.
@@ -136,10 +139,11 @@ final class WebSocketClient {
         self.urlSession = urlSession
         self.webSocketFactory = webSocketFactory ?? { request in
             let task = urlSession.webSocketTask(with: request)
-            // URLSession's default is 1 MiB. A durable conversation snapshot carries the whole
-            // active context, inline images included, and is often larger; a frame over the
-            // limit closes the socket with 1009 and the reconnect gets the same snapshot again.
-            // Match the server's own payload limit (`WS_MAX_PAYLOAD_BYTES`).
+            // URLSession's default is 1 MiB, and a durable conversation snapshot of 100 entries
+            // can be larger (images leave as attachment references, text does not). A frame
+            // over the limit fails the socket with EMSGSIZE and the reconnect would get the same
+            // snapshot again; `closedForOversizedMessage` stops that. Match the server's own
+            // payload limit (`WS_MAX_PAYLOAD_BYTES`).
             task.maximumMessageSize = Self.maximumMessageSize
             return PersistentWebSocketTransport(task: task)
         }
@@ -171,6 +175,7 @@ final class WebSocketClient {
         let thisConnection = connectionID
         didForceRefreshForConnection = false
         lastHTTPStatusCode = nil
+        closedForOversizedMessage = false
         status = .connecting
         wsLogInfo(
             "Connect requested to session stream (old=\(oldConn) new=\(thisConnection))",
@@ -845,6 +850,10 @@ final class WebSocketClient {
                         )
                     } else if WebSocketRecoveryPolicy.isTerminalReceiveFailure(error, closeCode: ws.closeCode()) {
                         shouldAttemptReconnect = false
+                        self.closedForOversizedMessage = WebSocketRecoveryPolicy.isMessageTooBig(
+                            error,
+                            closeCode: ws.closeCode()
+                        )
                         let metadata = self.receiveFailureMetadata(for: ws, error: error)
                             .merging(self.consumeReceiveErrorSuppressionMetadata()) { _, new in new }
                         logger.error("WebSocket terminal receive failure, close code \(ws.closeCode().rawValue)")

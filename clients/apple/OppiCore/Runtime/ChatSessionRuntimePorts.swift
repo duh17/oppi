@@ -211,6 +211,9 @@ protocol ChatSessionFocusedStreamPort: AnyObject {
     var transportPath: ConnectionTransportPath { get }
     var fatalSetupError: Bool { get set }
     var isBindTerminal: Bool { get }
+    /// The focused socket ended because the server sent a message larger than the client
+    /// accepts. A reconnect would get the same message.
+    var closedForOversizedMessage: Bool { get }
     /// The server advertises `capabilities.conversationStream` v1: a durable session's
     /// timeline comes from the conversation stream replica.
     var conversationStreamAvailable: Bool { get }

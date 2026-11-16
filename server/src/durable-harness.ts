@@ -66,7 +66,7 @@ import {
   type ConversationStreamSubscription,
 } from "./durable-conversation-stream.js";
 import type { CacheMissNoticeSource } from "./cache-miss.js";
-import type { UserImageStoreScope } from "./durable-conversation-view.js";
+import type { MessageImageStoreScope } from "./durable-conversation-view.js";
 import { DurableModels } from "./durable-models.js";
 import { createLogger } from "./logger.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
@@ -820,8 +820,8 @@ export class SessionHost {
     id: ConversationId,
     options: {
       renderers: MobileRendererRegistry;
-      /** Where user-message images of the conversation's session are stored. */
-      images?: UserImageStoreScope;
+      /** Where user-message and tool-result images of the conversation's session are stored. */
+      images?: MessageImageStoreScope;
       /** Present while the session shows cache-miss notices, which entries then carry. */
       cacheMissNotices?: CacheMissNoticeSource;
       beforeEntryId: number;

@@ -333,7 +333,7 @@ export async function readDurableTrace(
   id: ConversationId,
   view: TraceViewMode,
   entryRenderers?: LiveEntryRendererSet,
-  /** Where user-message image bytes are stored; without it they stay data URIs. */
+  /** Where user-message and tool-result image bytes are stored; without it they stay data URIs. */
   images?: { dataDir: string; sessionId: string },
   cacheMissNotices?: CacheMissNoticeSource,
 ): Promise<TraceEvent[]> {

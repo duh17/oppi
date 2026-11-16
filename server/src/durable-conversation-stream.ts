@@ -46,7 +46,7 @@ import {
   toolCallsOf,
   type DocPresenter,
   type ToolPresenter,
-  type UserImageStoreScope,
+  type MessageImageStoreScope,
 } from "./durable-conversation-view.js";
 import {
   isAbortedAttempt,
@@ -181,8 +181,8 @@ class ConversationRoom implements DocPresenter {
     private readonly harness: Harness,
     readonly conversationId: ConversationId,
     private readonly renderers: MobileRendererRegistry,
-    /** Where user-message images of this conversation's session are stored. */
-    private readonly images?: UserImageStoreScope,
+    /** Where user-message and tool-result images of this conversation's session are stored. */
+    private readonly images?: MessageImageStoreScope,
     /** Present while the session shows cache-miss notices; read when notices are derived. */
     private readonly cacheMissNotices?: () => CacheMissNoticeSource | undefined,
   ) {
@@ -848,7 +848,7 @@ async function roomFor(
   harness: Harness,
   conversationId: ConversationId,
   renderers: MobileRendererRegistry,
-  images?: UserImageStoreScope,
+  images?: MessageImageStoreScope,
   cacheMissNotices?: () => CacheMissNoticeSource | undefined,
 ): Promise<ConversationRoom> {
   let rooms = ROOMS.get(harness);
@@ -874,8 +874,8 @@ export async function attachConversationStream(options: {
   harness: Harness;
   conversationId: ConversationId;
   renderers: MobileRendererRegistry;
-  /** Where user-message images of the conversation's session are stored. */
-  images?: UserImageStoreScope;
+  /** Where user-message and tool-result images of the conversation's session are stored. */
+  images?: MessageImageStoreScope;
   /** Present while the session shows cache-miss notices, which entries then carry. */
   cacheMissNotices?: () => CacheMissNoticeSource | undefined;
   /** Default `full`. */
@@ -928,8 +928,8 @@ export async function readOlderConversationEntries(options: {
   harness: Harness;
   conversationId: ConversationId;
   renderers: MobileRendererRegistry;
-  /** Where user-message images of the conversation's session are stored. */
-  images?: UserImageStoreScope;
+  /** Where user-message and tool-result images of the conversation's session are stored. */
+  images?: MessageImageStoreScope;
   /** Present while the session shows cache-miss notices, which entries then carry. */
   cacheMissNotices?: CacheMissNoticeSource;
   beforeEntryId: number;
