@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "description": "Pins: saved File Browser locations, one list per server. GET /pins answers every pin with what is at its target now (ok, missing, unreadable, workspaceMissing, or unknown when the check took longer than 500 ms). POST /pins adds a target (a duplicate answers the saved pin's id); PUT /pins sets the order and labels and removes left-out pins, and a stale baseRevision answers 409 revision_conflict with the current list. Each change sends the pins_changed app event. Built by server/tests/pins-fixtures.ts; server/tests/pins-fixtures.test.ts fails when the committed bytes differ, and Apple PinsContractTests decodes these bodies.",
+    "description": "Pins: saved places, one list per server: File Browser folders and files, and sessions. GET /pins answers every pin with what is at its target now (ok, missing, unreadable, workspaceMissing, or unknown when the check took longer than 500 ms); a session pin is ok while the session exists and missing once it is deleted. POST /pins adds a target (a duplicate answers the saved pin's id); PUT /pins sets the order and labels and removes left-out pins, and a stale baseRevision answers 409 revision_conflict with the current list. Each change sends the pins_changed app event. Built by server/tests/pins-fixtures.ts; server/tests/pins-fixtures.test.ts fails when the committed bytes differ, and Apple PinsContractTests decodes these bodies.",
     "source": "server/src/types/pins.ts"
   },
   "list": {
@@ -69,6 +69,26 @@
         "kind": "directory",
         "createdAt": 1794384300000,
         "status": "unknown"
+      },
+      {
+        "id": "pin_Release00007",
+        "target": {
+          "origin": "session",
+          "sessionId": "2f6c1a9e-session"
+        },
+        "kind": "session",
+        "createdAt": 1794384360000,
+        "status": "ok"
+      },
+      {
+        "id": "pin_OldChat00008",
+        "target": {
+          "origin": "session",
+          "sessionId": "deleted-session"
+        },
+        "kind": "session",
+        "createdAt": 1794384420000,
+        "status": "missing"
       }
     ]
   },
@@ -86,6 +106,12 @@
         "path": "reports"
       },
       "label": "Reports"
+    },
+    {
+      "target": {
+        "origin": "session",
+        "sessionId": "2f6c1a9e-session"
+      }
     }
   ],
   "add": {
@@ -154,6 +180,26 @@
         "kind": "directory",
         "createdAt": 1794384300000,
         "status": "unknown"
+      },
+      {
+        "id": "pin_Release00007",
+        "target": {
+          "origin": "session",
+          "sessionId": "2f6c1a9e-session"
+        },
+        "kind": "session",
+        "createdAt": 1794384360000,
+        "status": "ok"
+      },
+      {
+        "id": "pin_OldChat00008",
+        "target": {
+          "origin": "session",
+          "sessionId": "deleted-session"
+        },
+        "kind": "session",
+        "createdAt": 1794384420000,
+        "status": "missing"
       }
     ],
     "pinId": "pin_Reports00002"
@@ -239,6 +285,26 @@
           "kind": "directory",
           "createdAt": 1794384300000,
           "status": "unknown"
+        },
+        {
+          "id": "pin_Release00007",
+          "target": {
+            "origin": "session",
+            "sessionId": "2f6c1a9e-session"
+          },
+          "kind": "session",
+          "createdAt": 1794384360000,
+          "status": "ok"
+        },
+        {
+          "id": "pin_OldChat00008",
+          "target": {
+            "origin": "session",
+            "sessionId": "deleted-session"
+          },
+          "kind": "session",
+          "createdAt": 1794384420000,
+          "status": "missing"
         }
       ]
     }

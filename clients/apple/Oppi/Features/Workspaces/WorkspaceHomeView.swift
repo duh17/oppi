@@ -226,6 +226,8 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
 /// These are intentionally not bottom-tab destinations; they are secondary
 /// management surfaces reached from the server/environment menu.
 enum WorkspaceUtilityNavTarget: Hashable {
+    /// The server's pins: sessions, folders, and files (`PinnedViewController`).
+    case pinned
     case schedules
     case agents
     case extensions
@@ -245,7 +247,7 @@ enum WorkspaceUtilityNavTarget: Hashable {
         case .schedules: .schedules
         case .extensions: .extensions
         case .sshTerminal: .terminal
-        case .pluginScreen, .manageServers, .serverMetrics, .appSettings: nil
+        case .pinned, .pluginScreen, .manageServers, .serverMetrics, .appSettings: nil
         }
     }
 }

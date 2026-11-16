@@ -19,6 +19,7 @@ function makeServer() {
   writeFileSync(join(home, "book.epub"), "epub");
   mkdirSync(join(checkout, "reports"));
   const workspaces = new Map([["ws-1", { id: "ws-1", hostMount: checkout, runtime: "host" }]]);
+  const sessions = new Set(["sess-release", "sess-review"]);
   const events: number[] = [];
 
   function start() {
@@ -26,6 +27,7 @@ function makeServer() {
       storage: {
         getDataDir: () => dataDir,
         getWorkspace: (id: string) => workspaces.get(id),
+        getSession: (id: string) => (sessions.has(id) ? { id } : undefined),
       },
       appEvents: { emitPinsChanged: (revision: number) => events.push(revision) },
     } as unknown as RouteContext;
@@ -44,7 +46,7 @@ function makeServer() {
     };
   }
 
-  return { dataDir, home, checkout, workspaces, events, start };
+  return { dataDir, home, checkout, workspaces, sessions, events, start };
 }
 
 describe("pins routes", () => {
@@ -207,6 +209,99 @@ describe("pins routes", () => {
       "workspaceMissing",
       "workspaceMissing",
     ]);
+  });
+});
+
+describe("session pins", () => {
+  it("pins a session once, reorders it among places, and reads missing once the session is deleted", async () => {
+    const server = makeServer();
+    const call = server.start();
+
+    const folder = await call<PinAddResponse>("POST", {
+      target: { origin: "host", path: "~/notebook" },
+    });
+    const release = await call<PinAddResponse>("POST", {
+      target: { origin: "session", sessionId: "sess-release" },
+    });
+    expect(release.status).toBe(200);
+    expect(release.json.pins.at(-1)).toMatchObject({
+      id: release.json.pinId,
+      target: { origin: "session", sessionId: "sess-release" },
+      kind: "session",
+      status: "ok",
+    });
+    const again = await call<PinAddResponse>("POST", {
+      target: { origin: "session", sessionId: "sess-release" },
+    });
+    expect(again.json).toMatchObject({ revision: 2, pinId: release.json.pinId });
+    const review = await call<PinAddResponse>("POST", {
+      target: { origin: "session", sessionId: "sess-review" },
+    });
+    expect(server.events).toEqual([1, 2, 3]);
+
+    const reordered = await call<PinsResponse>("PUT", {
+      baseRevision: 3,
+      pins: [{ id: review.json.pinId }, { id: release.json.pinId }, { id: folder.json.pinId }],
+    });
+    expect(reordered.json.pins.map((pin) => pin.id)).toEqual([
+      review.json.pinId,
+      release.json.pinId,
+      folder.json.pinId,
+    ]);
+
+    server.sessions.delete("sess-release");
+    const list = await server.start()<PinsResponse>("GET");
+    expect(list.json.pins.map((pin) => [pin.id, pin.status])).toEqual([
+      [review.json.pinId, "ok"],
+      [release.json.pinId, "missing"],
+      [folder.json.pinId, "ok"],
+    ]);
+    // A status is read, not a change: no new revision and no event.
+    expect(list.json.revision).toBe(4);
+    expect(server.events).toEqual([1, 2, 3, 4]);
+  });
+
+  it("refuses a session that does not exist and a malformed session target", async () => {
+    const server = makeServer();
+    const call = server.start();
+    const gone = await call<{ error: string }>("POST", {
+      target: { origin: "session", sessionId: "sess-gone" },
+    });
+    expect(gone.status).toBe(404);
+    expect(gone.json.error).toBe("Session not found");
+    for (const target of [
+      { origin: "session" },
+      { origin: "session", sessionId: "" },
+      { origin: "session", sessionId: 7 },
+      { origin: "session", sessionId: "sess\nrelease" },
+      { origin: "session", sessionId: "x".repeat(257) },
+      { origin: "session", sessionId: "sess-release", path: "~/notebook" },
+    ]) {
+      expect((await call("POST", { target })).status, JSON.stringify(target)).toBe(400);
+    }
+    expect((await call<PinsResponse>("GET")).json.pins).toEqual([]);
+    expect(server.events).toEqual([]);
+  });
+
+  it("refuses a stored file whose session pin is not of kind session", async () => {
+    const server = makeServer();
+    mkdirSync(join(server.dataDir, "settings"), { recursive: true });
+    writeFileSync(
+      join(server.dataDir, "settings", "pins.json"),
+      JSON.stringify({
+        version: 1,
+        revision: 1,
+        pins: [
+          {
+            id: "pin_Release00007",
+            target: { origin: "session", sessionId: "sess-release" },
+            kind: "directory",
+            createdAt: 1,
+          },
+        ],
+      }),
+    );
+    expect((await server.start()("GET")).status).toBe(503);
   });
 });
 

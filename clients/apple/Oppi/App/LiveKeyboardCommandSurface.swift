@@ -113,6 +113,7 @@ final class LiveKeyboardCommandSurface {
         switch command {
         case .newSession: run = newSession()
         case .settings: run = openSettings()
+        case .showPinned: run = showPinned()
         case .close: run = close()
         case .toggleSidebar:
             let (action, isShown) = toggleSidebar()
@@ -207,6 +208,17 @@ final class LiveKeyboardCommandSurface {
         guard navigation.workspaceStackRouteElements.last != .utility(.appSettings) else { return nil }
         return { [navigation, weak self] in
             navigation.openWorkspaceUtility(.appSettings)
+            // The compact drawer covers the screen the command opened.
+            self?.descendant(of: self?.rootController, as: WorkspaceDrawerController.self)?.closeSidebar()
+        }
+    }
+
+    /// The Pinned screen, as the sidebar's Pinned row opens it, on a server that keeps pins.
+    private func showPinned() -> (@MainActor () -> Void)? {
+        guard isInteractive, topPresented == nil, root.windowConnection?.pinsAvailable == true,
+              navigation.workspaceStackRouteElements.last != .utility(.pinned) else { return nil }
+        return { [navigation, weak self] in
+            navigation.openWorkspaceUtility(.pinned)
             // The compact drawer covers the screen the command opened.
             self?.descendant(of: self?.rootController, as: WorkspaceDrawerController.self)?.closeSidebar()
         }

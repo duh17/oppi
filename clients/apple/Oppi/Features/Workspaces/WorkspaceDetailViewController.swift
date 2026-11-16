@@ -157,7 +157,10 @@ final class WorkspaceDetailViewController: UIViewController {
         delete: { [weak self] session in
             { [weak self] in self?.confirmDelete(session) }
         },
-        lockTarget: { [serverId] session in .session(session, serverId: serverId) }
+        lockTarget: { [serverId] session in .session(session, serverId: serverId) },
+        pin: { [weak self] session in
+            PinMenu.sessionRowToggle(session, connection: self?.connection, view: self?.viewIfLoaded)
+        }
     )
 
     init(root: AppRootEnvironment, target: WorkspaceNavTarget, showsSidebarToggle: Bool = false) {

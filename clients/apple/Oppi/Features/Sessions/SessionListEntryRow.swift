@@ -15,6 +15,9 @@ struct SessionListRowActions {
     let delete: (Session) -> (() -> Void)?
     /// The row's lock scope; nil when the list has no server.
     let lockTarget: (Session) -> ScopedLockTarget?
+    /// The row's Pin or Unpin, read when the swipe or menu opens; nil where
+    /// the list's server keeps no session pins.
+    var pin: (Session) -> PinMenu.Toggle? = { _ in nil }
 }
 
 extension Confirmation {

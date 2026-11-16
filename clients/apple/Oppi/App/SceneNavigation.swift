@@ -1172,6 +1172,7 @@ final class SceneNavigation {
         _ target: WorkspaceUtilityNavTarget
     ) -> WorkspaceStackDiagnosticContext {
         let label = switch target {
+        case .pinned: "pinned"
         case .schedules: "schedules"
         case .agents: "agents"
         case .extensions: "extensions"

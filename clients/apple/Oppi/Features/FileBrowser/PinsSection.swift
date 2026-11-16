@@ -1,17 +1,17 @@
 import UIKit
 
-// Pins as a list section: the File Browser's Pinned section at the top of
-// the Home and workspace roots (`FileBrowserPinsSection`), and the sidebar's
-// Pinned section (`WorkspaceSidebarViewController`). A pin is a saved place
-// the browser can already open; opening one goes through the same routes and
-// scoped locks as browsing to it.
+// Pins in a list: the File Browser's Pinned section at the top of the Home
+// and workspace roots (`FileBrowserPinsSection`), and the Pinned screen
+// (`PinnedViewController`). A pin is a saved place the app can already open;
+// opening one goes through the same routes and scoped locks as browsing to it.
 
-/// One list's Pinned section. The list puts its rows in its own snapshot,
-/// draws them in its own row look, and forwards their taps, menus, swipes,
-/// drags, and Edit-mode reordering here.
+/// One list's pins. The list puts their rows in its own snapshot, draws them
+/// in its own row look, and forwards their taps, menus, swipes, drags, and
+/// Edit-mode reordering here.
 ///
 /// Edit puts the rows in the list's edit mode: reorder handles and delete
-/// controls change a local order, and Done saves it in one write.
+/// controls change a local order, and Done saves it in one write. A list
+/// that shows its pins in groups moves each pin only within its group.
 @MainActor
 class PinsSection {
     /// One pin row as it draws: the list reconfigures a row when this changes.
@@ -23,7 +23,8 @@ class PinsSection {
         /// A file's icon; nil for a folder.
         let icon: FileIcon?
         let isDirectory: Bool
-        /// Not there, or its workspace is gone: dimmed, and a tap offers Remove Pin.
+        /// Not there (a deleted session too), or its workspace is gone: dimmed,
+        /// and a tap offers Remove Pin.
         let isGone: Bool
         let isLocked: Bool
         let isEditing: Bool
@@ -58,13 +59,14 @@ class PinsSection {
     }
 
     let serverId: String
-    /// Where the section's accessibility identifiers start: `fileBrowser`, `workspace.sidebar`.
+    /// Where the section's accessibility identifiers start: `fileBrowser`, `pinned`.
     let identifierPrefix: String
     private(set) weak var presenter: UIViewController?
     private let hooks: Hooks
     private(set) var isEditing = false
     private var requestedFirstRead = false
-    private var editingOrder: [String] = []
+    /// Edit mode's order: each group's pins, in their new order.
+    private var editingGroups: [[String]] = []
     private var editingRemoved: Set<String> = []
 
     /// One Edit button for the header's life (lesson: one accessory control, mutated).
@@ -113,7 +115,7 @@ class PinsSection {
         var shown = connection.pins.pins.filter(hooks.shows)
         if isEditing {
             let byId = Dictionary(shown.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-            shown = editingOrder.compactMap { byId[$0] }
+            shown = editingGroups.joined().compactMap { byId[$0] }
         }
         guard !shown.isEmpty || isEditing else { return nil }
         let header = Header(isCollapsed: hooks.isCollapsed() && !isEditing, isEditing: isEditing, count: shown.count)
@@ -138,7 +140,7 @@ class PinsSection {
             key: pin.target.accessibilityKey,
             title: pin.displayName(workspaceName: workspaceName),
             detail: pin.subtitle(workspaceName: workspaceName),
-            icon: pin.kind == .directory ? nil : FileIcon.forPath(pin.target.path),
+            icon: pin.kind == .file ? FileIcon.forPath(pin.target.path) : nil,
             isDirectory: pin.kind == .directory,
             isGone: pin.status == .missing || pin.status == .workspaceMissing,
             isLocked: locked,
@@ -248,11 +250,14 @@ class PinsSection {
     private func offerRemoval(_ pin: Pin) {
         guard let presenter else { return }
         let name = pin.displayName(workspaceName: nil)
+        let message = switch (pin.kind, pin.status) {
+        case (.session, _): String(localized: "The session was deleted.")
+        case (_, .workspaceMissing): String(localized: "Its workspace was removed.")
+        default: String(localized: "It may have been moved, renamed, or deleted.")
+        }
         Confirmation(
             title: String(localized: "\u{201C}\(name)\u{201D} isn\u{2019}t there anymore"),
-            message: pin.status == .workspaceMissing
-                ? String(localized: "Its workspace was removed.")
-                : String(localized: "It may have been moved, renamed, or deleted."),
+            message: message,
             actionTitle: String(localized: "Remove Pin"),
             style: .alert,
             actionIdentifier: "\(identifierPrefix).pin.removeMissing"
@@ -291,9 +296,10 @@ class PinsSection {
             let unpin = Self.action(String(localized: "Unpin"), "pin.slash", "\(prefix).pin.unpin") { [weak self] in
                 self?.unpin(pinId)
             }
+            // A session keeps its own name: it renames in its chat, not here.
             return UIMenu(children: [
                 UIMenu(options: .displayInline, children: open),
-                UIMenu(options: .displayInline, children: [rename, unpin]),
+                UIMenu(options: .displayInline, children: pin.kind == .session ? [unpin] : [rename, unpin]),
             ])
         }
         configuration.preferredMenuElementOrder = .fixed
@@ -320,16 +326,15 @@ class PinsSection {
     }
 
     private func accessibilityActions(pinId: String) -> [UIAccessibilityCustomAction] {
-        let own = [
-            UIAccessibilityCustomAction(name: String(localized: "Rename")) { [weak self] _ in
-                self?.askRename(pinId)
-                return true
-            },
-            UIAccessibilityCustomAction(name: String(localized: "Unpin")) { [weak self] _ in
-                self?.unpin(pinId)
-                return true
-            },
-        ]
+        let rename = UIAccessibilityCustomAction(name: String(localized: "Rename")) { [weak self] _ in
+            self?.askRename(pinId)
+            return true
+        }
+        let unpin = UIAccessibilityCustomAction(name: String(localized: "Unpin")) { [weak self] _ in
+            self?.unpin(pinId)
+            return true
+        }
+        let own = pin(pinId)?.kind == .session ? [unpin] : [rename, unpin]
         guard let pin = pin(pinId), let source = hooks.paneSource() else { return own }
         let entry = pin.paneEntry(serverId: serverId)
         return own + PaneOpenMenu.accessibilityActions(near: source, includesOpenHere: false) { [weak source] placement in
@@ -344,7 +349,7 @@ class PinsSection {
         hooks.connection()?.pins.pins.first { $0.id == id }
     }
 
-    private func unpin(_ id: String) {
+    func unpin(_ id: String) {
         guard let (pins, api) = store else { return }
         Task { [weak self] in
             do {
@@ -378,34 +383,41 @@ class PinsSection {
         }
     }
 
+    /// The header's Edit and Done: the section's pins as one group.
     private func toggleEditing() {
         if isEditing {
             finishEditing()
-        } else {
-            guard let content = content() else { return }
-            editingOrder = content.rows.map(\.id)
-            editingRemoved = []
-            isEditing = true
-            hooks.setEditing(true)
-            hooks.changed()
+        } else if let content = content() {
+            beginEditing(groups: [content.rows.map(\.id)])
         }
     }
 
-    /// The list moved a pin: `ids` is the section's new order.
-    func didReorder(_ ids: [String]) {
+    /// Enters Edit mode with the list's pins in `groups`, as the list shows them.
+    func beginEditing(groups: [[String]]) {
+        guard !isEditing else { return }
+        editingGroups = groups
+        editingRemoved = []
+        isEditing = true
+        hooks.setEditing(true)
+        hooks.changed()
+    }
+
+    /// The list moved a pin: `groups` holds each group's new order.
+    func didReorder(_ groups: [[String]]) {
         guard isEditing else { return }
-        editingOrder = ids
+        editingGroups = groups
     }
 
     private func removeWhileEditing(_ id: String) {
-        editingOrder.removeAll { $0 == id }
+        editingGroups = editingGroups.map { $0.filter { $0 != id } }
         editingRemoved.insert(id)
         hooks.changed()
     }
 
     /// Done: saves the order and removals once, then leaves edit mode.
-    private func finishEditing() {
-        let order = editingOrder
+    func finishEditing() {
+        guard isEditing else { return }
+        let order = editingGroups
         let removed = editingRemoved
         isEditing = false
         hooks.setEditing(false)
@@ -413,8 +425,8 @@ class PinsSection {
         guard let (pins, api) = store else { return }
         Task { [weak self] in
             do {
-                // Only this list's pins move, within their own places; no change sends nothing.
-                try await pins.setOrder(order, removed: removed, api: api)
+                // Only this list's pins move, each group within its own places; no change sends nothing.
+                try await pins.setOrder(groups: order, removed: removed, api: api)
             } catch {
                 self?.report(error, title: String(localized: "Couldn\u{2019}t Save Pins"))
             }
@@ -433,7 +445,8 @@ class PinsSection {
 }
 
 /// Pin and Unpin for anything that names a place: a browser row, View
-/// Options' folder, the viewer's file. Success shows a pill; a failure says why.
+/// Options' folder, the viewer's file, a session row, the chat's … menu.
+/// Success shows a pill; a failure says why.
 @MainActor
 enum PinMenu {
     /// One Pin or Unpin: the menu item and the accessibility action run the same `run`.
@@ -458,6 +471,18 @@ enum PinMenu {
                 return true
             }
         }
+
+        /// A row's trailing swipe button.
+        func swipeAction(color: UIColor) -> UIContextualAction {
+            let run = run
+            let button = UIContextualAction(style: .normal, title: title) { _, _, completion in
+                run()
+                completion(true)
+            }
+            button.image = UIImage(systemName: symbol + ".fill")
+            button.backgroundColor = color
+            return button
+        }
     }
 
     static func toggle(
@@ -475,11 +500,65 @@ enum PinMenu {
         case (false, true): String(localized: "Pin This Folder")
         case (true, true): String(localized: "Unpin This Folder")
         }
-        return Toggle(
+        return toggle(
+            target: target,
+            saved: saved,
             title: title,
-            symbol: saved == nil ? "pin" : "pin.slash",
-            identifier: saved == nil ? "fileBrowser.pin.add" : "fileBrowser.pin.remove"
-        ) { [weak view] in
+            identifier: saved == nil ? "fileBrowser.pin.add" : "fileBrowser.pin.remove",
+            pins: pins,
+            api: api,
+            view: view
+        )
+    }
+
+    /// Pin or Unpin for one session: "Pin" on a session row (`identifier`
+    /// `session.pin.<id>` or `session.unpin.<id>`), "Pin Session" in the
+    /// chat's … menu (`namesSession`, `chat.toolbar.menu.pin` or `.unpin`).
+    static func sessionToggle(
+        sessionId: String,
+        namesSession: Bool,
+        pins: PinStore,
+        api: APIClient,
+        view: UIView
+    ) -> Toggle {
+        let target = PinTarget.session(id: sessionId)
+        let saved = pins.pin(for: target)
+        let title = switch (saved != nil, namesSession) {
+        case (false, false): String(localized: "Pin")
+        case (true, false): String(localized: "Unpin")
+        case (false, true): String(localized: "Pin Session")
+        case (true, true): String(localized: "Unpin Session")
+        }
+        let verb = saved == nil ? "pin" : "unpin"
+        return toggle(
+            target: target,
+            saved: saved,
+            title: title,
+            identifier: namesSession ? "chat.toolbar.menu.\(verb)" : "session.\(verb).\(sessionId)",
+            pins: pins,
+            api: api,
+            view: view
+        )
+    }
+
+    /// A session row's Pin or Unpin on `connection`'s server; nil when that
+    /// server keeps no session pins.
+    static func sessionRowToggle(_ session: Session, connection: ServerConnection?, view: UIView?) -> Toggle? {
+        guard let connection, connection.sessionPinsAvailable, let api = connection.apiClient, let view else { return nil }
+        return sessionToggle(sessionId: session.id, namesSession: false, pins: connection.pins, api: api, view: view)
+    }
+
+    /// Unpins `saved`, or pins `target` when nothing is saved for it.
+    private static func toggle(
+        target: PinTarget,
+        saved: Pin?,
+        title: String,
+        identifier: String,
+        pins: PinStore,
+        api: APIClient,
+        view: UIView
+    ) -> Toggle {
+        Toggle(title: title, symbol: saved == nil ? "pin" : "pin.slash", identifier: identifier) { [weak view] in
             Task { @MainActor in
                 do {
                     if let saved {
@@ -530,19 +609,23 @@ enum PinMenu {
 }
 
 extension PinTarget {
-    /// The pin row's identifier suffix: the Home path, or `<workspace>:<path>`.
+    /// The pin row's identifier suffix: the Home path, `<workspace>:<path>`, or `session:<id>`.
     var accessibilityKey: String {
         switch self {
         case .host(let path): path
         case .workspace(let id, let path): "\(id):\(path)"
+        case .session(let id): "session:\(id)"
         }
     }
 }
 
 extension Pin {
-    /// The label, else the target's own name (a workspace root reads as its workspace).
+    /// The label, else the target's own name (a workspace root reads as its
+    /// workspace). A session's own name is in its record, not here: the list
+    /// that has it shows it.
     func displayName(workspaceName: String?) -> String {
         if let label, !label.isEmpty { return label }
+        if kind == .session { return String(localized: "Session") }
         let name = target.name
         return name.isEmpty ? (workspaceName ?? String(localized: "Workspace")) : name
     }
@@ -559,6 +642,7 @@ extension Pin {
         case .unreadable: return String(localized: "Oppi can\u{2019}t read this file")
         case .ok, .unknown: break
         }
+        guard kind != .session else { return nil }
         let folders = (target.path as NSString).deletingLastPathComponent.split(separator: "/").map(String.init)
         switch target {
         case .host(let path):
@@ -567,16 +651,19 @@ extension Pin {
         case .workspace(_, let path):
             guard !path.isEmpty else { return nil }
             return ([workspaceName ?? String(localized: "Workspace")] + folders).joined(separator: " \u{203A} ")
+        case .session:
+            return nil
         }
     }
 
-    /// The pane entry this pin opens as: its folder's File Browser or its file.
+    /// The pane entry this pin opens as: its folder's File Browser, its file, or its session's chat.
     func paneEntry(serverId: String) -> PaneStackEntry {
         let route: PaneRoute = switch (target, kind) {
         case (.host(let path), .directory): .hostFiles(path: path == "~" ? nil : path)
-        case (.host(let path), .file): .file(.host, path: path, line: nil)
+        case (.host(let path), _): .file(.host, path: path, line: nil)
         case (.workspace(let id, let path), .directory): .files(workspace: id, path: path.isEmpty ? nil : path)
-        case (.workspace(let id, let path), .file): .file(.workspace(id: id, worktree: nil), path: path, line: nil)
+        case (.workspace(let id, let path), _): .file(.workspace(id: id, worktree: nil), path: path, line: nil)
+        case (.session(let id), _): .session(id)
         }
         return PaneStackEntry(serverId: serverId, route: route)
     }

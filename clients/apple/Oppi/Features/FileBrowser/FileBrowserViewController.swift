@@ -1213,7 +1213,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         }
         dataSource.reorderingHandlers.didReorder = { [weak self] transaction in
             let ids = transaction.finalSnapshot.itemIdentifiers(inSection: .pins).compactMap(\.pinId)
-            self?.pinsSection?.didReorder(ids)
+            self?.pinsSection?.didReorder([ids])
         }
         self.dataSource = dataSource
     }

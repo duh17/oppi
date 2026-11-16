@@ -1,23 +1,26 @@
 import Foundation
 
-// Pins: saved File Browser locations, one list per server (`GET /pins`,
-// `protocol/pins-http.json`). A pin names a place the File Browser can
-// already open; opening one goes through the same routes and locks.
+// Pins: saved places, one list per server (`GET /pins`,
+// `protocol/pins-http.json`): File Browser folders and files, and sessions.
+// A pin names a place the app can already open; opening one goes through the
+// same routes and locks.
 
 /// Where a pin points: a path in a workspace's main checkout (`""` is its
-/// root), or in the server's home folder written `~` or `~/…`.
+/// root), in the server's home folder written `~` or `~/…`, or a session.
 enum PinTarget: Hashable, Sendable, Codable {
     case workspace(id: String, path: String)
     case host(path: String)
+    case session(id: String)
 
-    private enum CodingKeys: String, CodingKey { case origin, workspaceId, path }
+    private enum CodingKeys: String, CodingKey { case origin, workspaceId, path, sessionId }
 
     init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        let path = try c.decode(String.self, forKey: .path)
         switch try c.decode(String.self, forKey: .origin) {
-        case "workspace": self = .workspace(id: try c.decode(String.self, forKey: .workspaceId), path: path)
-        case "host": self = .host(path: path)
+        case "workspace":
+            self = .workspace(id: try c.decode(String.self, forKey: .workspaceId), path: try c.decode(String.self, forKey: .path))
+        case "host": self = .host(path: try c.decode(String.self, forKey: .path))
+        case "session": self = .session(id: try c.decode(String.self, forKey: .sessionId))
         case let origin:
             throw DecodingError.dataCorruptedError(forKey: .origin, in: c, debugDescription: "unknown pin origin \(origin)")
         }
@@ -33,13 +36,23 @@ enum PinTarget: Hashable, Sendable, Codable {
         case .host(let path):
             try c.encode("host", forKey: .origin)
             try c.encode(path, forKey: .path)
+        case .session(let id):
+            try c.encode("session", forKey: .origin)
+            try c.encode(id, forKey: .sessionId)
         }
     }
 
+    /// A folder or file's path; empty for a session, which has none.
     var path: String {
         switch self {
         case .workspace(_, let path), .host(let path): path
+        case .session: ""
         }
+    }
+
+    var sessionId: String? {
+        if case .session(let id) = self { return id }
+        return nil
     }
 
     var workspaceId: String? {
@@ -47,12 +60,13 @@ enum PinTarget: Hashable, Sendable, Codable {
         return nil
     }
 
-    /// The last path component: the folder or file name, or "Home" for `~`.
+    /// The last path component: the folder or file name, or "Home" for `~`;
+    /// empty for a workspace root and a session, whose names live elsewhere.
     var name: String {
         let last = (path as NSString).lastPathComponent
         switch self {
         case .host where path == "~": return String(localized: "Home")
-        case .workspace where path.isEmpty: return ""
+        case .workspace where path.isEmpty, .session: return ""
         default: return last
         }
     }
@@ -70,7 +84,7 @@ enum PinStatus: String, Hashable, Sendable, Decodable {
 
 struct Pin: Hashable, Sendable, Decodable, Identifiable {
     enum Kind: String, Hashable, Sendable, Decodable {
-        case directory, file
+        case directory, file, session
     }
 
     let id: String

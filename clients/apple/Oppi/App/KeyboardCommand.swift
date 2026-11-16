@@ -15,6 +15,8 @@ enum KeyboardCommand: Hashable, Sendable {
     case settings
     case close
     case toggleSidebar
+    /// The Pinned screen of the window's server.
+    case showPinned
     /// The File Browser's folder tree beside the open file (regular width).
     case toggleFileTree
     /// Files, Git, Outline or Context: the chat's top-bar action of that name.
@@ -55,7 +57,7 @@ enum KeyboardCommand: Hashable, Sendable {
 
     /// Every command, in menu order.
     static let all: [Self] = [
-        .newSession, .settings, .close, .toggleSidebar, .toggleFileTree,
+        .newSession, .settings, .close, .toggleSidebar, .showPinned, .toggleFileTree,
         .pane(.files), .pane(.git), .pane(.outline), .pane(.context),
         .stop, .focusComposer, .nextSession, .previousSession,
     ] + paneSections.flatMap { $0 }
@@ -70,6 +72,7 @@ enum KeyboardCommand: Hashable, Sendable {
         case .settings: "settings"
         case .close: "close"
         case .toggleSidebar: "toggleSidebar"
+        case .showPinned: "showPinned"
         case .toggleFileTree: "toggleFileTree"
         case .pane(let action): "pane.\(action.rawValue)"
         case .stop: "stop"
@@ -102,6 +105,7 @@ enum KeyboardCommand: Hashable, Sendable {
         case .settings: String(localized: "Settings\u{2026}")
         case .close: String(localized: "Close")
         case .toggleSidebar: String(localized: "Show Sidebar")
+        case .showPinned: String(localized: "Show Pinned")
         case .toggleFileTree: String(localized: "Show File Tree")
         case .pane(let action): String(localized: "Show \(action.label)")
         case .stop: String(localized: "Stop Response")
@@ -129,6 +133,7 @@ enum KeyboardCommand: Hashable, Sendable {
         case .settings: (",", .command)
         case .close: ("w", .command)
         case .toggleSidebar: ("s", [.control, .command])
+        case .showPinned: ("p", [.command, .shift])
         case .toggleFileTree: ("l", [.command, .shift])
         case .pane(let action):
             ("\((Self.panes.firstIndex(of: action) ?? 0) + 1)", [.alternate, .command])

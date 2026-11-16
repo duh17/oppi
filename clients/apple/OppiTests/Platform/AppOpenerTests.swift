@@ -175,6 +175,18 @@ struct AppOpenerTests {
         #expect(!InAppInviteLink.claims(other))
     }
 
+    /// `oppi://pins` opens the Pinned screen and takes nothing else.
+    @Test func pinsLinkOpensPinnedAndTakesNoParameters() throws {
+        for raw in ["oppi://pins", "oppi:///pins", "OPPI://Pins"] {
+            let url = try #require(URL(string: raw))
+            #expect(AppOpenRequest(url: url, origin: .externalURL) == .pinned, Comment(rawValue: raw))
+        }
+        for raw in ["oppi://pins?server=sha256:aa", "oppi://pins/extra", "oppi://pins#top", "oppi://user@pins"] {
+            let url = try #require(URL(string: raw))
+            #expect(AppOpenRequest(url: url, origin: .externalURL) == .invalidLink(url), Comment(rawValue: raw))
+        }
+    }
+
     // MARK: - Warm and cold
 
     @Test func pushTapOpensTheSessionAndItsAskCard() async throws {

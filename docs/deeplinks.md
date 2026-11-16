@@ -8,6 +8,7 @@ oppi://workspace?path=/Users/example/workspace/oppi&name=Oppi&server=sha256:<ser
 oppi://session/<session-id>
 oppi://thread/<session-id>
 oppi://sessions?workspace=<workspace-id>
+oppi://pins
 oppi://file?workspace=<workspace-id>&path=src/app.ts#L12
 oppi://files?workspace=<workspace-id>&path=src
 oppi://browser?url=https%3A%2F%2Fexample.com%2Fdocs
@@ -30,6 +31,7 @@ xcrun simctl openurl booted 'oppi://workspace?path=/Users/example/workspace/oppi
 | `oppi://session/<session-id>` | Session ID | Opens the session if known locally or found by server lookup; otherwise opens Workspaces |
 | `oppi://thread/<session-id>` | ID of any session in the thread | Opens All Sessions (the matching list on iPad) with the session's thread open in place and scrolled to its root; if the session is a descendant, its root's thread opens. A session the server says it does not have opens the list with a "Session not found for this thread link" notice; a server that cannot be reached keeps the link for the next foreground, as a session link does |
 | `oppi://sessions[?workspace=<id>]` | Nothing; `workspace` optional | Opens All Sessions, or one workspace's sessions (in a pane beside the focused one on a wide window with Split Panes on) |
+| `oppi://pins` | Nothing | Opens the **Pinned** screen of the active server: its pinned sessions, folders, and files. Any path, parameter, fragment, user name, or port makes the link invalid. On a server without pins, the screen says that pins are unavailable |
 | `oppi://file?workspace=<id>&path=<path>[&worktree=<id>][#L<line>]` | `workspace` and `path` | Opens a workspace file (in a worktree, at a line). `oppi://file?host=1&path=<absolute path>` opens a file on the server's host, and `oppi://file?session=<id>&path=<path>` a session's own copy |
 | `oppi://files?workspace=<id>[&path=<folder>]` | `workspace` | Opens the File Browser at the workspace root or a folder. `oppi://files?host=1[&path=~/<folder>]` opens it in the server's home folder |
 | `oppi://panel?session=<id>&id=<surface id>` | `session` and `id` | Opens the session's chat with that extension surface in a [panel pane](extension-native-ui.md#panel-panes) beside it (full screen on a narrow window) |

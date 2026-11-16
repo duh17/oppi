@@ -121,10 +121,43 @@ struct PinStoreTests {
         await store.refresh(api: api)
 
         // The section showed A, B, C: C moved first and B was deleted.
-        try await store.setOrder(["pin_GardenC00005", "pin_GardenA00001"], removed: ["pin_GardenB00003"], api: api)
+        try await store.setOrder(groups: [["pin_GardenC00005", "pin_GardenA00001"]], removed: ["pin_GardenB00003"], api: api)
 
         let bodies = try Self.sent(puts.withLock { $0 })
         #expect(bodies.map { $0.pins.map(\.id) } == [["pin_GardenC00005", "pin_Notebook0002", "pin_Books0000004", "pin_GardenA00001"]])
+    }
+
+    /// The Pinned screen's Done moves each group (sessions, folders, files)
+    /// only within the places that group held, so a list that mixes them (the
+    /// File Browser's) keeps its mix.
+    @Test func reorderingGroupsMovesEachWithinItsOwnPlaces() async throws {
+        let ids = ["pin_SessionA0001", "pin_FolderA00002", "pin_SessionB0003", "pin_FolderB00004"]
+        let first = Self.list(1, ids.map { Self.pin($0, "~/\($0)") })
+        let puts = OSAllocatedUnfairLock(initialState: [Data]())
+        let scope = TestURLProtocol.routeScope { request in
+            switch (request.httpMethod, request.url?.path) {
+            case ("GET", "/pins"):
+                return try Self.respond(first, to: request)
+            case ("PUT", "/pins"):
+                puts.withLock { $0.append(Self.body(request)) }
+                return try Self.respond(first, to: request)
+            default:
+                throw Self.unplanned(request)
+            }
+        }
+        defer { scope.end() }
+        let api = makeTestURLProtocolClient()
+        let store = PinStore()
+        await store.refresh(api: api)
+
+        try await store.setOrder(
+            groups: [["pin_SessionB0003", "pin_SessionA0001"], ["pin_FolderB00004", "pin_FolderA00002"]],
+            removed: [],
+            api: api
+        )
+
+        let bodies = try Self.sent(puts.withLock { $0 })
+        #expect(bodies.map { $0.pins.map(\.id) } == [["pin_SessionB0003", "pin_FolderB00004", "pin_SessionA0001", "pin_FolderA00002"]])
     }
 
     /// Done with nothing moved or removed writes nothing.
@@ -147,7 +180,7 @@ struct PinStoreTests {
         let store = PinStore()
         await store.refresh(api: api)
 
-        try await store.setOrder(["pin_Books0000002"], removed: [], api: api)
+        try await store.setOrder(groups: [["pin_Books0000002"]], removed: [], api: api)
 
         #expect(puts.withLock { $0 } == 0)
     }

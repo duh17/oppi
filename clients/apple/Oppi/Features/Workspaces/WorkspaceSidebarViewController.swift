@@ -3,9 +3,8 @@ import UIKit
 /// The workspace list: the split shell's primary column and the compact
 /// shell's drawer.
 ///
-/// A scrolling `UICollectionView` list holds the destinations, the Pinned
-/// section (the server's pins, `PinsSection`), the Workspaces disclosure, and
-/// the workspace rows. New Workspace and App Settings sit in a
+/// A scrolling `UICollectionView` list holds the destinations, the Workspaces
+/// disclosure, and the workspace rows. New Workspace and App Settings sit in a
 /// second, non-scrolling list pinned below it. Everything reads
 /// `SceneNavigation` and the stores in `updateProperties()`: the selection a row
 /// paints is `SceneNavigation`'s, never the collection view's own. A store tick
@@ -35,16 +34,12 @@ final class WorkspaceSidebarViewController: UIViewController {
     private var isPresentingCreate = false
     /// The next snapshot animates: the user toggled the disclosure.
     private var animatesNextSnapshot = false
-    /// The Pinned section of the window's server; a new one when the server changes.
-    private var pinsSection: PinsSection?
 
     private enum Section: Hashable { case main }
 
     /// Fixed ids for everything but workspaces, which use the workspace id.
     private enum Item: Hashable {
         case utility(WorkspaceUtilityNavTarget)
-        case pinsHeader
-        case pin(String)
         case disclosure
         case workspace(String)
         case loading
@@ -53,11 +48,6 @@ final class WorkspaceSidebarViewController: UIViewController {
         case stale
         case noServer
         case newWorkspace
-
-        var pinId: String? {
-            if case .pin(let id) = self { return id }
-            return nil
-        }
     }
 
     /// What `AppStorage` read before: the same defaults keys.
@@ -92,16 +82,12 @@ final class WorkspaceSidebarViewController: UIViewController {
         var footerItems: [Item] = []
         var utilities: [WorkspaceUtilityNavTarget: UtilityRow] = [:]
         var workspaces: [String: WorkspaceRow] = [:]
-        var pinsHeader: PinsSection.Header?
-        var pins: [String: PinsSection.Row] = [:]
         var workspacesExpanded = WorkspaceSidebarDisclosurePolicy.defaultExpanded
         var server: PairedServer?
 
         func contentDiffers(_ item: Item, from previous: Self) -> Bool {
             switch item {
             case .utility(let target): utilities[target] != previous.utilities[target]
-            case .pinsHeader: pinsHeader != previous.pinsHeader
-            case .pin(let id): pins[id] != previous.pins[id]
             case .workspace(let id): workspaces[id] != previous.workspaces[id]
             case .disclosure: workspacesExpanded != previous.workspacesExpanded
             default: false
@@ -135,8 +121,7 @@ final class WorkspaceSidebarViewController: UIViewController {
         headerLabel.translatesAutoresizingMaskIntoConstraints = false
 
         list.backgroundColor = .clear
-        // Only pin rows select (`shouldSelectItemAt`); every other row takes
-        // its taps on its clear button.
+        list.allowsSelection = false
         list.accessibilityIdentifier = "workspace.sidebar.scroll"
         list.translatesAutoresizingMaskIntoConstraints = false
         footerList.backgroundColor = .clear
@@ -175,15 +160,6 @@ final class WorkspaceSidebarViewController: UIViewController {
 
         dataSource = makeDataSource(for: list)
         footerDataSource = makeDataSource(for: footerList)
-        list.delegate = self
-        list.dragDelegate = self
-        // Edit mode moves pins only (`PinsSection`).
-        dataSource?.reorderingHandlers.canReorderItem = { [weak self] item in
-            if case .pin = item { self?.pinsSection?.isEditing == true } else { false }
-        }
-        dataSource?.reorderingHandlers.didReorder = { [weak self] transaction in
-            self?.pinsSection?.didReorder(transaction.finalSnapshot.itemIdentifiers.compactMap(\.pinId))
-        }
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(defaultsDidChange),
@@ -191,12 +167,6 @@ final class WorkspaceSidebarViewController: UIViewController {
             object: nil
         )
         setNeedsUpdateProperties()
-    }
-
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        // A pinned folder deleted on disk sends no event; its status is read again.
-        pinsSection?.refresh()
     }
 
     override func updateProperties() {
@@ -252,18 +222,12 @@ final class WorkspaceSidebarViewController: UIViewController {
         // The pages the window's server offers, and its plugin entries.
         let connection = root.windowConnection
         let plugins = connection?.serverCapabilities?.pluginSidebar ?? []
-        let items = WorkspaceSidebarPrimaryUtilities.items(plugins: plugins) { connection?.offers($0) ?? true }
+        // Pinned leads the destinations on a server that keeps pins.
+        let pinned = connection?.pinsAvailable == true ? [WorkspaceSidebarPrimaryUtilities.pinned] : []
+        let items = pinned + WorkspaceSidebarPrimaryUtilities.items(plugins: plugins) { connection?.offers($0) ?? true }
         for item in items {
             model.utilities[item.target] = UtilityRow(item: item, isSelected: isUtilitySelected(item.target))
             model.mainItems.append(.utility(item.target))
-        }
-        if let pinned = pinsSection(serverId: server?.id)?.content() {
-            model.pinsHeader = pinned.header
-            model.mainItems.append(.pinsHeader)
-            for row in pinned.rows {
-                model.pins[row.id] = row
-                model.mainItems.append(.pin(row.id))
-            }
         }
         model.mainItems.append(.disclosure)
 
@@ -322,45 +286,6 @@ final class WorkspaceSidebarViewController: UIViewController {
         )
         model.footerItems.append(.utility(appSettings.target))
         return model
-    }
-
-    /// The Pinned section of `serverId`, the window's server: every pin of
-    /// that server. A tap opens it as a pane link does (beside the focused
-    /// pane on a wide window, else in the main pane); the menu's pane items
-    /// open from the focused pane, since the sidebar sits outside the panes.
-    private func pinsSection(serverId: String?) -> PinsSection? {
-        guard let serverId else {
-            pinsSection = nil
-            return nil
-        }
-        if let pinsSection, pinsSection.serverId == serverId { return pinsSection }
-        list.isEditing = false
-        let root = root
-        let section = PinsSection(serverId: serverId, identifierPrefix: "workspace.sidebar", presenter: self, hooks: .init(
-            // The section is the window server's; a new server makes a new section.
-            connection: { root.windowConnection },
-            shows: { _ in true },
-            open: { [weak self] pin, inMainPane in
-                let entry = pin.paneEntry(serverId: serverId)
-                root.opener.open(
-                    .pane(PaneLink(server: serverId, route: entry.route), sourceServerID: serverId),
-                    inMainPane: inMainPane
-                )
-                self?.onSelect?()
-            },
-            paneSource: { [weak self] in
-                self?.view.window.flatMap { Router.focusedScreen(in: $0) }?.viewIfLoaded
-            },
-            isCollapsed: { FileBrowserViewOptionsStore.shared.sidebarPinsCollapsed },
-            setCollapsed: { FileBrowserViewOptionsStore.shared.setSidebarPinsCollapsed($0) },
-            setEditing: { [weak self] editing in self?.list.isEditing = editing },
-            changed: { [weak self] in
-                self?.animatesNextSnapshot = true
-                self?.setNeedsUpdateProperties()
-            }
-        ))
-        pinsSection = section
-        return section
     }
 
     private func workspaceSessionStatus(
@@ -448,16 +373,11 @@ final class WorkspaceSidebarViewController: UIViewController {
         // element is a button, as the SwiftUI rows were.
         cell.accessories = []
         cell.accessibilityElements = [cell.element]
-        cell.accessibilityIdentifier = nil
-        cell.accessibilityLabel = nil
-        cell.accessibilityCustomActions = nil
-        cell.passthrough = nil
         cell.element.isHidden = false
         cell.element.accessibilityIdentifier = nil
         cell.element.accessibilityLabel = nil
         cell.element.accessibilityValue = nil
         cell.element.accessibilityHint = nil
-        cell.element.accessibilityCustomActions = nil
         cell.element.isAccessibilityElement = true
         cell.element.accessibilityTraits = .button
         cell.automaticallyUpdatesContentConfiguration = false
@@ -471,12 +391,6 @@ final class WorkspaceSidebarViewController: UIViewController {
             paintsSelection = true
             isSelected = row.isSelected
             configureUtility(cell, row: row, palette: palette)
-        case .pinsHeader:
-            guard let header = model.pinsHeader, let section = pinsSection else { return }
-            configurePinsHeader(cell, header: header, section: section, palette: palette)
-        case .pin(let id):
-            guard let row = model.pins[id], let section = pinsSection else { return }
-            configurePin(cell, row: row, section: section, palette: palette)
         case .disclosure:
             configureDisclosure(cell, palette: palette)
         case .workspace(let id):
@@ -563,74 +477,6 @@ final class WorkspaceSidebarViewController: UIViewController {
         cell.element.accessibilityHint = expanded ? "Hides workspace rows" : "Shows workspace rows"
     }
 
-    /// "Pinned" as the Workspaces disclosure draws its title, with Edit
-    /// (Done while editing) before the chevron. The Edit button takes its own
-    /// taps over the row's toggle.
-    private func configurePinsHeader(
-        _ cell: SidebarListCell,
-        header: PinsSection.Header,
-        section: PinsSection,
-        palette: ThemePalette
-    ) {
-        let comment = palette.ui.comment
-        var content = UIListContentConfiguration.cell()
-        content.text = String(localized: "Pinned")
-        content.textProperties.font = Self.font(.caption1, .semibold)
-        content.textProperties.color = comment
-        content.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 12, leading: 8, bottom: 6, trailing: 8)
-        cell.contentConfiguration = content
-        let chevron = UIImageView(image: UIImage(systemName: header.isCollapsed ? "chevron.right" : "chevron.down"))
-        chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(font: Self.font(.caption1, .semibold))
-        chevron.tintColor = comment
-        var accessories: [UICellAccessory] = [
-            .customView(configuration: .init(customView: chevron, placement: .trailing(), isHidden: header.isEditing)),
-        ]
-        if let edit = section.editAccessory(header, palette: palette) {
-            accessories.insert(edit, at: 0)
-            cell.passthrough = section.editElement
-        }
-        cell.accessories = accessories
-        cell.element.accessibilityIdentifier = "workspace.sidebar.pinned.header"
-        cell.element.accessibilityLabel = String(localized: "Pinned")
-        cell.element.accessibilityValue = header.isCollapsed ? String(localized: "Collapsed") : String(localized: "Expanded")
-        cell.element.accessibilityHint = header.isCollapsed
-            ? String(localized: "Shows pinned folders and files")
-            : String(localized: "Hides pinned folders and files")
-        if !header.isCollapsed { cell.accessibilityElements = [cell.element, section.editElement] }
-    }
-
-    /// A pin: its folder or file icon, its name, and where it lives (or why
-    /// it can't open), dimmed when it is gone. Unlike the other rows it has no
-    /// clear button over it: it is the list's own cell, as the File Browser's
-    /// pin rows are, so the list selects, highlights, opens its menu, drags
-    /// it, and moves it in Edit mode. The cell is its accessibility element
-    /// (`PinsSection.decorate`).
-    private func configurePin(_ cell: SidebarListCell, row: PinsSection.Row, section: PinsSection, palette: ThemePalette) {
-        let tint = row.isGone || !row.isDirectory ? palette.ui.comment : palette.ui.blue
-        var content = UIListContentConfiguration.subtitleCell()
-        content.image = UIImage(systemName: row.icon?.symbolName ?? "folder.fill")
-        content.imageProperties.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .body)
-        content.imageProperties.tintColor = tint
-        content.imageProperties.reservedLayoutSize = CGSize(width: 32, height: 32)
-        content.imageToTextPadding = 10
-        content.text = row.title
-        content.textProperties.font = Self.font(.body, .regular)
-        content.textProperties.color = row.isGone ? palette.ui.comment : palette.ui.fg
-        content.textProperties.numberOfLines = 1
-        content.textProperties.lineBreakMode = .byTruncatingMiddle
-        content.secondaryText = row.detail
-        content.secondaryTextProperties.font = Self.font(.caption1, .regular)
-        content.secondaryTextProperties.color = palette.ui.comment
-        content.secondaryTextProperties.numberOfLines = 1
-        content.secondaryTextProperties.lineBreakMode = .byTruncatingHead
-        content.textToSecondaryTextVerticalPadding = 2
-        content.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 8)
-        cell.contentConfiguration = content
-        cell.element.isHidden = true
-        cell.accessibilityElements = nil
-        section.decorate(cell, row: row, palette: palette)
-    }
-
     private func configureNotice(
         _ cell: SidebarListCell,
         text: String,
@@ -698,11 +544,11 @@ final class WorkspaceSidebarViewController: UIViewController {
         palette: ThemePalette
     ) {
         let wash = palette.ui.fg
-        cell.configurationUpdateHandler = { cell, state in
+        cell.configurationUpdateHandler = { cell, _ in
             var background = UIBackgroundConfiguration.clear()
             if paintsSelection && isSelected {
                 background.backgroundColor = wash.withAlphaComponent(0.08)
-            } else if (cell as? SidebarListCell)?.element.isHighlighted == true || state.isHighlighted {
+            } else if (cell as? SidebarListCell)?.element.isHighlighted == true {
                 background.backgroundColor = wash.withAlphaComponent(0.05)
             }
             background.cornerRadius = 12
@@ -724,11 +570,6 @@ final class WorkspaceSidebarViewController: UIViewController {
             guard let row = model.workspaces[id] else { return }
             navigation.openWorkspace(row.target)
             onSelect?()
-        case .pinsHeader:
-            pinsSection?.toggleCollapsed()
-        case .pin(let id):
-            // The section's open closes the drawer; a missing pin's alert keeps it.
-            pinsSection?.select(id)
         case .disclosure:
             animatesNextSnapshot = true
             UserDefaults.standard.set(!model.workspacesExpanded, forKey: AppIdentifiers.workspaceSidebarExpandedKey)
@@ -787,65 +628,6 @@ final class WorkspaceSidebarViewController: UIViewController {
     }
 }
 
-// MARK: - Pins: menus, drags, and Edit-mode moves
-
-extension WorkspaceSidebarViewController: UICollectionViewDelegate, UICollectionViewDragDelegate {
-    /// Pin rows are the only rows the list selects; the others have their own button.
-    func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
-        pinId(at: indexPath, in: collectionView) != nil
-    }
-
-    func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
-        pinId(at: indexPath, in: collectionView) != nil
-    }
-
-    /// A tap opens the pin; the row never stays selected, since what the
-    /// window shows is `SceneNavigation`'s to paint.
-    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        collectionView.deselectItem(at: indexPath, animated: true)
-        guard let id = pinId(at: indexPath, in: collectionView) else { return }
-        activate(.pin(id))
-    }
-
-    func collectionView(
-        _ collectionView: UICollectionView,
-        contextMenuConfigurationForItemsAt indexPaths: [IndexPath],
-        point: CGPoint
-    ) -> UIContextMenuConfiguration? {
-        guard indexPaths.count == 1, let id = pinId(at: indexPaths[0], in: collectionView) else { return nil }
-        return pinsSection?.contextMenu(pinId: id)
-    }
-
-    /// A pin drags out as the pane entry it opens as; a pane takes the drop.
-    func collectionView(
-        _ collectionView: UICollectionView,
-        itemsForBeginning session: UIDragSession,
-        at indexPath: IndexPath
-    ) -> [UIDragItem] {
-        guard let id = pinId(at: indexPath, in: collectionView) else { return [] }
-        return pinsSection?.dragItems(pinId: id) ?? []
-    }
-
-    /// A pin moves only among the pins.
-    func collectionView(
-        _ collectionView: UICollectionView,
-        targetIndexPathForMoveOfItemFromOriginalIndexPath originalIndexPath: IndexPath,
-        atCurrentIndexPath currentIndexPath: IndexPath,
-        toProposedIndexPath proposedIndexPath: IndexPath
-    ) -> IndexPath {
-        let items = (collectionView.dataSource as? UICollectionViewDiffableDataSource<Section, Item>)?
-            .snapshot().itemIdentifiers ?? []
-        guard let first = items.firstIndex(where: { $0.pinId != nil }),
-              let last = items.lastIndex(where: { $0.pinId != nil }) else { return originalIndexPath }
-        return IndexPath(item: min(max(proposedIndexPath.item, first), last), section: proposedIndexPath.section)
-    }
-
-    private func pinId(at indexPath: IndexPath, in collectionView: UICollectionView) -> String? {
-        guard collectionView === list else { return nil }
-        return dataSource?.itemIdentifier(for: indexPath)?.pinId
-    }
-}
-
 /// A list that reports when its rows change height, for the pinned footer.
 /// A list with no height lays out no rows, so the footer starts with an
 /// estimate and follows the content from there.
@@ -881,9 +663,6 @@ final class SidebarRowElement: UIButton {
 
 final class SidebarListCell: UICollectionViewListCell {
     let element = SidebarRowElement()
-    /// A control in the row that takes its own taps over `element` (the
-    /// Pinned header's Edit).
-    weak var passthrough: UIView?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -909,10 +688,6 @@ final class SidebarListCell: UICollectionViewListCell {
 
     /// The content never takes the tap.
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        if let passthrough, passthrough.window != nil, passthrough.isDescendant(of: self),
-           let hit = passthrough.hitTest(convert(point, to: passthrough), with: event) {
-            return hit
-        }
         let hit = super.hitTest(point, with: event)
         return hit != nil && !element.isHidden ? element : hit
     }

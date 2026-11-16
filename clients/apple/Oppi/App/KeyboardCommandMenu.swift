@@ -37,6 +37,7 @@ enum KeyboardCommandMenu {
             builder.insertChild(inline([.toggleSidebar, .toggleFileTree]), atStartOfMenu: .view)
         }
         builder.insertChild(inline(KeyboardCommand.panes.map(KeyboardCommand.pane)), atStartOfMenu: .view)
+        builder.insertChild(inline([.showPinned]), atStartOfMenu: .view)
         builder.insertChild(
             UIMenu(
                 title: String(localized: "Panes"), identifier: panesMenuID,

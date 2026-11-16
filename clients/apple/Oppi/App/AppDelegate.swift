@@ -149,6 +149,18 @@ final class SceneDelegate: NSObject, UIWindowSceneDelegate, @preconcurrency AppI
         if let intent = connectionOptions.appIntent {
             perform(intent)
         }
+        if let shortcut = connectionOptions.shortcutItem {
+            _ = perform(shortcut)
+        }
+    }
+
+    /// A Home Screen quick action while the app runs.
+    func windowScene(
+        _ windowScene: UIWindowScene,
+        performActionFor shortcutItem: UIApplicationShortcutItem,
+        completionHandler: @escaping (Bool) -> Void
+    ) {
+        completionHandler(perform(shortcutItem))
     }
 
     /// Builds the window once: from the connection callback, or right away
@@ -203,6 +215,14 @@ final class SceneDelegate: NSObject, UIWindowSceneDelegate, @preconcurrency AppI
 
     func sceneDidEnterBackground(_ scene: UIScene) {
         app?.sceneDidEnterBackground()
+    }
+
+    /// The Home Screen quick actions (`UIApplicationShortcutItems`): Pinned
+    /// opens the Pinned screen. False for an action this build does not know.
+    private func perform(_ shortcut: UIApplicationShortcutItem) -> Bool {
+        guard shortcut.type.hasSuffix(".pinned"), let app else { return false }
+        app.root.opener.open(.pinned)
+        return true
     }
 
     /// A system control's Open intent routes here: show Quick Session in its mode.

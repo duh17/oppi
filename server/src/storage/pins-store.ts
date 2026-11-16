@@ -13,6 +13,7 @@ export class PinsError extends HttpStatusError {}
 export const MAX_PINS = 50;
 export const MAX_PIN_LABEL_CHARACTERS = 40;
 const MAX_PIN_PATH_BYTES = 1024;
+const MAX_PIN_SESSION_ID_BYTES = 256;
 const PIN_ID = /^pin_[A-Za-z0-9_-]{12}$/;
 
 interface PinsRecord {
@@ -51,9 +52,24 @@ function plainRelativePath(path: string): string | null {
 
 /**
  * The target a pin may store, in its one canonical form, or a 400. A host path is `~` or `~/…`
- * (never absolute, never `~user`); a workspace path is relative to the workspace root.
+ * (never absolute, never `~user`); a workspace path is relative to the workspace root; a session
+ * target names a session id of plain characters.
  */
 export function validatePinTarget(value: unknown): PinTarget {
+  if (isRecord(value) && value.origin === "session") {
+    const id = value.sessionId;
+    if (
+      Object.keys(value).length !== 2 ||
+      typeof id !== "string" ||
+      !id ||
+      Buffer.byteLength(id, "utf8") > MAX_PIN_SESSION_ID_BYTES ||
+      // eslint-disable-next-line no-control-regex
+      /[\u0000-\u001f\u007f]/.test(id)
+    ) {
+      throw new PinsError(400, "A session pin names a session id");
+    }
+    return { origin: "session", sessionId: id };
+  }
   if (!isRecord(value) || typeof value.path !== "string") {
     throw new PinsError(400, "Expected target with origin and path");
   }
@@ -112,19 +128,24 @@ export function validatePinOrder(value: unknown): PinOrderEntry[] {
 }
 
 function sameTarget(a: PinTarget, b: PinTarget): boolean {
-  return (
-    a.origin === b.origin &&
-    a.path === b.path &&
-    (a.origin !== "workspace" || b.origin !== "workspace" || a.workspaceId === b.workspaceId)
-  );
+  switch (a.origin) {
+    case "host":
+      return b.origin === "host" && a.path === b.path;
+    case "workspace":
+      return b.origin === "workspace" && a.workspaceId === b.workspaceId && a.path === b.path;
+    case "session":
+      return b.origin === "session" && a.sessionId === b.sessionId;
+  }
 }
 
 function validStoredPin(value: unknown): value is Pin {
   if (!isRecord(value) || typeof value.id !== "string" || !PIN_ID.test(value.id)) return false;
-  if (value.kind !== "directory" && value.kind !== "file") return false;
+  if (value.kind !== "directory" && value.kind !== "file" && value.kind !== "session") return false;
   if (typeof value.createdAt !== "number") return false;
   try {
     const target = validatePinTarget(value.target);
+    // A session target is a session pin, and only it is.
+    if ((target.origin === "session") !== (value.kind === "session")) return false;
     return (
       sameTarget(target, value.target as PinTarget) && value.label === validatePinLabel(value.label)
     );

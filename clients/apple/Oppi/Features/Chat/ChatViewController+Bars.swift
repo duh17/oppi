@@ -413,7 +413,19 @@ final class ChatBarItems {
                 completion(items.isEmpty ? [] : [UIMenu(options: .displayInline, children: items)])
             }
         }
-        return UIMenu(children: [hidden, panes, customize])
+        // Pin Session or Unpin Session, read when the menu opens.
+        let pin = UIDeferredMenuElement.uncached { [weak self] completion in
+            MainActor.assumeIsolated {
+                guard let chat = self?.chat else { return completion([]) }
+                let connection = chat.connection
+                guard connection.sessionPinsAvailable, let api = connection.apiClient else { return completion([]) }
+                let toggle = PinMenu.sessionToggle(
+                    sessionId: chat.sessionId, namesSession: true, pins: connection.pins, api: api, view: chat.view
+                )
+                completion([UIMenu(options: .displayInline, children: [toggle.action])])
+            }
+        }
+        return UIMenu(children: [hidden, pin, panes, customize])
     }
 
     /// The actions without a button (turned off, or crowded out of a narrow

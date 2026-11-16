@@ -126,31 +126,21 @@ final class FileBrowserViewOptionsStore {
     private(set) var options: FileBrowserViewOptions
     /// The Pinned section of the Home and workspace roots is collapsed.
     private(set) var pinsCollapsed: Bool
-    /// The sidebar's Pinned section is collapsed.
-    private(set) var sidebarPinsCollapsed: Bool
 
     @ObservationIgnored private let defaults: UserDefaults
     private static let key = "\(AppIdentifiers.subsystem).fileBrowser.viewOptions"
     private static let pinsCollapsedKey = "\(AppIdentifiers.subsystem).fileBrowser.pinsCollapsed"
-    private static let sidebarPinsCollapsedKey = "\(AppIdentifiers.subsystem).sidebar.pinsCollapsed"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         options = Self.load(from: defaults)
         pinsCollapsed = defaults.bool(forKey: Self.pinsCollapsedKey)
-        sidebarPinsCollapsed = defaults.bool(forKey: Self.sidebarPinsCollapsedKey)
     }
 
     func setPinsCollapsed(_ collapsed: Bool) {
         guard collapsed != pinsCollapsed else { return }
         pinsCollapsed = collapsed
         defaults.set(collapsed, forKey: Self.pinsCollapsedKey)
-    }
-
-    func setSidebarPinsCollapsed(_ collapsed: Bool) {
-        guard collapsed != sidebarPinsCollapsed else { return }
-        sidebarPinsCollapsed = collapsed
-        defaults.set(collapsed, forKey: Self.sidebarPinsCollapsedKey)
     }
 
     private static func load(from defaults: UserDefaults) -> FileBrowserViewOptions {
@@ -165,7 +155,6 @@ final class FileBrowserViewOptionsStore {
     func resetForTesting() {
         options = Self.load(from: defaults)
         pinsCollapsed = defaults.bool(forKey: Self.pinsCollapsedKey)
-        sidebarPinsCollapsed = defaults.bool(forKey: Self.sidebarPinsCollapsedKey)
     }
 #endif
 

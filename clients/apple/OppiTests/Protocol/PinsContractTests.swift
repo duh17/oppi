@@ -24,11 +24,13 @@ struct PinsContractTests {
 
     @Test func decodesEveryStatusAndTarget() throws {
         let fixture = try JSONDecoder().decode(Fixture.self, from: ProtocolFixtures.data("pins-http.json"))
-        #expect(fixture.list.pins.map(\.status) == [.ok, .ok, .missing, .unreadable, .workspaceMissing, .unknown])
+        #expect(fixture.list.pins.map(\.status) == [.ok, .ok, .missing, .unreadable, .workspaceMissing, .unknown, .ok, .missing])
         #expect(fixture.list.pins[0].target == .host(path: "~/notebook"))
         #expect(fixture.list.pins[1].target == .workspace(id: "ws-1", path: "reports"))
         #expect(fixture.list.pins[1].label == "Reports")
         #expect(fixture.list.pins[2].kind == .file)
+        #expect(fixture.list.pins[6].target == .session(id: "2f6c1a9e-session"))
+        #expect(fixture.list.pins[6].kind == .session)
         #expect(fixture.add.pinId == "pin_Reports00002")
         #expect(fixture.conflict.code == "revision_conflict")
         #expect(fixture.conflict.current == fixture.list)

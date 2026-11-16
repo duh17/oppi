@@ -12,8 +12,11 @@ extension ServerConnection {
         switch event {
         case .connected:
             Task { await refreshPairingApprovals() }
-            // A pin changed while the stream was down sends no event; read the list again.
-            if pinsAvailable, pins.list != nil, let apiClient { Task { await pins.refresh(api: apiClient) } }
+            // A pin changed while the stream was down sends no event; read the list again. Session
+            // rows and the chat menu say Pin or Unpin, so a server with session pins reads it now.
+            if pinsAvailable, pins.list != nil || sessionPinsAvailable, let apiClient {
+                Task { await pins.refresh(api: apiClient) }
+            }
 
         case .sessionCreated(_, let workspaceId, _, let summary),
              .sessionImported(_, let workspaceId, _, let summary),
@@ -23,6 +26,10 @@ extension ServerConnection {
 
         case .sessionDeleted(let sessionId, let workspaceId, _):
             removeSessionFromAppEvent(event, sessionId: sessionId, workspaceId: workspaceId)
+            // A pinned session's pin reads Not found now; the server says so on the next read.
+            if pins.pin(for: .session(id: sessionId)) != nil, let apiClient {
+                Task { await pins.refresh(api: apiClient) }
+            }
 
         case .sessionEnded(let sessionId, let workspaceId, _, _):
             applySessionEndedFromAppEvent(sessionId: sessionId, workspaceId: workspaceId)

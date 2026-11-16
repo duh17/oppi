@@ -12,10 +12,11 @@ import { PROTOCOL_DIR } from "./protocol-fixtures.js";
 export const PINS_HTTP_SNAPSHOT_FILE = resolvePath.join(PROTOCOL_DIR, "pins-http.json");
 
 export const PINS_HTTP_FIXTURE_DESCRIPTION =
-  "Pins: saved File Browser locations, one list per server. GET /pins answers every pin with what is at its target now (ok, missing, unreadable, workspaceMissing, or unknown when the check took longer than 500 ms). POST /pins adds a target (a duplicate answers the saved pin's id); PUT /pins sets the order and labels and removes left-out pins, and a stale baseRevision answers 409 revision_conflict with the current list. Each change sends the pins_changed app event. Built by server/tests/pins-fixtures.ts; server/tests/pins-fixtures.test.ts fails when the committed bytes differ, and Apple PinsContractTests decodes these bodies.";
+  "Pins: saved places, one list per server: File Browser folders and files, and sessions. GET /pins answers every pin with what is at its target now (ok, missing, unreadable, workspaceMissing, or unknown when the check took longer than 500 ms); a session pin is ok while the session exists and missing once it is deleted. POST /pins adds a target (a duplicate answers the saved pin's id); PUT /pins sets the order and labels and removes left-out pins, and a stale baseRevision answers 409 revision_conflict with the current list. Each change sends the pins_changed app event. Built by server/tests/pins-fixtures.ts; server/tests/pins-fixtures.test.ts fails when the committed bytes differ, and Apple PinsContractTests decodes these bodies.";
 
 const notebook: PinTarget = { origin: "host", path: "~/notebook" };
 const reports: PinTarget = { origin: "workspace", workspaceId: "ws-1", path: "reports" };
+const releaseSession: PinTarget = { origin: "session", sessionId: "2f6c1a9e-session" };
 
 export function buildPinsList(): PinsResponse {
   return {
@@ -65,6 +66,20 @@ export function buildPinsList(): PinsResponse {
         createdAt: 1794384300000,
         status: "unknown",
       },
+      {
+        id: "pin_Release00007",
+        target: releaseSession,
+        kind: "session",
+        createdAt: 1794384360000,
+        status: "ok",
+      },
+      {
+        id: "pin_OldChat00008",
+        target: { origin: "session", sessionId: "deleted-session" },
+        kind: "session",
+        createdAt: 1794384420000,
+        status: "missing",
+      },
     ],
   };
 }
@@ -82,7 +97,11 @@ export function serializePinsHttpFixture(): string {
           source: "server/src/types/pins.ts",
         },
         list: buildPinsList(),
-        addRequests: [{ target: notebook }, { target: reports, label: "Reports" }],
+        addRequests: [
+          { target: notebook },
+          { target: reports, label: "Reports" },
+          { target: releaseSession },
+        ],
         add: buildPinAddResponse(),
         reorderRequest: {
           baseRevision: 7,

@@ -13,8 +13,10 @@ import UIKit
 /// never squeezes them over each other. A pane too short for one column but
 /// wide enough for two lays them out two by two.
 ///
-/// Under them, a Pinned group lists the server's pins (`PinStore`); one
-/// opens its folder's File Browser or its file in this pane.
+/// Under them, a Pinned group lists the server's pinned folders and files
+/// (`PinStore`); one opens its folder's File Browser or its file in this pane.
+/// Pinned sessions stay on the Pinned screen: Sessions above already picks a
+/// chat, and the group stays a short list of places.
 final class PaneLauncherViewController: UIViewController {
     enum Choice: CaseIterable {
         case sessions, files, terminal, rex, web, godot
@@ -150,7 +152,7 @@ final class PaneLauncherViewController: UIViewController {
         // A server switch that changes while the launcher is up adds or takes away its choice.
         let offered = offeredChoices
         if offered != shownChoices { showChoices(offered) }
-        let choices = (pins?.store.pins ?? []).map { PinnedChoice(pin: $0, workspaceName: workspaceName($0.target.workspaceId)) }
+        let choices = (pins?.store.pins ?? []).filter { $0.kind != .session }.map { PinnedChoice(pin: $0, workspaceName: workspaceName($0.target.workspaceId)) }
         if choices != shownPins { showPinned(choices) }
     }
 

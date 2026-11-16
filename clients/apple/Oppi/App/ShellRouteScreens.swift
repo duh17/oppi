@@ -80,6 +80,8 @@ enum ShellRouteScreens {
     ) -> UIViewController {
         let showsSidebarToggle = placement == .splitDetailRoot
         switch target {
+        case .pinned:
+            return PinnedViewController(root: root, showsSidebarToggle: showsSidebarToggle)
         case .sshTerminal:
             let screen = SSHTerminalHostListViewController(showsSidebarToggle: showsSidebarToggle)
             screen.traitOverrides.appRootEnvironment = root
@@ -123,6 +125,10 @@ enum ShellRouteScreens {
         }
         if let schedules = screen as? SchedulesViewController {
             schedules.showsSidebarToggle = placement == .splitDetailRoot
+            return
+        }
+        if let pinned = screen as? PinnedViewController {
+            pinned.showsSidebarToggle = placement == .splitDetailRoot
             return
         }
         if let list = screen as? AgentListViewController {

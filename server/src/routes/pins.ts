@@ -96,7 +96,8 @@ async function probe(
 /**
  * `GET /pins`, `POST /pins`, `PUT /pins`. A pin grants nothing: adding one checks the target the
  * way the File Browser would open it (inside the home folder or the workspace, with today's
- * symlink rules), and every open still goes through the file routes. Changes send `pins_changed`.
+ * symlink rules), and every open still goes through the file routes. A session pin needs only that
+ * the session exists; its chat opens through the session routes. Changes send `pins_changed`.
  */
 export function createPinRoutes(
   ctx: RouteContext,
@@ -105,7 +106,8 @@ export function createPinRoutes(
 ): RouteDispatcher {
   const timeoutMs = options.statusTimeoutMs ?? 500;
 
-  function locate(target: PinTarget): Located {
+  /** A place's target (a folder or file) on disk, or why it has no place. */
+  function locate(target: Exclude<PinTarget, { origin: "session" }>): Located {
     if (target.origin === "host") {
       const home = options.homeDir ?? homedir();
       return { kind: "path", path: target.path === "~" ? home : join(home, target.path.slice(2)) };
@@ -122,6 +124,19 @@ export function createPinRoutes(
     return { kind: "path", path, ...(workspace.runtime === "sandbox" ? { confineTo: root } : {}) };
   }
 
+  /** What is at a pin's target now: a session is there or deleted; a place is probed on disk. */
+  async function check(
+    target: PinTarget,
+    kind: Pin["kind"] | undefined,
+  ): Promise<{ status: PinStatus; kind?: Pin["kind"] }> {
+    if (target.origin === "session") {
+      return ctx.storage.getSession(target.sessionId)
+        ? { status: "ok", kind: "session" }
+        : { status: "missing" };
+    }
+    return probe(locate(target), kind === "session" ? undefined : kind);
+  }
+
   /** Each pin with its status, checked in parallel; a slow check reads `unknown`. */
   async function withStatus(list: { revision: number; pins: Pin[] }): Promise<PinsResponse> {
     const pins = await Promise.all(
@@ -130,8 +145,8 @@ export function createPinRoutes(
         const timeout = new Promise<PinStatus>((resolve) => {
           timer = setTimeout(() => resolve("unknown"), timeoutMs);
         });
-        const check = probe(locate(pin.target), pin.kind).then((result) => result.status);
-        const status = await Promise.race([check, timeout]);
+        const found = check(pin.target, pin.kind).then((result) => result.status);
+        const status = await Promise.race([found, timeout]);
         clearTimeout(timer);
         return { ...pin, status };
       }),
@@ -145,10 +160,16 @@ export function createPinRoutes(
     }
     const target = validatePinTarget(body.target);
     const label = validatePinLabel(body.label);
-    const located = locate(target);
-    if (located.kind === "workspaceMissing") throw new PinsError(404, "Workspace not found");
-    const found = await probe(located, undefined);
-    if (!found.kind) throw new PinsError(404, "Nothing to pin at that path");
+    if (target.origin !== "session" && locate(target).kind === "workspaceMissing") {
+      throw new PinsError(404, "Workspace not found");
+    }
+    const found = await check(target, undefined);
+    if (!found.kind) {
+      throw new PinsError(
+        404,
+        target.origin === "session" ? "Session not found" : "Nothing to pin at that path",
+      );
+    }
     const result = store.add(target, found.kind, label);
     if (result.changed) ctx.appEvents?.emitPinsChanged(result.revision);
     return { ...(await withStatus(result)), pinId: result.pin.id };

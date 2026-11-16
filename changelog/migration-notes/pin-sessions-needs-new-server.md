@@ -1,0 +1,1 @@
+- **Protocol:** Pinning a session needs a server of this release or later. With an older server, session rows and chats offer no **Pin**, and **Pinned** lists folders and files only. An app older than this release can't read the pins of a server that has a pinned session.

@@ -130,6 +130,10 @@ final class SessionInboxViewController: UIViewController {
         },
         lockTarget: { [weak self] session in
             self?.root.windowServerId.map { ScopedLockTarget.session(session, serverId: $0) }
+        },
+        pin: { [weak self] session in
+            guard let self else { return nil }
+            return PinMenu.sessionRowToggle(session, connection: item(for: session)?.connection, view: viewIfLoaded)
         }
     )
 

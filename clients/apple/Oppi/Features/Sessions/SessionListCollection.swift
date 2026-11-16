@@ -633,10 +633,12 @@ enum SessionListLifecycle {
 
 // MARK: - Swipes and menu
 
-/// Long-press menu (Open, Stop/Resume, Lock/Unlock, Copy Session ID, Delete)
-/// and trailing swipes for every session row. Swipe left is lifecycle: full
-/// swipe stops; a stopped row offers Resume and Delete with no full swipe, so
-/// a swipe never starts or deletes a session without a deliberate tap. There
+/// Long-press menu (Open, Stop/Resume, Lock/Unlock, Pin/Unpin, Copy Session
+/// ID, Delete) and trailing swipes for every session row. Swipe left is
+/// lifecycle, then Pin: full swipe stops; a stopped row offers Resume and
+/// Delete with no full swipe, so a swipe never starts or deletes a session
+/// without a deliberate tap. Pin (or Unpin) pins the row's one session, a
+/// thread member's too, never its thread. There
 /// is no leading swipe: a row's leading-edge drag belongs to the workspace
 /// drawer, and Lock/Unlock lives only in the long-press menu. The list's
 /// `SessionListRowActions` is the owner of every action.
@@ -667,6 +669,9 @@ enum SessionListRowMenus {
             buttons.append(swipeButton("Stop", symbol: "stop.fill", color: palette.ui.orange) {
                 actions.stop(session)
             })
+        }
+        if let pin = actions.pin(session) {
+            buttons.append(pin.swipeAction(color: palette.ui.yellow))
         }
         let configuration = UISwipeActionsConfiguration(actions: buttons)
         configuration.performsFirstActionWithFullSwipe = !isStopped
@@ -706,6 +711,9 @@ enum SessionListRowMenus {
         }
         if let target = actions.lockTarget(session) {
             main.append(lockAction(target, sessionId: session.id))
+        }
+        if let pin = actions.pin(session) {
+            main.append(pin.action)
         }
         main.append(menuAction("Copy Session ID", symbol: "doc.on.doc", id: "session.copyId.\(session.id)") {
             UIPasteboard.general.string = session.id

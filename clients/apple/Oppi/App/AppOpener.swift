@@ -29,6 +29,9 @@ enum AppOpenRequest: Equatable, Sendable {
     /// An `oppi://` pane link the codec refused: an unknown or repeated
     /// parameter, a path the route does not take.
     case invalidLink(URL)
+    /// `oppi://pins`, the Home Screen's Pinned quick action, and the Show
+    /// Pinned key: the Pinned screen of the window's server.
+    case pinned
     /// `oppi://connect` or `oppi://pair`.
     case invite(URL)
     /// http(s): the browser preference decides in-app or system.
@@ -71,6 +74,8 @@ enum AppOpenRequest: Equatable, Sendable {
             self = .createWorkspace(payload)
         } else if let terminal = TerminalOpen(url: url, sourceServerID: sourceServerID) {
             self = .terminal(terminal)
+        } else if let valid = Self.pinnedLink(url) {
+            self = valid ? .pinned : .invalidLink(url)
         } else if scheme == "oppi" {
             self = .invite(url)
         } else if let reference = ResourceReferenceURL.parse(url) {
@@ -80,6 +85,21 @@ enum AppOpenRequest: Equatable, Sendable {
         } else {
             self = .system(url)
         }
+    }
+}
+
+extension AppOpenRequest {
+    /// Whether `url` is a valid `oppi://pins` (or `oppi:///pins`) link; nil
+    /// when it names another route. The link takes no path, parameter,
+    /// fragment, user-info, or port.
+    static func pinnedLink(_ url: URL) -> Bool? {
+        guard url.scheme?.lowercased() == "oppi",
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        var parts = components.path.split(separator: "/").map(String.init)
+        if let host = components.host, !host.isEmpty { parts.insert(host, at: 0) }
+        guard parts.first?.lowercased() == "pins" else { return nil }
+        return parts.count == 1 && components.query == nil && components.fragment == nil
+            && components.user == nil && components.password == nil && components.port == nil
     }
 }
 
@@ -645,6 +665,9 @@ final class AppOpener {
             outcome = await performPane(link, sourceServerID: sourceServerID, generation: generation)
         case .invalidLink:
             toast(String(localized: "This Oppi link isn\u{2019}t valid"))
+            outcome = .finished
+        case .pinned:
+            navigation.openWorkspaceUtility(.pinned)
             outcome = .finished
         case .invite:
             // accept() runs invites on their own generation; nothing reaches

@@ -33,7 +33,8 @@ final class FileBrowserPinsSection: PinsSection {
             connection: hooks.connection,
             shows: { pin in
                 switch scope {
-                case .hostHome: true
+                // Sessions are the Pinned screen's alone.
+                case .hostHome: pin.kind != .session
                 case .workspace(let workspaceId, nil): pin.target.workspaceId == workspaceId
                 case .workspace: false
                 }
@@ -81,10 +82,13 @@ final class FileBrowserPinsSection: PinsSection {
                 // The browser's own lock cover asks for the workspace's unlock.
                 navigation.pushWorkspaceFileBrowser(FileBrowserNavTarget(serverId: serverId, scope: pinScope, path: folder))
             }
-        case (.host(let path), .file):
+        case (.host(let path), _):
             navigation.openWorkspaceLinkedFile(.hostFile(serverId: serverId, workspaceId: "", path: path))
-        case (.workspace(let workspaceId, let path), .file):
+        case (.workspace(let workspaceId, let path), _):
             navigation.openWorkspaceLinkedFile(.workspaceFile(serverId: serverId, workspaceId: workspaceId, path: path))
+        case (.session, _):
+            // The File Browser lists no session pins (`shows`).
+            return
         }
     }
 

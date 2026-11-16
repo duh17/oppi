@@ -216,6 +216,11 @@ targets:
             CFBundleURLSchemes:
               - oppi
         UILaunchScreen: {}
+        # Home Screen quick action: the Pinned screen (`SceneDelegate`, `AppOpenRequest.pinned`).
+        UIApplicationShortcutItems:
+          - UIApplicationShortcutItemType: $(PRODUCT_BUNDLE_IDENTIFIER).pinned
+            UIApplicationShortcutItemTitle: Pinned
+            UIApplicationShortcutItemIconSymbolName: pin
         # One UIKit window scene (`SceneDelegate`). One window, as before:
         # the app's navigation state is app-wide.
         UIApplicationSceneManifest:

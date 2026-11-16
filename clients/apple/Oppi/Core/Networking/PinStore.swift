@@ -4,7 +4,8 @@ import OSLog
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Pins")
 
 /// One server's pins (`GET /pins` plus `pins_changed`). Each `ServerConnection`
-/// owns one; the File Browser's Pinned section and the pane launcher read it.
+/// owns one; the Pinned screen, the File Browser's Pinned section, and the
+/// pane launcher read it.
 ///
 /// Every change is a `PUT /pins` of the whole order from the revision this
 /// store holds. When another device changed the list first, the server
@@ -65,17 +66,22 @@ final class PinStore {
     }
 
     /// Edit mode's Done for one screen's pins (a workspace root shows only
-    /// its own): `ids` in their new order go back into the places those pins
-    /// held, and `removed` go. Every other pin, and one another device added
-    /// meanwhile, keeps its place.
-    func setOrder(_ ids: [String], removed: Set<String>, api: APIClient) async throws {
+    /// its own; the Pinned screen groups sessions, folders, and files): each
+    /// group's ids in their new order go back into the places that group's
+    /// pins held, and `removed` go. Every other pin, and one another device
+    /// added meanwhile, keeps its place.
+    func setOrder(groups: [[String]], removed: Set<String>, api: APIClient) async throws {
         try await save(api: api) { pins in
             let byId = Dictionary(pins.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-            var moved = ids.compactMap { byId[$0] }.filter { !removed.contains($0.id) }[...]
-            let slots = Set(ids)
+            var moved = groups.map { ids in ids.compactMap { byId[$0] }.filter { !removed.contains($0.id) }[...] }
+            var groupOf: [String: Int] = [:]
+            for (index, ids) in groups.enumerated() {
+                for id in ids { groupOf[id] = index }
+            }
             return pins.compactMap { pin in
                 if removed.contains(pin.id) { return nil }
-                return Self.entry(slots.contains(pin.id) ? moved.popFirst() ?? pin : pin)
+                guard let group = groupOf[pin.id] else { return Self.entry(pin) }
+                return Self.entry(moved[group].popFirst() ?? pin)
             }
         }
     }

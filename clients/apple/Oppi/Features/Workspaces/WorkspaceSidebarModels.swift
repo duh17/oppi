@@ -109,6 +109,17 @@ enum WorkspaceSidebarPrimaryUtilities {
         return (native + added).sorted { ($0.item.order, $0.rank) < ($1.item.order, $1.rank) }.map(\.item)
     }
 
+    /// The server's pins, first among the destinations on a server that keeps
+    /// pins (`ServerConnection.pinsAvailable`); not part of `items`.
+    static let pinned = WorkspaceSidebarPrimaryUtilityItem(
+        target: .pinned,
+        title: "Pinned",
+        systemImage: "pin",
+        accessibilityLabel: "Pinned",
+        accessibilityIdentifier: "workspace.pinned.open",
+        accessibilityHint: "Opens your pinned sessions, folders, and files"
+    )
+
     /// Pinned below New Workspace; not part of `items`.
     static let appSettings = WorkspaceSidebarPrimaryUtilityItem(
         target: .appSettings,
