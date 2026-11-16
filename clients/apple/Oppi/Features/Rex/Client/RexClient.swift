@@ -263,14 +263,15 @@ struct RexLink: Sendable {
     /// Opens an exec stream on the host's SSH connection.
     let openStream: OpenStream
     let openDirect: OpenDirect
-    /// The SSH bridge starts the host's Rex when none runs (`RexBridge`).
+    /// The SSH bridge starts the host's Rex when none runs (`RexBridge`): only
+    /// for what the person opened on that host, never for a read.
     let autostart: Bool
     /// Whether this device has a route onto the tailnet (`RexTailnetPath`):
     /// plain HTTP to Rex goes nowhere without one.
     let tailnetUsable: @Sendable () -> Bool
 
     init(
-        route: RexRoute = .ssh, autostart: Bool = true,
+        route: RexRoute = .ssh, autostart: Bool = false,
         openStream: @escaping OpenStream, openDirect: @escaping OpenDirect = RexTLSStream.open,
         tailnetUsable: @escaping @Sendable () -> Bool = { RexTailnetPath.usable() }
     ) {

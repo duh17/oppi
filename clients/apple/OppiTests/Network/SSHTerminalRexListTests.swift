@@ -192,10 +192,11 @@ struct SSHTerminalRexListRowTests {
         #expect(notInstalled.map(\.id) == ["header", "reason", "retry"])
         #expect(notInstalled[1].kind == .placeholder("No Rex on this host."))
         #expect(notInstalled[2].kind == .retry("Retry"), "the muted line comes with the way to ask again")
-        // Not running may be started: the advice shows and the list fills in later.
+        // Not running may be started, but only by the person: the advice and Start Rex.
         let notRunning = rows(.init(absence: .notRunning))
-        #expect(notRunning.map(\.id) == ["header", "reason", "retry"])
+        #expect(notRunning.map(\.id) == ["header", "reason", "start"])
         #expect(notRunning[1].kind == .failure(RexAbsence.notRunning.advice))
+        #expect(notRunning[2].kind == .startRex)
     }
 
     @Test func aFailedStreamKeepsTheLastSessionsUnderTheReason() {
@@ -207,18 +208,49 @@ struct SSHTerminalRexListRowTests {
     }
 }
 
+/// A host whose Rex is stopped until a bridge that may start it runs: a read
+/// that only asks exits 4, the starting bridge reaches the fake Rex.
+@MainActor
+private final class StoppedRexStreamHost: RexStreamHost {
+    let world: RexFakeWorld
+    private(set) var commands: [String] = []
+    private var started = false
+    var isConnected: Bool { true }
+
+    init(world: RexFakeWorld) { self.world = world }
+
+    func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
+        commands.append(command)
+        if command == RexBridge.command { started = true }
+        guard started else {
+            let host = RexFakeHost { _ in .hold }
+            let stream = host.open(sink: sink)
+            host.end(status: 4)
+            return stream
+        }
+        return world.host().open(sink: sink)
+    }
+
+    func run(_ command: String, input: Data) async throws -> SSHExecResult {
+        throw SSHConnectionError.commandRequestRejected
+    }
+}
+
 /// A host whose Rex bridge command exits with `status` as soon as it opens: 4,
 /// Rex is installed and not running; 5, not installed; 126, no usable `nc`.
 @MainActor
 private final class ExitingStreamHost: RexStreamHost {
     let status: Int
     private(set) var opened = 0
+    /// The bridge command of each stream, in order.
+    private(set) var commands: [String] = []
     var isConnected: Bool { true }
 
     init(status: Int) { self.status = status }
 
     func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
         opened += 1
+        commands.append(command)
         let host = RexFakeHost { _ in .hold }
         let stream = host.open(sink: sink)
         // A bridge with no Rex there exits without answering anything on the
@@ -901,7 +933,8 @@ struct SSHTerminalRexSectionTests {
         let seen = seenHost
         try hosts.save([seen])
         hosts.store().rexHosts.markSeen(seen)
-        let rig = try mountTab([seen], standIn: { _ in ExitingStreamHost(status: 4) })
+        let stream = ExitingStreamHost(status: 4)
+        let rig = try mountTab([seen], standIn: { _ in stream })
         defer { rig.tearDown() }
         let reason = "sshTerminal.rexList.\(seen.id.uuidString).reason"
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
@@ -911,6 +944,21 @@ struct SSHTerminalRexSectionTests {
         #expect(rig.built.followers[seen.id]?.monitor.absence == .notRunning)
         #expect(hosts.store().rexHosts.hasSeenRex(on: seen))
         #expect(headers(in: rig) == ["sshTerminal.rexList.\(seen.id.uuidString).header"])
+        // Opening the list, and every read after it, only asks: none may start Rex.
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { stream.commands.count >= 2 })
+        #expect(stream.commands.allSatisfy { $0 == RexBridge.commandWithoutAutostart })
+
+        // Start Rex is the person's ask on this host: one stream starts it, and the
+        // reads after it go back to asking only.
+        let start = "sshTerminal.rexList.\(seen.id.uuidString).startRex"
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
+            self.actionCells(in: rig).contains { $0.accessibilityIdentifier == start }
+        })
+        let asked = stream.commands.count
+        try tap(try #require(actionCells(in: rig).first { $0.accessibilityIdentifier == start }), in: rig)
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { stream.commands.count >= asked + 2 })
+        #expect(stream.commands[asked] == RexBridge.command)
+        #expect(stream.commands.dropFirst(asked + 1).allSatisfy { $0 == RexBridge.commandWithoutAutostart })
     }
 
     /// Every saved host has a section in Rex mode: the page is the panes, and a host
@@ -1115,6 +1163,32 @@ struct SSHTerminalRexSectionTests {
     }
 
     private func titles(_ follower: SSHTerminalRexFollower) -> [String] { sessions(of: follower).map(\.title) }
+
+    /// New Session on a host whose Rex is not running is the person's ask there: one
+    /// starting read, the same as Start Rex, then the session is made and opened.
+    /// The reads before it only asked.
+    @Test func newSessionStartsARexThatIsNotRunningThenCreatesIt() async throws {
+        let world = RexFakeWorld.preview()
+        let host = StoppedRexStreamHost(world: world)
+        let follower = SSHTerminalRexFollower(
+            profile: rexHost, promptsAutomatically: false,
+            session: SSHTerminalConnectSession(registry: SSHTerminalRegistry(), profileStore: hosts.store),
+            monitor: RexMonitor(publishDelay: .milliseconds(20), retryDelay: { _, _ in .seconds(30) }),
+            standIn: host
+        )
+        defer { follower.close() }
+        follower.sync(active: true)
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { follower.monitor.absence == .notRunning })
+        #expect(host.commands == [RexBridge.commandWithoutAutostart])
+        var opened: [RexPaneTarget] = []
+        follower.monitor.openPane = { opened.append($0) }
+
+        await follower.createSession()
+        #expect(follower.manageFailure == nil)
+        #expect(host.commands == [RexBridge.commandWithoutAutostart, RexBridge.command])
+        #expect(world.requests("session.create").count == 1)
+        #expect(opened == [RexPaneTarget(sessionID: "session:new-1", blockID: "block:new-1-1", label: "Shell")])
+    }
 
     /// New Rex Session asks Rex for a session with one window holding a shell,
     /// opens that shell's pane, hands the claim on it back, and the list gains

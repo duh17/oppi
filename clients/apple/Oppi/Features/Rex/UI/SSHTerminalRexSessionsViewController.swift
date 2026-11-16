@@ -52,7 +52,14 @@ final class SSHTerminalRexSessionsViewController: UIViewController {
             content: content,
             isSheet: false,
             refresh: { [weak self] in await self?.follower.refresh() },
-            activate: { [weak self] focus in self?.monitor.open(focus) ?? false }
+            activate: { [weak self] focus in
+                guard let self else { return false }
+                if focus == SSHTerminalRexSessionsContent.startRexFocus {
+                    monitor.startRex()
+                    return true
+                }
+                return monitor.open(focus)
+            }
         )
         addChild(list)
         list.view.translatesAutoresizingMaskIntoConstraints = false
@@ -186,6 +193,8 @@ final class SSHTerminalRexSessionsContent: SSHTerminalOverviewContent {
 
     let title = "Rex"
     let identifierPrefix = "sshTerminal.rex"
+    /// The Start Rex row under "not running": the one way this screen starts Rex.
+    static let startRexFocus = SSHTerminalOverviewFocus(scope: nil, id: "start-rex", isGroup: false)
     var focusFailure: String? { monitor.focusFailure }
     var watching: Bool {
         get { monitor.watching }
@@ -226,7 +235,15 @@ final class SSHTerminalRexSessionsContent: SSHTerminalOverviewContent {
         // Why Rex cannot be read, with what to do about it; any other failure
         // shows as it came.
         if let reason = monitor.absence?.advice ?? monitor.failure {
-            sections.append(.init(id: "failure", rows: [.init(id: "failure", title: reason, kind: .failure, focus: nil)]))
+            var rows = [SSHTerminalOverviewRow(id: "failure", title: reason, kind: .failure, focus: nil)]
+            // Reading never starts Rex; the person asks for it here.
+            if monitor.absence == .notRunning {
+                rows.append(.init(
+                    id: "startRex", title: String(localized: "Start Rex"), kind: .action(symbol: "play.fill"),
+                    focus: startRexFocus, accessibilityID: "sshTerminal.rex.startRex"
+                ))
+            }
+            sections.append(.init(id: "failure", rows: rows))
             if monitor.gaveUp { return sections }
         }
         guard let snapshot = monitor.snapshot else {

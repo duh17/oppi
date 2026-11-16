@@ -2258,8 +2258,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// straight over Tailscale and nothing is recorded for it.
     static func makeRexMonitor(for profile: SSHTerminalProfile?, hosts: SSHTerminalRexHostStore?) -> RexMonitor {
         if profile?.rexTailnet != nil { return RexMonitor.forTerminal(of: profile) }
-        // Reading Rex beside a shell never starts one on the host.
-        let monitor = RexMonitor(directHost: profile.map(RexDirectHost.init), autostart: false)
+        let monitor = RexMonitor(directHost: profile.map(RexDirectHost.init))
         if let profile, let hosts {
             monitor.onFinding = { hosts.record($0, on: profile) }
         }

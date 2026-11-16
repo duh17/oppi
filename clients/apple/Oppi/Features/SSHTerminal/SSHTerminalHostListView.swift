@@ -379,7 +379,7 @@ final class SSHTerminalHostListViewController:
                 return collectionView.dequeueConfiguredReusableCell(using: rexSessionCell, for: indexPath, item: item)
             // A retry is a button like a pane: the row that asks again has to be
             // drawn by the cell that carries the action, or it is a dead label.
-            case .pane, .tapToConnect, .newSession, .retry:
+            case .pane, .tapToConnect, .newSession, .retry, .startRex:
                 return collectionView.dequeueConfiguredReusableCell(using: rexActionCell, for: indexPath, item: item)
             default:
                 return collectionView.dequeueConfiguredReusableCell(using: rexCell, for: indexPath, item: item)
@@ -957,7 +957,7 @@ final class SSHTerminalHostListViewController:
         cell.accessories = []
         cell.accessibilityTraits = []
         switch row.kind {
-        case .retry:
+        case .retry, .startRex:
             // The action cell draws it.
             break
         case .header(let name, let needsYou):
@@ -1067,6 +1067,19 @@ final class SSHTerminalHostListViewController:
                 label: title,
                 value: nil,
                 hint: "Reads this host's Rex again"
+            ) { [weak self] in self?.activateRexRow(host: hostID, id: id) }
+        case .startRex:
+            content.text = String(localized: "Start Rex")
+            content.textProperties.color = palette.ui.blue
+            content.image = UIImage(systemName: "play.fill")
+            content.imageProperties.tintColor = palette.ui.blue
+            cell.accessories = []
+            cell.indentationLevel = 0
+            cell.configureAction(
+                identifier: "\(prefix).startRex",
+                label: String(localized: "Start Rex"),
+                value: nil,
+                hint: "Starts Rex on this host"
             ) { [weak self] in self?.activateRexRow(host: hostID, id: id) }
         case .tapToConnect:
             content.text = "Tap to connect"
@@ -1188,6 +1201,8 @@ final class SSHTerminalHostListViewController:
             Task { await follower.createSession() }
         case .tapToConnect:
             follower.connect()
+        case .startRex:
+            follower.monitor.startRex()
         default:
             break
         }

@@ -207,15 +207,49 @@ struct SSHTerminalPageModeTests {
         #expect(rows.last?.kind == .retry("Retry"), "the muted line comes with the way to ask again")
     }
 
-    /// Rex that is installed but not running keeps its advice: it can be started.
-    @Test func rexThatIsNotRunningKeepsItsAdviceAndTheWayToAskAgain() {
+    /// Rex that is installed but not running keeps its advice and offers Start Rex,
+    /// the person's go-ahead: reading never starts it, and the tap sends exactly one
+    /// read that may start it (the host's `REX_AUTOSTART` decides).
+    @Test func rexThatIsNotRunningKeepsItsAdviceAndOffersToStartIt() async throws {
         let state = SSHTerminalRexListState(absence: .notRunning)
         let rows = SSHTerminalRexListRow.rows(hostName: "alex@devbox", state: state)
-        #expect(rows.map(\.id) == ["header", "reason", "retry"])
+        #expect(rows.map(\.id) == ["header", "reason", "start"])
+        #expect(rows.last?.kind == .startRex)
         guard case .failure(let advice)? = rows.first(where: { $0.id == "reason" })?.kind else {
             Issue.record("Rex not running must keep its advice row")
             return
         }
-        #expect(advice.contains("rex server start"))
+        #expect(advice.contains("Start Rex"))
+
+        let host = StoppedRexHost()
+        let monitor = RexMonitor(retryDelay: { _, _ in .seconds(30) })
+        let reading = Task { await monitor.run(over: host) }
+        defer { reading.cancel() }
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { monitor.absence == .notRunning })
+        #expect(host.commands == [RexBridge.commandWithoutAutostart], "reading only asks")
+
+        monitor.startRex()
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { host.commands.count == 2 })
+        #expect(host.commands.last == RexBridge.command, "Start Rex sends the starting read")
+    }
+}
+
+/// A host whose Rex is installed and not running, and stays so: every bridge
+/// exits 4 at once. It keeps the bridge command of each stream.
+@MainActor
+private final class StoppedRexHost: RexStreamHost {
+    private(set) var commands: [String] = []
+    var isConnected: Bool { true }
+
+    func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
+        commands.append(command)
+        let host = RexFakeHost { _ in .hold }
+        let stream = host.open(sink: sink)
+        host.end(status: 4)
+        return stream
+    }
+
+    func run(_ command: String, input: Data) async throws -> SSHExecResult {
+        throw SSHConnectionError.commandRequestRejected
     }
 }

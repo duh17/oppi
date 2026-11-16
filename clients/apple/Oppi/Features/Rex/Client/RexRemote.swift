@@ -579,7 +579,7 @@ enum RexAbsence: Equatable, Sendable {
         case .notInstalled:
             "Oppi found no rex on this host: not in ~/.local/bin, on the PATH that SSH commands see, or in the Rex Mac app's server. Install Rex (on a Mac, the Rex app), then pull down to try again."
         case .notRunning:
-            "Rex is not running on this host, and Oppi did not start it. Start it (rex server start) and this list fills in."
+            "Rex is not running on this host. Start Rex starts it, unless the host turns that off with REX_AUTOSTART=0."
         case .refused(let message):
             message
         }
@@ -693,10 +693,17 @@ final class RexMonitor {
     /// `destroy`) go over: it is attached to every session (`session.attach_all`),
     /// which Rex needs of a caller that destroys one.
     @ObservationIgnored private var control: RexControl?
-    /// Its SSH bridge starts the host's Rex when none runs, as a Rex list or
-    /// pane the person opened does. A shell terminal reading Rex in the
-    /// background leaves a stopped Rex stopped.
-    let autostart: Bool
+    /// Reading never starts the host's Rex: a list or a status check reports
+    /// it not running (`--autostart=false`). Only `startRex()`, the person
+    /// asking on that host, lets the next stream start it; a pane opened on
+    /// the host starts it on its own connection (`RexHostTransport.open`).
+    @ObservationIgnored private var startsRex = false
+    /// Who waits on the answer to a start (`startRexAndWait`): Rex read, or not.
+    @ObservationIgnored private var startWaiters: [CheckedContinuation<Bool, Never>] = []
+    /// The stream being opened is the one that may start Rex: only its
+    /// failure answers a start (a read already under way when the person
+    /// asked does not).
+    @ObservationIgnored private var startingRead = false
 
     var available: Bool { snapshot != nil }
     /// `run` has stopped for good (no `nc`, no Rex), until `retry()`.
@@ -711,14 +718,12 @@ final class RexMonitor {
     init(
         directHost: RexDirectHost? = nil,
         tailnet: RexTailnetHost? = nil,
-        autostart: Bool = true,
         openDirect: @escaping RexLink.OpenDirect = RexTLSStream.open,
         publishDelay: Duration = .milliseconds(150),
         retryDelay: @escaping @MainActor (Retry, Int) -> Duration = { Retry.delay($0, failures: $1) }
     ) {
         self.directHost = directHost
         self.tailnet = tailnet
-        self.autostart = autostart
         self.openDirect = openDirect
         self.publishDelay = publishDelay
         self.retryDelay = retryDelay
@@ -748,14 +753,46 @@ final class RexMonitor {
     func run(over host: any RexStreamHost) async {
         // One open: a direct route that fails is not tried again by this run.
         let plan = directHost.map { RexRoutePlan(host: $0) }
-        await follow(while: { host.isConnected }, connect: {
-            try await RexLink.connect(
+        await follow(while: { host.isConnected }, connect: { [self] in
+            // One stream starts Rex per ask; the ones after it only read.
+            let autostart = startsRex
+            startsRex = false
+            if autostart { startingRead = true }
+            return try await RexLink.connect(
                 plan: plan,
                 openStream: { @MainActor command, _, sink in try await host.openStream(command: command, sink: sink) },
                 run: { @MainActor command in try await host.run(command, input: Data()) },
                 autostart: autostart
             )
         })
+    }
+
+    /// The person asked to start Rex on this host (a list's Start Rex): the
+    /// next stream over SSH starts it, as Rex's own client does, unless the
+    /// host sets `REX_AUTOSTART=0`. It goes now, not after the retry delay.
+    @discardableResult
+    func startRex() -> Bool {
+        guard absence == .notRunning else { return false }
+        startsRex = true
+        absence = nil
+        failure = nil
+        backoff?.cancel()
+        return true
+    }
+
+    /// `startRex()`, then the starting read's answer: true once Rex has been
+    /// read (so it can be asked to change things), false when it still could
+    /// not be, or the reading stopped.
+    func startRexAndWait() async -> Bool {
+        guard startRex() else { return false }
+        return await withCheckedContinuation { startWaiters.append($0) }
+    }
+
+    private func finishStart(_ started: Bool) {
+        startingRead = false
+        let waiters = startWaiters
+        startWaiters = []
+        for waiter in waiters { waiter.resume(returning: started) }
     }
 
     /// Subscribes to a saved host's Rex over Tailscale with no SSH connection,
@@ -793,6 +830,8 @@ final class RexMonitor {
         while alive: @MainActor () -> Bool,
         connect: @MainActor () async throws -> (RexLink, RexControl)
     ) async {
+        // A start nobody can answer any more does not leave its asker waiting.
+        defer { finishStart(false) }
         var failures = 0
         while !Task.isCancelled, AppPreferenceStore.Experiments.rexEnabled, alive() {
             var synced = false
@@ -811,6 +850,7 @@ final class RexMonitor {
                 default: absence = tailnet.flatMap { RexTailnetAccess.refusal(error, host: $0) }.map { .refused($0) }
                 }
                 if let absence { onFinding?(.absent(absence)) }
+                if startingRead { finishStart(false) }
                 if let absence, absence.givesUp {
                     snapshot = nil
                     failure = nil
@@ -820,7 +860,8 @@ final class RexMonitor {
                 failure = error.localizedDescription
             }
             failures = synced ? 1 : failures + 1
-            await pause(retryDelay(retry, failures))
+            // A start asked for while this read was under way goes now.
+            if !startsRex { await pause(retryDelay(retry, failures)) }
         }
     }
 
@@ -898,6 +939,7 @@ final class RexMonitor {
             synced = true
             self.control = control
             onFinding?(.reached)
+            finishStart(true)
             for await _ in inbox.wake {
                 let events = inbox.drain()
                 for event in events { mirror.apply(event) }

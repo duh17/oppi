@@ -248,7 +248,7 @@ extension RexLink {
         plan: RexRoutePlan?,
         openStream: @escaping OpenStream,
         run: Run?,
-        autostart: Bool = true,
+        autostart: Bool = false,
         reconnectToken: String? = nil,
         onWritable: (@Sendable (Bool) -> Void)? = nil
     ) async throws -> (RexLink, RexControl) {

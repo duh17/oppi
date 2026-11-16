@@ -28,8 +28,8 @@ import Synchronization
 enum RexBridge {
     /// The bridge, starting Rex when it is not running.
     static let command = command(autostart: true)
-    /// The bridge to a Rex that runs already: a terminal reading the host's Rex
-    /// in the background (`RexMonitor.autostart`) must not start one.
+    /// The bridge to a Rex that runs already: a list or a terminal reading the
+    /// host's Rex (`RexMonitor`) must not start one.
     static let commandWithoutAutostart = command(autostart: false)
 
     /// Either bridge, as a stand-in host recognises it.
@@ -134,6 +134,8 @@ final class RexHostTransport: RexTransport {
             plan: plan,
             openStream: { try await connection.openStream(command: $0, inboundFlow: $1, sink: $2) },
             run: { try await connection.run($0, maximumOutputBytes: 64 * 1024, timeout: .seconds(10)) },
+            // A pane the person opened on this host starts its Rex, as Rex's own client does.
+            autostart: true,
             reconnectToken: reconnectToken,
             onWritable: onWritable
         )

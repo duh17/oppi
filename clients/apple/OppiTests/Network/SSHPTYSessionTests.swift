@@ -757,6 +757,38 @@ struct SSHInstallTransportTests {
     }
 }
 
+/// What Oppi runs on a host to reach its Rex: only what the person opened there
+/// may start Rex.
+@Suite("Rex over SSH", .serialized)
+@MainActor
+struct RexOverSSHTests {
+    /// A pane opened on the host runs the bridge that starts Rex (no autostart
+    /// flag, so the host's `REX_AUTOSTART` decides); a list reading the same
+    /// host asks with `--autostart=false` and reports Rex not running.
+    @Test func aPaneStartsRexAndAListOnlyAsks() async throws {
+        // Every bridge answers as `rex` does with no server and none started: exit 4.
+        let fixture = try await SSHFixture.start(auth: .passwordOnly) { _, _ in
+            FixtureExecReply(exitStatus: 4, answersOnFirstInput: true)
+        }
+        defer { fixture.close() }
+        let connection = try await SSHConnection.open(
+            username: "fixture", authentication: .password("fixture-correct"),
+            savedHostKey: fixture.savedHostKey, socket: fixture.clientSocket
+        )
+        defer { connection.close() }
+
+        await #expect(throws: RexClientError.notRunning) { _ = try await RexHostTransport.open(connection: connection) }
+        #expect(fixture.channelRequests == ["exec:\(RexBridge.command)"])
+
+        let monitor = RexMonitor(retryDelay: { _, _ in .seconds(30) })
+        let reading = Task { await monitor.run(over: connection) }
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { monitor.absence == .notRunning })
+        reading.cancel()
+        await reading.value
+        #expect(fixture.channelRequests == ["exec:\(RexBridge.command)", "exec:\(RexBridge.commandWithoutAutostart)"])
+    }
+}
+
 private final class EventCollector: @unchecked Sendable {
     private let storage = Mutex<[SSHPTYEvent]>([])
     private let loop = MultiThreadedEventLoopGroup.singleton.next()

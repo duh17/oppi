@@ -417,9 +417,14 @@ extension SSHTerminalRexListFollowing {
     /// other change is in flight.
     var canManage: Bool { monitor.canManage && !managing }
 
-    /// Makes a session with a shell and opens it.
+    /// Makes a session with a shell and opens it. It is the person's ask on
+    /// this host, so a Rex that is not running is started first, as Start Rex
+    /// does (the host's `REX_AUTOSTART=0` still keeps it stopped).
     func createSession() async {
         await manage("Could not create a session.") {
+            if monitor.absence == .notRunning, await !monitor.startRexAndWait() {
+                throw RexClientError.notRunning
+            }
             let pane = try await monitor.createSession()
             monitor.openPane?(pane)
         }

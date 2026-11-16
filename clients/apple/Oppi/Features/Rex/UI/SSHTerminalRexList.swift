@@ -139,11 +139,14 @@ struct SSHTerminalRexListRow: Hashable, Sendable {
         /// Rex could not be read here: the row that asks again, the same owner as a
         /// pull to refresh.
         case retry(String)
+        /// Rex is installed and not running: the person's go-ahead to start it
+        /// on this host. Reading the list never starts it.
+        case startRex
 
         /// A session, a pane, and the connect and new rows take a tap; the rest only read.
         var isAction: Bool {
             switch self {
-            case .session, .pane, .tapToConnect, .newSession, .retry: true
+            case .session, .pane, .tapToConnect, .newSession, .retry, .startRex: true
             case .header, .window, .placeholder, .failure: false
             }
         }
@@ -205,8 +208,13 @@ extension SSHTerminalRexListRow {
             reasons.append(.init(id: "retry", kind: .retry(String(localized: "Retry"))))
         } else if let reason = state.absence?.advice ?? state.failure {
             reasons.append(.init(id: "reason", kind: .failure(reason)))
-            // The same owner as a pull to refresh: one row asks again.
-            if !state.connecting { reasons.append(.init(id: "retry", kind: .retry(String(localized: "Retry")))) }
+            if !state.connecting {
+                // A Rex that is not running starts only when the person asks here;
+                // anything else asks again, the same owner as a pull to refresh.
+                reasons.append(state.absence == .notRunning
+                    ? .init(id: "start", kind: .startRex)
+                    : .init(id: "retry", kind: .retry(String(localized: "Retry"))))
+            }
         }
         if let failure = state.manageFailure {
             reasons.append(.init(id: "action", kind: .failure(failure)))

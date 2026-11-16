@@ -1391,7 +1391,8 @@ struct SSHTerminalTests {
         let monitor = rig.monitor
 
         #expect(monitor.needsAttention == 1)
-        #expect(await rig.fixture.streamCommands == [RexBridge.command])
+        // Reading Rex never starts it on the host.
+        #expect(await rig.fixture.streamCommands == [RexBridge.commandWithoutAutostart])
         let requests = host.requests
         #expect(requests.map(\.method).sorted() == (
             ["session.attach_all"] + Array(repeating: "session.view", count: 2)
@@ -1578,7 +1579,7 @@ struct SSHTerminalTests {
         #expect(retries.map(\.0) == [.dropped] && retries.map(\.1) == [1])
         #expect(secondHost.requests.first?.method == "session.attach_all", "a new stream starts over")
         #expect(monitor.needsAttention == 1)
-        #expect(await rig.fixture.streamCommands == [RexBridge.command, RexBridge.command])
+        #expect(await rig.fixture.streamCommands == [RexBridge.commandWithoutAutostart, RexBridge.commandWithoutAutostart])
 
         // Rex stops: the failure shows, the last list stays, the badge goes dark.
         secondHost.end(status: 4)
