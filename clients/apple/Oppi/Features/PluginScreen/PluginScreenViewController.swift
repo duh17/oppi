@@ -13,7 +13,9 @@ import UIKit
 /// from the person's taps: an item's `push`, a bar button's `present`, or an action's result.
 ///
 /// An entry's sidebar page (`showsHost`) leads with the host row, as the native catalogs do: it
-/// follows the window's server, and choosing another server watches the same page there.
+/// follows the window's server, and choosing another server watches the same page there. A page
+/// with `search` filters its item rows on the device; an item with `file` opens that host file
+/// in the app's own viewer (`HostFileScreen`).
 @MainActor
 final class PluginScreenViewController: ListScreenController<String, String> {
     let entry: String
@@ -42,11 +44,15 @@ final class PluginScreenViewController: ListScreenController<String, String> {
     private var failures: [String: String] = [:] { didSet { setNeedsUpdateProperties() } }
     private var sidebarToggle: UIBarButtonItem?
     private var barButtons: [String: UIBarButtonItem] = [:]
+    /// The bar's search, once the page asks for one; the query filters item rows.
+    private var search: ScreenSearchController?
+    private var query = "" { didSet { setNeedsUpdateProperties() } }
     private lazy var submitItem = UIBarButtonItem()
 
     private static let hostSection = "\u{1}host"
     private static let hostRow = "\u{1}host"
     private static let stateSection = "\u{1}state"
+    private static let noResultsSection = "\u{1}noResults"
     private static let failureSection = "\u{1}failure"
     private static let failureRow = "\u{1}failure"
 
@@ -98,6 +104,8 @@ final class PluginScreenViewController: ListScreenController<String, String> {
         problem = nil
         draft = [:]
         failures = [:]
+        query = ""
+        search?.setText("")
     }
 
     override func load() async throws {
@@ -196,6 +204,15 @@ final class PluginScreenViewController: ListScreenController<String, String> {
         Router.present(screen, presentation: .sheet.inNavigation(), from: self)
     }
 
+    private func openFile(_ path: String) {
+        guard let connection = root.windowConnection else { return }
+        let root = root
+        Task { [weak self] in
+            guard let screen = await HostFileScreen.make(path: path, connection: connection, root: root), let self else { return }
+            Router.push(screen, from: self)
+        }
+    }
+
     private func openURL(_ text: String) {
         guard let url = URL(string: text), ["http", "https"].contains(url.scheme) else { return }
         root.opener.open(.webLink(url))
@@ -214,8 +231,34 @@ final class PluginScreenViewController: ListScreenController<String, String> {
         navigationController?.setToolbarHidden(true, animated: animated)
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        search?.hostDidAppear(self)
+    }
+
+    /// The bar's search, installed the first time the page asks for one.
+    private func installSearch(_ prompt: String) {
+        guard search == nil else { return }
+        let search = ScreenSearchController(prompt: prompt)
+        search.install(on: self, alwaysVisible: false)
+        search.onTextChange = { [weak self] text in
+            guard let self, text != query else { return }
+            query = text
+        }
+        self.search = search
+        // Shown first, as on a screen that had it from the start; it hides as the list scrolls
+        // once the bar has laid out.
+        if view.window != nil {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                search.hostDidAppear(self)
+            }
+        }
+    }
+
     override func updateProperties() {
         let content = content
+        if let prompt = content?.search?.prompt { installSearch(prompt) }
         title = content.map { $0.title.isEmpty ? fallbackTitle : $0.title } ?? fallbackTitle
         super.updateProperties()
         if let submit = content?.submit {
@@ -319,10 +362,21 @@ final class PluginScreenViewController: ListScreenController<String, String> {
                 state: .failed(title: problem, message: nil, retry: nil), identifier: stateRowIdentifier
             )))
         }
+        let searching = content.search != nil && !query.trimmingCharacters(in: .whitespaces).isEmpty
+        var matched = false
         for section in content.sections where shows(section) {
-            var items = section.rows.map(\.id)
+            let rows = searching ? section.rows.filter(matches) : section.rows
+            if searching, rows.isEmpty { continue }
+            matched = true
+            var items = rows.map(\.id)
             if failures[section.id] != nil { items.append(Self.failureRow + section.id) }
             sections.append(ListSection(section.id, header: header(of: section), footer: footer(of: section), items: items))
+        }
+        if searching, !matched {
+            sections.append(ListSection(Self.noResultsSection, items: [], state: ListStateRow(
+                state: .empty(title: String(localized: "No results for “\(query)”"), systemImage: "magnifyingglass", message: nil),
+                identifier: stateRowIdentifier
+            )))
         }
         if failures[Self.failureSection] != nil {
             sections.append(ListSection(Self.failureSection, items: [Self.failureRow]))
@@ -339,6 +393,13 @@ final class PluginScreenViewController: ListScreenController<String, String> {
     private func isNote(_ row: PluginScreenRow, in section: String) -> Bool {
         row.kind == "text" && row.style == "footnote"
             && content?.sections.first { $0.id == section }?.rows.count == 1
+    }
+
+    /// Whether an item row matches the query by its title, subtitle or status; other rows stay.
+    private func matches(_ row: PluginScreenRow) -> Bool {
+        guard row.kind == "item" else { return true }
+        let fields = [row.title, row.subtitle, row.status?.text].compactMap { $0 }
+        return FuzzyMatch.matchesAny(query: query.trimmingCharacters(in: .whitespaces), fields: fields)
     }
 
     private func shows(_ section: PluginScreenPage.Section) -> Bool {
@@ -574,7 +635,18 @@ final class PluginScreenViewController: ListScreenController<String, String> {
                 value: [row.subtitle, status?.text].compactMap { $0 }.joined(separator: ", "),
                 enabled: enabled
             ) { [weak self] in
-                if let page = row.push { self?.open(page: page) } else if let url = row.url { self?.openURL(url) }
+                if let page = row.push {
+                    self?.open(page: page)
+                } else if let url = row.url {
+                    self?.openURL(url)
+                } else if let file = row.file {
+                    self?.openFile(file)
+                }
+            }
+            cell.accessories = row.push != nil ? [.disclosureIndicator()] : []
+            if let symbol = row.symbol {
+                cell.contentConfiguration = symbolContent(row, symbol: symbol, palette: palette)
+                return
             }
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 4, leading: 0, bottom: 4, trailing: 0)) {
                 var views: [UIView] = [ControlRowViews.label(row.title, style: .headline, color: palette.ui.fg)]
@@ -589,7 +661,6 @@ final class PluginScreenViewController: ListScreenController<String, String> {
                 }
                 return ControlRowViews.stack(views, spacing: 4)
             }
-            cell.accessories = row.push != nil ? [.disclosureIndicator()] : []
             return
         }
         let title = row.title ?? ""
@@ -600,6 +671,34 @@ final class PluginScreenViewController: ListScreenController<String, String> {
         content.text = title
         content.textProperties.color = !enabled ? palette.comment : row.role == "destructive" ? palette.red : palette.blue
         cell.contentConfiguration = content
+    }
+
+    /// An item led by its symbol: the list kit's subtitle cell, the subtitle's lines and then the
+    /// status, led by its own symbol, as secondary text.
+    private func symbolContent(_ row: PluginScreenRow, symbol: String, palette: ThemePalette) -> UIListContentConfiguration {
+        var content = UIListContentConfiguration.subtitleCell()
+        content.text = row.title
+        content.textProperties.color = palette.ui.fg
+        content.image = UIImage(systemName: symbol)
+        content.imageProperties.tintColor = palette.ui.blue
+        let secondary = NSMutableAttributedString()
+        if let subtitle = row.subtitle, !subtitle.isEmpty {
+            secondary.append(NSAttributedString(string: subtitle, attributes: [.foregroundColor: palette.ui.comment]))
+        }
+        if let status = row.status {
+            let color = tone(status.tone, palette: palette) ?? palette.ui.comment
+            let font = UIListContentConfiguration.subtitleCell().secondaryTextProperties.font
+            if secondary.length > 0 { secondary.append(NSAttributedString(string: "\n")) }
+            if let image = UIImage(systemName: status.symbol ?? "circle", withConfiguration: UIImage.SymbolConfiguration(font: font))?
+                .withTintColor(color, renderingMode: .alwaysOriginal) {
+                secondary.append(NSAttributedString(attachment: NSTextAttachment(image: image)))
+                secondary.append(NSAttributedString(string: " "))
+            }
+            secondary.append(NSAttributedString(string: status.text, attributes: [.foregroundColor: color]))
+        }
+        content.secondaryAttributedText = secondary
+        content.secondaryTextProperties.numberOfLines = 0
+        return content
     }
 
     private func tapButton(_ row: PluginScreenRow, section: String) {

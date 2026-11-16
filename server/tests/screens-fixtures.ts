@@ -8,7 +8,14 @@ import {
   serverPage,
   signInPage,
 } from "../plugins/mcp-screen/pages.js";
+import {
+  filesPage,
+  listPage as skillsListPage,
+  skillPage,
+  SKILLS_SIDEBAR_ENTRY,
+} from "../plugins/skills-screen/pages.js";
 import { SCREENS_VERSION } from "../src/plugin-screens.js";
+import type { ServerSkillSummary } from "../src/server-resource-service.js";
 import { SERVER_FEATURE_PRESETS } from "../src/server-features.js";
 import type {
   ConversationDocOp,
@@ -21,13 +28,26 @@ import { PROTOCOL_DIR } from "./protocol-fixtures.js";
 
 /**
  * `protocol/screens.json`: the plugin screen vocabulary and `WS /screens/stream`, drawn from the
- * MCP Servers plugin's real pages over the `mcp-http.json` catalogs. Every row kind appears.
+ * MCP Servers plugin's real pages over the `mcp-http.json` catalogs and the Skills plugin's over
+ * a small catalog. Every row kind appears.
  *
  * Only this serializer defines the bytes. `screens-fixtures.test.ts` rebuilds it in memory and
  * compares against the committed file; `npm run protocol:fixtures:update` writes it. Apple
  * `PluginScreenProtocolTests` decodes every page and message and applies `server`'s frames in order.
  */
 export const SCREENS_SNAPSHOT_FILE = join(PROTOCOL_DIR, "screens.json");
+
+const skill = (name: string, overrides: Partial<ServerSkillSummary> = {}): ServerSkillSummary => ({
+  id: `skill_${Buffer.from(name).toString("hex").padEnd(64, "0").slice(0, 64)}`,
+  name,
+  description: `Use when ${name} work comes up.`,
+  provenance: { kind: "piAgent", label: "~/.pi/agent/skills" },
+  path: `/Users/alex/.pi/agent/skills/${name}/SKILL.md`,
+  state: "enabled",
+  warnings: [],
+  editable: true,
+  ...overrides,
+});
 
 export function buildScreensFixture() {
   const mcp = buildMcpHttpFixture();
@@ -45,6 +65,7 @@ export function buildScreensFixture() {
     workspaceAdd: addPage({ response: mcp.catalogs[1]! }),
     signIn: signInPage(mcp.flows[1]),
     signInDone: signInPage(mcp.flows[2]),
+    ...skillsPages(),
   };
   const ops = (from: ScreenPage, to: ScreenPage): ConversationDocOp[] =>
     diffRevisions(from as unknown as JsonValue, to as unknown as JsonValue) as ConversationDocOp[];
@@ -100,11 +121,29 @@ export function buildScreensFixture() {
     serverInfo: {
       capabilities: { screens: { v: SCREENS_VERSION } },
       features: SERVER_FEATURE_PRESETS.all,
-      sidebar: [MCP_SIDEBAR_ENTRY],
+      sidebar: [SKILLS_SIDEBAR_ENTRY, MCP_SIDEBAR_ENTRY],
     },
     pages,
     client,
     server,
+  };
+}
+
+/** The Skills plugin's pages: a searchable list, a Skill, and its files by folder. */
+function skillsPages() {
+  const release = skill("release");
+  const broken = skill("diagram", { state: "error", loadError: "Missing description" });
+  const docs = skill("docs-writer", { state: "disabled", packageName: "@acme/docs" });
+  const detail = {
+    summary: release,
+    skillMarkdown: "# release",
+    files: ["SKILL.md", "scripts/check.sh", "references/checklist.md"],
+  };
+  return {
+    skills: skillsListPage({ value: { skills: [release, broken, docs] } }),
+    skill: skillPage({ value: detail }, release.id),
+    skillFiles: filesPage({ value: detail }, release.id, "") as ScreenPage,
+    skillFolder: filesPage({ value: detail }, release.id, "scripts") as ScreenPage,
   };
 }
 

@@ -66,7 +66,7 @@ enum PaneEntries {
         case .paneEntry(let entry):
             return entry
         case .chatReader, .workspaceConfiguration, .utility, .serverDetails, .modelProviders,
-             .serverResourceDetail, .serverSkillBrowser, .serverSkillFile:
+             .serverResourceDetail:
             return nil
         }
     }

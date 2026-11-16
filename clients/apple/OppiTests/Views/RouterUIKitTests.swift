@@ -86,7 +86,7 @@ struct RouterUIKitTests {
         })
         let shellStack = try #require(stack)
 
-        navigation.openWorkspaceUtility(.skills)
+        navigation.openWorkspaceUtility(.agents)
         navigation.openWorkspaceUtility(.extensions)
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
             shellStack.transitionCoordinator == nil && shellStack.viewControllers.count == 3
@@ -99,12 +99,12 @@ struct RouterUIKitTests {
             shellStack.transitionCoordinator == nil && shellStack.viewControllers.count == 4
         })
         shellStack.popViewController(animated: false)
-        #expect(navigation.workspaceStackRouteElements == [.utility(.skills), .utility(.extensions)])
+        #expect(navigation.workspaceStackRouteElements == [.utility(.agents), .utility(.extensions)])
 
         // Back from a route pops it from SceneNavigation too.
         shellStack.popViewController(animated: false)
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
-            navigation.workspaceStackRouteElements == [.utility(.skills)]
+            navigation.workspaceStackRouteElements == [.utility(.agents)]
         })
 
         // Replacing the stack in SceneNavigation replaces the UIKit stack.
@@ -127,11 +127,11 @@ struct RouterUIKitTests {
         })
         let shellStack = try #require(stack)
 
-        root.navigation.openWorkspaceUtility(.skills)
+        root.navigation.openWorkspaceUtility(.extensions)
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
             shellStack.transitionCoordinator == nil && shellStack.viewControllers.count == 2
         })
-        let skills = try #require(shellStack.topViewController as? ServerSkillsViewController)
+        let skills = try #require(shellStack.topViewController as? ServerExtensionsViewController)
 
         // A reader hides the bar for its own chrome, as a Skill file did.
         Router.push(BarHidingReaderViewController(), from: skills)

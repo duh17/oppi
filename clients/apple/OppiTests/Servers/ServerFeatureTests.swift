@@ -45,7 +45,7 @@ struct ServerFeatureTests {
             PluginScreenSidebarEntry(id: "acme.local", title: "Local", icon: "network", order: 15, scopes: ["workspace"]),
         ]
         let all = WorkspaceSidebarPrimaryUtilities.items(plugins: plugins) { _ in true }
-        #expect(all.map(\.target) == [.agents, .schedules, .skills, .extensions, .pluginScreen("acme.things"), .sshTerminal])
+        #expect(all.map(\.target) == [.agents, .schedules, .extensions, .pluginScreen("acme.things"), .sshTerminal])
         #expect(all.first { $0.target == .pluginScreen("acme.things") }?.title == "Things")
         #expect(WorkspaceSidebarPrimaryUtilities.items(plugins: []) { _ in false }.isEmpty)
         let terminalOnly = WorkspaceSidebarPrimaryUtilities.items(plugins: []) { $0 == .terminal }

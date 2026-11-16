@@ -16,6 +16,7 @@ import type { SubagentWorktree, SubagentWorktreeState } from "../plugins/subagen
 import type { NotifyInput, NotifyOutcome } from "../plugins/notify/contract.js";
 import type { SchemeReader } from "./internal-urls.js";
 import type { McpService } from "./mcp-service.js";
+import type { ServerResourceService } from "./server-resource-service.js";
 import type { TraceEvent } from "./trace.js";
 import type {
   GodotCommandRequest,
@@ -193,7 +194,18 @@ export interface OppiDurableHost {
    * for a built-in's sidebar screen. Undefined while the server has none.
    */
   mcp(): OppiMcpHost | undefined;
+  /**
+   * The server's Skills catalog (what Pi resolves on the host, and each Skill's server default),
+   * for a built-in's sidebar screen. Undefined while the server has none.
+   */
+  skills(): OppiSkillsHost | undefined;
 }
+
+/** `oppiHost().skills()`: the server's Skills catalog, as the HTTP routes use it. */
+export type OppiSkillsHost = Pick<
+  ServerResourceService,
+  "listSkills" | "getSkillDetail" | "setSkillEnabled"
+>;
 
 /** `oppiHost().mcp()`: the server's MCP management, as the HTTP routes use it. */
 export type OppiMcpHost = Pick<

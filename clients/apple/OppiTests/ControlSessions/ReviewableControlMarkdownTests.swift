@@ -479,17 +479,12 @@ struct ReviewableControlMarkdownTests {
         #expect(retry.sessionTarget.sessionId == session.id)
     }
 
-    @Test func guidedSkillHandoffNavigatesOnlyAfterSheetDismissalCompletes() throws {
+    @Test func guidedRevisionHandoffNavigatesOnlyAfterSheetDismissalCompletes() throws {
         let navigation = SceneNavigation()
         navigation.app.launchPhase = .ready
         navigation.app.showOnboarding = false
-        navigation.openWorkspaceUtility(.skills)
-        navigation.openServerSkillBrowser(.init(serverId: "server-1", resourceId: "skill-1"))
-        navigation.openServerSkillFile(.init(
-            serverId: "server-1",
-            resourceId: "skill-1",
-            path: "SKILL.md"
-        ))
+        navigation.openWorkspaceUtility(.extensions)
+        navigation.openServerResourceDetail(.init(serverId: "server-1", kind: .extension, resourceId: "extension-1"))
         let readerDepth = navigation.workspaceStackRouteElements.count
 
         let target = try ControlRevisionCommentNavigation.makeAtomicLaunchSessionTarget(
@@ -501,7 +496,7 @@ struct ReviewableControlMarkdownTests {
         handoff.prepare(target)
 
         #expect(navigation.workspaceStackRouteElements.count == readerDepth)
-        #expect(navigation.workspaceStackDiagnosticContext.screen == "server_skill_file")
+        #expect(navigation.workspaceStackDiagnosticContext.screen == "server_extension_detail")
 
         let completedTarget = handoff.completeAfterDismissal()
         let dismissedTarget = try #require(completedTarget)

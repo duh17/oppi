@@ -83,6 +83,7 @@ import { DURABLE_STORE_LOCK_STALE_MS } from "./durable-store-lock.js";
 import { DurableSessionDoc } from "./durable-session-doc.js";
 import { godotForConversation } from "./godot/godot-sessions.js";
 import { mcpForPlugins } from "./mcp-service.js";
+import { skillsForPlugins } from "./server-resource-service.js";
 import { requireDurableStoreId } from "./session-runtime-capabilities.js";
 import type {
   ConversationStreamServerMessage,
@@ -319,7 +320,7 @@ export interface DurableSessionNaming {
  * conversation that runs a tool call's env, and the file tools over the host or a sandbox VM. One object for
  * every runtime of the process, bound once before the first package loads.
  */
-const durableHost: Omit<OppiDurableHost, "godot" | "mcp"> = {
+const durableHost: Omit<OppiDurableHost, "godot" | "mcp" | "skills"> = {
   sessions: (env) => {
     const caller = conversationOfEnv(env);
     return caller?.host.runtime.boundThreads?.forCaller(caller.host, caller.conversationId);
@@ -1931,7 +1932,12 @@ export class DurableHarness {
     this.runPolicy = settings;
     // Once, before any plugin loads (built-ins read it when evaluated); it cannot be rebound.
     if (!durableHostBound) {
-      bindOppiHost({ ...durableHost, godot: godotForConversation, mcp: mcpForPlugins });
+      bindOppiHost({
+        ...durableHost,
+        godot: godotForConversation,
+        mcp: mcpForPlugins,
+        skills: skillsForPlugins,
+      });
       durableHostBound = true;
     }
     const plugins = new PluginHost({

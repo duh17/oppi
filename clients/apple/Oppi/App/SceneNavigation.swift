@@ -93,7 +93,6 @@ enum SessionNavigationSource: Sendable, Equatable {
 }
 
 enum ServerResourceDetailKind: Hashable, Sendable {
-    case skill
     case `extension`
 }
 
@@ -105,11 +104,7 @@ struct ServerResourceDetailNavTarget: Hashable, Sendable {
     let resourceId: String
 }
 
-struct ServerSkillBrowserNavTarget: Hashable, Sendable {
-    let serverId: String
-    let resourceId: String
-}
-
+/// One file of a Skill on one server (`ServerSkillFileViewController`), by Skill-relative path.
 struct ServerSkillFileNavTarget: Hashable, Sendable {
     let serverId: String
     let resourceId: String
@@ -163,7 +158,7 @@ struct SplitDetailColumn: Equatable {
             case .workspaceConfiguration, .utility:
                 root = (ShellRoute(element), index)
                 pushed = []
-            case .chatReader, .serverResourceDetail, .serverSkillBrowser, .serverSkillFile,
+            case .chatReader, .serverResourceDetail,
                  .serverDetails, .modelProviders, .paneEntry:
                 pushed.append((ShellRoute(element), index))
             }
@@ -196,8 +191,6 @@ enum WorkspaceStackRouteElement: Hashable {
     case serverDetails(ServerDetailsNavTarget)
     case modelProviders(ModelProvidersNavTarget)
     case serverResourceDetail(ServerResourceDetailNavTarget)
-    case serverSkillBrowser(ServerSkillBrowserNavTarget)
-    case serverSkillFile(ServerSkillFileNavTarget)
     /// A restored or linked pane entry shown through its leaf state.
     case paneEntry(PaneStackEntry)
 }
@@ -704,8 +697,7 @@ final class SceneNavigation {
         case .linkedFile(let target):
             return .coveringPage(sourceSessionId: coveringSourceSessionId(for: target))
         case .workspace, .fileBrowser, .workspaceConfiguration, .utility,
-             .serverDetails, .modelProviders, .serverResourceDetail,
-             .serverSkillBrowser, .serverSkillFile, .paneEntry:
+             .serverDetails, .modelProviders, .serverResourceDetail, .paneEntry:
             return .other
         }
     }
@@ -917,14 +909,6 @@ final class SceneNavigation {
         pushServerPage(.serverResourceDetail(target))
     }
 
-    func openServerSkillBrowser(_ target: ServerSkillBrowserNavTarget) {
-        pushServerPage(.serverSkillBrowser(target))
-    }
-
-    func openServerSkillFile(_ target: ServerSkillFileNavTarget) {
-        pushServerPage(.serverSkillFile(target))
-    }
-
     func openWorkspaceConfiguration(_ target: WorkspaceNavTarget) {
         guard scopedLockAllows(.workspace(serverId: target.serverId, workspaceId: target.workspace.id), retry: {
             self.openWorkspaceConfiguration(target)
@@ -1123,9 +1107,7 @@ final class SceneNavigation {
         case .utility(let target): utilityDiagnosticContext(target)
         case .serverDetails: serverDetailsDiagnosticContext
         case .modelProviders: modelProvidersDiagnosticContext
-        case .serverResourceDetail(let target): serverResourceDetailDiagnosticContext(target)
-        case .serverSkillBrowser: serverSkillBrowserDiagnosticContext
-        case .serverSkillFile: serverSkillFileDiagnosticContext
+        case .serverResourceDetail: serverResourceDetailDiagnosticContext
         case .paneEntry(let entry): paneEntryDiagnosticContext(entry)
         }
     }
@@ -1192,7 +1174,6 @@ final class SceneNavigation {
         let label = switch target {
         case .schedules: "schedules"
         case .agents: "agents"
-        case .skills: "skills"
         case .extensions: "extensions"
         case .pluginScreen: "plugin_screen"
         case .sshTerminal: "ssh_terminal"
@@ -1207,24 +1188,8 @@ final class SceneNavigation {
         )
     }
 
-    private static func serverResourceDetailDiagnosticContext(
-        _ target: ServerResourceDetailNavTarget
-    ) -> WorkspaceStackDiagnosticContext {
-        WorkspaceStackDiagnosticContext(
-            screen: target.kind == .skill ? "server_skill_detail" : "server_extension_detail",
-            sessionId: nil,
-            workspaceId: nil
-        )
-    }
-
-    private static let serverSkillBrowserDiagnosticContext = WorkspaceStackDiagnosticContext(
-        screen: "server_skill_browser",
-        sessionId: nil,
-        workspaceId: nil
-    )
-
-    private static let serverSkillFileDiagnosticContext = WorkspaceStackDiagnosticContext(
-        screen: "server_skill_file",
+    private static let serverResourceDetailDiagnosticContext = WorkspaceStackDiagnosticContext(
+        screen: "server_extension_detail",
         sessionId: nil,
         workspaceId: nil
     )

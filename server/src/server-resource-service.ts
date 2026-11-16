@@ -252,6 +252,21 @@ export class ServerResourceConflictError extends ServerResourceServiceError {
   }
 }
 
+/**
+ * The running server's Skills catalog as built-in plugins reach it (`oppiHost().skills()`): the
+ * newest service. One process-wide slot like the MCP one, outside `oppi/v1`, so plugin code
+ * cannot replace it.
+ */
+let servedToPlugins: ServerResourceService | undefined;
+
+export function skillsForPlugins(): ServerResourceService | undefined {
+  return servedToPlugins;
+}
+
+function serveToPlugins(service: ServerResourceService): void {
+  servedToPlugins = service;
+}
+
 export class ServerResourceService {
   private readonly dataDir: string;
   private readonly agentDir: string;
@@ -264,6 +279,7 @@ export class ServerResourceService {
     this.agentDir = resolve(options.agentDir);
     this.catalogCwd = join(this.dataDir, "resource-catalog-cwd");
     this.plugins = options.plugins;
+    serveToPlugins(this);
   }
 
   async listSkills(): Promise<{ skills: ServerSkillSummary[] }> {

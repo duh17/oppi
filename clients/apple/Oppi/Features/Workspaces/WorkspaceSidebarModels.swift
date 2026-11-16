@@ -66,15 +66,6 @@ enum WorkspaceSidebarPrimaryUtilities {
             order: 20
         ),
         .init(
-            target: .skills,
-            title: "Skills",
-            systemImage: "sparkles.rectangle.stack",
-            accessibilityLabel: "Open Skills",
-            accessibilityIdentifier: "workspace.skills.open",
-            accessibilityHint: nil,
-            order: 30
-        ),
-        .init(
             target: .extensions,
             title: "Extensions",
             systemImage: "shippingbox",

@@ -262,15 +262,6 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
             app.buttons["BackButton"].tap()
             XCTAssertTrue(drawerButton.waitUntilExists(timeout: 5), "Back must pop to All Sessions")
         }
-
-        revealSidebar(isSplit: isSplit)
-        app.buttons["workspace.skills.open"].tap()
-        XCTAssertTrue(app.searchFields["Search skills"].waitUntilExists(timeout: 5), "Skills must search in the host's bar")
-        assertRunning()
-        if !isSplit {
-            app.buttons["BackButton"].tap()
-            XCTAssertTrue(drawerButton.waitUntilExists(timeout: 5), "Back must pop Skills")
-        }
         assertRunning()
     }
 

@@ -403,11 +403,6 @@ struct ServerResourceStoreTests {
 
         let pending = try #require(store.skills(forServer: "server-a").first)
         #expect(pending.packageName == "@scope/cached-skill")
-        let pendingPresentation = ServerSkillListPresentation(skills: [pending], query: "@scope/cached-skill")
-        #expect(pendingPresentation.visibleSkills == [pending])
-        #expect(ServerSkillListPresentation(skills: [pending], query: privatePath).visibleSkills.isEmpty)
-        #expect(ServerSkillListPresentation.accessibilityLabel(for: pending) == "skill-package, @scope/cached-skill, Pi agent, Enabled")
-        #expect(!ServerSkillListPresentation.accessibilityLabel(for: pending).contains(privatePath))
 
         await mutationGate.release()
         await mutation.value
@@ -415,7 +410,6 @@ struct ServerResourceStoreTests {
         let settled = try #require(store.skills(forServer: "server-a").first)
         #expect(settled == authoritative)
         #expect(settled.packageName == "@scope/authoritative-skill")
-        #expect(ServerSkillListPresentation(skills: [settled], query: "@scope/authoritative-skill").visibleSkills == [settled])
     }
 
     @Test func optimisticExtensionToggleRetainsPackageMetadataAcrossPendingRollbackAndPresentation() async throws {

@@ -1,0 +1,1 @@
+- **Protocol:** This app shows **Skills** in the sidebar only with a server of this release or later. A workspace's **Skills** in Workspace Settings is unchanged.

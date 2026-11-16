@@ -75,6 +75,11 @@ struct PluginScreenProtocolTests {
         #expect(pages["failed"]?.state?.kind == "failed")
         let toggle = try #require(pages["http"]?.sections.flatMap(\.rows).first { $0.kind == "toggle" })
         #expect(toggle.boolValue == true)
+        // A searchable list whose items lead with a symbol, and file rows that open host files.
+        #expect(pages.values.contains { $0.search?.prompt.isEmpty == false })
+        let items = pages.values.flatMap { $0.sections.flatMap(\.rows) }.filter { $0.kind == "item" }
+        #expect(items.contains { $0.symbol != nil })
+        #expect(items.contains { $0.file?.hasPrefix("/") == true })
     }
 
     @Test func oneWatchsFramesRebuildItsPages() throws {

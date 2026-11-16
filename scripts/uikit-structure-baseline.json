@@ -82,9 +82,6 @@
     "clients/apple/Oppi/Features/LiveVoice/LiveVoiceCallStrip.swift": {
       "active connection read": 1
     },
-    "clients/apple/Oppi/Features/Mcp/McpServerDetailViewController.swift": {
-      ".settingsToggle(": 1
-    },
     "clients/apple/Oppi/Features/QuickSession/QuickSessionModel+Launch.swift": {
       "active connection read": 1
     },
@@ -163,9 +160,6 @@
       "AppPreferences.*.set": 3
     },
     "clients/apple/Oppi/Features/Skills/ServerResourceDetailScreenController.swift": {
-      "active connection read": 1
-    },
-    "clients/apple/Oppi/Features/Skills/ServerSkillBrowserViewController.swift": {
       "active connection read": 1
     },
     "clients/apple/Oppi/Features/Skills/ServerSkillFileViewController.swift": {

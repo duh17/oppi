@@ -146,8 +146,7 @@ extension PreviewUITestCase where Self: XCTestCase {
     /// one element's presence.
     ///
     /// 5 s is the budget most of the suite's classes used. A sheet-heavy class
-    /// (`RouterSettingsModalsUITests`, `ModelProvidersUITests`,
-    /// `ServerSkillsUITests`) passes 10 s itself: a loaded pool simulator can take
+    /// (`RouterSettingsModalsUITests`, `ModelProvidersUITests`) passes 10 s itself: a loaded pool simulator can take
     /// several seconds to finish a dismissal.
     func waitFor(_ condition: @autoclosure () -> Bool, timeout: TimeInterval = 5) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)

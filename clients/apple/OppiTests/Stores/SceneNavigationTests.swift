@@ -396,19 +396,19 @@ struct SceneNavigationShellRoutingTests {
     @Test func visibleSplitDiagnosticContextTracksNonSessionPathTop() {
         let navigation = SceneNavigation()
         navigation.setWorkspaceNavigationPresentation(.split)
-        navigation.openWorkspaceUtility(.skills)
+        navigation.openWorkspaceUtility(.agents)
         navigation.openServerResourceDetail(.init(
             serverId: "server-1",
-            kind: .skill,
-            resourceId: "skill-1"
+            kind: .extension,
+            resourceId: "extension-1"
         ))
 
-        #expect(navigation.visibleSplitDiagnosticContext.screen == "server_skill_detail")
+        #expect(navigation.visibleSplitDiagnosticContext.screen == "server_extension_detail")
         #expect(navigation.visibleSplitDiagnosticContext.sessionId == nil)
         #expect(navigation.visibleSplitDiagnosticContext.workspaceId == nil)
 
         navigation.popShownStack(toDepth: navigation.splitDetailColumn.pushed.count - 1)
-        #expect(navigation.visibleSplitDiagnosticContext.screen == "utility_skills")
+        #expect(navigation.visibleSplitDiagnosticContext.screen == "utility_agents")
     }
 
     @Test func referencedSessionChainSurvivesCompactToSplitToCompactTransition() {
@@ -1468,19 +1468,19 @@ struct SceneNavigationShellRoutingTests {
         #expect(Set(items.map(\.accessibilityIdentifier)).count == items.count)
     }
 
-    @Test func skillsAndExtensionsAreReleaseEnabledCompactUtilitiesWithDiagnostics() {
+    @Test func agentsAndExtensionsAreCompactUtilitiesWithDiagnostics() {
         let navigation = readyNavigation()
 
-        navigation.openWorkspaceUtility(.skills)
+        navigation.openWorkspaceUtility(.agents)
         #expect(navigation.workspaceStackRouteElements.count == 1)
-        #expect(navigation.workspaceStackDiagnosticContext.screen == "utility_skills")
+        #expect(navigation.workspaceStackDiagnosticContext.screen == "utility_agents")
 
         navigation.openWorkspaceUtility(.extensions)
         #expect(navigation.workspaceStackRouteElements.count == 2)
         #expect(navigation.workspaceStackDiagnosticContext.screen == "utility_extensions")
     }
 
-    @Test func skillsAndExtensionsReplaceSplitSelectionAndKeepSidebarVisible() {
+    @Test func agentsAndExtensionsReplaceSplitSelectionAndKeepSidebarVisible() {
         let navigation = readyNavigation()
         let workspace = WorkspaceNavTarget(
             serverId: "server-1",
@@ -1489,61 +1489,14 @@ struct SceneNavigationShellRoutingTests {
         navigation.setWorkspaceNavigationPresentation(.split)
         navigation.openWorkspace(workspace)
 
-        navigation.openWorkspaceUtility(.skills)
+        navigation.openWorkspaceUtility(.agents)
         #expect(navigation.selectedWorkspaceFilter == nil)
-        #expect(navigation.splitDetailColumn.root == .utility(.skills))
+        #expect(navigation.splitDetailColumn.root == .utility(.agents))
         #expect(navigation.splitColumnVisibility == .all)
 
         navigation.openWorkspaceUtility(.extensions)
         #expect(navigation.splitDetailColumn.root == .utility(.extensions))
         #expect(navigation.splitColumnVisibility == .all)
-    }
-
-    @Test func skillDetailAndFilePreserveServerScopedRouteAcrossWidthChanges() {
-        let navigation = readyNavigation()
-        let detail = ServerResourceDetailNavTarget(
-            serverId: "server-a",
-            kind: .skill,
-            resourceId: "skill_opaque"
-        )
-        let browser = ServerSkillBrowserNavTarget(
-            serverId: "server-a",
-            resourceId: "skill_opaque"
-        )
-        let file = ServerSkillFileNavTarget(
-            serverId: "server-a",
-            resourceId: "skill_opaque",
-            path: "references/checklist.md"
-        )
-
-        navigation.openWorkspaceUtility(.skills)
-        navigation.openServerResourceDetail(detail)
-        navigation.openServerSkillBrowser(browser)
-        navigation.openServerSkillFile(file)
-
-        #expect(navigation.workspaceStackRouteElements.count == 4)
-        #expect(navigation.workspaceStackDiagnosticContext.screen == "server_skill_file")
-
-        navigation.setWorkspaceNavigationPresentation(.split)
-        #expect(navigation.splitDetailColumn.root == .utility(.skills))
-        #expect(navigation.splitDetailColumn.pushed.count == 3)
-
-        navigation.setWorkspaceNavigationPresentation(.stack)
-        #expect(navigation.workspaceStackRouteElements.count == 4)
-        #expect(navigation.workspaceStackDiagnosticContext.screen == "server_skill_file")
-
-        navigation.popShownStack(toDepth: navigation.workspaceStackRouteElements.count - 1)
-        #expect(navigation.workspaceStackDiagnosticContext.screen == "server_skill_browser")
-
-        navigation.setWorkspaceNavigationPresentation(.split)
-        #expect(navigation.splitDetailColumn.root == .utility(.skills))
-        #expect(navigation.splitDetailColumn.pushed.count == 2)
-
-        navigation.setWorkspaceNavigationPresentation(.stack)
-        #expect(navigation.workspaceStackRouteElements.count == 3)
-        #expect(navigation.workspaceStackDiagnosticContext.screen == "server_skill_browser")
-        #expect(browser.serverId == detail.serverId)
-        #expect(file.resourceId == detail.resourceId)
     }
 
     @Test func extensionDetailPreservesUtilityRootAcrossWidthChanges() {

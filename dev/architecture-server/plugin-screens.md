@@ -1,6 +1,6 @@
 # Plugin screens
 
-A built-in plugin can add a sidebar entry whose pages are list screens the app draws generically. MCP Servers is one; the app has no MCP screen of its own.
+A built-in plugin can add a sidebar entry whose pages are list screens the app draws generically. MCP Servers and Skills are two; the app has no screen of its own for either.
 
 ## Owners
 
@@ -9,8 +9,8 @@ A built-in plugin can add a sidebar entry whose pages are list screens the app d
 - `server/src/screens-stream.ts` owns `WS /screens/stream`: one watch per page, the first value whole, then `diffRevisions` ops against the last value sent.
 - `/server/info` lists `sidebar` and `capabilities.screens.v` (`routes/identity.ts`) without waiting: its first request starts the plugins' load; the stream loads them on demand.
 - An entry's `feature` names its server switch (`server-features.ts`); `ScreensStreamMux.featuresChanged` ends watches a save turns off. Scope `server` is the sidebar row; `workspace:<id>` is opened from Workspace Settings by that `feature`.
-- `server/plugins/mcp-screen`: MCP Servers over `oppiHost().mcp()`.
-- Apple: `PluginScreenStream`, `PluginScreenReplica` (`ChordDelta`), and `PluginScreenViewController` on `ListScreenController`; the sidebar root (`showsHost`) leads with the host row.
+- `server/plugins/mcp-screen`: MCP Servers over `oppiHost().mcp()`. `server/plugins/skills-screen`: Skills over `oppiHost().skills()`.
+- Apple: `PluginScreenStream`, `PluginScreenReplica` (`ChordDelta`), and `PluginScreenViewController` on `ListScreenController`; the sidebar root (`showsHost`) leads with the host row. An item's `file` opens through `HostFileScreen`, which picks the viewer by the edit origin the server names.
 
 ## Invariants
 

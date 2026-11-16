@@ -1,0 +1,1 @@
+- **Client:** **Skills** in the sidebar is now drawn from what the server sends, like **MCP Servers**. Search filters the list as you type. A Skill's folders open as pages of their own, and a file opens in the same viewer and editor as before, with **Edit with Session**. Skills no longer shows a saved list while the server is unreachable, and folders no longer expand in place.

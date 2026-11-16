@@ -228,8 +228,6 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
 enum WorkspaceUtilityNavTarget: Hashable {
     case schedules
     case agents
-    /// Placeholder roots; dedicated navigation destinations land with the catalog views.
-    case skills
     case extensions
     /// A server plugin's sidebar entry, by its id (`PluginScreenViewController`).
     case pluginScreen(String)
@@ -245,7 +243,6 @@ enum WorkspaceUtilityNavTarget: Hashable {
         switch self {
         case .agents: .agents
         case .schedules: .schedules
-        case .skills: .skills
         case .extensions: .extensions
         case .sshTerminal: .terminal
         case .pluginScreen, .manageServers, .serverMetrics, .appSettings: nil

@@ -1,9 +1,11 @@
 import XCTest
 
-/// MCP Servers against a real paired server: the server's MCP Servers plugin, drawn by the app's
-/// generic plugin page. Adding a server through its form, switching it off, and removing it all
-/// reach the server's `mcp.json` and come back as the page's own updates, in the sidebar's global
-/// list and in a host workspace's own list from Workspace Settings.
+/// The server's plugin pages against a real paired server, drawn by the app's generic plugin page.
+/// MCP Servers: adding a server through its form, switching it off, and removing it all reach the
+/// server's `mcp.json` and come back as the page's own updates, in the sidebar's global list and
+/// in a host workspace's own list from Workspace Settings. Skills: the catalog searches on the
+/// device, a Skill's switch reaches Pi's settings, and its files open in the app's own viewer
+/// (the native server starts with `server/e2e/skills`).
 @MainActor
 final class PluginScreenE2ETests: E2ETestCase {
     /// The server's MCP Servers entry, as `/server/info` lists it.
@@ -16,9 +18,9 @@ final class PluginScreenE2ETests: E2ETestCase {
         "screen.\(entry).\(page).\(section).\(row)"
     }
 
-    private func findEntry() throws {
+    private func findEntry(feature: String = "mcp") throws {
         let sidebar = try e2eLabAPIJSON(method: "GET", path: "/server/info")["sidebar"] as? [[String: Any]]
-        entry = try XCTUnwrap(sidebar?.first { $0["feature"] as? String == "mcp" }?["id"] as? String, "No MCP Servers entry")
+        entry = try XCTUnwrap(sidebar?.first { $0["feature"] as? String == feature }?["id"] as? String, "No \(feature) entry")
     }
 
     /// The Add sheet: Add stays off until the name and URL are in, Cancel and swipe-down close
@@ -92,6 +94,60 @@ final class PluginScreenE2ETests: E2ETestCase {
         tap(app.buttons["\(id(detail, "remove", "remove")).confirm"].firstMatch, named: "Remove confirmation")
         XCTAssertTrue(app.navigationBars["MCP Servers"].waitForExistence(timeout: 30), "Remove did not return to the list")
         XCTAssertTrue(row.waitForNonExistence(timeout: 45), "The removed server is still listed")
+    }
+
+    func testSkillsPageSearchesSwitchesAndOpensFiles() throws {
+        try findEntry(feature: "skills")
+        let catalog = try e2eLabAPIJSON(method: "GET", path: "/server/resources/skills")["skills"] as? [[String: Any]] ?? []
+        guard let release = catalog.first(where: { $0["name"] as? String == "release-checklist" })?["id"] as? String else {
+            throw XCTSkip("The server has no seeded Skills (e2e.sh --native copies server/e2e/skills)")
+        }
+        let skill = "skill/\(release)"
+        let files = "files/\(release)"
+
+        tap(app.buttons["workspace.sidebar.open"], named: "workspace sidebar button")
+        tap(app.buttons["workspace.plugin.\(entry).open"], named: "Skills entry")
+        XCTAssertTrue(app.navigationBars["Skills"].waitForExistence(timeout: 15), "Skills did not open")
+        let row = app.buttons[id("list", "enabled", "skill.\(release)")]
+        XCTAssertTrue(row.waitForExistence(timeout: 30), "The seeded Skill is not listed")
+
+        // Search filters on the device; nothing matching says so.
+        let search = app.searchFields["Search skills"]
+        tap(search, named: "Search skills")
+        search.typeText("no-matching-e2e-skill")
+        XCTAssertTrue(row.waitForNonExistence(timeout: 10), "Search did not filter the list")
+        XCTAssertTrue(app.staticTexts["screen.\(entry).list.state"].waitForExistence(timeout: 10), "No empty search state")
+        // Clear the query (an iPad's bar search has no Cancel).
+        tap(search.buttons["Clear text"], named: "Clear search")
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "Ending the search did not bring the rows back")
+
+        // The Skill's switch writes Pi's settings and the page follows.
+        tap(row, named: "release-checklist")
+        XCTAssertTrue(app.navigationBars["release-checklist"].waitForExistence(timeout: 15), "The Skill's page did not open")
+        let enabled = app.switches[id(skill, "default", "enabled")]
+        XCTAssertTrue(enabled.waitForExistence(timeout: 30))
+        enabled.tap()
+        let off = NSPredicate(format: "value == '0' AND isEnabled == true")
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: off, evaluatedWith: enabled)], timeout: 30), .completed)
+        let stored = try e2eLabAPIJSON(method: "GET", path: "/server/resources/skills")["skills"] as? [[String: Any]]
+        XCTAssertEqual(stored?.first { $0["id"] as? String == release }?["state"] as? String, "disabled")
+        enabled.tap()
+        let on = NSPredicate(format: "value == '1' AND isEnabled == true")
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: on, evaluatedWith: enabled)], timeout: 30), .completed)
+
+        // Files: folders are pages, and a file opens in the Skill file viewer with its editor.
+        let browse = app.buttons[id(skill, "contents", "browse")]
+        XCTAssertTrue(scrollToElement(browse, in: app.collectionViews["screen.\(entry).\(skill).list"], timeout: 15))
+        tap(browse, named: "Browse Files")
+        // Row ids are the plugin's: `folder.<name>` and `file.<name>`.
+        let rowId = { (kind: String, name: String) in [kind, name].joined(separator: ".") }
+        tap(app.buttons[id(files, "files", rowId("folder", "scripts"))], named: "scripts folder", timeout: 15)
+        tap(app.buttons[id("\(files)/scripts", "files", rowId("file", "check.sh"))], named: "check.sh", timeout: 15)
+        XCTAssertTrue(app.buttons["workspace-file-editor.edit"].waitForExistence(timeout: 20), "The Skill's file has no editor")
+        app.navigationBars.firstMatch.buttons.element(boundBy: 0).tap()
+        app.navigationBars.firstMatch.buttons.element(boundBy: 0).tap()
+        tap(app.buttons[id(files, "files", rowId("file", "SKILL.md"))], named: "SKILL.md", timeout: 15)
+        XCTAssertTrue(app.buttons["workspace-file-editor.edit"].waitForExistence(timeout: 20), "SKILL.md has no editor")
     }
 
     /// A host workspace's own servers: Workspace Settings opens the same plugin page on the

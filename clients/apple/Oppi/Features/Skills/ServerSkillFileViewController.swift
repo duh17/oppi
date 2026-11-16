@@ -66,8 +66,8 @@ enum ServerSkillFilePresentation: Equatable {
     }
 }
 
-/// One Skill file in the shared file viewer (route `.serverSkillFile`), on the
-/// Skill's server. The Skill's page or the catalog already holds its summary,
+/// One Skill file in the shared file viewer, on the Skill's server: a host file
+/// whose server-named edit origin is a Skill (`HostFileScreen`). The Skill's page or the catalog already holds its summary,
 /// so opening a file is one host read; the server rebuilds its Skill catalog
 /// only when neither has it. An editable Skill's own file opens with the
 /// selected-text review flow, the editor, and Edit with Session; other files
@@ -77,19 +77,14 @@ final class ServerSkillFileViewController: UIViewController {
     let target: ServerSkillFileNavTarget
 
     private enum Shown: Equatable {
-        case connecting
         case loading
         case unavailable(String)
         case file(ServerSkillFilePresentation)
     }
 
     private let root: AppRootEnvironment
-    /// The route makes the Skill's server the active one on every appearance.
-    private let switchesServer: Bool
-    /// The Skill's server once it is ready.
-    private var connection: ServerConnection? {
-        didSet { setNeedsUpdateProperties() }
-    }
+    /// The Skill's server.
+    private let connection: ServerConnection
     private var fetchedSummary: ServerSkillSummary? {
         didSet { setNeedsUpdateProperties() }
     }
@@ -98,17 +93,13 @@ final class ServerSkillFileViewController: UIViewController {
     }
     private var shown: Shown?
     private var content: UIViewController?
-    private var connectTask: Task<Void, Never>?
     private var summaryTask: Task<Void, Never>?
     private var isOnScreen = false
 
-    /// `connection`: the Skill's server when the caller already has it ready;
-    /// nil makes it the active server first ("Connecting…").
-    init(target: ServerSkillFileNavTarget, root: AppRootEnvironment, connection: ServerConnection? = nil) {
+    init(target: ServerSkillFileNavTarget, root: AppRootEnvironment, connection: ServerConnection) {
         self.target = target
         self.root = root
         self.connection = connection
-        switchesServer = connection == nil
         super.init(nibName: nil, bundle: nil)
         traitOverrides.appRootEnvironment = root
         navigationItem.largeTitleDisplayMode = .never
@@ -118,7 +109,6 @@ final class ServerSkillFileViewController: UIViewController {
     required init?(coder: NSCoder) { nil }
 
     deinit {
-        connectTask?.cancel()
         summaryTask?.cancel()
     }
 
@@ -136,20 +126,12 @@ final class ServerSkillFileViewController: UIViewController {
     override func viewIsAppearing(_ animated: Bool) {
         super.viewIsAppearing(animated)
         isOnScreen = true
-        // The server switch and the summary load run on every appearance,
-        // as the hosted screen's tasks did.
-        if switchesServer {
-            connect()
-        } else {
-            loadSummaryIfNeeded()
-        }
+        loadSummaryIfNeeded()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         isOnScreen = false
-        connectTask?.cancel()
-        connectTask = nil
         summaryTask?.cancel()
         summaryTask = nil
     }
@@ -157,17 +139,12 @@ final class ServerSkillFileViewController: UIViewController {
     override func updateProperties() {
         super.updateProperties()
         view.backgroundColor = root.themeStore.backgroundColor
-        guard let connection else {
-            show(.connecting)
-            updateBar()
-            return
-        }
         if let summary = summary(in: connection) {
             show(.file(ServerSkillFilePresentation.resolve(
                 editable: summary.editable,
                 resourcePath: summary.path,
                 selectedFilePath: target.path
-            )), summary: summary, connection: connection)
+            )), summary: summary)
         } else if let error {
             show(.unavailable(error))
         } else {
@@ -184,19 +161,8 @@ final class ServerSkillFileViewController: UIViewController {
             ?? store.skills(forServer: target.serverId).first { $0.id == target.resourceId }
     }
 
-    private func connect() {
-        connectTask?.cancel()
-        let coordinator = root.coordinator
-        let serverId = target.serverId
-        connectTask = Task { [weak self] in
-            guard await coordinator.switchToServerReady(serverId), !Task.isCancelled, let self else { return }
-            self.connection = coordinator.connection(for: serverId)
-            self.loadSummaryIfNeeded()
-        }
-    }
-
     private func loadSummaryIfNeeded() {
-        guard isOnScreen, let connection, summary(in: connection) == nil else { return }
+        guard isOnScreen, summary(in: connection) == nil else { return }
         loadSummary(connection)
     }
 
@@ -223,13 +189,11 @@ final class ServerSkillFileViewController: UIViewController {
 
     // MARK: Content
 
-    private func show(_ next: Shown, summary: ServerSkillSummary? = nil, connection: ServerConnection? = nil) {
+    private func show(_ next: Shown, summary: ServerSkillSummary? = nil) {
         guard shown != next else { return }
         shown = next
         removeContent()
         switch next {
-        case .connecting:
-            contentUnavailableConfiguration = loadStateConfiguration(.connecting)
         case .loading:
             contentUnavailableConfiguration = loadStateConfiguration(.loading(String(localized: "Loading file…")))
         case .unavailable(let reason), .file(.unavailable(let reason)):
@@ -237,13 +201,13 @@ final class ServerSkillFileViewController: UIViewController {
                 title: String(localized: "File Unavailable"),
                 message: reason,
                 retry: RetryAction { [weak self] in
-                    guard let self, let connection = self.connection else { return }
-                    self.loadSummary(connection)
+                    guard let self else { return }
+                    self.loadSummary(self.connection)
                 }
             ))
         case .file(.editable(let hostPath)):
             contentUnavailableConfiguration = nil
-            guard let summary, let connection else { return }
+            guard let summary else { return }
             embed(ReviewableControlMarkdownViewController(
                 hostFilePath: hostPath,
                 serverId: target.serverId,
@@ -257,7 +221,6 @@ final class ServerSkillFileViewController: UIViewController {
             ))
         case .file(.readOnly(let hostPath)):
             contentUnavailableConfiguration = nil
-            guard let connection else { return }
             embed(FileViewerViewController(
                 configuration: .init(
                     workspaceId: "",
@@ -307,7 +270,7 @@ final class ServerSkillFileViewController: UIViewController {
         if let bar {
             bar.apply(to: navigationItem)
         } else {
-            navigationItem.title = shown == .connecting ? nil : fileName
+            navigationItem.title = fileName
             navigationItem.rightBarButtonItems = nil
         }
     }

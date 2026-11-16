@@ -248,6 +248,10 @@ export function checkScreenPage(value: unknown): string | undefined {
       if (problem) return problem;
     }
   }
+  if (value.search !== undefined) {
+    const search = value.search as Record<string, unknown>;
+    if (!isObject(search) || !isText(search.prompt)) return "search needs a prompt";
+  }
   if (value.submit !== undefined) {
     const submit = value.submit as Record<string, unknown>;
     if (!isObject(submit) || !isText(submit.title) || !isText(submit.action))
@@ -293,8 +297,13 @@ function checkRow(row: unknown): string | undefined {
       return (
         need("title", isText) ??
         optional("subtitle", isString) ??
+        optional("symbol", isIcon) ??
         optional("push", isText) ??
         optional("url", isUrl) ??
+        optional("file", isHostPath) ??
+        ([row.push, row.url, row.file].filter((target) => target !== undefined).length > 1
+          ? "an item opens one of push, url or file"
+          : undefined) ??
         optional(
           "status",
           (status) =>
@@ -381,6 +390,8 @@ const isTone = (value: unknown): boolean => TONES.has(value as string);
 const isIcon = (value: unknown): boolean => ICONS.has(value as string);
 const isId = (value: unknown): boolean =>
   typeof value === "string" && /^[a-z][a-z0-9._-]*$/.test(value);
+const isHostPath = (value: unknown): boolean =>
+  typeof value === "string" && value.startsWith("/") && !value.includes("\0");
 const isUrl = (value: unknown): boolean => {
   if (typeof value !== "string") return false;
   try {

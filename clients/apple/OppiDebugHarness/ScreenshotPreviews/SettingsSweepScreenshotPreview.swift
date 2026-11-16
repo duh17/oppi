@@ -6,7 +6,7 @@ import UIKit
 /// `SettingsSweepFixtureURLProtocol`. `SCREENSHOT_SWEEP_PAGE` picks the page:
 /// `ssh-hosts`, `theme-import` (`theme-import-failed`: the themes request
 /// answers 404),
-/// `experiments`, `skills`, `skills-offline` (the seeded catalog, cached while the refresh fails), `skill-detail`, `skill-detail-failed`, `skill-browser`, `extensions`, `extensions-offline` (the catalog
+/// `experiments`, `extensions`, `extensions-offline` (the catalog
 /// request fails over a cached catalog), `extensions-unavailable` (the
 /// request fails with nothing cached), `extensions-builtin-only`, `extension-detail`,
 /// `extension-detail-builtin` (a built-in plugin the runtime needs),
@@ -380,8 +380,6 @@ final class SettingsSweepPreviewController: PreviewRootController {
         case "pairing-approval":
             return stack { PairingApprovalPreviewScreen(root: root) }
         // Shell routes the router hosts directly: search lives in its bar.
-        case "skills", "skills-offline":
-            return stack { ServerSkillsViewController(root: root) }
         case "extensions", "extensions-offline", "extensions-builtin-only":
             return stack { ServerExtensionsViewController(root: root) }
         case "extensions-unavailable":
@@ -488,24 +486,6 @@ final class SettingsSweepPreviewController: PreviewRootController {
                         serverId: server.id, kind: .extension,
                         resourceId: page == "extension-detail" ? "workflow" : "oppi-control"
                     ),
-                    root: root,
-                    connection: connection
-                )
-            }
-        case "skill-detail", "skill-detail-failed":
-            // `-failed`: the detail request answers 404, so the page states its own
-            // failure row over the catalog row it opened.
-            return stack {
-                ServerSkillDetailViewController(
-                    target: .init(serverId: server.id, kind: .skill, resourceId: "release"),
-                    root: root,
-                    connection: connection
-                )
-            }
-        case "skill-browser":
-            return stack {
-                ServerSkillBrowserViewController(
-                    target: .init(serverId: server.id, resourceId: "release"),
                     root: root,
                     connection: connection
                 )
@@ -784,10 +764,6 @@ final class SettingsSweepPreviewController: PreviewRootController {
         if page == "extensions-offline" || page == "extensions-unavailable" {
             SettingsSweepFixtureURLProtocol.routes["/server/resources/extensions"] = nil
         }
-        // `skills-offline`: the refresh fails and the seeded catalog shows as cached.
-        if page == "skills-offline" {
-            SettingsSweepFixtureURLProtocol.routes["/server/resources/skills"] = nil
-        }
         // The failure captures: the page's own request answers 404, so the list
         // shows what it says when its load fails.
         if page == "model-providers-failed" {
@@ -798,9 +774,6 @@ final class SettingsSweepPreviewController: PreviewRootController {
         }
         if page == "theme-import-failed" {
             SettingsSweepFixtureURLProtocol.routes["/themes"] = nil
-        }
-        if page == "skill-detail-failed" {
-            SettingsSweepFixtureURLProtocol.routes["/server/resources/skills/release"] = nil
         }
         // Paired Devices with a read that fails: the kit's one failed row.
         if page == "paired-devices-offline" {

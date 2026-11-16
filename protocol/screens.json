@@ -19,6 +19,16 @@
     },
     "sidebar": [
       {
+        "id": "oppi.skills",
+        "title": "Skills",
+        "icon": "sparkles.rectangle.stack",
+        "order": 30,
+        "scopes": [
+          "server"
+        ],
+        "feature": "skills"
+      },
+      {
         "id": "oppi.mcp",
         "title": "MCP Servers",
         "icon": "network",
@@ -970,6 +980,202 @@
               "id": "status",
               "label": "Status",
               "value": "Signed in"
+            }
+          ]
+        }
+      ]
+    },
+    "skills": {
+      "title": "Skills",
+      "search": {
+        "prompt": "Search skills"
+      },
+      "sections": [
+        {
+          "id": "attention",
+          "header": "Needs Attention",
+          "rows": [
+            {
+              "kind": "item",
+              "id": "skill.skill_6469616772616d00000000000000000000000000000000000000000000000000",
+              "title": "diagram",
+              "subtitle": "Use when diagram work comes up.\n~/.pi/agent/skills",
+              "symbol": "sparkles.rectangle.stack",
+              "status": {
+                "text": "Error",
+                "symbol": "exclamationmark.triangle.fill",
+                "tone": "warning"
+              },
+              "push": "skill/skill_6469616772616d00000000000000000000000000000000000000000000000000"
+            }
+          ]
+        },
+        {
+          "id": "enabled",
+          "header": "Enabled",
+          "rows": [
+            {
+              "kind": "item",
+              "id": "skill.skill_72656c6561736500000000000000000000000000000000000000000000000000",
+              "title": "release",
+              "subtitle": "Use when release work comes up.\n~/.pi/agent/skills",
+              "symbol": "sparkles.rectangle.stack",
+              "status": {
+                "text": "Enabled",
+                "symbol": "checkmark.circle",
+                "tone": "secondary"
+              },
+              "push": "skill/skill_72656c6561736500000000000000000000000000000000000000000000000000"
+            }
+          ]
+        },
+        {
+          "id": "disabled",
+          "header": "Disabled",
+          "rows": [
+            {
+              "kind": "item",
+              "id": "skill.skill_646f63732d777269746572000000000000000000000000000000000000000000",
+              "title": "docs-writer",
+              "subtitle": "Use when docs-writer work comes up.\n@acme/docs\n~/.pi/agent/skills",
+              "symbol": "sparkles.rectangle.stack",
+              "status": {
+                "text": "Disabled",
+                "symbol": "minus.circle",
+                "tone": "secondary"
+              },
+              "push": "skill/skill_646f63732d777269746572000000000000000000000000000000000000000000"
+            }
+          ]
+        }
+      ]
+    },
+    "skill": {
+      "title": "release",
+      "sections": [
+        {
+          "id": "summary",
+          "rows": [
+            {
+              "kind": "text",
+              "id": "description",
+              "text": "Use when release work comes up.",
+              "tone": "secondary"
+            }
+          ]
+        },
+        {
+          "id": "default",
+          "header": "Server Default",
+          "footer": "New sessions use this setting. Reload an active session to apply it now.",
+          "rows": [
+            {
+              "kind": "toggle",
+              "id": "enabled",
+              "label": "Enabled",
+              "value": true,
+              "action": "enabled",
+              "disabled": false
+            }
+          ]
+        },
+        {
+          "id": "source",
+          "header": "Source",
+          "rows": [
+            {
+              "kind": "value",
+              "id": "provenance",
+              "label": "Provenance",
+              "value": "~/.pi/agent/skills"
+            },
+            {
+              "kind": "value",
+              "id": "scope",
+              "label": "Scope",
+              "value": "Server default"
+            },
+            {
+              "kind": "value",
+              "id": "files",
+              "label": "Files",
+              "value": "Editable"
+            }
+          ]
+        },
+        {
+          "id": "validation",
+          "header": "Validation",
+          "rows": [
+            {
+              "kind": "value",
+              "id": "status",
+              "label": "Status",
+              "value": "Loaded"
+            }
+          ]
+        },
+        {
+          "id": "contents",
+          "header": "Contents",
+          "rows": [
+            {
+              "kind": "item",
+              "id": "browse",
+              "title": "Browse Files",
+              "subtitle": "3 files",
+              "symbol": "folder",
+              "push": "files/skill_72656c6561736500000000000000000000000000000000000000000000000000"
+            }
+          ]
+        }
+      ]
+    },
+    "skillFiles": {
+      "title": "release",
+      "sections": [
+        {
+          "id": "files",
+          "footer": "Open a file to select text, stage comments, and revise it in an Oppi session.",
+          "rows": [
+            {
+              "kind": "item",
+              "id": "folder.references",
+              "title": "references",
+              "symbol": "folder",
+              "push": "files/skill_72656c6561736500000000000000000000000000000000000000000000000000/references"
+            },
+            {
+              "kind": "item",
+              "id": "folder.scripts",
+              "title": "scripts",
+              "symbol": "folder",
+              "push": "files/skill_72656c6561736500000000000000000000000000000000000000000000000000/scripts"
+            },
+            {
+              "kind": "item",
+              "id": "file.SKILL.md",
+              "title": "SKILL.md",
+              "symbol": "doc.text",
+              "file": "/Users/alex/.pi/agent/skills/release/SKILL.md"
+            }
+          ]
+        }
+      ]
+    },
+    "skillFolder": {
+      "title": "scripts",
+      "sections": [
+        {
+          "id": "files",
+          "footer": "Open a file to select text, stage comments, and revise it in an Oppi session.",
+          "rows": [
+            {
+              "kind": "item",
+              "id": "file.check.sh",
+              "title": "check.sh",
+              "symbol": "doc.text",
+              "file": "/Users/alex/.pi/agent/skills/release/scripts/check.sh"
             }
           ]
         }

@@ -167,4 +167,40 @@ struct PluginScreenViewControllerTests {
         let row = try #require(views(UICollectionViewListCell.self, id("list", "main", "c"), in: screen).first)
         #expect(row.accessibilityLabel == "Update Oppi to see this row.")
     }
+
+    @Test("a searchable page filters its items on the device and drops the sections left empty")
+    func searchFiltersItems() async throws {
+        let (screen, window) = try show(page: "list")
+        defer { hideTestWindow(window) }
+        await draw(screen, .value(watch: "w", value: try Self.page("skills")))
+        let search = try #require(ScreenSearchController.search(on: screen))
+        let type = { (text: String) in
+            search.searchBar.text = text
+            search.searchResultsUpdater?.updateSearchResults(for: search)
+        }
+        // The page's own rows, not the page's state row (no server in this test).
+        let items = {
+            guard let snapshot = screen.dataSource?.snapshot() else { return -1 }
+            return snapshot.sectionIdentifiers.filter { !$0.hasPrefix("\u{1}") }.map(snapshot.numberOfItems(inSection:)).reduce(0, +)
+        }
+        #expect(items() == 3)
+
+        // Matches by subtitle (the package) as well as title; the other groups go.
+        type("acme")
+        await settle(screen)
+        #expect(items() == 1)
+        #expect(screen.dataSource?.snapshot().sectionIdentifiers.contains("disabled") == true)
+
+        type("no such skill")
+        await settle(screen)
+        #expect(items() == 0)
+        #expect(screen.dataSource?.snapshot().sectionIdentifiers.contains("\u{1}noResults") == true)
+
+        // A new value keeps the query.
+        await draw(screen, .value(watch: "w", value: try Self.page("skills")))
+        #expect(screen.dataSource?.snapshot().sectionIdentifiers.contains("\u{1}noResults") == true)
+        type("")
+        await settle(screen)
+        #expect(items() == 3)
+    }
 }

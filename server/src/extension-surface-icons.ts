@@ -57,6 +57,7 @@ export const EXTENSION_UI_SURFACE_ICON_NAMES = [
   "server.rack",
   "shield",
   "sparkles",
+  "sparkles.rectangle.stack",
   "square.and.arrow.up",
   "star",
   "stop",

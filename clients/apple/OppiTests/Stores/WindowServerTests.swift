@@ -22,8 +22,8 @@ struct WindowServerTests {
         let chat = WorkspaceSessionNavTarget(serverId: firstId, sessionId: "s-first", workspaceId: "w-first")
         root.navigation.openWorkspaceSession(chat)
 
-        let screenA = ServerSkillsViewController(root: root)
-        let screenB = ServerSkillsViewController(root: second)
+        let screenA = ServerExtensionsViewController(root: root)
+        let screenB = ServerExtensionsViewController(root: second)
         let windowA = try Self.show(UINavigationController(rootViewController: screenA), x: 0)
         let windowB = try Self.show(UINavigationController(rootViewController: screenB), x: 400)
         defer { Self.hide(windowA); Self.hide(windowB) }

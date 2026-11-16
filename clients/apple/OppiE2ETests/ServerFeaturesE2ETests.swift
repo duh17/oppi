@@ -9,17 +9,19 @@ final class ServerFeaturesE2ETests: E2ETestCase {
     override var e2eLaunchesSessionsInboxOnly: Bool { true }
     override var e2eAutoCreatesSessionOnLaunch: Bool { false }
 
-    /// The sidebar rows a server switch hides, by accessibility identifier. MCP Servers is the
-    /// server's plugin entry, whose row the sidebar names by the entry's id, read from
+    /// The sidebar rows a server switch hides, by accessibility identifier. Skills and MCP Servers
+    /// are the server's plugin entries, whose rows the sidebar names by the entry's id, read from
     /// `/server/info` while every switch is on.
     private var switchedRows: [String] = []
 
     private func readSwitchedRows() throws {
         let sidebar = try e2eLabAPIJSON(method: "GET", path: "/server/info")["sidebar"] as? [[String: Any]]
-        let mcp = try XCTUnwrap(sidebar?.first { $0["feature"] as? String == "mcp" }?["id"] as? String, "No MCP Servers entry")
+        let entry = { (feature: String) in
+            try XCTUnwrap(sidebar?.first { $0["feature"] as? String == feature }?["id"] as? String, "No \(feature) entry")
+        }
         switchedRows = [
-            "workspace.agents.open", "workspace.schedules.open", "workspace.skills.open",
-            "workspace.extensions.open", "workspace.plugin.\(mcp).open", "workspace.terminal.open",
+            "workspace.agents.open", "workspace.schedules.open", "workspace.plugin.\(try entry("skills")).open",
+            "workspace.extensions.open", "workspace.plugin.\(try entry("mcp")).open", "workspace.terminal.open",
         ]
     }
 

@@ -28,8 +28,6 @@ enum ShellRoute: Hashable {
     case serverDetails(ServerDetailsNavTarget)
     case modelProviders(ModelProvidersNavTarget)
     case serverResourceDetail(ServerResourceDetailNavTarget)
-    case serverSkillBrowser(ServerSkillBrowserNavTarget)
-    case serverSkillFile(ServerSkillFileNavTarget)
     /// A restored or linked pane entry, shown through its leaf state until
     /// its content can open (`PaneLeafStateViewController`).
     case paneEntry(PaneStackEntry)
@@ -60,8 +58,6 @@ enum ShellRoute: Hashable {
         case .serverDetails(let target): self = .serverDetails(target)
         case .modelProviders(let target): self = .modelProviders(target)
         case .serverResourceDetail(let target): self = .serverResourceDetail(target)
-        case .serverSkillBrowser(let target): self = .serverSkillBrowser(target)
-        case .serverSkillFile(let target): self = .serverSkillFile(target)
         case .paneEntry(let entry): self = .paneEntry(entry)
         }
     }

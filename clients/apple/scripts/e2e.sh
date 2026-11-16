@@ -428,9 +428,9 @@ $NATIVE_MODE && E2E_CLEAN_NATIVE=1
 # ── 2. Start server ──
 
 if $NATIVE_MODE; then
-    # Build if source is newer than dist
+    # Build if source (the server's or a built-in plugin's) is newer than dist
     if [ ! -d "$REPO_ROOT/server/dist" ] || \
-       [ "$(find "$REPO_ROOT/server/src" -newer "$REPO_ROOT/server/dist" -print -quit)" ]; then
+       [ "$(find "$REPO_ROOT/server/src" "$REPO_ROOT/server/plugins" -newer "$REPO_ROOT/server/dist" -print -quit)" ]; then
         echo "[e2e] Building server..."
         (cd "$REPO_ROOT/server" && npm run build)
     else
@@ -481,6 +481,8 @@ EOF
         node "$REPO_ROOT/server/e2e/model-lane.ts" write "$PI_AGENT_DIR" >/dev/null
         echo "[e2e] Installed the DeepSeek lane in $PI_AGENT_DIR"
     fi
+    # The Skills page's catalog: realistic skills, and one Pi cannot load.
+    cp -R "$REPO_ROOT/server/e2e/skills" "$PI_AGENT_DIR/skills"
 
     # Start server as background process
     echo "[e2e] Starting native server on port $E2E_PORT ..."

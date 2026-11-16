@@ -16,6 +16,7 @@
       "./control",
       "./godot",
       "./mcp-screen",
+      "./skills-screen",
       "./example-bookmarks",
       "./example-board",
       "./example-release-notes"

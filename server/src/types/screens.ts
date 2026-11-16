@@ -18,15 +18,22 @@ export interface ScreenStatus {
   tone?: ScreenTone;
 }
 
-/** A row that opens something: another page of this entry (`push`) or a web page (`url`). */
+/**
+ * A row that opens something: another page of this entry (`push`), a web page (`url`), or a
+ * file on the server's host (`file`, an absolute path), which the app opens in its own file
+ * viewer with whatever editing the server allows for that file. At most one of the three.
+ * `symbol` leads the row; `subtitle` may run several lines.
+ */
 export interface ScreenItemRow {
   kind: "item";
   id: string;
   title: string;
   subtitle?: string;
+  symbol?: string;
   status?: ScreenStatus;
   push?: string;
   url?: string;
+  file?: string;
 }
 
 /** A label and its value. `mono` sets both in monospace, the label quieter: a key and its value. */
@@ -157,6 +164,12 @@ export interface ScreenPageState {
 export interface ScreenPage {
   title: string;
   state?: ScreenPageState;
+  /**
+   * A search field in the bar. The app filters the page's item rows on the device by their
+   * title, subtitle and status, hides sections left without rows, and keeps the query while the
+   * page updates.
+   */
+  search?: { prompt: string };
   bar?: ScreenBarItem[];
   sections: ScreenSection[];
   submit?: { title: string; action: string; requires?: string[] };

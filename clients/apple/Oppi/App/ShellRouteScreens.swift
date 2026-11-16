@@ -62,14 +62,7 @@ enum ShellRouteScreens {
             // reloads in place and keeps a live provider sign-in.
             return ModelProvidersViewController(target: target, root: root)
         case .serverResourceDetail(let target):
-            switch target.kind {
-            case .skill: return ServerSkillDetailViewController(target: target, root: root)
-            case .extension: return ServerExtensionDetailViewController(target: target, root: root)
-            }
-        case .serverSkillBrowser(let target):
-            return ServerSkillBrowserViewController(target: target, root: root)
-        case .serverSkillFile(let target):
-            return ServerSkillFileViewController(target: target, root: root)
+            return ServerExtensionDetailViewController(target: target, root: root)
         case .paneEntry(let entry):
             // A game states its own server and project (a Godot link on a
             // compact window, or with no room for a pane beside).
@@ -101,8 +94,6 @@ enum ShellRouteScreens {
                 entry: entry, page: "list", title: title ?? "", root: root,
                 showsHost: true, showsSidebarToggle: showsSidebarToggle
             )
-        case .skills:
-            return ServerSkillsViewController(root: root, showsSidebarToggle: showsSidebarToggle)
         case .appSettings:
             return SettingsRootViewController(root: root)
         case .serverMetrics:
@@ -142,10 +133,6 @@ enum ShellRouteScreens {
             metrics.showsSidebarToggle = placement == .splitDetailRoot
             return
         }
-        if let list = screen as? ServerSkillsViewController {
-            list.showsSidebarToggle = placement == .splitDetailRoot
-            return
-        }
         if let list = screen as? ServerExtensionsViewController {
             list.showsSidebarToggle = placement == .splitDetailRoot
             return
@@ -178,9 +165,8 @@ enum ShellRouteScreens {
         if screen is WorkspaceSidebarViewController { return }
         // A reader's payload and lock are its own state.
         if screen is ChatReaderViewController { return }
-        // A Skill's page and files, an Extension's detail, and Model Providers read their own state.
-        if screen is ServerSkillDetailViewController || screen is ServerSkillBrowserViewController
-            || screen is ServerExtensionDetailViewController || screen is ModelProvidersViewController { return }
+        // An Extension's detail and Model Providers read their own state.
+        if screen is ServerExtensionDetailViewController || screen is ModelProvidersViewController { return }
         if let detail = screen as? WorkspaceDetailViewController {
             if case .workspace(let target) = route {
                 detail.update(workspace: target.workspace)

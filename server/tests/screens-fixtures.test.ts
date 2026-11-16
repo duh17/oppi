@@ -13,7 +13,7 @@ describe("plugin screens protocol fixture", () => {
     expect(serializeScreensFixture()).toBe(readFileSync(SCREENS_SNAPSHOT_FILE, "utf8"));
   });
 
-  it("holds MCP pages the stream would send, with every row kind", () => {
+  it("holds the plugin pages the stream would send, with every row kind", () => {
     const { pages } = buildScreensFixture();
     for (const [name, page] of Object.entries(pages))
       expect([name, checkScreenPage(page)]).toEqual([name, undefined]);

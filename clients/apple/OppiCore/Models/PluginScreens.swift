@@ -59,6 +59,11 @@ struct PluginScreenPage: Decodable, Sendable, Equatable {
         var when: When?
     }
 
+    /// A search field in the bar, which filters the item rows on the device.
+    struct Search: Decodable, Sendable, Equatable {
+        let prompt: String
+    }
+
     struct Submit: Decodable, Sendable, Equatable {
         let title: String
         let action: String
@@ -68,6 +73,7 @@ struct PluginScreenPage: Decodable, Sendable, Equatable {
 
     let title: String
     var state: State?
+    var search: Search?
     var bar: [BarItem]?
     let sections: [Section]
     var submit: Submit?
@@ -100,9 +106,13 @@ struct PluginScreenRow: Decodable, Sendable, Equatable, Hashable {
     let id: String
     var title: String?
     var subtitle: String?
+    /// An item's leading SF Symbol.
+    var symbol: String?
     var status: Status?
     var push: String?
     var url: String?
+    /// An item that opens a file on the server's host, by absolute path.
+    var file: String?
     var label: String?
     /// A string for `value`, `choice` and `field`; a bool for `toggle`.
     var value: JSONValue?
