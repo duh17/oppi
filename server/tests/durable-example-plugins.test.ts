@@ -21,14 +21,46 @@ import { Storage } from "../src/storage.js";
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createServerResourceRoutes } from "../src/routes/server-resources.js";
 import type { RouteContext } from "../src/routes/types.js";
-import type { ServerMessage, Session, Workspace } from "../src/types.js";
+import {
+  EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
+  EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
+  EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY,
+  EXTENSION_NATIVE_UI_PANEL_CAPABILITY,
+  EXTENSION_NATIVE_UI_WORKING_CAPABILITY,
+} from "../src/extension-ui-contract.js";
+import type { ExtensionUISurface, ServerMessage, Session, Workspace } from "../src/types.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
 import { makeTempDir } from "./harness/temp-dir.js";
 
 // The example plugins Oppi ships off (server/plugins/example-*), driven as the owner would: their
 // rows on the extension list turn them on, and a durable session's model calls their tools.
 
-const EXAMPLE_TOOLS = ["example_bookmark_add", "example_bookmark_list", "example_release_notes"];
+/** In install order (`plugins/package.json`). */
+const EXAMPLE_TOOLS = [
+  "example_bookmark_add",
+  "example_bookmark_list",
+  "example_board_add",
+  "example_release_notes",
+];
+
+/** What a current phone says it draws: every surface shape, so it is sent each panel whole. */
+const PHONE_CAPABILITIES = [
+  EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
+  EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
+  EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY,
+  EXTENSION_NATIVE_UI_PANEL_CAPABILITY,
+  EXTENSION_NATIVE_UI_WORKING_CAPABILITY,
+];
+
+/** The board panel's rows as `title: open|done`, read from the drawer's tree. */
+function boardRows(surface: ExtensionUISurface | undefined): string[] {
+  type Node = { id?: string; text?: string; type?: string; children?: Node[] };
+  const list = (surface?.sections[0] as unknown as { body: Node } | undefined)?.body;
+  return (list?.children ?? []).map((row) => {
+    const [title, mark] = row.children ?? [];
+    return `${title?.text}: ${mark?.type === "button" ? "open" : "done"}`;
+  });
+}
 
 const managers: SessionManager[] = [];
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -185,6 +217,42 @@ async function fixture() {
       expect(result).toMatchObject({ toolName: tool });
       return { isError: result!.role === "toolResult" && result!.isError, text: textOf(result) };
     },
+    /** The board panel `session`'s surface loop holds now, as a phone that draws it whole sees it. */
+    board(session: Session): ExtensionUISurface | undefined {
+      manager.declareSurfaceCapabilities(session.id, "phone", PHONE_CAPABILITIES);
+      for (const message of manager.getSurfaceMessages(session.id, "phone"))
+        if (message.type === "extension_ui_surface" && message.surface.id === "example-board")
+          return message.surface;
+      return undefined;
+    },
+    /** Tap Done on `item`'s row, as the phone sends it; resolves once the tap is answered. */
+    async tapDone(session: Session, item: string): Promise<void> {
+      const surface = f.board(session)!;
+      const requestId = `tap-${item}`;
+      const settled = new Promise<void>((resolve) => {
+        const unsubscribe = manager.subscribe(session.id, (message: ServerMessage) => {
+          if (message.type !== "extension_ui_settled" || message.id !== requestId) return;
+          unsubscribe();
+          resolve();
+        });
+      });
+      expect(
+        await manager.actOnSurface(
+          session.id,
+          {
+            surfaceId: "example-board",
+            compositeId: "items",
+            actionId: "done",
+            nodeId: `mark:${item}`,
+            revision: surface.revision,
+            values: { item },
+            requestId,
+          },
+          "phone",
+        ),
+      ).toBe(true);
+      await settled;
+    },
     async rows(): Promise<ServerExtensionSummary[]> {
       const listed = await route("GET", "/server/resources/extensions?plugins=true");
       expect(listed.status).toBe(200);
@@ -204,6 +272,7 @@ describe("example plugins", () => {
     const f = await fixture();
     const examples = (await f.rows()).filter((row) => row.name.startsWith("oppi-example-"));
     expect(examples).toEqual([
+      expect.objectContaining({ name: "oppi-example-board", source: "built-in", state: "off" }),
       expect.objectContaining({ name: "oppi-example-bookmarks", source: "built-in", state: "off" }),
       expect.objectContaining({
         name: "oppi-example-release-notes",
@@ -214,18 +283,23 @@ describe("example plugins", () => {
     expect(examples.map((row) => row.plugin)).toEqual([
       expect.objectContaining({ required: false, enabled: false }),
       expect.objectContaining({ required: false, enabled: false }),
+      expect.objectContaining({ required: false, enabled: false }),
     ]);
     const session = await f.session("Examples off");
     expect(await f.offered(session)).toEqual([]);
 
-    for (const name of ["oppi-example-bookmarks", "oppi-example-release-notes"])
+    for (const name of [
+      "oppi-example-board",
+      "oppi-example-bookmarks",
+      "oppi-example-release-notes",
+    ])
       expect(await f.switchRow(name, true)).toMatchObject({
         status: 200,
         body: { name, state: "on" },
       });
     // Kept apart from `disabled`, which a default-on plugin uses.
     expect(f.storage.getConfig().experimental?.durableExtensions).toEqual({
-      enabled: ["example-bookmarks", "example-release-notes"],
+      enabled: ["example-board", "example-bookmarks", "example-release-notes"],
     });
     await f.reattach(session);
     expect(await f.offered(session)).toEqual(EXAMPLE_TOOLS);
@@ -235,13 +309,13 @@ describe("example plugins", () => {
       body: { state: "off" },
     });
     expect(f.storage.getConfig().experimental?.durableExtensions).toEqual({
-      enabled: ["example-release-notes"],
+      enabled: ["example-board", "example-release-notes"],
     });
     await f.reattach(session);
-    expect(await f.offered(session)).toEqual(["example_release_notes"]);
+    expect(await f.offered(session)).toEqual(["example_board_add", "example_release_notes"]);
     // A stray `disabled` entry does not turn a default-off example on.
     f.storage.mutateConfig(() => ({
-      experimental: { serverDurable: true, durableExtensions: { disabled: ["example-bookmarks"] } },
+      experimental: { serverDurable: true, durableExtensions: { disabled: ["example-board"] } },
     }));
     await f.reattach(session);
     expect(await f.offered(session)).toEqual([]);
@@ -274,6 +348,40 @@ describe("example plugins", () => {
       isError: false,
       text: "No bookmarks yet.",
     });
+  });
+
+  it("board: each chat keeps its own panel, a tap's change is saved, and the panel returns after a restart", async () => {
+    const f = await fixture();
+    await f.manager.setPluginEnabled("example-board", true);
+    const chat = await f.session("Board");
+    const other = await f.session("Another board");
+    expect(await f.call(chat, "example_board_add", { title: "Write the notes" })).toEqual({
+      isError: false,
+      text: 'Added "Write the notes". 1 item(s) on the board.',
+    });
+    await f.call(chat, "example_board_add", { title: "Ship it" });
+    // The other chat publishes the same panel after the first one did.
+    await f.call(other, "example_board_add", { title: "Other chat item" });
+    expect(boardRows(f.board(chat))).toEqual(["Write the notes: open", "Ship it: open"]);
+    expect(f.board(chat)!.pill).toBeDefined();
+    expect(boardRows(f.board(other))).toEqual(["Other chat item: open"]);
+
+    // A tap in the first chat changes its board only, and its handler saves the change.
+    await f.tapDone(chat, "item-1");
+    expect(f.board(chat)!.header.subtitle).toBe("1 open · 1 done");
+    expect(boardRows(f.board(chat))).toEqual(["Write the notes: done", "Ship it: open"]);
+    expect(boardRows(f.board(other))).toEqual(["Other chat item: open"]);
+
+    // After a restart the chat's panel is drawn again from its saved board, with no tool call.
+    await f.restart();
+    await f.manager.startSession(chat.id, f.workspace);
+    await expect
+      .poll(() => boardRows(f.board(chat)))
+      .toEqual(["Write the notes: done", "Ship it: open"]);
+    // A chat that is not open has no live panel; it is drawn when the chat attaches.
+    expect(f.board(other)).toBeUndefined();
+    await f.manager.startSession(other.id, f.workspace);
+    await expect.poll(() => boardRows(f.board(other))).toEqual(["Other chat item: open"]);
   });
 
   it("release-notes: returns the top of the workspace's CHANGELOG.md, and an error without one", async () => {

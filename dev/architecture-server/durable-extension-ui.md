@@ -18,6 +18,13 @@ Part of [Oppi server architecture](../architecture-server.md). The convention fo
 - **Working words:** a background task watches `pi.live` and publishes only a working message, cleared while idle; the host ensures one task per attachment.
 - **Subagent pill:** `oppi.sessions`' conversation-scoped task (`oppi.subagent-widget`, `widget.ts`) owns the children's activity-list widget. It follows documents (`oppi.subagents`, each child's `pi.live` and `oppi.extension-ui`), never a polling timer, and writes only when derived state changes; attach calls `ensureSubagentWidget` (`sessions/contract.ts`). Write cadence and invocation lifetime are explained in `widget.ts`.
 
+## Panels
+
+- `surface()` (`durable-surface.ts`) keeps a panel's state per Session loop, so one module-level panel serves every chat.
+- `SessionHost.surfacesFor` is `oppiHost().surfaces(env)`: the loop plus the conversation's reads and commits, one object per loop.
+- Surfaces are memory only; never persist them. On attach, `DurableBackend.restoreSurfaces` syncs the panels selected extensions list in `surfaces`.
+- `tsconfig.v1-types.json` emits `oppi/v1`'s declarations; exported types must be nameable from public exports (`tests/plugin-types.test.ts`).
+
 ## Transcript cards
 
 An entry with no `model` and a `data.card` (`TranscriptCard`, `sanitizeTranscriptCard` from `transcript-card.ts`, so classic trace reads do not load the durable runtime) is a display card: non-empty title, millisecond `at`, optional `subtitle`, `status`, `body` (≤4096 UTF-8 bytes), up to eight `fields` (≤500 chars), `accent` (`info`, `success`, `warning`, `error`); unknown properties are dropped. History projects it as a `system` event with `presentation.kind="custom"`; live append emits a notice `entry:<entry-id>`. Cards never appear in `get_messages` or model context.
@@ -35,7 +42,7 @@ An entry with no `model` and a `data.card` (`TranscriptCard`, `sanitizeTranscrip
 - Reporting persists the result, then submits a follow-up under the stable `background-job:<id>` request id and finishes once admitted (pi-durable's `23-subagent-background` pattern). Stop can discard a queued report; it is never resubmitted under another id. Clients cannot use the reporter namespace for `clientTurnId`.
 - A card in `oppi.input-cards` (generic display metadata, keyed by request id) marks the report as generated input: outside the editable queue and `get_messages`, kept by queue replacement, drawn as a card in history.
 - Output (the last 64,000 characters) is saved at completion in the task-scoped `oppi.background-job-output` document, retired when the runner settles, so output stays only in the transcript. The panel's live tail (`liveTails`) is memory only. Ordinary Stop preserves background jobs.
-- `background-jobs/panel.ts` owns the job panel: a session surface (`oppiHost().surfaces(env)`) whose one action is Stop. Surfaces live only in Session memory, so `server.ts` republishes it after each `DurableJobs` change, on runner resume, and from each running job's one-second check (plugins have no attach hook): a new Session loop, a new minute of age, or a backgrounded job's changed tail, at most every 2 s per panel (`LIVE_REDRAW_MS`). With no job to show it always dismisses: after `/reload` the panel object is new and never drew what it must clear. Stop sets `cancelRequested` through a handle the runner keeps on the current loop. The classic `index.ts` cannot reach `surface()` and keeps its v1 widget.
+- `background-jobs/panel.ts` owns the job panel: `load` reads `DurableJobs`; Stop commits `cancelRequested`. `server.ts` syncs it after each job change, on runner resume, and from each running job's one-second check (at most every 2 s, `LIVE_REDRAW_MS`). With no job to show it always dismisses: after `/reload` the panel object is new and never drew what it must clear. The classic `index.ts` keeps its v1 widget.
 
 ## Input-card output
 

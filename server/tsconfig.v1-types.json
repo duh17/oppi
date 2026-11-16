@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "declarationDir": "dist/types"
+  },
+  "include": [],
+  "files": ["src/oppi-v1.ts", "src/oppi-v1-schema.ts"]
+}

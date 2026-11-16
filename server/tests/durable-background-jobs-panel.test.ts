@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createJobsPanel, type PanelJob } from "../plugins/background-jobs/panel.js";
+import { jobsPanel, type PanelJob } from "../plugins/background-jobs/panel.js";
 import type { ExtensionUISurface, ExtensionUISurfaceNode } from "../src/types.js";
 
 /**
@@ -20,7 +20,7 @@ function words(node: ExtensionUISurfaceNode): string[] {
 }
 
 function render(jobs: PanelJob[]): ExtensionUISurface {
-  return createJobsPanel().surface.render({ jobs, at: AT });
+  return jobsPanel(() => undefined).render({ jobs, at: AT });
 }
 
 function find(node: ExtensionUISurfaceNode, id: string): ExtensionUISurfaceNode | undefined {
@@ -79,7 +79,8 @@ describe("background jobs panel view", () => {
     const list = body(render([job("bash-8", { command: "ls" })]));
     const card = find(list, "job:bash-8");
     const head = find(list, "head:bash-8");
-    if (card?.type !== "stack" || head?.type !== "row") throw new Error("expected a card and its head row");
+    if (card?.type !== "stack" || head?.type !== "row")
+      throw new Error("expected a card and its head row");
     expect(head.children.map((child) => child.id)).toEqual([
       "status:bash-8",
       "title:bash-8",

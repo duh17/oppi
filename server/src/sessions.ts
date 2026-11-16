@@ -69,9 +69,12 @@ import { StartingRegistry } from "./session-starting.js";
 import type { DurableSessionNaming } from "./durable-harness.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
 import type { LayoutFiles } from "./layout-files.js";
-import { SessionSurfaces, type SessionMessageSubscriber } from "./session-surfaces.js";
+import {
+  SessionSurfaces,
+  type SessionMessageSubscriber,
+  type SurfaceLoop,
+} from "./session-surfaces.js";
 import type { ExtensionUISurfaceAudience } from "./extension-surface-runtime.js";
-import type { SurfacePublisher } from "./durable-surface.js";
 import type { LiveVoiceSpeech } from "./live-voice-speech.js";
 
 const log = createLogger({ base: { component: "sessions" } });
@@ -993,8 +996,8 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     return active.surfaces;
   }
 
-  /** What `oppiHost().surfaces(env)` hands a plugin: publish into this Session's loop. */
-  surfacePublisherFor(sessionId: string): SurfacePublisher | undefined {
+  /** What `oppiHost().surfaces(env)` publishes into: this Session's loop. */
+  surfacePublisherFor(sessionId: string): SurfaceLoop | undefined {
     return this.surfacesFor(sessionId)?.publisher;
   }
 

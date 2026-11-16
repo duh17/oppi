@@ -17,6 +17,7 @@
       "./godot",
       "./mcp-screen",
       "./example-bookmarks",
+      "./example-board",
       "./example-release-notes"
     ]
   }

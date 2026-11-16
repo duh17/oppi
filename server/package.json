@@ -4,6 +4,18 @@
   "description": "Self-hosted server for the Oppi mobile coding agent",
   "type": "module",
   "main": "dist/src/cli.js",
+  "exports": {
+    ".": "./dist/src/cli.js",
+    "./v1": {
+      "types": "./dist/types/src/oppi-v1.d.ts",
+      "default": "./dist/src/oppi-v1.js"
+    },
+    "./v1/schema": {
+      "types": "./dist/types/src/oppi-v1-schema.d.ts",
+      "default": "./dist/src/oppi-v1-schema.js"
+    },
+    "./package.json": "./package.json"
+  },
   "bin": {
     "oppi": "dist/src/cli.js"
   },
@@ -39,10 +51,11 @@
   "scripts": {
     "clean": "rm -rf dist",
     "compile": "node node_modules/@typescript/native/bin/tsc",
+    "compile:types": "node node_modules/@typescript/native/bin/tsc -p tsconfig.v1-types.json",
     "typecheck": "node node_modules/@typescript/native/bin/tsc --noEmit",
-    "build": "bash -c 'npm run clean && npm run compile && node scripts/copy-oppi-docs.mjs && node scripts/copy-plugins.mjs && chmod +x dist/src/cli.js'",
-    "build:in-place": "bash -c 'npm run compile -- --noEmitOnError && node scripts/copy-oppi-docs.mjs && node scripts/copy-plugins.mjs && chmod +x dist/src/cli.js'",
-    "prepare": "bash -c 'npm run clean && npm run compile && node scripts/copy-oppi-docs.mjs && node scripts/copy-plugins.mjs && chmod +x dist/src/cli.js'",
+    "build": "bash -c 'npm run clean && npm run compile && npm run compile:types && node scripts/copy-oppi-docs.mjs && node scripts/copy-plugins.mjs && chmod +x dist/src/cli.js'",
+    "build:in-place": "bash -c 'npm run compile -- --noEmitOnError && npm run compile:types && node scripts/copy-oppi-docs.mjs && node scripts/copy-plugins.mjs && chmod +x dist/src/cli.js'",
+    "prepare": "bash -c 'npm run clean && npm run compile && npm run compile:types && node scripts/copy-oppi-docs.mjs && node scripts/copy-plugins.mjs && chmod +x dist/src/cli.js'",
     "dev": "tsx --preserve-symlinks watch src/cli.ts serve",
     "start": "node dist/src/cli.js serve",
     "prepublishOnly": "npm run build",

@@ -376,13 +376,168 @@ In managed sessions Oppi creates the `ctx.ui` bridge, so the server translates e
 
 ## Composable surfaces (version 2)
 
-A server plugin can publish a composable surface: a pill in the strip above or below the composer, and a drawer of sections with actions. Define it with `surface()` from `oppi/v1` and publish it with `panel.publish({ surfaces: oppiHost().surfaces(env) }, state)`. A section is one of the closed composites (`statusCard`, `checklist`, `dataTable`, `actionBar`) or a `blocks` section, whose `body` is a tree of the nodes below. The pill, when the surface has one, is one row of inline nodes. The server rejects a surface that breaks a rule; it never repairs one.
-
-A UI plugin example is coming. The shipped [example plugins](extensions.md#example-plugins) cover tools and state.
+A server plugin can publish a composable surface: a pill in the strip above or below the composer, and a drawer of sections with actions. Define it with `surface()` from `oppi/v1`. A section is one of the closed composites (`statusCard`, `checklist`, `dataTable`, `actionBar`) or a `blocks` section, whose `body` is a tree of the nodes below. The pill, when the surface has one, is one row of inline nodes. The server rejects a surface that breaks a rule; it never repairs one.
 
 The drawer has a maximum height and scrolls. While its body is taller than that, the drawer's header offers full screen: every section without the height cap, following the surface's updates, with working actions.
 
-A surface stays until the plugin ends it, its deadline passes, or the session ends. A client that reconnects is sent the surfaces still live and drops any that ended while it was away. A tap on a surface that has already ended closes it on the client; no handler runs.
+A surface stays until the plugin ends it, its deadline passes, or the session ends. A server restart ends every surface; the panels an extension lists in `surfaces` are drawn again when their chat attaches. A client that reconnects is sent the surfaces still live and drops any that ended while it was away. A tap on a surface that has already ended closes it on the client; no handler runs.
+
+### A panel plugin
+
+This is the shipped `example-board` plugin, complete. Its tool puts an item on the chat's board, the board shows as a pill with a drawer, and each open item has a **Done** button that saves the change. Turn it on with `oppi extensions enable example-board` (see [Example plugins](extensions.md#example-plugins)). CI type-checks this file against the published `oppi/v1` types ([Types](extensions.md#types)).
+
+```ts
+/**
+ * Example plugin: a panel with a pill, a drawer, and a button that saves state.
+ *
+ * `example_board_add` puts an item on the chat's board. The board shows as a pill above the
+ * composer ("Board · 2 open"); tapping it opens a drawer that lists the items, each open one with
+ * a Done button. Done marks the item in the plugin's document, so the change survives a server
+ * restart, and the panel comes back by itself when the chat opens again.
+ *
+ * It ships off. Turn it on with `oppi extensions enable example-board`; see README.md.
+ */
+import {
+  badge,
+  blocks,
+  button,
+  defineDoc,
+  defineExtension,
+  defineFacet,
+  defineTool,
+  Extensions,
+  oppiHost,
+  pill,
+  row,
+  stack,
+  surface,
+  text,
+} from "oppi/v1";
+import { obj, str } from "oppi/v1/schema";
+
+type Item = { id: string; title: string; done: boolean };
+type Board = { items: Item[] };
+
+/**
+ * The board. `scope: "conversation"` keeps one board per conversation, the same unit a panel
+ * belongs to: each chat, and each subagent it starts, has its own. A conversation document also
+ * says what a rewind keeps (`history`) and what a fork starts with (`fork`).
+ */
+const BoardDoc = defineDoc<Board>({
+  kind: "oppi.example.board",
+  version: 1,
+  scope: "conversation",
+  history: "latest",
+  fork: "current",
+  initial: () => ({ items: [] }),
+  checkpointWhen: () => false,
+});
+
+/** A drawer's list holds at most 12 rows; the board shows the newest. */
+const SHOWN = 12;
+
+/**
+ * One panel object for every chat: Oppi keeps what each chat's panel shows apart. `load` reads
+ * the chat's board, and is how the panel is drawn after any change and when the chat attaches.
+ */
+const panel = surface<Board>({
+  id: "example-board",
+  title: "Board",
+  actions: { done: { title: "Done", role: "primary", pending: { title: "Saving…" } } },
+  load: async (conversation, context) => {
+    const board = await conversation.snapshot(BoardDoc, conversation.conversationId, context);
+    // No items, no panel: `undefined` ends it.
+    return board && board.items.length > 0 ? { items: [...board.items] } : undefined;
+  },
+  view: ({ items }) => {
+    const open = items.filter((item) => !item.done).length;
+    return {
+      header: { title: "Board", subtitle: `${open} open · ${items.length - open} done` },
+      pill: pill({
+        content: [
+          text({ text: "Board", style: "headline" }),
+          badge({ text: `${open} open`, tone: open > 0 ? "accent" : "success" }),
+        ],
+      }),
+      sections: [
+        blocks({
+          id: "items",
+          fallback: `Board: ${open} open`,
+          body: stack({
+            id: "list",
+            children: items.slice(-SHOWN).map((item) =>
+              row({
+                id: `row:${item.id}`,
+                align: "spread",
+                children: [
+                  text({ id: `title:${item.id}`, text: item.title }),
+                  item.done
+                    ? badge({ id: `done:${item.id}`, text: "Done", tone: "success" })
+                    : button({
+                        id: `mark:${item.id}`,
+                        title: "Done",
+                        action: { id: "done", values: { item: item.id } },
+                      }),
+                ],
+              }),
+            ),
+          }),
+        }),
+      ],
+    };
+  },
+});
+
+// A tap runs outside any tool call. `conversation` is the tapped chat's: commit there, as a tool
+// commits through `api`, then draw the panel from the saved board.
+panel.action("done", async (_state, { values, conversation, context, ctx }) => {
+  await conversation.commit(async (tx) => {
+    const board = await tx.doc(BoardDoc, conversation.conversationId);
+    const item = board.items.find((candidate) => candidate.id === values?.item);
+    if (item) item.done = true;
+  }, context);
+  await panel.sync(ctx, context);
+});
+
+const add = defineTool({
+  name: "example_board_add",
+  description: "Add an item to the board panel of this chat.",
+  parameters: obj({ title: str() }),
+  async execute(args, api, context) {
+    const count = await api.commit(async (tx) => {
+      const board = await tx.doc(BoardDoc, api.conversationId);
+      board.items.push({ id: `item-${board.items.length + 1}`, title: args.title, done: false });
+      return board.items.length;
+    }, context);
+    // Undefined while the chat has no live Session to draw into (a bare Harness, a test).
+    const surfaces = oppiHost().surfaces(api.env);
+    if (surfaces) await panel.sync({ surfaces }, context);
+    return {
+      output: [{ type: "text", text: `Added "${args.title}". ${count} item(s) on the board.` }],
+    };
+  },
+});
+
+const ExampleBoard = defineExtension({
+  name: "example-board",
+  runtimes: ["host", "sandbox"],
+  tools: [add],
+  // The panels Oppi draws again when a chat attaches, after a server restart too.
+  surfaces: [panel],
+});
+
+export default defineFacet((_host, self) => self.contribute(Extensions, ExampleBoard));
+```
+
+How the parts fit:
+
+- **One panel for every chat.** Create the panel once, at module level. Oppi keeps what the panel shows, and the state a tap's handler receives, separately for each chat's surface loop (`ctx.surfaces`), so one chat's taps never see another chat's state.
+- **`surface()` fields:** `id` (unique among the session's surfaces), `title`, `actions` (every action id a node or section can send, with its `title`, `role`, and optional `pending` words), `view(state)` returning `{ header, pill?, sections }`, and optional `load`, `placement`, `panel`, `lifecycle`, `empty`, and `fallback` (the words a client without composable surfaces shows; default: the header's title).
+- **Where it publishes:** `oppiHost().surfaces(api.env)` in a tool returns the chat's surface loop, or `undefined` when the chat has no live session. Pass it as `{ surfaces }`.
+- **State lives in a document.** `load(conversation, context)` reads the panel's state from the plugin's own documents and returns `undefined` when there is nothing to show. `panel.sync(ctx, context)` calls `load` and publishes the result, or ends the panel. Syncs of one chat run one at a time, so the last one drawn is current. Without a `load`, publish a state directly with `panel.publish(ctx, state)`, and redraw the last one with `panel.refresh(ctx)`.
+- **Actions can save.** `panel.action(id, handler)` runs when someone taps a node whose `action.id` is `id`; the node's `action.values` arrive as `values`. A tap runs outside any tool call, so a captured tool `api` cannot commit. The handler gets `conversation` instead: `conversation.commit(change, context)` and `conversation.snapshot(...)` work like `api.commit` and `api.snapshot` on the tapped chat's conversation, and `context` is aborted when the surface ends. A handler can also return a replacement surface, a `{ patch }`, or an `{ error: { compositeId, message } }` that the tapped card shows.
+- **The panel returns after a restart.** A session's surfaces live in server memory. List the panel in `defineExtension({ surfaces: [panel] })`, and Oppi calls `panel.sync` each time a chat that selects the extension attaches, including after a server restart. A listed panel needs a `load`; without one, its restore fails and the server log says so.
+- **Ending it:** `panel.end(ctx)` dismisses the chat's panel, and `load` returning `undefined` does the same.
 
 ### Blocks nodes
 

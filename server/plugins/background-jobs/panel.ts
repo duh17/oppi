@@ -13,15 +13,17 @@ import {
   surface,
   text,
   type Surface,
+  type SurfaceDefinition,
   type SurfaceView,
 } from "oppi/v1";
+import { DurableJobs } from "./contract.js";
 import { backgroundPill, displayCommand, displayLines, type JobStatus } from "./jobs.js";
 
 // The durable form of the job pill: one persistent strip panel per conversation, drawn by the
 // host from `oppi/v1`'s `surface()`. The classic extension (`index.ts`) cannot publish one — it
 // only reaches the host's v1 widget — and keeps using `backgroundPill`, the model both views read.
-// A surface lives in its Session's memory, so the server publishes it again from the saved job
-// list (`server.ts`) whenever a job changes and when a job's runner resumes after a restart.
+// A surface lives in its Session's memory, so it is drawn from the saved job list (`server.ts`):
+// whenever a job changes, when a job's runner resumes, and when the Session attaches.
 
 export const PANEL_ID = "background-jobs";
 /** Jobs the panel draws: a body is a stack of at most 12 children, and one is left for the count. */
@@ -370,38 +372,44 @@ export function jobsView(state: PanelState): SurfaceView {
   };
 }
 
-/** One conversation's panel, and the means to stop the jobs it lists. */
-export interface JobsPanel {
-  readonly surface: Surface<PanelState>;
-  /**
-   * How to stop each running job of this conversation, by job id. A tap on Stop runs outside any
-   * task, so the job's own runner leaves its handle here while it runs and takes it back after.
-   * A handle answers whether the job was running and is now marked for the kill.
-   */
-  readonly stops: Map<string, () => Promise<boolean>>;
-}
-
-export function createJobsPanel(): JobsPanel {
-  const stops = new Map<string, () => Promise<boolean>>();
+/**
+ * The jobs panel, one object for every conversation: `surface()` keeps what each Session loop was
+ * drawn. `load` reads a conversation's panel state from its saved job list.
+ */
+export function jobsPanel(
+  load: NonNullable<SurfaceDefinition<PanelState>["load"]>,
+): Surface<PanelState> {
   const panel = surface<PanelState>({
     id: PANEL_ID,
     title: "Background jobs",
     actions: { stop: { title: "Stop", role: "destructive", pending: { title: "Stopping…" } } },
     fallback: fallbackText,
+    load,
     view: jobsView,
   });
-  panel.action("stop", async (_state, tap) => {
-    const job = tap.values?.job;
-    const stopped = typeof job === "string" ? await stops.get(job)?.() : undefined;
+  panel.action("stop", async (_state, { values, compositeId, conversation, context }) => {
+    const job = values?.job;
+    // A tap on Stop asks for the kill as `background_job cancel` does: it marks the job, if it
+    // still runs, and the job's runner, which watches the list, kills the process.
+    const stopped =
+      typeof job === "string" &&
+      (await conversation.commit(async (tx) => {
+        const current = (await tx.doc(DurableJobs, conversation.conversationId)).jobs.find(
+          (item) => item.id === job,
+        );
+        if (current?.status !== "running") return false;
+        current.cancelRequested = true;
+        return true;
+      }, context));
     if (!stopped)
       return {
         error: {
-          compositeId: tap.compositeId,
+          compositeId,
           message: `${typeof job === "string" ? job : "That job"} is not running.`,
         },
       };
     // The row changes when the runner reports the job stopped, which republishes the panel.
     return undefined;
   });
-  return { surface: panel, stops };
+  return panel;
 }

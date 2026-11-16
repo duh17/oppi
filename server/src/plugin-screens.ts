@@ -75,13 +75,22 @@ const actArgs = obj({
 /** A page while its source has not answered yet: every screen document starts as this. */
 export const LOADING_PAGE: ScreenPage = { title: "", state: { kind: "loading" }, sections: [] };
 
+/**
+ * A screen's members. Chord exports `method()` but not the class it returns, so `act`'s type is
+ * named through the function: `oppi/v1`'s published declarations can then spell the contract.
+ */
+const screenMembers: {
+  readonly page: ReturnType<typeof unknown>;
+  readonly act: ReturnType<typeof method<typeof actArgs, ReturnType<typeof unknown>>>;
+} = { page: unknown(), act: method(actArgs, unknown()) };
+
 /** One screen type: its Chord contract (one object per `{ scope, page }`) and its page document. */
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- Chord infers the contract's type from its declaration.
 export function defineScreen(id: string) {
   const contract = local(`oppi.screen/${id}`, {
     version: 1,
     params: { scope: param(), page: param() },
-    members: { page: unknown(), act: method(actArgs, unknown()) },
+    members: screenMembers,
   });
   const document = defineState(`oppi.screen/${id}.page`, {
     schema: obj({}, { open: true }),

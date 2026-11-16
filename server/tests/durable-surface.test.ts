@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import type { ConversationId } from "@earendil-works/pi-durable";
 
 import {
   actionBar,
@@ -27,6 +29,8 @@ import {
   text,
   toggle,
   type SurfaceContext,
+  type SurfaceConversation,
+  type SurfaceDispatch,
 } from "../src/durable-surface.js";
 import { ExtensionSurfaceRuntime } from "../src/extension-surface-runtime.js";
 import type { ExtensionUISurface, ServerMessage } from "../src/types.js";
@@ -53,86 +57,107 @@ const state: DeployState = {
 };
 
 function deployPanel() {
-  return surface<DeployState>(
-    {
-      id: "deploy",
-      title: "Deploys",
-      empty: { title: "No deploys yet", message: "Run deploy to start one." },
-      actions: {
-        retry: {
-          title: "Retry",
-          role: "primary",
-          pending: { title: "Retrying…", disabled: ["retry"] },
-        },
-        openLog: { title: "Logs" },
-        copy: { title: "Copy" },
+  return surface<DeployState>({
+    id: "deploy",
+    title: "Deploys",
+    empty: { title: "No deploys yet", message: "Run deploy to start one." },
+    actions: {
+      retry: {
+        title: "Retry",
+        role: "primary",
+        pending: { title: "Retrying…", disabled: ["retry"] },
       },
-      view: (current) => ({
-        header: { title: `web → ${current.env}`, subtitle: current.sha },
-        sections: [
-          statusCard({
-            id: "status",
-            header: { title: current.summary },
-            phase: current.phase,
-            tone: current.phase === "error" ? "danger" : "neutral",
-            actions: current.phase === "error" ? ["retry", "openLog"] : ["openLog"],
-            fallback: `Deploy ${current.phase}`,
-            steps: current.gates,
-          }),
-          checklist({
-            id: "gates",
-            header: { title: "Gates" },
-            fallback: `${current.gates.length} gates`,
-            items: current.gates,
-          }),
-          dataTable({
-            id: "tables",
-            header: { title: "Tables" },
-            fallback: `${current.rows.length} tables`,
-            state:
-              current.rows.length === 0
-                ? { kind: "empty", title: "No tables", message: "The database is empty." }
-                : "content",
-            actions: ["copy"],
-            columns: [
-              { id: "name", title: "Name" },
-              { id: "rows", title: "Rows", kind: "number" },
-            ],
-            rows: current.rows.map((row) => ({
-              id: row.id,
-              cells: { name: row.table, rows: row.rows },
-              actions: ["copy"],
-            })),
-            sort: { columnId: "name" },
-          }),
-          actionBar({
-            id: "decide",
-            header: { title: "What next?" },
-            fallback: "Retry or read the log",
-            actions: ["retry", "openLog"],
-          }),
-        ],
-      }),
+      openLog: { title: "Logs" },
+      copy: { title: "Copy" },
     },
-  );
+    view: (current) => ({
+      header: { title: `web → ${current.env}`, subtitle: current.sha },
+      sections: [
+        statusCard({
+          id: "status",
+          header: { title: current.summary },
+          phase: current.phase,
+          tone: current.phase === "error" ? "danger" : "neutral",
+          actions: current.phase === "error" ? ["retry", "openLog"] : ["openLog"],
+          fallback: `Deploy ${current.phase}`,
+          steps: current.gates,
+        }),
+        checklist({
+          id: "gates",
+          header: { title: "Gates" },
+          fallback: `${current.gates.length} gates`,
+          items: current.gates,
+        }),
+        dataTable({
+          id: "tables",
+          header: { title: "Tables" },
+          fallback: `${current.rows.length} tables`,
+          state:
+            current.rows.length === 0
+              ? { kind: "empty", title: "No tables", message: "The database is empty." }
+              : "content",
+          actions: ["copy"],
+          columns: [
+            { id: "name", title: "Name" },
+            { id: "rows", title: "Rows", kind: "number" },
+          ],
+          rows: current.rows.map((row) => ({
+            id: row.id,
+            cells: { name: row.table, rows: row.rows },
+            actions: ["copy"],
+          })),
+          sort: { columnId: "name" },
+        }),
+        actionBar({
+          id: "decide",
+          header: { title: "What next?" },
+          fallback: "Retry or read the log",
+          actions: ["retry", "openLog"],
+        }),
+      ],
+    }),
+  });
 }
 
+/** A conversation no test here reads or commits through. */
+const conversation = {
+  conversationId: "conversation-1" as ConversationId,
+} as SurfaceConversation;
+
+/** One conversation's surface loop: what it was handed, and the dispatch of the last publish. */
 function fakeContext(): {
   ctx: SurfaceContext;
   published: ExtensionUISurface[];
   dismissed: string[];
+  dispatch: () => SurfaceDispatch;
 } {
   const published: ExtensionUISurface[] = [];
   const dismissed: string[] = [];
+  let dispatch: SurfaceDispatch | undefined;
   return {
     published,
     dismissed,
+    dispatch: () => dispatch!,
     ctx: {
       surfaces: {
-        publish: (value) => published.push(value),
+        publish: (value, handler) => {
+          published.push(value);
+          dispatch = handler;
+        },
         dismiss: (id) => dismissed.push(id),
+        conversation,
       },
     },
+  };
+}
+
+function tap(actionId: string, values?: Record<string, string>) {
+  return {
+    compositeId: "status",
+    actionId,
+    revision: 1,
+    ...(values ? { values } : {}),
+    signal: new AbortController().signal,
   };
 }
 
@@ -193,22 +218,88 @@ describe("authoring a surface", () => {
   it("publishes, refreshes after work, and ends through the conversation's surface loop", () => {
     const panel = deployPanel();
     const { ctx, published, dismissed } = fakeContext();
-    expect(panel.current()).toBeUndefined();
+    expect(panel.current(ctx)).toBeUndefined();
     expect(() => panel.refresh(ctx)).toThrow(/nothing has been published/);
 
     panel.publish(ctx, state);
     expect(published).toHaveLength(1);
-    expect(panel.current()).toEqual(state);
+    expect(panel.current(ctx)).toEqual(state);
 
     const next: DeployState = { ...state, phase: "running" };
     published.length = 0;
     panel.publish(ctx, next);
     expect(published[0].sections[0]).toMatchObject({ phase: "running" });
-    expect(panel.current()).toEqual(next);
+    expect(panel.current(ctx)).toEqual(next);
 
     panel.end(ctx);
     expect(dismissed).toEqual(["deploy"]);
-    expect(panel.current()).toBeUndefined();
+    expect(panel.current(ctx)).toBeUndefined();
+  });
+
+  it("keeps each conversation's panel apart: a tap answers from its own chat's state", async () => {
+    // One module-level panel, published into two chats' loops, as a plugin naturally writes it.
+    const panel = deployPanel();
+    const handled: Array<{ sha: string; values?: object }> = [];
+    panel.action("retry", (current, invocation) => {
+      handled.push({
+        sha: current.sha,
+        ...(invocation.values ? { values: invocation.values } : {}),
+      });
+      return panel.publish(invocation.ctx, { ...current, phase: "queued" });
+    });
+    const first = fakeContext();
+    const second = fakeContext();
+    panel.publish(first.ctx, state);
+    panel.publish(second.ctx, { ...state, sha: "9e0d7aa", env: "staging" });
+
+    // A tap in the first chat, after the second one published.
+    expect(await first.dispatch()(tap("retry"))).toMatchObject({ surface: { id: "deploy" } });
+    expect(handled).toEqual([{ sha: "4f2c1ab" }]);
+    expect(first.published.at(-1)?.header).toMatchObject({ title: "web → prod" });
+    expect(second.published).toHaveLength(1);
+    expect(panel.current(second.ctx)).toMatchObject({ sha: "9e0d7aa", phase: "error" });
+
+    // Ending one chat's panel leaves the other's taps working.
+    panel.end(second.ctx);
+    expect(await second.dispatch()(tap("retry"))).toEqual({
+      error: { compositeId: "status", message: "This action is not available." },
+    });
+    expect(await first.dispatch()(tap("retry"))).toMatchObject({ surface: { id: "deploy" } });
+    expect(handled.map((entry) => entry.sha)).toEqual(["4f2c1ab", "4f2c1ab"]);
+  });
+
+  it("syncs from load: publishes what it reads, ends on nothing, and draws syncs in order", async () => {
+    const reads: Array<DeployState | undefined> = [];
+    const gates: Array<() => void> = [];
+    const panel = surface<DeployState>({
+      id: "deploy",
+      title: "Deploys",
+      load: async (read) => {
+        expect(read).toBe(conversation);
+        // Each read waits for the test, so the second sync can finish its read first.
+        await new Promise<void>((resolve) => gates.push(resolve));
+        return reads.shift();
+      },
+      view: (current) => ({ header: { title: current.phase }, sections: [] }),
+    });
+    const { ctx, published, dismissed } = fakeContext();
+    reads.push({ ...state, phase: "running" }, { ...state, phase: "success" });
+    const syncs = [panel.sync(ctx, BACKGROUND_CONTEXT), panel.sync(ctx, BACKGROUND_CONTEXT)];
+    await expect.poll(() => gates.length).toBe(1);
+    gates.shift()!();
+    await expect.poll(() => gates.length).toBe(1);
+    gates.shift()!();
+    await Promise.all(syncs);
+    expect(published.map((surface) => surface.header.title)).toEqual(["running", "success"]);
+
+    const ended = panel.sync(ctx, BACKGROUND_CONTEXT);
+    await expect.poll(() => gates.length).toBe(1);
+    gates.shift()!();
+    await ended;
+    expect(dismissed).toEqual(["deploy"]);
+    expect(panel.current(ctx)).toBeUndefined();
+
+    await expect(deployPanel().sync(ctx, BACKGROUND_CONTEXT)).rejects.toThrow(/needs a load/);
   });
 
   it("answers an action with the surface it re-rendered", async () => {
@@ -226,7 +317,9 @@ describe("authoring a surface", () => {
       compositeId: "status",
       actionId: "retry",
       signal: new AbortController().signal,
+      context: BACKGROUND_CONTEXT,
       ctx,
+      conversation,
     });
     const answer = surfaceActionAnswer(result, "status");
     expect(answer).toMatchObject({ surface: { version: 2, id: "deploy" } });
@@ -253,7 +346,9 @@ describe("authoring a surface", () => {
           compositeId: request.compositeId,
           actionId: request.actionId,
           signal: request.signal,
+          context: BACKGROUND_CONTEXT,
           ctx: fakeContext().ctx,
+          conversation,
         });
         return surfaceActionAnswer(result, request.compositeId);
       },
@@ -285,77 +380,75 @@ describe("authoring a surface", () => {
 
 describe("authoring a tree of primitives", () => {
   function treePanel() {
-    return surface<{ running: boolean }>(
-      {
-        id: "tree",
-        title: "Tree",
-        actions: {
-          retry: { title: "Retry", role: "primary" },
-          notify: { title: "Notify" },
-          open: { title: "Open" },
-        },
-        view: (current) => ({
-          header: { title: "web → prod" },
-          pill: pill({
-            content: [
-              icon({ name: "hammer", tone: "accent" }),
-              text({ text: "web → prod", style: "caption" }),
-              badge({ text: "running", tone: "warning" }),
-            ],
-          }),
-          sections: [
-            blocks({
-              id: "panel",
-              header: { title: "Gates" },
-              fallback: "Deploy running",
-              tone: "accent",
-              actions: ["retry"],
-              body: stack({
-                children: [
-                  row({
-                    align: "spread",
-                    children: [
-                      text({ text: "Deploying", style: "headline" }),
-                      badge({ text: "2 of 4", tone: "warning" }),
-                    ],
-                  }),
-                  progress({ label: "Tests", value: 0.4 }),
-                  keyValue({ pairs: [{ key: "Env", value: "prod" }] }),
-                  table({
-                    id: "gates",
-                    columns: ["Gate", "State"],
-                    rows: [
-                      {
-                        id: "build",
-                        cells: ["Build", "passed"],
-                        actions: [{ id: "open" }],
-                      },
-                    ],
-                  }),
-                  button({
-                    id: "retry",
-                    title: "Retry",
-                    role: "primary",
-                    action: { id: "retry", pending: { title: "Retrying…" } },
-                  }),
-                  toggle({
-                    id: "notify",
-                    title: "Notify on failure",
-                    value: current.running,
-                    action: { id: "notify" },
-                  }),
-                  menu({
-                    id: "overflow",
-                    icon: "list.bullet",
-                    items: [{ title: "Open", action: { id: "open" } }],
-                  }),
-                ],
-              }),
-            }),
+    return surface<{ running: boolean }>({
+      id: "tree",
+      title: "Tree",
+      actions: {
+        retry: { title: "Retry", role: "primary" },
+        notify: { title: "Notify" },
+        open: { title: "Open" },
+      },
+      view: (current) => ({
+        header: { title: "web → prod" },
+        pill: pill({
+          content: [
+            icon({ name: "hammer", tone: "accent" }),
+            text({ text: "web → prod", style: "caption" }),
+            badge({ text: "running", tone: "warning" }),
           ],
         }),
-      },
-    );
+        sections: [
+          blocks({
+            id: "panel",
+            header: { title: "Gates" },
+            fallback: "Deploy running",
+            tone: "accent",
+            actions: ["retry"],
+            body: stack({
+              children: [
+                row({
+                  align: "spread",
+                  children: [
+                    text({ text: "Deploying", style: "headline" }),
+                    badge({ text: "2 of 4", tone: "warning" }),
+                  ],
+                }),
+                progress({ label: "Tests", value: 0.4 }),
+                keyValue({ pairs: [{ key: "Env", value: "prod" }] }),
+                table({
+                  id: "gates",
+                  columns: ["Gate", "State"],
+                  rows: [
+                    {
+                      id: "build",
+                      cells: ["Build", "passed"],
+                      actions: [{ id: "open" }],
+                    },
+                  ],
+                }),
+                button({
+                  id: "retry",
+                  title: "Retry",
+                  role: "primary",
+                  action: { id: "retry", pending: { title: "Retrying…" } },
+                }),
+                toggle({
+                  id: "notify",
+                  title: "Notify on failure",
+                  value: current.running,
+                  action: { id: "notify" },
+                }),
+                menu({
+                  id: "overflow",
+                  icon: "list.bullet",
+                  items: [{ title: "Open", action: { id: "open" } }],
+                }),
+              ],
+            }),
+          }),
+        ],
+      }),
+    });
   }
 
   it("renders a tree the host accepts, pill included", () => {

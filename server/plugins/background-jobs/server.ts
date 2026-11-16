@@ -25,6 +25,7 @@ import {
   Extensions,
   oppiHost,
   type SchemeReader,
+  type SurfaceConversation,
   type SurfacePublisher,
 } from "oppi/v1";
 import {
@@ -38,7 +39,7 @@ import {
 } from "./jobs.js";
 import { RESULT_GUIDANCE } from "./delivery.js";
 import { DurableJobs, type Job, type Status } from "./contract.js";
-import { createJobsPanel, outputTail, type JobsPanel, type PanelJob } from "./panel.js";
+import { jobsPanel, outputTail, type PanelJob, type PanelState } from "./panel.js";
 
 type Output = { output: string; truncated: boolean };
 /**
@@ -76,18 +77,8 @@ function jobById(jobs: readonly Job[], jobId: string): Job {
 //
 // The jobs panel is a v2 surface (`panel.ts`) in the live Session's own loop, so it has no saved
 // record of its own: it is drawn from the job list in `DurableJobs`, which is. Every change to that
-// list publishes it again, and so does a runner that resumes after a restart, which is how it
-// returns once the Session is attached. A conversation with no live Session has no panel.
-
-/** One live Session's panel: the surface, the handles that stop its jobs, and its publish queue. */
-interface LivePanel extends JobsPanel {
-  /** Publishes run one after another, each reading the list afresh, so the last one is current. */
-  queue: Promise<void>;
-  /** When the panel was last published; new output waits `LIVE_REDRAW_MS` from then. */
-  drawnAt: number;
-  /** The output tail each running job's row showed in that publish, by job id. */
-  drawnTails: Map<string, string>;
-}
+// list publishes it again, and so does a runner that resumes after a restart; the host draws it
+// when the Session attaches (`surfaces` below). A conversation with no live Session has no panel.
 
 /**
  * Before the panel, the pill was two notification slots in the conversation's `DurableUI`
@@ -121,8 +112,8 @@ async function retireLegacyPill(tx: Tx, id: ConversationId): Promise<void> {
 }
 
 /**
- * How often a running job's runner looks for a Session loop it has not drawn the panel into, and
- * for new output to redraw (and, with a timeout, for a minute of the countdown the panel lacks).
+ * How often a running job's runner looks for new output to redraw (and, with a timeout, for a
+ * minute of the countdown the panel lacks).
  */
 const PANEL_LOOP_CHECK_MS = 1_000;
 /**
@@ -144,9 +135,6 @@ const LIVE_TAIL_CHARS = 16_384;
  */
 const liveTails = new Map<TaskId, () => { output: string; truncated: boolean }>();
 
-/** A panel is per live Session loop: a new loop (after a Session restarts) gets a new panel. */
-const panels = new WeakMap<SurfacePublisher, LivePanel>();
-
 /** The Session loop of the conversation that runs `env`; none for a bare Harness or a stopped Session. */
 function surfacesOf(env: ExecutionEnv | undefined): SurfacePublisher | undefined {
   try {
@@ -154,15 +142,6 @@ function surfacesOf(env: ExecutionEnv | undefined): SurfacePublisher | undefined
   } catch {
     return undefined;
   }
-}
-
-function panelOf(surfaces: SurfacePublisher): LivePanel {
-  let panel = panels.get(surfaces);
-  if (!panel) {
-    panel = { ...createJobsPanel(), queue: Promise.resolve(), drawnAt: 0, drawnTails: new Map() };
-    panels.set(surfaces, panel);
-  }
-  return panel;
 }
 
 /** The execution env of a task, or none when its sandbox is not attached. */
@@ -178,80 +157,60 @@ async function envOf(
 }
 
 /**
- * Publish the conversation's panel from its saved job list: the backgrounded jobs whose results
- * are not delivered yet, or a dismissal when none is left. A panel that cannot be drawn must not
- * fail the job it shows, so a failure here ends the publish and nothing else.
+ * A conversation's panel state from its saved job list: the backgrounded jobs whose results are
+ * not delivered yet, or nothing when none is left, which ends the panel. Ending is unconditional:
+ * after `/reload` the Session may still show a panel this code never drew, and a dismissal of
+ * nothing live is a no-op.
  */
-async function syncPanel(
-  reader: DocumentReader,
-  conversationId: ConversationId,
-  env: ExecutionEnv | undefined,
+async function loadPanel(
+  conversation: SurfaceConversation,
   context: Context,
-): Promise<void> {
-  const surfaces = surfacesOf(env);
-  if (!surfaces) return;
-  const panel = panelOf(surfaces);
-  panel.queue = panel.queue.then(async () => {
-    try {
-      const saved = (await reader.snapshot(DurableJobs, conversationId, context))?.jobs ?? [];
-      const shown: PanelJob[] = [];
-      for (const job of saved) {
-        if (job.decision !== "background" || job.delivered) continue;
-        // A finished job's output waits in its runner's document until delivery.
-        const output =
-          job.status === "running"
-            ? undefined
-            : (await reader.snapshot(JobOutput, job.taskId, context))?.output;
-        const live = job.status === "running" ? liveTails.get(job.taskId)?.() : undefined;
-        shown.push({
-          id: job.id,
-          command: job.command,
-          cwd: job.cwd,
-          ...(job.status === "running" && job.timeout !== undefined
-            ? { timeoutAt: job.startedAt + job.timeout * 1000 }
-            : {}),
-          ...(live ? { output: live.output, truncated: live.truncated } : {}),
-          // The classic pill treats every non-success terminal outcome as an error.
-          status: job.status === "interrupted" ? "failed" : job.status,
-          startedAt: job.startedAt,
-          ...(job.status === "running" ? {} : { exitCode: job.exitCode }),
-          ...(output === undefined ? {} : { output }),
-        });
-      }
-      if (shown.length > 0) {
-        panel.surface.publish({ surfaces }, { jobs: shown, at: Date.now() });
-        panel.drawnAt = Date.now();
-        panel.drawnTails = new Map(
-          shown
-            .filter((job) => job.status === "running")
-            .map((job) => [job.id, outputTail(job.output) ?? ""]),
-        );
-      } else {
-        // Unconditional: after `/reload` this panel object is new and never drew the surface the
-        // Session still shows, and a dismissal of nothing live is a no-op.
-        panel.surface.end({ surfaces });
-      }
-    } catch {
-      // The panel is display only; the next change publishes it again.
-    }
-  });
-  await panel.queue;
+): Promise<PanelState | undefined> {
+  const saved =
+    (await conversation.snapshot(DurableJobs, conversation.conversationId, context))?.jobs ?? [];
+  const shown: PanelJob[] = [];
+  for (const job of saved) {
+    if (job.decision !== "background" || job.delivered) continue;
+    // A finished job's output waits in its runner's document until delivery.
+    const output =
+      job.status === "running"
+        ? undefined
+        : (await conversation.snapshot(JobOutput, job.taskId, context))?.output;
+    const live = job.status === "running" ? liveTails.get(job.taskId)?.() : undefined;
+    shown.push({
+      id: job.id,
+      command: job.command,
+      cwd: job.cwd,
+      ...(job.status === "running" && job.timeout !== undefined
+        ? { timeoutAt: job.startedAt + job.timeout * 1000 }
+        : {}),
+      ...(live ? { output: live.output, truncated: live.truncated } : {}),
+      // The classic pill treats every non-success terminal outcome as an error.
+      status: job.status === "interrupted" ? "failed" : job.status,
+      startedAt: job.startedAt,
+      ...(job.status === "running" ? {} : { exitCode: job.exitCode }),
+      ...(output === undefined ? {} : { output }),
+    });
+  }
+  return shown.length > 0 ? { jobs: shown, at: Date.now() } : undefined;
 }
 
+/** One panel for every conversation: `surface()` keeps each Session loop's own state. */
+const panel = jobsPanel(loadPanel);
+
 /**
- * Leave `stop` where a tap on the job's Stop in `surfaces` reaches it, until the returned function
- * takes it back. It answers whether the job was running and is now marked for the kill.
+ * Publish the panel of the conversation running `env` from its saved job list. A panel that
+ * cannot be drawn must not fail the job it shows, so a failure here ends the publish and nothing
+ * else.
  */
-function offerStop(
-  surfaces: SurfacePublisher,
-  jobId: string,
-  stop: () => Promise<boolean>,
-): () => void {
-  const { stops } = panelOf(surfaces);
-  stops.set(jobId, stop);
-  return () => {
-    if (stops.get(jobId) === stop) stops.delete(jobId);
-  };
+async function syncPanel(env: ExecutionEnv | undefined, context: Context): Promise<void> {
+  const surfaces = surfacesOf(env);
+  if (!surfaces) return;
+  try {
+    await panel.sync({ surfaces }, context);
+  } catch {
+    // The panel is display only; the next change publishes it again.
+  }
 }
 
 /** Watch acquisition + initial read closes the edge-before-listener race. */
@@ -405,26 +364,6 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
             });
             changed(watch?.value ?? null);
             if (live?.value?.run === undefined) await checkStop();
-            // A tap on Stop asks for the kill as `background_job cancel` does: look the job up in the
-            // saved list and mark it, if it still runs; this runner's watcher then kills the process.
-            const stop = async (): Promise<boolean> => {
-              const saved = await runtime.snapshot(DurableJobs, runtime.conversationId, context);
-              if (saved?.jobs.find((item) => item.id === job.id)?.status !== "running")
-                return false;
-              await runtime.commit(async (tx) => {
-                const current = jobById(
-                  (await tx.doc(DurableJobs, runtime.conversationId)).jobs,
-                  job.id,
-                );
-                if (current.status === "running") current.cancelRequested = true;
-              }, context);
-              return true;
-            };
-            // The panel lives in a Session's surface loop, and a Session that stops and starts again
-            // while this job runs has a new one. Offer Stop to whichever loop is current, and draw
-            // the panel into a loop that appears.
-            let loop = surfacesOf(env);
-            let withdrawStop = loop ? offerStop(loop, job.id, stop) : () => {};
             // The job's age is a client-ticked node and needs no redraw. Only the static "times out
             // in Nm" caption does, so a job with a timeout is drawn again each minute.
             const minutesLeft = (): number =>
@@ -434,26 +373,24 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
             let drawnMinutes = minutesLeft();
             // New output redraws the panel once it has gone LIVE_REDRAW_MS unpublished, and only
             // when this job's row would change. The same tick paces it: a job adds no timer.
-            const outputChanged = (panel: LivePanel | undefined): boolean =>
+            // What the Session's loop shows now is the panel's last state there: its read time and
+            // this job's row.
+            const outputChanged = (drawn: PanelState | undefined): boolean =>
               shown &&
-              panel !== undefined &&
-              Date.now() - panel.drawnAt >= LIVE_REDRAW_MS &&
-              (outputTail(liveOutput()) ?? "") !== (panel.drawnTails.get(job.id) ?? "");
+              drawn !== undefined &&
+              Date.now() - drawn.at >= LIVE_REDRAW_MS &&
+              (outputTail(liveOutput()) ?? "") !==
+                (outputTail(drawn.jobs.find((item) => item.id === job.id)?.output) ?? "");
+            // A Session that stops and starts again while this job runs has a new loop, which the
+            // host draws when it attaches; this tick redraws whichever loop is current.
             const watchLoop = setInterval(() => {
-              const current = surfacesOf(env);
+              const surfaces = surfacesOf(env);
+              if (!surfaces) return;
               const minutes = minutesLeft();
-              if (current === loop) {
-                if (current && (minutes !== drawnMinutes || outputChanged(panels.get(current)))) {
-                  drawnMinutes = minutes;
-                  void syncPanel(runtime, runtime.conversationId, env, context);
-                }
-                return;
+              if (minutes !== drawnMinutes || outputChanged(panel.current({ surfaces }))) {
+                drawnMinutes = minutes;
+                void syncPanel(env, context);
               }
-              withdrawStop();
-              loop = current;
-              withdrawStop = current ? offerStop(current, job.id, stop) : () => {};
-              drawnMinutes = minutes;
-              if (current) void syncPanel(runtime, runtime.conversationId, env, context);
             }, PANEL_LOOP_CHECK_MS);
             watchLoop.unref?.();
             try {
@@ -480,7 +417,6 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
               }
             } finally {
               clearInterval(watchLoop);
-              withdrawStop();
               await watch?.stop();
               await live?.stop();
             }
@@ -556,7 +492,7 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
       if (job.decision === "background") {
         // The result waits for delivery, so the panel shows it: after a restart this is where the
         // panel comes back for a job that finished or was interrupted while the server was down.
-        await syncPanel(runtime, runtime.conversationId, await envOf(runtime, context), context);
+        await syncPanel(await envOf(runtime, context), context);
         const conversation = await runtime.conversation(runtime.conversationId, context);
         if (!conversation) throw new Error("Background job conversation disappeared");
         // Follow pi-durable/test/examples/23-subagent-background.ts: one
@@ -605,8 +541,7 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
         await runtime.waitForTask(job.starter, context);
       }
       await runtime.commit(settle, context);
-      if (job.decision === "background")
-        await syncPanel(runtime, runtime.conversationId, await envOf(runtime, context), context);
+      if (job.decision === "background") await syncPanel(await envOf(runtime, context), context);
     },
   },
   async abort(task, runtime, context) {
@@ -620,7 +555,7 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
       await retireLegacyPill(tx, runtime.conversationId);
       return { status: "terminal", outcome: { status: "aborted" } };
     }, context);
-    await syncPanel(runtime, runtime.conversationId, await envOf(runtime, context), context);
+    await syncPanel(await envOf(runtime, context), context);
   },
 });
 
@@ -687,7 +622,7 @@ async function start(
     await retireLegacyPill(tx, api.conversationId);
     return job;
   }, context);
-  if (started.decision === "background") await syncPanel(api, api.conversationId, env, context);
+  if (started.decision === "background") await syncPanel(env, context);
   return started;
 }
 function notice(job: Job): ToolExecutionResult {
@@ -820,7 +755,7 @@ const bash = defineTool({
       return { ...current };
     }, context);
     if (selected.decision === "background") {
-      await syncPanel(api, api.conversationId, api.env, context);
+      await syncPanel(api.env, context);
       return backgrounded(selected);
     }
     // The runner's report phase waits for this tool task before it settles, so
@@ -913,6 +848,8 @@ export const DurableBackgroundJobs = defineExtension({
   runtimes: ["host", "sandbox"],
   tools: [backgroundJob, bash],
   tasks: [JobRunner],
+  // Drawn again from the job list when a Session attaches, after a server restart too.
+  surfaces: [panel],
   sections: [
     section(
       "background-jobs",

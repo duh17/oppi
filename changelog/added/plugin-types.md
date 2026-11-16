@@ -1,0 +1,1 @@
+- **Server:** The `oppi-server` package publishes types for `oppi/v1` and `oppi/v1/schema`, so a plugin outside the repository can type-check. See [Types](docs/extensions.md#types).

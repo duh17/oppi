@@ -107,7 +107,9 @@ export {
   type SurfaceActionInvocation,
   type SurfaceActionReturn,
   type SurfaceCompositeFields,
+  type RestorableSurface,
   type SurfaceContext,
+  type SurfaceConversation,
   type SurfaceDefinition,
   type SurfaceDispatch,
   type SurfaceOptions,
@@ -143,8 +145,9 @@ export interface OppiDurableHost {
   control(env: ExecutionEnv | undefined): DurableControlHost | undefined;
   /**
    * `surface()`'s way in for the Session bound to the conversation running `env`: the panel
-   * publishes into it, and its actions answer from it. Undefined for an env the server did not
-   * make, a conversation without a Session, or a Session that is not live.
+   * publishes into it, its actions answer from it, and its `conversation` reads and commits that
+   * conversation's documents. One object per live Session loop. Undefined for an env the server
+   * did not make, a conversation without a Session, or a Session that is not live.
    */
   surfaces(env: ExecutionEnv | undefined): SurfacePublisher | undefined;
   /**

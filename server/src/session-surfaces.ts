@@ -27,6 +27,12 @@ import type {
   ServerMessage,
 } from "./types.js";
 
+/**
+ * One Session's loop as a plugin publishes into it. The durable runtime hands plugins this with the
+ * Session's conversation attached (`SessionHost.surfacesFor`), as a `SurfacePublisher`.
+ */
+export type SurfaceLoop = Pick<SurfacePublisher, "publish" | "dismiss">;
+
 /** What a capability list says this client draws: the strongest shape it names. */
 function declaredAudience(capabilities: readonly string[]): ExtensionUISurfaceAudience {
   if (capabilities.includes(EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY)) {
@@ -78,8 +84,8 @@ export class SessionSurfaces {
   private stopped = false;
   /** Which shape each connected client draws; a client that has said nothing draws v1. */
   private readonly audiences = new Map<string, ExtensionUISurfaceAudience>();
-  /** What `oppiHost().surfaces(env)` hands a plugin: publish into this session's loop. */
-  readonly publisher: SurfacePublisher;
+  /** What `oppiHost().surfaces(env)` publishes into: this session's loop. */
+  readonly publisher: SurfaceLoop;
 
   constructor(
     private readonly options: {

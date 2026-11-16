@@ -1,0 +1,7 @@
+{
+  "name": "oppi-example-board",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Oppi example plugin (off by default): a board panel with a pill, a drawer, and a Done button that saves to a durable document.",
+  "type": "module"
+}

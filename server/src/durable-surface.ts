@@ -1,3 +1,5 @@
+import { BACKGROUND_CONTEXT, withAbortSignal, type Context } from "@earendil-works/chord/context";
+import type { CommitOptions, ConversationId, DocumentReader, Tx } from "@earendil-works/pi-durable";
 import { readExtensionUISurface } from "./extension-surface.js";
 import type {
   ExtensionUIBlocksComposite,
@@ -36,6 +38,7 @@ import type {
  *   id: "deploy",
  *   title: "Deploys",
  *   actions: { retry: { title: "Retry", role: "primary" }, logs: { title: "Logs" } },
+ *   load: (conversation, context) => conversation.snapshot(Deploy, conversation.conversationId, context),
  *   view: (state) => ({
  *     header: { title: `web → ${state.env}`, subtitle: state.sha },
  *     sections: [
@@ -46,14 +49,17 @@ import type {
  *   }),
  * });
  *
- * panel.action("retry", async (state, ctx) => {
- *   await redeploy(state.sha);
- *   return panel.refresh(ctx);
+ * panel.action("retry", async (state, { conversation, context, ctx }) => {
+ *   await conversation.commit(async (tx) => { … }, context);
+ *   await panel.sync(ctx, context);
  * });
  * ```
  *
  * A definition is typed and checked at author time: `render` throws a message naming the broken
  * rule rather than publishing something the phone would drop.
+ *
+ * One `surface()` serves every chat: what it published, and what a tap's handler gets, is kept per
+ * conversation's surface loop (`ctx.surfaces`), so a module-level panel is the natural form.
  */
 
 /** One composite's shared presentation, as an author writes it. */
@@ -583,7 +589,8 @@ export interface SurfaceView {
 
 /**
  * Where a published surface goes: the conversation's surface loop, bound by the host. A handler
- * receives the same object, so `panel.refresh(ctx)` re-renders after its work.
+ * receives the same object, so `panel.sync(ctx, context)` or `panel.refresh(ctx)` redraws after its
+ * work.
  */
 export interface SurfaceContext {
   readonly surfaces: SurfacePublisher;
@@ -613,6 +620,21 @@ export type SurfaceDispatch = (
   tap: SurfaceTap,
 ) => ExtensionUISurfaceActionAnswer | Promise<ExtensionUISurfaceActionAnswer>;
 
+/**
+ * The conversation a surface loop belongs to, as a tool's `api` offers it: its documents to read,
+ * and commits on it. A tap's handler and a definition's `load` run outside any tool call, so this
+ * is how they read and change the plugin's own durable state.
+ */
+export interface SurfaceConversation extends DocumentReader {
+  readonly conversationId: ConversationId;
+  /** One atomic commit, as `api.commit` in a tool: stored before it resolves, or not at all. */
+  commit<T>(
+    change: (tx: Tx) => T | Promise<T>,
+    context: Context,
+    options?: CommitOptions,
+  ): Promise<T>;
+}
+
 export interface SurfacePublisher {
   /**
    * Publish or replace by key; the host coalesces repeats of a persistent surface. `dispatch` is
@@ -621,6 +643,8 @@ export interface SurfacePublisher {
   publish(surface: ExtensionUISurface, dispatch?: SurfaceDispatch): unknown;
   /** The surface is done: its actions are cancelled and the client clears it. */
   dismiss(surfaceId: string): unknown;
+  /** The conversation whose Session this loop draws into. */
+  readonly conversation: SurfaceConversation;
 }
 
 export interface SurfaceDefinition<State> {
@@ -635,6 +659,16 @@ export interface SurfaceDefinition<State> {
   empty?: { title: string; message: string };
   /** Every action id any section offers. */
   actions?: Record<string, ExtensionUISurfaceActionDefinition>;
+  /**
+   * The panel's state for one conversation, read from the plugin's own documents; `undefined`
+   * when there is no panel to show. `sync` publishes what it reads. A Session's surfaces live in
+   * memory, so when the extension lists the panel in `defineExtension({ surfaces })` the host
+   * calls `sync` each time the conversation's Session attaches, after a server restart too.
+   */
+  load?: (
+    conversation: SurfaceConversation,
+    context: Context,
+  ) => State | undefined | Promise<State | undefined>;
   /**
    * What an older client shows for the whole surface: the words for this state, or a fixed line.
    * Default: the view's header title. A per-state line is the author's own, since only the author
@@ -656,7 +690,11 @@ export interface SurfaceActionInvocation<State> {
   readonly nodeId?: string;
   readonly values?: Record<string, string | number | boolean>;
   readonly signal: AbortSignal;
+  /** `signal` as a durable context, for `conversation`'s reads and commits. */
+  readonly context: Context;
   readonly ctx: SurfaceContext;
+  /** The tapped chat's conversation: commit the plugin's documents here (`ctx.surfaces.conversation`). */
+  readonly conversation: SurfaceConversation;
 }
 
 export type SurfaceActionHandler<State> = (
@@ -669,19 +707,32 @@ export interface Surface<State> {
   readonly title: string;
   /** The wire surface for `state`; throws a message naming the rule it breaks. */
   render(state: State): ExtensionUISurface;
+  /** Publish `state` into this conversation's loop; the panel keeps it for that loop's taps. */
   publish(ctx: SurfaceContext, state: State): ExtensionUISurface;
-  /** Re-render the last published state, for an action that changed the world. */
+  /** Re-render the state last published into this loop, for an action that changed the world. */
   refresh(ctx: SurfaceContext): ExtensionUISurface;
-  /** The last published state, before anything is published. */
-  current(): State | undefined;
+  /**
+   * Publish what the definition's `load` reads now, or end the panel when it reads nothing. Syncs
+   * of one loop run one after another, each reading afresh, so the last one drawn is current.
+   */
+  sync(ctx: SurfaceContext, context: Context): Promise<void>;
+  /** The state last published into this loop; undefined before anything is, or after `end`. */
+  current(ctx: SurfaceContext): State | undefined;
+  /** Dismiss the panel in this loop, whether or not this panel object drew it. */
   end(ctx: SurfaceContext): void;
   /** `{ kind: "empty" }` with the definition's words, for a view with nothing to show. */
   emptyState(): ExtensionUISurfaceState;
   action(id: string, handler: SurfaceActionHandler<State>): Surface<State>;
   handlers(): ReadonlyMap<string, SurfaceActionHandler<State>>;
-  /** This panel's handler for one tap, over the state it last published. */
+  /** This panel's handler for one tap, over the state it last published into this loop. */
   dispatch(ctx: SurfaceContext): SurfaceDispatch;
 }
+
+/**
+ * A panel the host restores when a conversation's Session attaches: what an extension lists in
+ * `defineExtension({ surfaces })`. Every `surface()` is one; its `sync` needs a `load`.
+ */
+export type RestorableSurface = Pick<Surface<unknown>, "id" | "sync">;
 
 export interface SurfaceOptions<State> {
   /** A one-shot surface's deadline, resolved when the view is rendered. */
@@ -693,8 +744,20 @@ export function surface<State>(
   options: SurfaceOptions<State> = {},
 ): Surface<State> {
   const handlers = new Map<string, SurfaceActionHandler<State>>();
-  let published: State | undefined;
-  let rendered = false;
+  /**
+   * Per conversation's surface loop: the state last published there, and the syncs queued for it.
+   * Keyed weakly, so a loop that ends (its Session stopped) takes its entry with it.
+   */
+  type Loop = { published?: { state: State }; syncs: Promise<void> };
+  const loops = new WeakMap<SurfacePublisher, Loop>();
+  const loopOf = (ctx: SurfaceContext): Loop => {
+    let entry = loops.get(ctx.surfaces);
+    if (!entry) {
+      entry = { syncs: Promise.resolve() };
+      loops.set(ctx.surfaces, entry);
+    }
+    return entry;
+  };
 
   function render(state: State): ExtensionUISurface {
     const view = definition.view(state);
@@ -729,21 +792,34 @@ export function surface<State>(
     render,
     publish(ctx, state) {
       const wire = render(state);
-      published = state;
-      rendered = true;
+      loopOf(ctx).published = { state };
       ctx.surfaces.publish(wire, panel.dispatch(ctx));
       return wire;
     },
     refresh(ctx) {
-      if (!rendered) throw new Error(`surface "${definition.id}": nothing has been published`);
-      const wire = render(published as State);
+      const published = loops.get(ctx.surfaces)?.published;
+      if (!published) throw new Error(`surface "${definition.id}": nothing has been published`);
+      const wire = render(published.state);
       ctx.surfaces.publish(wire, panel.dispatch(ctx));
       return wire;
     },
-    current: () => published,
+    sync(ctx, context) {
+      const { load } = definition;
+      if (!load) return Promise.reject(new Error(`surface "${definition.id}": sync needs a load`));
+      const entry = loopOf(ctx);
+      const next = entry.syncs.then(async () => {
+        const state = await load(ctx.surfaces.conversation, context);
+        if (state === undefined) panel.end(ctx);
+        else panel.publish(ctx, state);
+      });
+      // A failed sync is its caller's to report; the next one still runs.
+      entry.syncs = next.catch(() => undefined);
+      return next;
+    },
+    current: (ctx) => loops.get(ctx.surfaces)?.published?.state,
     end(ctx) {
-      rendered = false;
-      published = undefined;
+      const entry = loops.get(ctx.surfaces);
+      if (entry) delete entry.published;
       ctx.surfaces.dismiss(definition.id);
     },
     emptyState: () => ({
@@ -759,13 +835,14 @@ export function surface<State>(
     dispatch(ctx) {
       return async (tap) => {
         const handler = handlers.get(tap.actionId);
-        // The surface is gone from this panel, or the id was never offered: nothing ran, and the
+        const published = loops.get(ctx.surfaces)?.published;
+        // The surface is gone from this loop, or the id was never offered: nothing ran, and the
         // card that asked says so in the host's words rather than pretending it worked.
-        if (!handler || !rendered)
+        if (!handler || !published)
           return {
             error: { compositeId: tap.compositeId, message: "This action is not available." },
           };
-        const state = published as State;
+        const { state } = published;
         const answer = await handler(state, {
           state,
           compositeId: tap.compositeId,
@@ -774,7 +851,9 @@ export function surface<State>(
           ...(tap.nodeId === undefined ? {} : { nodeId: tap.nodeId }),
           ...(tap.values === undefined ? {} : { values: tap.values }),
           signal: tap.signal,
+          context: withAbortSignal(tap.signal, BACKGROUND_CONTEXT),
           ctx,
+          conversation: ctx.surfaces.conversation,
         });
         return surfaceActionAnswer(answer, tap.compositeId);
       };

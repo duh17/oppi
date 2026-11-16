@@ -73,7 +73,8 @@ import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import { safeErrorMessage } from "./log-utils.js";
 import type { DurableThreads } from "./durable-threads.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
-import type { SurfacePublisher } from "./durable-surface.js";
+import type { SurfaceConversation, SurfacePublisher } from "./durable-surface.js";
+import type { SurfaceLoop } from "./session-surfaces.js";
 import type { LiveVoiceRuntimePort } from "./live-voice-speech.js";
 import { LIVE_VOICE_EXTENSION } from "../plugins/live-voice/contract.js";
 import { OPPI_CALLER_SESSION_ID_ENV } from "./session-caller-identity.js";
@@ -278,6 +279,7 @@ const REQUIRED_PLUGINS: ReadonlySet<string> = new Set([
  * `experimental.durableExtensions.enabled`; the `disabled` list is for every other plugin.
  */
 const OFF_BY_DEFAULT_PLUGINS: ReadonlySet<string> = new Set([
+  "oppi-example-board",
   "oppi-example-bookmarks",
   "oppi-example-release-notes",
 ]);
@@ -300,8 +302,11 @@ const NEVER_DEFAULT = new Set([CONTROL_EXTENSION, LIVE_VOICE_EXTENSION]);
  */
 export interface DurableSessionBinding {
   sessionIdOf(storeId: string, conversationId: ConversationId): string | undefined;
-  surfacesFor(storeId: string, conversationId: ConversationId): SurfacePublisher | undefined;
+  surfacesFor(storeId: string, conversationId: ConversationId): SurfaceLoop | undefined;
 }
+
+/** The publisher handed out for each Session loop: one object per loop, so panels can key by it. */
+const loopPublishers = new WeakMap<SurfaceLoop, SurfacePublisher>();
 
 /** What `oppiHost().sessionName` reads and writes: the name of an Oppi Session. */
 export interface DurableSessionNaming {
@@ -336,7 +341,7 @@ const durableHost: Omit<OppiDurableHost, "godot" | "mcp"> = {
   },
   surfaces: (env) => {
     const caller = conversationOfEnv(env);
-    return caller?.host.runtime.surfacesFor(caller.host.storeId, caller.conversationId);
+    return caller?.host.surfacesFor(caller.conversationId);
   },
   liveVoice: (env) => {
     const caller = conversationOfEnv(env);
@@ -483,6 +488,46 @@ export class SessionHost {
     holdResume: boolean,
   ) {
     this.resumeHeld = holdResume;
+  }
+
+  /**
+   * What `oppiHost().surfaces(env)` hands a plugin for conversation `id`: the surface loop of the
+   * Session bound to it, with that conversation's reads and commits for a panel's `load` and its
+   * actions, which run outside any task. The same object for as long as the loop lives, so a panel
+   * keeps its state per chat by it. Undefined while no live Session is bound to `id`.
+   */
+  surfacesFor(id: ConversationId): SurfacePublisher | undefined {
+    const loop = this.runtime.surfacesFor(this.storeId, id);
+    if (!loop) return undefined;
+    let publisher = loopPublishers.get(loop);
+    if (!publisher) {
+      const conversation: SurfaceConversation = {
+        conversationId: id,
+        // The Harness is read at each use: a store that failed and reopened has a new one.
+        // Both reads are overloaded, so they forward their arguments as they came.
+        snapshot: (async (...args: unknown[]) => {
+          const { harness } = await this.open();
+          return (harness.snapshot as (...read: unknown[]) => Promise<unknown>)(...args);
+        }) as SurfaceConversation["snapshot"],
+        snapshotAsOf: (async (...args: unknown[]) => {
+          const { harness } = await this.open();
+          return (harness.snapshotAsOf as (...read: unknown[]) => Promise<unknown>)(...args);
+        }) as SurfaceConversation["snapshotAsOf"],
+        commit: async (change, context, options) => {
+          const { harness } = await this.open();
+          const handle = await harness.conversation(id, context);
+          if (!handle) throw new Error(`Server durable conversation ${id} is missing`);
+          return handle.commit(change, context, options);
+        },
+      };
+      publisher = Object.freeze({
+        publish: loop.publish,
+        dismiss: loop.dismiss,
+        conversation: Object.freeze(conversation),
+      });
+      loopPublishers.set(loop, publisher);
+    }
+    return publisher;
   }
 
   /** Close the session's previous MCP before opening its next one, which reuses the extension name. */
@@ -1736,7 +1781,7 @@ export class DurableHarness {
     return this.sessionBinding?.sessionIdOf(storeId, conversationId);
   }
   /** What `oppiHost().surfaces(env)` publishes into: the loop of the Session bound to a conversation. */
-  surfacesFor(storeId: string, conversationId: ConversationId): SurfacePublisher | undefined {
+  surfacesFor(storeId: string, conversationId: ConversationId): SurfaceLoop | undefined {
     return this.sessionBinding?.surfacesFor(storeId, conversationId);
   }
   get boundNotify(): SessionNotifyPort | undefined {

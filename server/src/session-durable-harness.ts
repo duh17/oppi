@@ -9,14 +9,14 @@ import type { DurableThreadsDeps } from "./durable-threads.js";
 import type { LiveVoiceSpeech } from "./live-voice-speech.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
 import type { Storage } from "./storage.js";
-import type { SurfacePublisher } from "./durable-surface.js";
+import type { SurfaceLoop } from "./session-surfaces.js";
 
 export interface DurableHarnessOwner {
   storage: Storage;
   fenceStopped: (hosts: readonly SessionHost[]) => Promise<void>;
   recoverSessions: (host: SessionHost, failure: unknown) => Promise<void>;
   threads: Pick<DurableThreadsDeps, "withIncomingWork" | "onCreated" | "trace">;
-  surfacePublisherFor: (sessionId: string) => SurfacePublisher | undefined;
+  surfacePublisherFor: (sessionId: string) => SurfaceLoop | undefined;
   sessionNaming: () => DurableSessionNaming | null;
   notifyPort: () => SessionNotifyPort | null;
   liveVoiceSpeech: () => LiveVoiceSpeech | null;

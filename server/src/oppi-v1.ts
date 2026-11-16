@@ -1,5 +1,6 @@
 import { defineRegistry } from "@earendil-works/chord";
 import type { Extension, RegistrySnapshot, ToolRegistration } from "@earendil-works/pi-durable";
+import type { RestorableSurface } from "./durable-surface.js";
 import { pluginRuntimes, type PluginRuntime } from "./plugin-runtimes.js";
 
 /**
@@ -48,23 +49,32 @@ export {
 } from "./plugin-screens.js";
 export type * from "./types/screens.js";
 
-/** A durable extension with the runtimes whose sessions may select it. */
+/** A durable extension with the runtimes whose sessions may select it, and the panels it restores. */
 export interface PluginExtension<
   Tool extends ToolRegistration = ToolRegistration,
 > extends Extension<Tool> {
   readonly runtimes: readonly PluginRuntime[];
+  readonly surfaces: readonly RestorableSurface[];
 }
 
 /**
  * pi-durable's `defineExtension`, plus `runtimes`: the runtimes whose sessions may select it, by
  * default `["host"]`. Code always runs in the server process; list `"sandbox"` only when every
- * command and file access goes through `api.env`.
+ * command and file access goes through `api.env`. `surfaces` lists the panels (`surface()` with a
+ * `load`) the host publishes again whenever a conversation that selects the extension attaches.
  * @public
  */
 export function defineExtension<Tool extends ToolRegistration = ToolRegistration>(
-  extension: Extension<Tool> & { readonly runtimes?: readonly PluginRuntime[] },
+  extension: Extension<Tool> & {
+    readonly runtimes?: readonly PluginRuntime[];
+    readonly surfaces?: readonly RestorableSurface[];
+  },
 ): PluginExtension<Tool> {
-  return { ...extension, runtimes: pluginRuntimes(extension.runtimes) };
+  return {
+    ...extension,
+    runtimes: pluginRuntimes(extension.runtimes),
+    surfaces: extension.surfaces ?? [],
+  };
 }
 
 /**

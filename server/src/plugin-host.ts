@@ -976,7 +976,7 @@ function notAnExtension(value: unknown): string | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return "not an object";
   const record = value as Record<string, unknown>;
   if (typeof record.name !== "string" || !record.name.trim()) return "it has no name";
-  for (const key of ["tools", "sections", "hooks", "wraps", "tasks"] as const)
+  for (const key of ["tools", "sections", "hooks", "wraps", "tasks", "surfaces"] as const)
     if (record[key] !== undefined && !Array.isArray(record[key]))
       return `its \`${key}\` is not an array`;
   return undefined;

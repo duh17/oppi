@@ -1,0 +1,1 @@
+- **Server:** For plugin authors: a panel's `current()` now takes the chat's surface context, `panel.current(ctx)`, since a panel keeps one state per chat.

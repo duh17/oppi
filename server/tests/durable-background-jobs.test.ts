@@ -19,6 +19,7 @@ import {
   InboxDoc,
   type SubmissionId,
   type Conversation,
+  type ConversationId,
   type TaskId,
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
@@ -50,10 +51,13 @@ const loop = vi.hoisted(() => {
   const state = {
     on: false,
     /**
-     * Bumped to stand for a plugin reload: the reloaded module starts with no panel of its own for
-     * the Session, as `panels` does when the built-in is evaluated again.
+     * Bumped to stand for a plugin reload: the reloaded module's panel has drawn nothing into the
+     * Session's loop, which still shows what the old one drew.
      */
     generation: 0,
+    /** The Harness and conversation the loop's Session runs, for a tap's commits and `load`. */
+    harness: undefined as Harness | undefined,
+    conversationId: undefined as ConversationId | undefined,
     /** Runs after each publish, while the panel's own sync is still on the stack. */
     afterPublish: undefined as ((surface: ExtensionUISurface) => void) | undefined,
     published: [] as Array<{
@@ -81,6 +85,25 @@ vi.mock("oppi/v1", async (importOriginal) => {
         dismiss: (surfaceId) => {
           loop.dismissed.push(surfaceId);
         },
+        conversation: {
+          get conversationId() {
+            return loop.conversationId!;
+          },
+          snapshot: ((...args: unknown[]) =>
+            (loop.harness!.snapshot as (...read: unknown[]) => unknown)(
+              ...args,
+            )) as Harness["snapshot"],
+          snapshotAsOf: ((...args: unknown[]) =>
+            (loop.harness!.snapshotAsOf as (...read: unknown[]) => unknown)(
+              ...args,
+            )) as Harness["snapshotAsOf"],
+          commit: async (change, commitContext, options) =>
+            (await loop.harness!.conversation(loop.conversationId!, commitContext))!.commit(
+              change,
+              commitContext,
+              options,
+            ),
+        },
       };
       publishers.set(loop.generation, found);
     }
@@ -102,6 +125,8 @@ afterEach(async () => {
   vi.restoreAllMocks();
   loop.on = false;
   loop.generation = 0;
+  loop.harness = undefined;
+  loop.conversationId = undefined;
   loop.afterPublish = undefined;
   loop.published.length = 0;
   loop.dismissed.length = 0;
@@ -239,6 +264,7 @@ async function fixture(responses: FauxResponseStep[], realExec = false, serverOw
       context,
     );
     harnesses.add(harness);
+    loop.harness = harness;
     return harness;
   };
   const harness = serverOwner
@@ -253,6 +279,8 @@ async function fixture(responses: FauxResponseStep[], realExec = false, serverOw
   const root = await harness.root(context, {
     agent: { model: { provider: "faux", modelId: "faux-1" }, cwd: dir },
   });
+  loop.harness = harness;
+  loop.conversationId = root.id;
   return {
     dir,
     harness,

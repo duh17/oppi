@@ -122,6 +122,7 @@ import { expandSkillCommand, loadDurableProjectResources } from "./durable-proje
 import { ProjectContextDoc } from "../plugins/project-context/contract.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
+import type { PluginExtension } from "./oppi-v1.js";
 import { managedProjectTrustContext, resolveManagedProjectTrust } from "./project-trust.js";
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
 import { MAIN_WORKTREE_ID } from "./worktrees.js";
@@ -766,6 +767,31 @@ export class DurableBackend implements AgentBackend {
   }
 
   /**
+   * Draw again the panels this conversation's extensions list (`defineExtension({ surfaces })`),
+   * from their own documents. A Session's surfaces live in memory, so every attach, after a
+   * server restart too, starts with none. A panel that cannot be drawn is logged and left out; it
+   * never fails the attach.
+   */
+  private async restoreSurfaces(): Promise<void> {
+    const surfaces = this.host.surfacesFor(this.conversation.id);
+    if (!surfaces) return;
+    const { extensions } = await this.conversation.agent(BACKGROUND_CONTEXT);
+    for (const extension of extensions as ReadonlyArray<Partial<PluginExtension>>) {
+      for (const panel of extension.surfaces ?? []) {
+        if (this.disposed) return;
+        await panel.sync({ surfaces }, BACKGROUND_CONTEXT).catch((error: unknown) => {
+          log.warn("durable_surface.restore_failed", {
+            sessionId: this.session.id,
+            extension: extension.name,
+            surfaceId: panel.id,
+            error: safeErrorMessage(error),
+          });
+        });
+      }
+    }
+  }
+
+  /**
    * The workspace VM's capabilities for one sandbox attachment. The same env discovers its
    * resources, on attach and on `/reload`, and is bound to the conversation once it exists.
    */
@@ -785,6 +811,12 @@ export class DurableBackend implements AgentBackend {
     if (this.eventsStarted) return;
     this.eventsStarted = true;
     this.ui.start();
+    void this.restoreSurfaces().catch((error: unknown) => {
+      log.warn("durable_surface.restore_failed", {
+        sessionId: this.session.id,
+        error: safeErrorMessage(error),
+      });
+    });
     // One warning after the first connection attempts, as Pi's MCP extension notifies
     // SDK sessions.
     void this.mcp?.startupProblems().then((message) => {
