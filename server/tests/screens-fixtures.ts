@@ -37,10 +37,12 @@ export function buildScreensFixture() {
     loading: listPage({}),
     failed: listPage({ error: "MCP management is busy. Retry refresh when it finishes." }),
     list: listPage(probe),
+    workspaceList: listPage({ response: mcp.catalogs[1]! }),
     listDuringSignIn: listPage({ response: mcp.signInCatalog }),
     http: page(serverPage(probe, "remote")),
     stdio: page(serverPage(probe, "echo")),
-    add: addPage(),
+    add: addPage(probe),
+    workspaceAdd: addPage({ response: mcp.catalogs[1]! }),
     signIn: signInPage(mcp.flows[1]),
     signInDone: signInPage(mcp.flows[2]),
   };

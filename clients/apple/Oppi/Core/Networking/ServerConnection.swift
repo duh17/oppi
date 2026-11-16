@@ -199,6 +199,11 @@ final class ServerConnection {
     func offers(_ feature: ServerFeature) -> Bool {
         serverCapabilities?.offers(feature) ?? true
     }
+    /// The plugin entry that serves `feature`'s page in `scope` (`server` or `workspace`), when
+    /// the server has one: how a native screen links to a feature that is a plugin page.
+    func pluginEntry(for feature: ServerFeature, scope: String) -> PluginScreenSidebarEntry? {
+        serverCapabilities?.pluginSidebar?.first { $0.feature == feature.rawValue && $0.scopes.contains(scope) }
+    }
     /// Relay the server pushes through (`capabilities.pushNotifications`); nil when it does not.
     var pushRelay: URL? { serverCapabilities?.pushRelay }
 
@@ -2183,7 +2188,8 @@ final class ServerConnection {
         pushRelay: URL? = nil,
         extensionNativeUICapabilities: [String]? = nil,
         pins: Bool = false,
-        features: [String: Bool]? = nil
+        features: [String: Bool]? = nil,
+        pluginSidebar: [PluginScreenSidebarEntry]? = nil
     ) {
         func version(_ enabled: Bool) -> ServerInfo.CapabilityVersion? {
             enabled ? ServerInfo.CapabilityVersion(version: 1) : nil
@@ -2206,6 +2212,7 @@ final class ServerConnection {
         serverCapabilities = capabilities
         serverCapabilities?.pins = version(pins)
         serverCapabilities?.features = features
+        serverCapabilities?.pluginSidebar = pluginSidebar
         dictationStreamUnsupportedByEndpoint = false
         missingRequiredSplitStreamCapabilities = capabilities.missingRequiredSplitStreamCapabilities
         streamCapabilitiesLoaded = true

@@ -1,6 +1,6 @@
 import XCTest
 
-/// Opens every settings, server, agent, schedule, MCP, pairing, and onboarding
+/// Opens every settings, server, agent, schedule, pairing, and onboarding
 /// modal that the UIKit router presents, on the real screens over the settings
 /// sweep fixture server (`SCREENSHOT_SCREEN=settings-sweep`). Each modal closes
 /// through its own control (the screen's `finish()` or its presenter's
@@ -553,7 +553,7 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
     private static var cleanStartRuns = 0
 
     private func assertStartsCleanThenLeavesStateBehind() {
-        launch(page: "mcp")
+        launch(page: "agents")
         defer { Self.cleanStartRuns += 1 }
         // The second of the pair must start from a reset of the first one's
         // process, or its clean start proves nothing. A fresh launch here means
@@ -565,125 +565,34 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
                 "The second of the pair must reuse the first one's launch"
             )
         }
-        let add = app.buttons["mcp.add"]
-        XCTAssertTrue(waitFor(add.exists && add.isEnabled, timeout: 10), "MCP list did not load")
-        let sheet = app.navigationBars["Add MCP Server"]
+        let row = app.buttons["agents.row.agent-design"]
+        XCTAssertTrue(row.waitUntilExists(timeout: 10), "Agents list did not load")
+        let editor = app.navigationBars["Edit Agent"]
+        let sheet = app.navigationBars["Create Schedule"]
         XCTAssertEqual(lastWrite, "none", "A test must start with no write recorded")
         XCTAssertFalse(sheet.exists, "A test must start with no sheet presented")
         XCTAssertFalse(app.keyboards.firstMatch.exists, "A test must start with the keyboard down")
 
-        add.tap()
-        XCTAssertTrue(sheet.waitUntilExists(timeout: 5), "Add MCP Server did not open")
-        let name = app.textFields["mcp.add.name"]
+        row.tap()
+        let edit = app.buttons["agents.detail.edit"]
+        XCTAssertTrue(edit.waitUntilExists(timeout: 10), "Agent detail did not load")
+        tapBarButton(edit)
+        XCTAssertTrue(editor.waitUntilExists(timeout: 10), "Edit Agent did not open")
+        let name = app.textViews["agent.nativeEdit.name"]
         name.tap()
-        name.typeText("leftover")
-        let url = app.textFields["mcp.add.url"]
-        url.tap()
-        url.typeText("https://leftover.example.com/mcp")
-        tapBarButton(app.buttons["mcp.add.save"])
-        XCTAssertTrue(sheet.waitUntilGone(timeout: 10), "Add must close the sheet")
-        XCTAssertTrue(waitFor(lastWrite.contains("\"name\":\"leftover\""), timeout: 10), "The add did not reach the host: \(lastWrite)")
+        name.typeText(" leftover")
+        tapBarButton(app.buttons["agent.nativeEdit.save"])
+        XCTAssertTrue(editor.waitUntilGone(timeout: 10), "Save must close the editor")
+        XCTAssertTrue(waitFor(lastWrite.contains("leftover"), timeout: 10), "The save did not reach the host: \(lastWrite)")
 
-        // Leave the sheet up with the keyboard in it.
-        add.tap()
-        XCTAssertTrue(sheet.waitUntilExists(timeout: 5), "Add MCP Server did not reopen")
-        name.tap()
+        // Leave a sheet up with the keyboard in it.
+        tapScrolledIntoView(app.buttons["agents.detail.schedule"])
+        XCTAssertTrue(sheet.waitUntilExists(timeout: 10), "Create Schedule did not open")
+        // The sheet's composer: the list's own sits under the sheet.
+        let input = app.textViews.matching(identifier: "chat.input").allElementsBoundByIndex.last { $0.isHittable }
+        XCTAssertNotNil(input, "Create Schedule has no composer")
+        input?.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitUntilExists(timeout: 5), "The keyboard did not come up")
-        assertRunning()
-    }
-
-    // MARK: MCP
-
-    func testMcpAddServerClosesAndSaves() {
-        launch(page: "mcp")
-        let add = app.buttons["mcp.add"]
-        XCTAssertTrue(waitFor(add.exists && add.isEnabled, timeout: 10), "MCP list did not load")
-        let sheet = app.navigationBars["Add MCP Server"]
-
-        add.tap()
-        XCTAssertTrue(sheet.waitUntilExists(timeout: 5), "Add MCP Server did not open in a navigation bar")
-        attachScreenshot("mcp-add")
-        tapBarButton(cancelButton)
-        XCTAssertTrue(sheet.waitUntilGone(timeout: 10), "Cancel must close Add MCP Server")
-        add.tap()
-        XCTAssertTrue(sheet.waitUntilExists(timeout: 5), "Add MCP Server did not reopen")
-        dragToBottom(sheet)
-        XCTAssertTrue(sheet.waitUntilGone(timeout: 10), "Swipe-down must close Add MCP Server")
-
-        add.tap()
-        XCTAssertTrue(sheet.waitUntilExists(timeout: 5), "Add MCP Server did not reopen after the swipe")
-        let name = app.textFields["mcp.add.name"]
-        name.tap()
-        name.typeText("notes2")
-        let url = app.textFields["mcp.add.url"]
-        url.tap()
-        url.typeText("https://notes2.example.com/mcp")
-        tapBarButton(app.buttons["mcp.add.save"])
-        XCTAssertTrue(sheet.waitUntilGone(timeout: 10), "Add must close the sheet")
-        XCTAssertTrue(
-            waitFor(lastWrite.contains("POST /mcp/scopes/global/servers") && lastWrite.contains("\"name\":\"notes2\""), timeout: 10),
-            "The new server must reach the host: \(lastWrite)"
-        )
-        assertRunning()
-    }
-
-    /// `.interactiveDismissDisabled` while saving must hold on a router sheet
-    /// in a navigation controller: a swiped-away sheet left the add running.
-    func testMcpAddServerCannotBeSweptAwayWhileSaving() {
-        launch(page: "mcp", writeDelay: 8)
-        let add = app.buttons["mcp.add"]
-        XCTAssertTrue(waitFor(add.exists && add.isEnabled, timeout: 10), "MCP list did not load")
-        let sheet = app.navigationBars["Add MCP Server"]
-        add.tap()
-        XCTAssertTrue(sheet.waitUntilExists(timeout: 5), "Add MCP Server did not open")
-        let name = app.textFields["mcp.add.name"]
-        name.tap()
-        name.typeText("slow")
-        let url = app.textFields["mcp.add.url"]
-        url.tap()
-        url.typeText("https://slow.example.com/mcp")
-        tapBarButton(app.buttons["mcp.add.save"])
-        XCTAssertTrue(waitFor(lastWrite.contains("\"name\":\"slow\""), timeout: 10), "The add did not start: \(lastWrite)")
-
-        dragToBottom(sheet)
-        hold()
-        XCTAssertTrue(sheet.exists, "Swipe-down must not close the sheet while it saves")
-        XCTAssertTrue(sheet.waitUntilGone(timeout: 20), "The finished add must close the sheet")
-        assertRunning()
-    }
-
-    /// Sign-in starts on a pushed server detail, which covers the list. The
-    /// detail presents the sheet; after going back, the list presents it.
-    func testMcpSignInPresentsFromDetailAndList() {
-        launch(page: "mcp")
-        let github = app.buttons["mcp.server.global.github"]
-        XCTAssertTrue(github.waitUntilExists(timeout: 10), "MCP list did not load")
-        github.tap()
-        let login = app.buttons["mcp.login"]
-        tapScrolledIntoView(login)
-        let signIn = app.navigationBars["Sign In"]
-        XCTAssertTrue(signIn.waitUntilExists(timeout: 5), "Sign-in did not open from the server detail")
-        XCTAssertTrue(app.textFields["mcp.auth.callback"].waitUntilExists(timeout: 5))
-        attachScreenshot("mcp-sign-in")
-        tapBarButton(cancelButton)
-        XCTAssertTrue(signIn.waitUntilGone(timeout: 10), "Close must close sign-in")
-        assertRunning()
-
-        app.buttons["BackButton"].firstMatch.tap()
-        let resume = app.buttons["mcp.auth.continue"]
-        hold()
-        XCTAssertTrue(resume.waitUntilExists(timeout: 5), "The list must keep the live sign-in")
-        XCTAssertFalse(signIn.exists, "Going back must not present sign-in again")
-        resume.tap()
-        XCTAssertTrue(signIn.waitUntilExists(timeout: 5), "Continue Sign-In did not open from the list")
-        dragToBottom(signIn)
-        XCTAssertTrue(signIn.waitUntilGone(timeout: 10), "Swipe-down must close sign-in")
-
-        app.buttons["mcp.auth.cancel"].tap()
-        XCTAssertTrue(
-            waitFor(lastWrite.contains("POST /mcp/auth/flows/mcp-flow/cancel"), timeout: 10),
-            "Cancel must reach the host: \(lastWrite)"
-        )
         assertRunning()
     }
 

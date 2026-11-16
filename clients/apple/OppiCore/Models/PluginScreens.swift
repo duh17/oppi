@@ -18,7 +18,11 @@ struct PluginScreenSidebarEntry: Codable, Sendable, Equatable, Hashable {
     /// An SF Symbol from the server's surface icon allow-list.
     let icon: String
     let order: Double
+    /// `server`: a sidebar row. `workspace`: the same screen for one host workspace
+    /// (`workspace:<id>`), opened from Workspace Settings by `feature`.
     let scopes: [String]
+    /// The server switch (`ServerFeature` raw value) the entry belongs to.
+    var feature: String?
 }
 
 /// One page of a plugin screen.
@@ -48,6 +52,8 @@ struct PluginScreenPage: Decodable, Sendable, Equatable {
 
         let id: String
         var header: String?
+        /// The app adds its own name for the server to the header.
+        var namesHost: Bool?
         var footer: String?
         let rows: [PluginScreenRow]
         var when: When?
@@ -56,6 +62,8 @@ struct PluginScreenPage: Decodable, Sendable, Equatable {
     struct Submit: Decodable, Sendable, Equatable {
         let title: String
         let action: String
+        /// Fields that must be filled, among the shown sections, before Submit turns on.
+        var requires: [String]?
     }
 
     let title: String
@@ -78,6 +86,8 @@ struct PluginScreenRow: Decodable, Sendable, Equatable, Hashable {
     struct Option: Decodable, Sendable, Equatable, Hashable {
         let value: String
         let title: String
+        /// Leads the section's footer while this option is chosen.
+        var footer: String?
     }
 
     struct Confirm: Decodable, Sendable, Equatable, Hashable {

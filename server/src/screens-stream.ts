@@ -7,10 +7,12 @@
  * (`failed`) and the app keeps the last one. No sequence numbers and no replay: a reconnecting
  * app watches again and gets the current value.
  *
- * A watch ends `gone` when its entry or page goes (a plugin unloaded, a page that says `gone`),
- * `off` when the entry's feature switch is off (at `watch`, or when `featuresChanged` turns it
- * off), and `unsupported` for a vocabulary version or scope this server does not draw. `act` runs
- * on the watched object and answers its own `result`; it is never retried.
+ * A watch ends `gone` when its entry, its workspace or its page goes (a plugin unloaded, a page
+ * that says `gone`), `off` when the entry's feature switch is off (at `watch`, or when
+ * `featuresChanged` turns it off), and `unsupported` for a vocabulary version or scope the entry
+ * does not serve. `act` runs on the watched object and answers its own `result`; it is never
+ * retried. An `act` sent right after its `watch` waits for the page to open, and one already
+ * running finishes even if the page is unwatched meanwhile: it is the person's own change.
  */
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import { diffRevisions } from "@earendil-works/chord/delta";
@@ -23,6 +25,7 @@ import { safeErrorMessage } from "./log-utils.js";
 import {
   checkScreenPage,
   screenPageIdProblem,
+  screenScopeServed,
   sidebarEntryOn,
   SCREENS_VERSION,
   type ScreenHost,
@@ -56,6 +59,8 @@ interface ScreensStreamOptions {
   readonly screens: () => Promise<ScreenHost | undefined>;
   /** The server's feature switches now. */
   readonly features: () => Readonly<ServerFeatureSwitches>;
+  /** Whether a workspace scope's workspace exists. */
+  readonly workspaceExists: (id: string) => boolean;
   readonly renew?: RenewStreamAccess;
 }
 
@@ -69,19 +74,18 @@ interface Watching {
   handle?: WatchHandle<JsonValue>;
   /** The last value sent; ops are computed against it. */
   last?: JsonValue;
+  /** The screen object once open, or undefined once it never will be. */
+  readonly ready: Promise<ScreenReference | undefined>;
+  readonly settle: (ref: ScreenReference | undefined) => void;
+  /** Acts still running: the screen object is released after the last one. */
+  acts: number;
+  ended: boolean;
 }
 
 export class ScreensStreamMux {
-  private readonly options: ScreensStreamOptions;
   private readonly sockets = new Set<ScreensSocket>();
 
-  constructor(
-    screens: ScreensStreamOptions["screens"],
-    features: ScreensStreamOptions["features"],
-    renew?: RenewStreamAccess,
-  ) {
-    this.options = { screens, features, ...(renew ? { renew } : {}) };
-  }
+  constructor(private readonly options: ScreensStreamOptions) {}
 
   handleWebSocket(ws: WebSocket): void {
     const socket = new ScreensSocket(ws, this.options);
@@ -147,12 +151,20 @@ class ScreensSocket {
     this.end(id);
     const ended = (reason: ScreenEndReason): void =>
       this.send({ type: "ended", watch: id, reason });
-    if (message.v !== SCREENS_VERSION || scope !== "server" || screenPageIdProblem(page))
-      return ended("unsupported");
+    if (message.v !== SCREENS_VERSION || screenPageIdProblem(page)) return ended("unsupported");
     if (this.watches.size >= MAX_WATCHES_PER_SOCKET)
       return this.send({ type: "failed", watch: id, message: "Too many open screens" });
     // Counted now, so the limit holds while the plugins load; an unwatch meanwhile replaces it.
-    const watching: Watching = { entry: entryId, abort: new AbortController() };
+    let settle: (ref: ScreenReference | undefined) => void = () => undefined;
+    const ready = new Promise<ScreenReference | undefined>((resolve) => (settle = resolve));
+    const watching: Watching = {
+      entry: entryId,
+      abort: new AbortController(),
+      ready,
+      settle,
+      acts: 0,
+      ended: false,
+    };
     this.watches.set(id, watching);
     const current = (): boolean => this.watches.get(id) === watching;
     let host: ScreenHost | undefined;
@@ -167,6 +179,14 @@ class ScreensSocket {
       this.end(id);
       return ended("gone");
     }
+    if (!screenScopeServed(entry, scope)) {
+      this.end(id);
+      return ended("unsupported");
+    }
+    if (scope !== "server" && !this.options.workspaceExists(scope.slice("workspace:".length))) {
+      this.end(id);
+      return ended("gone");
+    }
     if (!sidebarEntryOn(entry, this.options.features())) {
       this.end(id);
       return ended("off");
@@ -177,6 +197,7 @@ class ScreensSocket {
       const ref = await host.open(entry, { scope, page }, context);
       if (!current()) return ref.release();
       watching.ref = ref;
+      watching.settle(ref);
       const handle = await ref.page.watch(context);
       if (!current()) {
         void handle.stop();
@@ -226,22 +247,29 @@ class ScreensSocket {
   private async act(message: Extract<ScreensClientMessage, { type: "act" }>): Promise<void> {
     const { call, watch: id } = message;
     const watching = this.watches.get(id);
-    if (!watching?.ref) {
+    // A page still opening answers once it is open.
+    const ref = watching && (watching.ref ?? (await watching.ready));
+    if (!watching || !ref) {
       this.send({ type: "result", call, ok: false, message: "This page is not open." });
       return;
     }
+    watching.acts += 1;
     try {
-      const answer = await watching.ref.act(
+      // Not the watch's context: leaving the page does not cancel a change the person made.
+      const answer = await ref.act(
         {
           action: message.action,
           ...(message.row !== undefined ? { row: message.row } : {}),
           ...(message.values ? { values: message.values } : {}),
         },
-        withAbortSignal(watching.abort.signal, BACKGROUND_CONTEXT),
+        BACKGROUND_CONTEXT,
       );
       this.send({ type: "result", call, ...actResult(answer) });
     } catch (error) {
       this.send({ type: "result", call, ok: false, message: safeErrorMessage(error) });
+    } finally {
+      watching.acts -= 1;
+      if (watching.ended && watching.acts === 0) ref.release();
     }
   }
 
@@ -249,9 +277,11 @@ class ScreensSocket {
     const watching = this.watches.get(id);
     if (!watching) return;
     this.watches.delete(id);
+    watching.ended = true;
     watching.abort.abort();
+    watching.settle(undefined);
     void watching.handle?.stop();
-    watching.ref?.release();
+    if (watching.acts === 0) watching.ref?.release();
   }
 
   private send(message: ScreensServerMessage): void {

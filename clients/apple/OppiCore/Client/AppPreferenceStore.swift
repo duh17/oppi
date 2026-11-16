@@ -253,7 +253,6 @@ enum AppPreferenceStore {
         static let herdrKey = "\(AppIdentifiers.subsystem).experiments.herdr"
         static let calendarEventsKey = "\(AppIdentifiers.subsystem).experiments.calendarEvents"
         static let godotPaneKey = "\(AppIdentifiers.subsystem).experiments.godotPane"
-        static let pluginSidebarKey = "\(AppIdentifiers.subsystem).experiments.pluginSidebar"
         static let liveActivityKey = "\(AppIdentifiers.subsystem).experiments.liveActivity"
         /// The calendars Schedules leaves out, by EventKit identifier: a calendar added
         /// later shows until it is hidden.
@@ -279,9 +278,6 @@ enum AppPreferenceStore {
 
         /// Godot Pane: the launcher's Godot choice and Godot games in panes.
         static var godotPaneEnabled: Bool { flag(godotPaneKey) }
-
-        /// Plugin Sidebar: the server's plugin entries in the sidebar, beside the native ones.
-        static var pluginSidebarEnabled: Bool { flag(pluginSidebarKey) }
 
         /// Live Activity: the Lock Screen card and each server's switch for it. While off,
         /// every server's card reads off and its saved choice is kept (`LiveActivitySettings`).

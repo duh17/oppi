@@ -1,13 +1,16 @@
-// The MCP Servers screen's pages, drawn from the server's MCP management: the global
-// `mcp.json` with Pi's live probe, and the host's one OAuth sign-in. Pure: the facet
-// (`server.ts`) probes and writes these into each page's document; tests read them directly.
+// The MCP Servers screen's pages, drawn from the server's MCP management: one scope's
+// `mcp.json` (the global one, or a host workspace's own) with Pi's live probe, and the host's one
+// OAuth sign-in. Pure: the facet (`server.ts`) probes and writes these into each page's document;
+// tests read them directly.
 import type {
   McpAddServerRequest,
   McpAuthFlowSnapshot,
   McpExposure,
+  McpScopeSnapshot,
   McpServerSummary,
   McpServersResponse,
 } from "../../src/types/mcp.js";
+import type { ProjectTrustState } from "../../src/types/workspace.js";
 import type {
   ScreenPage,
   ScreenRow,
@@ -20,21 +23,32 @@ import type {
 
 export const MCP_SCREEN_ID = "oppi.mcp";
 
-/** The sidebar entry: server-wide only for now. */
+/**
+ * The sidebar entry: the global servers in the sidebar, and a host workspace's own servers from
+ * its Workspace Settings.
+ */
 export const MCP_SIDEBAR_ENTRY: ScreenSidebarEntry = {
   id: MCP_SCREEN_ID,
   title: "MCP Servers",
   icon: "network",
   order: 50,
-  scopes: ["server"],
+  scopes: ["server", "workspace"],
+  feature: "mcp",
 };
 /** The server-wide scope's `mcp.json`: `~/.pi/agent/mcp.json`. */
 export const GLOBAL_SCOPE = "global";
+
+/** The MCP scope a screen scope names: `server` is the global file, `workspace:<id>` its own. */
+export function mcpScopeOf(scope: string): string {
+  return scope.startsWith("workspace:") ? scope.slice("workspace:".length) : GLOBAL_SCOPE;
+}
 
 /** What a page is drawn from: the last probe, or why there is none yet. */
 export interface McpProbe {
   readonly response?: McpServersResponse;
   readonly error?: string;
+  /** The rows are the last known status while Pi's live probe runs. */
+  readonly checking?: boolean;
 }
 
 interface Exposure {
@@ -57,7 +71,12 @@ const EXPOSURES: Exposure[] = [
   { value: "direct", title: "Direct", explanation: "Tools are always declared to the model." },
   { value: "hidden", title: "Hidden", explanation: "Tools cannot be called." },
 ];
-const exposureOptions = EXPOSURES.map(({ value, title }) => ({ value, title }));
+/** Each option carries its explanation, which the app shows under the section as it is picked. */
+const exposureOptions = EXPOSURES.map(({ value, title, explanation }) => ({
+  value,
+  title,
+  footer: explanation,
+}));
 const exposureOf = (value: McpExposure): Exposure =>
   EXPOSURES.find((exposure) => exposure.value === value) ?? CODE_MODE;
 
@@ -71,7 +90,9 @@ const STATES: Record<string, { text: string; tone: ScreenTone }> = {
   disconnected: { text: "Failed", tone: "danger" },
 };
 
-function status(state: string): ScreenStatus {
+function status(state: string, checking = false): ScreenStatus {
+  if (state === "unknown" && checking)
+    return { text: "Checking\u2026", tone: "secondary", symbol: "circle" };
   const known = STATES[state] ?? {
     text: state.charAt(0).toUpperCase() + state.slice(1),
     tone: "secondary" as const,
@@ -101,12 +122,28 @@ function pending(title: string, probe: McpProbe, failure: string): ScreenPage {
   return { title, state: { kind: "loading", message: "Probing MCP servers…" }, sections: [] };
 }
 
-/** The server list: the host's sign-in, scope errors, one row per server, and the note. */
+/** A server's row: its transport, tools and exposure, and its status. */
+function serverRow(entry: McpServerSummary, id: string, probe: McpProbe, push: boolean): ScreenRow {
+  return {
+    kind: "item",
+    id,
+    title: entry.name,
+    subtitle: `${transportLabel(entry)} \u00b7 ${entry.tools.length} tools \u00b7 ${exposureOf(entry.exposure).title}`,
+    status: status(entry.state, probe.checking),
+    ...(push ? { push: `server/${entry.name}` } : {}),
+  };
+}
+
+/**
+ * One scope's servers: the host's sign-in, scope errors, one row per server, a workspace's
+ * servers from the global file, and the note.
+ */
 export function listPage(probe: McpProbe): ScreenPage {
   const title = "MCP Servers";
   const bar = [{ id: "add", title: "Add MCP Server", symbol: "plus", present: "add" }];
   if (!probe.response) return pending(title, probe, "Couldn't Load MCP Servers");
   const scope = probe.response.scope;
+  const global = scope.kind === "global";
   const sections: ScreenSection[] = [];
   const flow = liveFlow(probe);
   if (flow)
@@ -138,20 +175,24 @@ export function listPage(probe: McpProbe): ScreenPage {
   if (scope.servers.length === 0)
     rows.push({ kind: "text", id: "empty", text: "No MCP servers configured", tone: "secondary" });
   for (const entry of scope.servers)
-    rows.push({
-      kind: "item",
-      id: `server.${entry.name}`,
-      title: entry.name,
-      subtitle: `${transportLabel(entry)} · ${entry.tools.length} tools · ${exposureOf(entry.exposure).title}`,
-      status: status(entry.state),
-      push: `server/${entry.name}`,
-    });
+    rows.push(serverRow(entry, `server.${entry.name}`, probe, true));
   sections.push({
     id: "servers",
-    footer:
-      "Global servers from ~/.pi/agent/mcp.json load in every host workspace. Each workspace\u2019s own servers are in its Workspace Settings.",
+    ...(global ? {} : { header: "This Workspace" }),
+    footer: global
+      ? "Global servers from ~/.pi/agent/mcp.json load in every host workspace. Each workspace\u2019s own servers are in its Workspace Settings."
+      : "Servers from this workspace\u2019s .pi/mcp.json. A server here replaces a global server with the same name.",
     rows,
   });
+  const inherited = scope.inherited ?? [];
+  if (inherited.length > 0)
+    sections.push({
+      id: "inherited",
+      header: "From Global",
+      footer:
+        "Global servers that also load in this workspace. Change them from MCP Servers in the sidebar.",
+      rows: inherited.map((entry) => serverRow(entry, `inherited.${entry.name}`, probe, false)),
+    });
   sections.push({
     id: "note",
     rows: [
@@ -167,15 +208,24 @@ export function listPage(probe: McpProbe): ScreenPage {
   return { title, bar, sections };
 }
 
-/** One server: where it connects, Enabled and Exposure, sign-in, references, tools, Remove. */
+/**
+ * One server: where it connects, Enabled and Exposure, sign-in, references, tools, Remove.
+ * Its first header names the scope and, from the app, the host.
+ */
 export function serverPage(probe: McpProbe, name: string): ScreenPage | { gone: true } {
   const response = probe.response;
   if (!response) return pending(name, probe, "Couldn't Load This Server");
-  const entry = response.scope.servers.find((server) => server.name === name);
+  const scope = response.scope;
+  const entry = scope.servers.find((server) => server.name === name);
   if (!entry) return { gone: true };
   const locked = response.activeSignIn !== undefined;
   const info: ScreenRow[] = [
-    { kind: "value", id: "status", label: "Status", value: status(entry.state).text },
+    {
+      kind: "value",
+      id: "status",
+      label: "Status",
+      value: status(entry.state, probe.checking).text,
+    },
     { kind: "value", id: "transport", label: "Transport", value: transportLabel(entry) },
   ];
   if (entry.config.url)
@@ -191,10 +241,11 @@ export function serverPage(probe: McpProbe, name: string): ScreenPage | { gone: 
   if (entry.config.cwd)
     info.push({ kind: "value", id: "cwd", label: "Working Directory", value: entry.config.cwd });
   const sections: ScreenSection[] = [
-    { id: "info", header: "Global", rows: info },
+    { id: "info", header: scope.title, namesHost: true, rows: info },
     {
       id: "config",
-      footer: `${exposureOf(entry.exposure).explanation} Saved in this scope's mcp.json. New sessions or /reload pick up configuration changes.`,
+      footer:
+        "Saved in this scope's mcp.json. New sessions or /reload pick up configuration changes.",
       rows: [
         {
           kind: "toggle",
@@ -325,7 +376,7 @@ export function serverPage(probe: McpProbe, name: string): ScreenPage | { gone: 
         action: "remove",
         disabled: locked,
         confirm: {
-          title: `Remove ${name} from Global?`,
+          title: `Remove ${name} from ${scope.title}?`,
           message:
             "The configuration entry will be removed. Stored OAuth credentials are not deleted; sign out first if needed.",
           button: "Remove Server",
@@ -340,19 +391,36 @@ const SECRET_REFERENCES =
   // eslint-disable-next-line no-template-curly-in-string -- mcp.json's own ${NAME} reference syntax.
   "Use ${NAME} references instead of literal secrets. For example: API_KEY=${TOOLS_KEY}, or Authorization=Bearer ${TOKEN}. Values are resolved on the host; literal values are redacted when read back.";
 
-/** The Add form. Its draft is the app's until Add sends it (`addRequest`). */
-export function addPage(): ScreenPage {
+const TRUST: Record<ProjectTrustState, string> = {
+  trusted: "trusted",
+  ask: "asks at session start",
+  distrusted: "not trusted",
+};
+
+/**
+ * The Add form for the probed scope; its header names the host, from the app. Its draft is the
+ * app's until Add sends it (`addRequest`); Add stays off until the name and the URL or the
+ * command are filled.
+ */
+export function addPage(probe: McpProbe): ScreenPage {
+  if (!probe.response) return pending("Add MCP Server", probe, "Couldn't Load This Scope");
+  const scope: Pick<McpScopeSnapshot, "title" | "projectTrust"> = probe.response.scope;
   return {
     title: "Add MCP Server",
-    submit: { title: "Add", action: "add" },
+    submit: { title: "Add", action: "add", requires: ["name", "url", "command"] },
     sections: [
       {
         id: "configuration",
         header: "Configuration",
-        footer: EXPOSURES.map(({ title, explanation }) => `${title}: ${explanation}`).join("\n"),
+        namesHost: true,
+        ...(scope.projectTrust
+          ? {
+              footer: `Saved to this workspace\u2019s .pi/mcp.json. Project trust: ${TRUST[scope.projectTrust]}.`,
+            }
+          : {}),
         rows: [
-          { kind: "value", id: "scope", label: "Scope", value: "Global" },
           { kind: "field", id: "name", placeholder: "Server name" },
+          { kind: "value", id: "scope", label: "Scope", value: scope.title },
           {
             kind: "choice",
             id: "transport",

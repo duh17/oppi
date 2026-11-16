@@ -44,7 +44,9 @@ struct PluginScreenProtocolTests {
         #expect(info.capabilities?.screens?.v == PluginScreens.version)
         let entries = try #require(info.appCapabilities?.pluginSidebar)
         #expect(entries.map(\.id) == info.sidebar?.map(\.id))
-        #expect(entries.allSatisfy { $0.scopes.contains("server") })
+        // An entry with a workspace scope names its switch, which Workspace Settings finds it by.
+        let workspace = try #require(entries.first { $0.scopes.contains("workspace") })
+        #expect(workspace.feature.flatMap(ServerFeature.init(rawValue:)) != nil)
         // The switches ride along: every feature on in the fixture.
         let capabilities = try #require(info.appCapabilities)
         #expect(ServerFeature.allCases.allSatisfy { info.features?[$0.rawValue] == true })
@@ -64,7 +66,11 @@ struct PluginScreenProtocolTests {
         #expect(kinds == ["item", "value", "text", "toggle", "choice", "button", "field"])
         let add = try #require(pages["add"])
         #expect(add.submit?.action == "add")
+        #expect(add.submit?.requires?.isEmpty == false)
         #expect(add.sections.compactMap(\.when).map(\.is).contains("stdio"))
+        // A choice's options carry what each one means, for the footer.
+        let choices = add.sections.flatMap(\.rows).filter { $0.kind == "choice" }
+        #expect(choices.contains { $0.options?.allSatisfy { $0.footer?.isEmpty == false } == true })
         #expect(pages["loading"]?.state?.kind == "loading")
         #expect(pages["failed"]?.state?.kind == "failed")
         let toggle = try #require(pages["http"]?.sections.flatMap(\.rows).first { $0.kind == "toggle" })

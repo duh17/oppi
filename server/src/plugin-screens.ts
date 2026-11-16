@@ -5,7 +5,6 @@ import type { Watchable } from "@earendil-works/chord/watch";
 import { arr, bool, obj, opt, str, union, unknown } from "@earendil-works/pi-schema";
 import { EXTENSION_UI_SURFACE_ICON_NAMES } from "./extension-surface-icons.js";
 import { isServerFeature, type ServerFeatureSwitches } from "./server-features.js";
-import type { ServerFeature } from "./types/config.js";
 import type {
   ScreenNav,
   ScreenPage,
@@ -103,12 +102,11 @@ export function defineScreen(id: string) {
 export type ScreenDefinition = ReturnType<typeof defineScreen>;
 
 /**
- * A sidebar entry as a plugin contributes it: what `/server/info` lists, its screen, and the
- * feature switch that hides it while off (`server-features.ts`).
+ * A sidebar entry as a plugin contributes it: what `/server/info` lists, with the feature switch
+ * that hides it while off (`server-features.ts`), and its screen.
  */
 export interface SidebarContribution extends ScreenSidebarEntry {
   readonly screen: ScreenDefinition;
-  readonly feature?: ServerFeature;
 }
 
 /** Oppi's registry of sidebar entries; only built-in plugins' contributions are listed. */
@@ -156,7 +154,21 @@ export function sidebarEntryInfo(entry: SidebarContribution): ScreenSidebarEntry
     icon: entry.icon,
     order: entry.order,
     scopes: [...entry.scopes],
+    ...(entry.feature ? { feature: entry.feature } : {}),
   };
+}
+
+/** The scope a watch names, when `entry` serves it: `server`, or `workspace:<id>`. */
+export function screenScopeServed(
+  entry: Pick<ScreenSidebarEntry, "scopes">,
+  scope: string,
+): boolean {
+  if (scope === "server") return entry.scopes.includes("server");
+  return (
+    scope.startsWith("workspace:") &&
+    scope.length > "workspace:".length &&
+    entry.scopes.includes("workspace")
+  );
 }
 
 /** Whether `entry` is offered: its feature, when it names one, is on. */
@@ -240,6 +252,11 @@ export function checkScreenPage(value: unknown): string | undefined {
     const submit = value.submit as Record<string, unknown>;
     if (!isObject(submit) || !isText(submit.title) || !isText(submit.action))
       return "submit needs a title and an action";
+    if (
+      submit.requires !== undefined &&
+      (!Array.isArray(submit.requires) || !submit.requires.every(isText))
+    )
+      return "submit's requires must list field ids";
   }
   if (!Array.isArray(value.sections)) return "the page has no sections";
   for (const section of value.sections) {
@@ -249,6 +266,8 @@ export function checkScreenPage(value: unknown): string | undefined {
     if (!Array.isArray(section.rows)) return `section ${section.id as string} has no rows`;
     if (section.rows.length > SCREEN_SECTION_MAX_ROWS)
       return `section ${section.id as string} has ${section.rows.length} rows; the budget is ${SCREEN_SECTION_MAX_ROWS}`;
+    if (section.namesHost !== undefined && !isBool(section.namesHost))
+      return "a section's namesHost must be true or false";
     if (section.when !== undefined) {
       const when = section.when as Record<string, unknown>;
       if (!isObject(when) || !isText(when.field) || typeof when.is !== "string")
@@ -312,7 +331,11 @@ function checkRow(row: unknown): string | undefined {
             Array.isArray(options) &&
             options.length > 0 &&
             options.every(
-              (option) => isObject(option) && isString(option.value) && isText(option.title),
+              (option) =>
+                isObject(option) &&
+                isString(option.value) &&
+                isText(option.title) &&
+                (option.footer === undefined || isString(option.footer)),
             ),
         ) ??
         optional("action", isText) ??

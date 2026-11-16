@@ -419,12 +419,18 @@ struct WorkspaceSettingsPagesTests {
 
     @Test func anEmptySandboxMcpListPointsToMcpServers() async throws {
         let workspace = makeTestWorkspace(id: "w1")
-        let mounted = try mount(workspace: workspace, fixture: true, sandboxMcpServers: []) { model, _, root in
-            WorkspaceSandboxMcpViewController(model: model, root: root)
+        let mounted = try mount(workspace: workspace, fixture: true, sandboxMcpServers: []) { model, connection, root in
+            connection.setSplitStreamCapabilitiesForTesting(pluginSidebar: [PluginScreenSidebarEntry(
+                id: "acme.servers", title: "MCP Servers", icon: "network", order: 50,
+                scopes: ["server", "workspace"], feature: ServerFeature.mcp.rawValue
+            )])
+            return WorkspaceSandboxMcpViewController(model: model, root: root)
         }
         defer { close(mounted) }
 
-        _ = try await waitFor(UIButton.self, "workspace.edit.sandboxMcp.openServers", in: mounted)
+        // The server's own MCP Servers page, where servers are added.
+        try await waitFor(UIButton.self, "workspace.edit.sandboxMcp.openServers", in: mounted).sendActions(for: .touchUpInside)
+        try await waitUntil { (mounted.nav.topViewController as? PluginScreenViewController)?.entry == "acme.servers" }
     }
 
     @Test func aBlockedMcpServerCannotBeSwitchedOnButAStalePickCanBeCleared() async throws {

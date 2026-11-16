@@ -69,7 +69,8 @@ const log = createLogger({ base: { component: "plugins" } });
 /**
  * Oppi's plugin host: durable extensions as plugins in upstream Chord's layout
  * (`plugin-discovery.ts`), each `server.ts` a facet that contributes one extension to `Extensions`
- * (`oppi/v1`). A store-less Chord host (`createHost`) loads them; its core facet composes the
+ * (`oppi/v1`), or only to Oppi's other registries (a built-in's sidebar entry, `Sidebar`): such a
+ * plugin gives sessions nothing and is not an extension the lists show. A store-less Chord host (`createHost`) loads them; its core facet composes the
  * contributions with the server's own extensions into the registry snapshot the Harness reads
  * through pi-durable's `registryReader`. Per-session extensions (MCP) live in an overlay the host
  * owns, outside plugins.
@@ -257,7 +258,13 @@ export interface PluginCatalog {
 /** The core facet's plugin name; a plugin of this name is refused. */
 const CORE_PLUGIN = "@oppi/core";
 
-type Entry = { readonly loaded: LoadedPlugin; readonly facet: Facet<chord.Principal> };
+/** A plugin as the host holds it; one without an extension contributes to other registries only. */
+type HostedPlugin = Omit<LoadedPlugin, "extension"> & { readonly extension?: Extension };
+
+const hasExtension = (plugin: HostedPlugin): plugin is LoadedPlugin =>
+  plugin.extension !== undefined;
+
+type Entry = { readonly loaded: HostedPlugin; readonly facet: Facet<chord.Principal> };
 type Candidate = Entry & { readonly fresh: boolean };
 type Found = DiscoveredPlugin & {
   readonly source: PluginSource;
@@ -294,9 +301,9 @@ export class PluginHost {
     );
   }
 
-  /** Installed plugins in install order: built-ins first. */
+  /** Installed plugins with an extension, in install order: built-ins first. */
   get plugins(): readonly LoadedPlugin[] {
-    return this.entries.map((entry) => entry.loaded);
+    return this.entries.map((entry) => entry.loaded).filter(hasExtension);
   }
 
   get classic(): ClassicPluginIndex {
@@ -492,7 +499,9 @@ export class PluginHost {
     if (first && (!builtIns || errors.length > 0)) throw fatal(errors);
     const builtInNames = new Set([
       ...(builtIns ?? []).map((plugin) => plugin.name),
-      ...this.plugins.filter((plugin) => plugin.source === "built-in").map((plugin) => plugin.name),
+      ...this.entries
+        .filter((entry) => entry.loaded.source === "built-in")
+        .map((entry) => entry.loaded.name),
     ]);
     let owners: Found[] | undefined;
     try {
@@ -548,7 +557,7 @@ export class PluginHost {
             dir: found.dir,
             facet: found.facet,
             required: found.source === "built-in" && this.options.required.has(found.name),
-            extension,
+            ...(extension ? { extension } : {}),
             runtimes,
             extensionIds: found.extensionIds,
           },
@@ -685,13 +694,19 @@ export class PluginHost {
     this.composition = compositionOf(this.entries);
     this.failed = this.failuresOf(errors, [...(builtIns ?? []), ...(owners ?? [])], previous);
 
-    const names = new Set(result.map((entry) => entry.loaded.extension.name));
+    const extensionName = (entry: Entry): string[] =>
+      entry.loaded.extension ? [entry.loaded.extension.name] : [];
+    const names = new Set(result.flatMap(extensionName));
     const pluginReport: PluginReport = {
-      loaded: result.filter((entry) => entry.fresh).map((entry) => entry.loaded),
-      kept: result.filter((entry) => !entry.fresh).map((entry) => entry.loaded),
-      removed: [...previous.values()]
-        .map((old) => old.loaded.extension.name)
-        .filter((name) => !names.has(name)),
+      loaded: result
+        .filter((entry) => entry.fresh)
+        .map((entry) => entry.loaded)
+        .filter(hasExtension),
+      kept: result
+        .filter((entry) => !entry.fresh)
+        .map((entry) => entry.loaded)
+        .filter(hasExtension),
+      removed: [...previous.values()].flatMap(extensionName).filter((name) => !names.has(name)),
       skipped,
       errors,
     };
@@ -757,8 +772,9 @@ export class PluginHost {
    * what pi-durable's `install` would throw on, and what it would allow but Oppi refuses: a name or
    * tool another plugin has.
    */
-  private clashOf(plugin: LoadedPlugin, taken: Taken): string | undefined {
+  private clashOf(plugin: HostedPlugin, taken: Taken): string | undefined {
     const { extension } = plugin;
+    if (!extension) return undefined;
     const holder = taken.names.get(extension.name);
     if (holder) return `Extension "${extension.name}" is taken by ${holder}`;
     const tools = new Set<string>();
@@ -804,7 +820,8 @@ type Taken = {
   tasks: Map<string, string>;
 };
 
-function take(taken: Taken, plugin: LoadedPlugin): void {
+function take(taken: Taken, plugin: HostedPlugin): void {
+  if (!hasExtension(plugin)) return;
   const holder = `plugin "${plugin.name}"`;
   taken.names.set(plugin.extension.name, holder);
   for (const tool of plugin.extension.tools ?? []) taken.tools.set(tool.name, holder);
@@ -942,14 +959,16 @@ async function evaluateFacet(file: string): Promise<Facet<chord.Principal>> {
 
 /**
  * The extension a facet contributes to `Extensions`, from running its setup against a recorder
- * (Chord runs it again when it loads the plugin; a setup only declares). Throws when the setup
- * throws or contributes no valid extension.
+ * (Chord runs it again when it loads the plugin; a setup only declares). A facet may contribute
+ * to other registries only (a sidebar entry); it then has no extension. Throws when the setup
+ * throws, contributes nothing, or contributes an invalid extension.
  */
 function contributionOf(facet: Facet<chord.Principal>): {
-  extension: Extension;
+  extension?: Extension;
   runtimes: readonly PluginRuntime[];
 } {
   let contributed: unknown;
+  let contributes = false;
   const host: FacetHost = {
     serve: () => undefined,
     references: () => ({
@@ -959,12 +978,15 @@ function contributionOf(facet: Facet<chord.Principal>): {
   };
   const self: FacetSelf = {
     contribute: (registry, value) => {
+      contributes = true;
       if (registry.name === Extensions.name) contributed = value;
     },
   };
   facet.setup(host, self);
-  if (contributed === undefined)
-    throw new Error("The facet contributes no extension to Extensions");
+  if (contributed === undefined) {
+    if (!contributes) throw new Error("The facet contributes nothing");
+    return { runtimes: [] };
+  }
   const problem = notAnExtension(contributed);
   if (problem)
     throw new Error(`Its contribution is not a durable extension (defineExtension): ${problem}`);

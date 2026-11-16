@@ -5,9 +5,9 @@ import UIKit
 /// (a compact one never splits). While Split Panes is on there, New Panes under
 /// it sets the side each kind of new pane opens on (`SettingsCatalog.newPaneSide`,
 /// read by `PanePlacement`). Split Panes, Rex, Herdr, Calendar Events, Game
-/// Pane, Plugin Sidebar and Live Activity are declared in `SettingsCatalog`
+/// Pane and Live Activity are declared in `SettingsCatalog`
 /// (`experimentSplitPanes`, `experimentRex`, `experimentHerdr`,
-/// `experimentCalendarEvents`, `experimentGodotPane`, `experimentPluginSidebar`,
+/// `experimentCalendarEvents`, `experimentGodotPane`,
 /// `experimentLiveActivity`) and read and
 /// written through the app's device `SettingsStore`, so a switch saves as it flips
 /// and the feature follows without a relaunch. Live Voice still writes its own
@@ -19,9 +19,9 @@ import UIKit
 /// access, its section offers Calendars (which ones Schedules shows); refused, it
 /// offers the system Settings page where access is given back.
 final class SettingsExperimentsViewController: ListScreenController<SettingsExperimentsViewController.Section, SettingsExperimentsViewController.Item> {
-    enum Section: Hashable, Sendable { case splitPanes, newPanes, liveVoice, rex, herdr, calendarEvents, godotPane, pluginSidebar, liveActivity }
+    enum Section: Hashable, Sendable { case splitPanes, newPanes, liveVoice, rex, herdr, calendarEvents, godotPane, liveActivity }
     enum Item: Hashable, Sendable {
-        case splitPanes, liveVoice, rex, herdr, calendarEvents, godotPane, pluginSidebar, liveActivity
+        case splitPanes, liveVoice, rex, herdr, calendarEvents, godotPane, liveActivity
         /// Where a new pane of this kind opens: Automatic, Right or Below.
         case newPaneSide(AppPreferenceStore.NewPanes.Kind)
         /// Which calendars Schedules shows; with access only.
@@ -83,7 +83,6 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
             AppPreferenceStore.Experiments.herdrEnabled,
             AppPreferenceStore.Experiments.calendarEventsEnabled,
             PlatformCapabilities.godotPane && AppPreferenceStore.Experiments.godotPaneEnabled,
-            AppPreferenceStore.Experiments.pluginSidebarEnabled,
             PlatformCapabilities.liveActivities && AppPreferenceStore.Experiments.liveActivityEnabled,
         ].count { $0 }
     }
@@ -134,11 +133,7 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
                 footer: calendarFooter,
                 items: settingRows(calendarEvents, .calendarEvents) { .failure($0) } + calendarRows
             ),
-        ] + godotPaneSection + [ListSection(
-            .pluginSidebar,
-            footer: SettingsCatalog.experimentPluginSidebar.copy.footer,
-            items: settingRows(SettingsCatalog.experimentPluginSidebar, .pluginSidebar) { .failure($0) }
-        )] + liveActivitySection
+        ] + godotPaneSection + liveActivitySection
     }
 
     /// One side per kind of new pane, while Split Panes is on. Games only where
@@ -191,7 +186,6 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
         case .herdr: settingInputs(SettingsCatalog.experimentHerdr)
         case .calendarEvents: settingInputs(SettingsCatalog.experimentCalendarEvents)
         case .godotPane: settingInputs(SettingsCatalog.experimentGodotPane)
-        case .pluginSidebar: settingInputs(SettingsCatalog.experimentPluginSidebar)
         case .liveActivity: settingInputs(SettingsCatalog.experimentLiveActivity)
         case .newPaneSide(let kind): settingInputs(SettingsCatalog.newPaneSide(kind))
         case .calendars: AnyHashable([
@@ -248,7 +242,7 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
         switch item {
-        case .splitPanes, .liveVoice, .rex, .herdr, .calendarEvents, .godotPane, .pluginSidebar, .liveActivity:
+        case .splitPanes, .liveVoice, .rex, .herdr, .calendarEvents, .godotPane, .liveActivity:
             super.dequeue(item, at: indexPath)
         case .newPaneSide: collectionView.dequeueConfiguredReusableCell(using: newPaneSideRow, for: indexPath, item: item)
         case .calendars: collectionView.dequeueConfiguredReusableCell(using: calendarsRow, for: indexPath, item: item)
@@ -279,8 +273,6 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
             settingToggleRow(cell, SettingsCatalog.experimentCalendarEvents)
         case .godotPane:
             settingToggleRow(cell, SettingsCatalog.experimentGodotPane)
-        case .pluginSidebar:
-            settingToggleRow(cell, SettingsCatalog.experimentPluginSidebar)
         case .liveActivity:
             settingToggleRow(cell, SettingsCatalog.experimentLiveActivity)
         case .liveVoice:

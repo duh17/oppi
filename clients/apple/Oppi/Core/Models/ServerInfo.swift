@@ -32,15 +32,12 @@ struct ServerInfo: Codable, Sendable, Equatable {
     var features: [String: Bool]? = nil
 
     /// `capabilities` with what this app reads beside them: the feature switches, and the
-    /// sidebar entries this app can draw (the server speaks this app's screen vocabulary, and
-    /// the entry is offered server-wide).
+    /// plugin entries this app can draw (the server speaks this app's screen vocabulary).
     var appCapabilities: Capabilities? {
         guard var capabilities else { return nil }
         capabilities.features = features
         guard capabilities.screens?.v == PluginScreens.version else { return capabilities }
-        capabilities.pluginSidebar = (sidebar ?? []).filter { entry in
-            entry.scopes.contains("server")
-        }
+        capabilities.pluginSidebar = sidebar ?? []
         return capabilities
     }
 
@@ -160,7 +157,8 @@ struct ServerInfo: Codable, Sendable, Equatable {
         /// for the whole vocabulary (`protocol/screens.json`).
         var screens: ScreensCapability? = nil
         /// The server's `sidebar` entries this app draws, set from the info that carried these
-        /// capabilities (`appCapabilities`); never on the wire.
+        /// capabilities (`appCapabilities`); never on the wire. The sidebar lists those with the
+        /// `server` scope.
         var pluginSidebar: [PluginScreenSidebarEntry]? = nil
         /// The info's `features`, set by `appCapabilities`; never on the wire. Read through
         /// `offers(_:)`.

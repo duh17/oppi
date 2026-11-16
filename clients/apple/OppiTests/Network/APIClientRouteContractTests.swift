@@ -839,30 +839,6 @@ extension APIClientEndpoint {
 
     private static let mcpRoutes: [APIClientEndpoint] = [
         APIClientEndpoint("listMcpServers") { _ = try? await $0.listMcpServers(scopeId: Placeholder.workspace) },
-        APIClientEndpoint("addMcpServer") {
-            try? await $0.addMcpServer(scopeId: Placeholder.workspace, McpAddServerRequest(name: "echo"))
-        },
-        APIClientEndpoint("patchMcpServer") {
-            try? await $0.patchMcpServer(
-                scopeId: Placeholder.workspace, name: "echo", patch: McpPatchServerRequest(enabled: true)
-            )
-        },
-        APIClientEndpoint("removeMcpServer") {
-            try? await $0.removeMcpServer(scopeId: Placeholder.workspace, name: "echo")
-        },
-        APIClientEndpoint("startMcpAuthFlow") {
-            _ = try? await $0.startMcpAuthFlow(scopeId: Placeholder.workspace, name: "echo")
-        },
-        APIClientEndpoint("logoutMcpServer") {
-            try? await $0.logoutMcpServer(scopeId: Placeholder.workspace, name: "echo")
-        },
-        APIClientEndpoint("getMcpAuthFlow") { _ = try? await $0.getMcpAuthFlow(flowId: Placeholder.flow) },
-        APIClientEndpoint("submitMcpCallback") {
-            _ = try? await $0.submitMcpCallback(flowId: Placeholder.flow, input: "code")
-        },
-        APIClientEndpoint("cancelMcpAuthFlow") {
-            _ = try? await $0.cancelMcpAuthFlow(flowId: Placeholder.flow)
-        },
     ]
 
     // MARK: Diagnostics & dictation

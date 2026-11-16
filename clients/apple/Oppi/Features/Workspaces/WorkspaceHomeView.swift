@@ -231,7 +231,6 @@ enum WorkspaceUtilityNavTarget: Hashable {
     /// Placeholder roots; dedicated navigation destinations land with the catalog views.
     case skills
     case extensions
-    case mcpServers
     /// A server plugin's sidebar entry, by its id (`PluginScreenViewController`).
     case pluginScreen(String)
     case sshTerminal
@@ -248,7 +247,6 @@ enum WorkspaceUtilityNavTarget: Hashable {
         case .schedules: .schedules
         case .skills: .skills
         case .extensions: .extensions
-        case .mcpServers: .mcp
         case .sshTerminal: .terminal
         case .pluginScreen, .manageServers, .serverMetrics, .appSettings: nil
         }

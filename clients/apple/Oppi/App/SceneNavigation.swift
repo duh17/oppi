@@ -1194,7 +1194,6 @@ final class SceneNavigation {
         case .agents: "agents"
         case .skills: "skills"
         case .extensions: "extensions"
-        case .mcpServers: "mcp_servers"
         case .pluginScreen: "plugin_screen"
         case .sshTerminal: "ssh_terminal"
         case .manageServers: "manage_servers"

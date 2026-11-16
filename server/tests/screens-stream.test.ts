@@ -28,19 +28,22 @@ function write(path: string, text: string): void {
   writeFileSync(path, text);
 }
 
-/** A plugin whose screen lists the words `add` gave it, and can break its own page on purpose. */
+/**
+ * A plugin whose screen lists the words `add` gave it, and can break its own page on purpose.
+ * Without `feature` it is a sidebar entry only: no extension, and a workspace scope too.
+ */
 function screenPlugin(id: string, order: number, feature?: string): string {
   return `
 import { defineExtension, defineFacet, defineScreen, Extensions, Sidebar } from "oppi/v1";
 const Screen = defineScreen(${JSON.stringify(id)});
 export default defineFacet((host, self) => {
-  self.contribute(Extensions, defineExtension({ name: ${JSON.stringify(id)} }));
+  ${feature ? `self.contribute(Extensions, defineExtension({ name: ${JSON.stringify(id)} }));` : ""}
   self.contribute(Sidebar, { id: ${JSON.stringify(id)}, title: "Things", icon: "list.bullet",
-    order: ${order}, scopes: ["server"], screen: Screen${feature ? `, feature: ${JSON.stringify(feature)}` : ""} });
-  host.serve(Screen.contract, ({ page }, self) => {
+    order: ${order}, scopes: ${feature ? '["server"]' : '["server", "workspace"]'}, screen: Screen${feature ? `, feature: ${JSON.stringify(feature)}` : ""} });
+  host.serve(Screen.contract, ({ scope, page }, self) => {
     const doc = self.state(Screen.document);
     const words = [];
-    const page_ = (extra) => ({ title: page, sections: [{ id: "main",
+    const page_ = (extra) => ({ title: page + " in " + scope, sections: [{ id: "main",
       rows: words.map((word, i) => ({ kind: "text", id: "w" + i, text: word })) }], ...extra });
     const put = (value, ctx) => doc.change((d) => {
       for (const key of Object.keys(d)) delete d[key];
@@ -49,6 +52,7 @@ export default defineFacet((host, self) => {
     self.onLive((ctx) => put(page_({}), ctx));
     return { page: doc, act: async (args, ctx) => {
       if (args.action === "add") { words.push(String(args.values?.[0]?.value)); await put(page_({}), ctx); return { ok: true }; }
+      if (args.action === "slow") { await new Promise((resolve) => setTimeout(resolve, 100)); words.push("slow"); await put(page_({}), ctx); return { ok: true }; }
       if (args.action === "huge") { await put(page_({ sections: [{ id: "main", rows: [{ kind: "text", id: "x", text: "x".repeat(${SCREEN_PAGE_MAX_BYTES}) }] }] }), ctx); return { ok: true }; }
       if (args.action === "eighth") { await put(page_({ sections: [{ id: "main", rows: [{ kind: "chart", id: "c" }] }] }), ctx); return { ok: true }; }
       if (args.action === "gone") { await put({ gone: true }, ctx); return { ok: true }; }
@@ -107,10 +111,11 @@ async function connect() {
   const host = await loadedHost();
   /** The server's switches the stream reads; a test turns one off and calls `featuresChanged`. */
   const features = { ...SERVER_FEATURE_PRESETS.all };
-  const mux = new ScreensStreamMux(
-    async () => host.screens(),
-    () => features,
-  );
+  const mux = new ScreensStreamMux({
+    screens: async () => host.screens(),
+    features: () => features,
+    workspaceExists: (id) => id === "ws1",
+  });
   const ws = new FakeSocket();
   sockets.push(ws);
   mux.handleWebSocket(ws as never);
@@ -202,9 +207,24 @@ describe("plugin screens", () => {
     const host = await loadedHost();
     const loaded = await info(async () => host.screens());
     expect(loaded.sidebar).toEqual([
-      { id: "test.first", title: "Things", icon: "list.bullet", order: 10, scopes: ["server"] },
-      { id: "test.things", title: "Things", icon: "list.bullet", order: 20, scopes: ["server"] },
+      {
+        id: "test.first",
+        title: "Things",
+        icon: "list.bullet",
+        order: 10,
+        scopes: ["server", "workspace"],
+      },
+      {
+        id: "test.things",
+        title: "Things",
+        icon: "list.bullet",
+        order: 20,
+        scopes: ["server"],
+        feature: "mcp",
+      },
     ]);
+    // A plugin that adds only a sidebar entry is no extension: sessions and the lists skip it.
+    expect(host.plugins.map((plugin) => plugin.name)).toEqual(["things"]);
     expect(loaded.features).toEqual(SERVER_FEATURE_PRESETS.all);
 
     // An entry whose feature is off is not listed; the switches say which are off.
@@ -241,10 +261,11 @@ describe("plugin screens", () => {
   });
 
   it("counts a watch from its message, so the limit holds while the plugins load", async () => {
-    const mux = new ScreensStreamMux(
-      () => new Promise(() => undefined),
-      () => SERVER_FEATURE_PRESETS.all,
-    );
+    const mux = new ScreensStreamMux({
+      screens: () => new Promise(() => undefined),
+      features: () => SERVER_FEATURE_PRESETS.all,
+      workspaceExists: () => true,
+    });
     const ws = new FakeSocket();
     mux.handleWebSocket(ws as never);
     for (let n = 1; n <= 17; n++)
@@ -264,7 +285,7 @@ describe("plugin screens", () => {
       state: { kind: "loading" },
       sections: [],
     });
-    await c.settled("w1", { title: "list", sections: [{ id: "main", rows: [] }] });
+    await c.settled("w1", { title: "list in server", sections: [{ id: "main", rows: [] }] });
     expect(c.ws.sent.filter((m) => m.type === "value")).toHaveLength(1);
 
     const before = c.ws.sent.length;
@@ -281,7 +302,7 @@ describe("plugin screens", () => {
       ["p", ["sections", 0, "rows"], 0, 0, [{ kind: "text", id: "w0", text: "hello" }]],
     ]);
     await c.settled("w1", {
-      title: "list",
+      title: "list in server",
       sections: [{ id: "main", rows: [{ kind: "text", id: "w0", text: "hello" }] }],
     });
   });
@@ -310,7 +331,7 @@ describe("plugin screens", () => {
   it("refuses a page over budget or outside the vocabulary, and diffs the next good one against the last sent", async () => {
     const c = await connect();
     c.send(watch());
-    await c.settled("w1", { title: "list", sections: [{ id: "main", rows: [] }] });
+    await c.settled("w1", { title: "list in server", sections: [{ id: "main", rows: [] }] });
     let seen = c.ws.sent.length;
     c.send({ type: "act", watch: "w1", call: "c1", action: "huge" });
     expect((await c.frame("failed", seen)).message).toMatch(/budget is 65536/);
@@ -321,7 +342,10 @@ describe("plugin screens", () => {
     );
 
     // The app still holds the last good page; the next good one is diffed against it.
-    expect(c.replica("w1")).toEqual({ title: "list", sections: [{ id: "main", rows: [] }] });
+    expect(c.replica("w1")).toEqual({
+      title: "list in server",
+      sections: [{ id: "main", rows: [] }],
+    });
     c.send({
       type: "act",
       watch: "w1",
@@ -330,7 +354,7 @@ describe("plugin screens", () => {
       values: [{ field: "w", value: "ok" }],
     });
     await c.settled("w1", {
-      title: "list",
+      title: "list in server",
       sections: [{ id: "main", rows: [{ kind: "text", id: "w0", text: "ok" }] }],
     });
   });
@@ -356,5 +380,40 @@ describe("plugin screens", () => {
       c: { type: "ended", watch: "c", reason: "unsupported" },
       d: { type: "ended", watch: "d", reason: "unsupported" },
     });
+  });
+
+  it("serves a workspace scope to an entry that has one, for a workspace that exists", async () => {
+    const c = await connect();
+    c.send(watch({ entry: "test.first", scope: "workspace:ws1" }));
+    await c.settled("w1", { title: "list in workspace:ws1", sections: [{ id: "main", rows: [] }] });
+    c.send(watch({ watch: "w2", entry: "test.first", scope: "workspace:gone" }));
+    c.send(watch({ watch: "w3", entry: "test.first", scope: "workspace:" }));
+    await vi.waitFor(() =>
+      expect(c.ws.sent.filter((m) => m.type === "ended")).toEqual([
+        { type: "ended", watch: "w2", reason: "gone" },
+        { type: "ended", watch: "w3", reason: "unsupported" },
+      ]),
+    );
+  });
+
+  it("runs an act sent while its page opens, and finishes one whose page is unwatched meanwhile", async () => {
+    const c = await connect();
+    // The act follows the watch at once, before the plugins answered.
+    c.send(watch());
+    c.send({
+      type: "act",
+      watch: "w1",
+      call: "c1",
+      action: "add",
+      values: [{ field: "w", value: "early" }],
+    });
+    expect(await c.frame("result")).toEqual({ type: "result", call: "c1", ok: true });
+
+    // A change in flight is the person's: leaving the page does not cancel it.
+    const seen = c.ws.sent.length;
+    c.send({ type: "act", watch: "w1", call: "c2", action: "slow" });
+    c.send({ type: "unwatch", watch: "w1" });
+    // It wrote its page after the unwatch: an aborted act would fail here.
+    expect(await c.frame("result", seen)).toEqual({ type: "result", call: "c2", ok: true });
   });
 });

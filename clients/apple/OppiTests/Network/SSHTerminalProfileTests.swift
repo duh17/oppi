@@ -240,15 +240,6 @@ struct SSHTerminalProfileTests {
         #expect(!decoded.opensRexSessions)
         #expect(decoded.multiplexerChoice == .herdr)
     }
-
-    /// Terminal is a regular destination: the sidebar offers it below MCP
-    /// Servers, with no saved host.
-    @Test @MainActor func theSidebarOffersTerminalBelowMCPServers() {
-        let items = WorkspaceSidebarPrimaryUtilities.items
-        let mcp = items.firstIndex { $0.target == .mcpServers }
-        #expect(mcp != nil)
-        if let mcp { #expect(items[mcp + 1].target == .sshTerminal) }
-    }
 }
 
 private func boundSecret(id: UUID, host: String, username: String, password: String) throws -> Data {

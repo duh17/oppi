@@ -37,10 +37,16 @@ struct ServerFeatureTests {
         #expect(ServerFeature.allCases.filter(one.offers) == [.mcp])
     }
 
-    @Test("The sidebar lists only the pages the server offers")
+    @Test("The sidebar lists only the pages the server offers, its plugin entries among them by order")
     func sidebarFollowsTheSwitches() {
-        let all = WorkspaceSidebarPrimaryUtilities.items(plugins: []) { _ in true }
-        #expect(all.map(\.target) == [.agents, .schedules, .skills, .extensions, .mcpServers, .sshTerminal])
+        let plugins = [
+            PluginScreenSidebarEntry(id: "acme.things", title: "Things", icon: "network", order: 50, scopes: ["server", "workspace"]),
+            // A workspace-only entry opens from Workspace Settings, never the sidebar.
+            PluginScreenSidebarEntry(id: "acme.local", title: "Local", icon: "network", order: 15, scopes: ["workspace"]),
+        ]
+        let all = WorkspaceSidebarPrimaryUtilities.items(plugins: plugins) { _ in true }
+        #expect(all.map(\.target) == [.agents, .schedules, .skills, .extensions, .pluginScreen("acme.things"), .sshTerminal])
+        #expect(all.first { $0.target == .pluginScreen("acme.things") }?.title == "Things")
         #expect(WorkspaceSidebarPrimaryUtilities.items(plugins: []) { _ in false }.isEmpty)
         let terminalOnly = WorkspaceSidebarPrimaryUtilities.items(plugins: []) { $0 == .terminal }
         #expect(terminalOnly.map(\.target) == [.sshTerminal])

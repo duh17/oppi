@@ -71,7 +71,8 @@ final class WorkspaceSandboxMcpViewController: ListScreenController<
         items += missing.map { .missing($0) }
         // Nothing to pick from once the read settled: the way to add one sits under
         // the empty row. While it loads, the row beside it is the base's.
-        if servers.isEmpty, missing.isEmpty, !isLoading, model.sandboxMcpLoadError == nil, model.sandboxMcpError == nil {
+        if servers.isEmpty, missing.isEmpty, !isLoading, model.sandboxMcpLoadError == nil, model.sandboxMcpError == nil,
+           globalServersEntry != nil {
             items.append(.openServers)
         }
         let serverName = model.serverName(in: root.coordinator.serverStore) ?? String(localized: "your server")
@@ -203,8 +204,13 @@ final class WorkspaceSandboxMcpViewController: ListScreenController<
 
     // MARK: - Actions
 
-    /// The server's own MCP Servers list, where servers are added.
+    /// The server's own MCP Servers page, where servers are added.
+    private var globalServersEntry: PluginScreenSidebarEntry? {
+        model.pluginEntry(for: .mcp, scope: "server")
+    }
+
     private func openServers() {
-        Router.push(McpServersViewController(scopeId: McpScopeSnapshot.globalId, root: root), from: self)
+        guard let entry = globalServersEntry else { return }
+        Router.push(PluginScreenViewController(entry: entry.id, page: "list", title: entry.title, root: root), from: self)
     }
 }

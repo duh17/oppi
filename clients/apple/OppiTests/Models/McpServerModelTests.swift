@@ -23,7 +23,6 @@ struct McpServerModelTests {
         #expect(global.servers[0].config.env?["KEY"] == "[redacted]")
         #expect(global.servers[0].config.env?["REF"] == "${TOKEN}")
         #expect(global.servers[1].config.oauth?.clientSecret == "[redacted]")
-        #expect(global.servers[1].stateLabel == "Needs sign-in")
         #expect(global.projectTrust == nil && global.inherited == nil)
         #expect(catalogs.dropFirst().map(\.scope.projectTrust) == [.ask, .trusted, .distrusted, nil])
         let sandbox = catalogs[4].scope
@@ -55,27 +54,6 @@ struct McpServerModelTests {
         #expect(decoded.catalogs == data.catalogs)
         #expect(decoded.flows == data.flows)
     }
-    @Test func addAndPatchEncodeOnlyRequestedFields() throws {
-        let add = McpAddServerRequest(name: "echo", command: "node", args: ["echo.cjs"], env: ["KEY": "${TOOLS_KEY}"])
-        let object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(add)) as? [String: Any])
-        #expect(object["url"] == nil)
-        #expect(object["oauth"] == nil)
-        #expect(object["scopeId"] == nil)
-        #expect(object["env"] as? [String: String] == ["KEY": "${TOOLS_KEY}"])
-        let patch = McpPatchServerRequest(enabled: true, exposure: .codemode)
-        let patchObject = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(patch)) as? [String: Any])
-        #expect(Set(patchObject.keys) == ["enabled", "exposure"])
-        #expect(patchObject["enabled"] as? Bool == true)
-        #expect(patchObject["exposure"] as? String == "codemode")
-    }
-    @Test(arguments: McpExposure.allCases)
-    func addExposureSelectionOmitsOnlyTheDefault(exposure: McpExposure) throws {
-        let add = McpAddServerRequest(name: "echo", command: "node", exposure: exposure.configurationValue)
-        let object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(add)) as? [String: Any])
-        #expect(object["exposure"] as? String == (exposure == .codemode ? nil : exposure.rawValue))
-        #expect(!exposure.explanation.isEmpty)
-    }
-
     @Test func malformedRequiredFieldsFailDecode() {
         #expect(throws: DecodingError.self) {
             try JSONDecoder().decode(McpServersResponse.self, from: Data("{\"scope\":{\"id\":\"global\"}}".utf8))

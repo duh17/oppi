@@ -1,10 +1,8 @@
 import { sleep } from "@earendil-works/chord";
 import type { Context } from "@earendil-works/chord/context";
 import {
-  defineExtension,
   defineFacet,
   defineScreen,
-  Extensions,
   oppiHost,
   Sidebar,
   SCREEN_REFRESH_ACTION,
@@ -16,20 +14,22 @@ import type { McpAuthFlowSnapshot, McpExposure } from "../../src/types/mcp.js";
 import {
   addPage,
   addRequest,
-  GLOBAL_SCOPE,
   listPage,
   MCP_SCREEN_ID,
   MCP_SIDEBAR_ENTRY,
+  mcpScopeOf,
   serverPage,
   signInPage,
   type McpProbe,
 } from "./pages.js";
 
 /**
- * MCP Servers as a plugin sidebar entry: the server-wide scope's list, each server's detail, the
- * Add form, and the host's OAuth sign-in, drawn by the app's generic list screen. Each page is a
- * Chord object whose document is a projection of `oppiHost().mcp()`: probed when the page is
- * opened and after each change, and followed once a second while a sign-in is live.
+ * MCP Servers as a plugin sidebar entry: a scope's list (the global servers in the sidebar, a
+ * host workspace's own from its Workspace Settings), each server's detail, the Add form, and the
+ * host's OAuth sign-in, drawn by the app's generic list screen. Each page is a Chord object whose
+ * document is a projection of `oppiHost().mcp()`: probed when the page is opened and after each
+ * change, and followed once a second while a sign-in is live. It contributes no extension:
+ * sessions get their MCP tools from the server's MCP management, not from this plugin.
  */
 const Screen = defineScreen(MCP_SCREEN_ID);
 
@@ -54,12 +54,11 @@ function mcp(): OppiMcpHost {
 }
 
 export default defineFacet((host, self) => {
-  // The plugin host loads a facet only with an extension; this one gives sessions nothing.
-  self.contribute(Extensions, defineExtension({ name: "oppi.mcp-screen", runtimes: ["host"] }));
-  self.contribute(Sidebar, { ...MCP_SIDEBAR_ENTRY, feature: "mcp", screen: Screen });
+  self.contribute(Sidebar, { ...MCP_SIDEBAR_ENTRY, screen: Screen });
 
-  host.serve(Screen.contract, ({ page }, self) => {
+  host.serve(Screen.contract, ({ scope: screenScope, page }, self) => {
     const doc = self.state(Screen.document);
+    const scope = mcpScopeOf(screenScope);
     let probe: McpProbe = {};
     let flowId: string | undefined;
 
@@ -68,7 +67,7 @@ export default defineFacet((host, self) => {
         page === "list"
           ? listPage(probe)
           : page === "add"
-            ? addPage()
+            ? addPage(probe)
             : page === "signin"
               ? signInPage(flowId ? readFlow(flowId) : mcp().auth.active())
               : page.startsWith("server/")
@@ -92,19 +91,23 @@ export default defineFacet((host, self) => {
     /** `cached`: the last known status at once (a page opening), not Pi's live probe. */
     const reprobe = async (context: Context, cached = false): Promise<void> => {
       seenChanges = changes;
-      if (page === "signin") flowId ??= mcp().auth.active()?.flowId;
-      if (page === "add" || page === "signin") return render(context);
+      if (page === "signin") {
+        flowId ??= mcp().auth.active()?.flowId;
+        return render(context);
+      }
       try {
-        probe = { response: await mcp().list(GLOBAL_SCOPE, { cached }) };
+        probe = { response: await mcp().list(scope, { cached }), checking: cached };
       } catch (error) {
-        probe = { ...probe, error: failure(error).message };
+        probe = { ...probe, error: failure(error).message, checking: false };
       }
       await render(context);
     };
 
     self.onLive(async (context) => {
       // The rows show at once; the live probe the cached read started fills in their status.
+      // The Add form needs only the scope's name and trust, which the cached read has.
       await reprobe(context, true);
+      if (page === "add") return;
       await reprobe(context);
       // A sign-in changes on the host without a tap here: follow it while it is live, and probe
       // again once it ends, since it changed the server's state. A change another page made
@@ -112,7 +115,6 @@ export default defineFacet((host, self) => {
       let flowSeen = false;
       while (!context.abortSignal?.aborted) {
         await sleep(POLL_MS, context);
-        if (page === "add") continue;
         const active = oppiHost().mcp()?.auth.active();
         if (active || flowSeen || seenChanges !== changes) {
           flowSeen = active !== undefined;
@@ -131,19 +133,19 @@ export default defineFacet((host, self) => {
             await reprobe(context);
             return { ok: true };
           case "enabled":
-            await mcp().patch(GLOBAL_SCOPE, server, { enabled: value === true });
+            await mcp().patch(scope, server, { enabled: value === true });
             break;
           case "exposure":
-            await mcp().patch(GLOBAL_SCOPE, server, { exposure: value as McpExposure });
+            await mcp().patch(scope, server, { exposure: value as McpExposure });
             break;
           case "remove":
-            await mcp().remove(GLOBAL_SCOPE, server);
+            await mcp().remove(scope, server);
             return { ok: true, nav: { kind: "pop" } };
           case "logout":
-            await mcp().logout(GLOBAL_SCOPE, server);
+            await mcp().logout(scope, server);
             break;
           case "login":
-            await mcp().login(GLOBAL_SCOPE, server, "phone_browser");
+            await mcp().login(scope, server, "phone_browser");
             await reprobe(context);
             return { ok: true, nav: { kind: "present", page: "signin" } };
           case "signin.continue":
@@ -162,7 +164,7 @@ export default defineFacet((host, self) => {
             break;
           }
           case "add":
-            await mcp().add(GLOBAL_SCOPE, addRequest(args.values));
+            await mcp().add(scope, addRequest(args.values));
             return { ok: true, nav: { kind: "pop" } };
           default:
             return { ok: false, message: `Unknown action ${args.action}` };

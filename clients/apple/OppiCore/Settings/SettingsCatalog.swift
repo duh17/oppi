@@ -358,19 +358,6 @@ enum SettingsCatalog {
         )
     )
 
-    /// Plugin Sidebar: sidebar entries the server's built-in plugins add, drawn by the app's
-    /// generic list screen, each beside the native entry it may replace.
-    static let experimentPluginSidebar = SettingDeclaration<Bool>(
-        id: "settings.experiments.pluginSidebar",
-        key: AppPreferenceStore.Experiments.pluginSidebarKey,
-        storage: .device(perServer: false),
-        default: AppPreferenceStore.Experiments.enabledDefault,
-        copy: SettingCopy(
-            title: String(localized: "Plugin Sidebar"),
-            footer: String(localized: "Adds the server's plugin pages to the sidebar, marked (plugin), beside the built-in pages they mirror. A page shows only while its feature is on in the server's Server Settings › Features.")
-        )
-    )
-
     /// Live Activity: the Lock Screen card. While off, no server's card shows, Server
     /// Settings hides each server's switch, and every server is told this phone shows
     /// none; turning it on brings each server's saved choice back. Effects live in
@@ -486,7 +473,6 @@ enum SettingsCatalog {
         experimentHerdr.descriptor,
         experimentCalendarEvents.descriptor,
         experimentSplitPanes.descriptor,
-        experimentPluginSidebar.descriptor,
         experimentLiveActivity.descriptor,
         calendarEventsHiddenCalendars.descriptor,
         serverMetricsEnabled.descriptor,

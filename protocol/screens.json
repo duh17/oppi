@@ -24,8 +24,10 @@
         "icon": "network",
         "order": 50,
         "scopes": [
-          "server"
-        ]
+          "server",
+          "workspace"
+        ],
+        "feature": "mcp"
       }
     ]
   },
@@ -109,6 +111,74 @@
                 "symbol": "circle"
               },
               "push": "server/disabled"
+            }
+          ]
+        },
+        {
+          "id": "note",
+          "rows": [
+            {
+              "kind": "text",
+              "id": "note",
+              "style": "footnote",
+              "tone": "secondary",
+              "text": "Refresh probes Pi's configured servers, not running sessions. Configuration changes apply to new sessions or /reload."
+            }
+          ]
+        }
+      ]
+    },
+    "workspaceList": {
+      "title": "MCP Servers",
+      "bar": [
+        {
+          "id": "add",
+          "title": "Add MCP Server",
+          "symbol": "plus",
+          "present": "add"
+        }
+      ],
+      "sections": [
+        {
+          "id": "servers",
+          "header": "This Workspace",
+          "footer": "Servers from this workspace’s .pi/mcp.json. A server here replaces a global server with the same name.",
+          "rows": [
+            {
+              "kind": "text",
+              "id": "error.0",
+              "text": "Invalid MCP entry",
+              "tone": "danger"
+            },
+            {
+              "kind": "item",
+              "id": "server.project",
+              "title": "project",
+              "subtitle": "stdio · 0 tools · Direct",
+              "status": {
+                "text": "Needs remembered trust",
+                "tone": "warning",
+                "symbol": "circle"
+              },
+              "push": "server/project"
+            }
+          ]
+        },
+        {
+          "id": "inherited",
+          "header": "From Global",
+          "footer": "Global servers that also load in this workspace. Change them from MCP Servers in the sidebar.",
+          "rows": [
+            {
+              "kind": "item",
+              "id": "inherited.echo",
+              "title": "echo",
+              "subtitle": "stdio · 1 tools · Code Mode",
+              "status": {
+                "text": "Connected",
+                "tone": "success",
+                "symbol": "checkmark.circle"
+              }
             }
           ]
         },
@@ -230,6 +300,7 @@
         {
           "id": "info",
           "header": "Global",
+          "namesHost": true,
           "rows": [
             {
               "kind": "value",
@@ -253,7 +324,7 @@
         },
         {
           "id": "config",
-          "footer": "Scripts find and call tools; the model doesn't see them. Saved in this scope's mcp.json. New sessions or /reload pick up configuration changes.",
+          "footer": "Saved in this scope's mcp.json. New sessions or /reload pick up configuration changes.",
           "rows": [
             {
               "kind": "toggle",
@@ -271,19 +342,23 @@
               "options": [
                 {
                   "value": "codemode",
-                  "title": "Code Mode"
+                  "title": "Code Mode",
+                  "footer": "Scripts find and call tools; the model doesn't see them."
                 },
                 {
                   "value": "deferred",
-                  "title": "Deferred"
+                  "title": "Deferred",
+                  "footer": "Tool search loads matching tools into the model context."
                 },
                 {
                   "value": "direct",
-                  "title": "Direct"
+                  "title": "Direct",
+                  "footer": "Tools are always declared to the model."
                 },
                 {
                   "value": "hidden",
-                  "title": "Hidden"
+                  "title": "Hidden",
+                  "footer": "Tools cannot be called."
                 }
               ],
               "action": "exposure",
@@ -388,6 +463,7 @@
         {
           "id": "info",
           "header": "Global",
+          "namesHost": true,
           "rows": [
             {
               "kind": "value",
@@ -418,7 +494,7 @@
         },
         {
           "id": "config",
-          "footer": "Scripts find and call tools; the model doesn't see them. Saved in this scope's mcp.json. New sessions or /reload pick up configuration changes.",
+          "footer": "Saved in this scope's mcp.json. New sessions or /reload pick up configuration changes.",
           "rows": [
             {
               "kind": "toggle",
@@ -436,19 +512,23 @@
               "options": [
                 {
                   "value": "codemode",
-                  "title": "Code Mode"
+                  "title": "Code Mode",
+                  "footer": "Scripts find and call tools; the model doesn't see them."
                 },
                 {
                   "value": "deferred",
-                  "title": "Deferred"
+                  "title": "Deferred",
+                  "footer": "Tool search loads matching tools into the model context."
                 },
                 {
                   "value": "direct",
-                  "title": "Direct"
+                  "title": "Direct",
+                  "footer": "Tools are always declared to the model."
                 },
                 {
                   "value": "hidden",
-                  "title": "Hidden"
+                  "title": "Hidden",
+                  "footer": "Tools cannot be called."
                 }
               ],
               "action": "exposure",
@@ -513,24 +593,29 @@
       "title": "Add MCP Server",
       "submit": {
         "title": "Add",
-        "action": "add"
+        "action": "add",
+        "requires": [
+          "name",
+          "url",
+          "command"
+        ]
       },
       "sections": [
         {
           "id": "configuration",
           "header": "Configuration",
-          "footer": "Code Mode: Scripts find and call tools; the model doesn't see them.\nDeferred: Tool search loads matching tools into the model context.\nDirect: Tools are always declared to the model.\nHidden: Tools cannot be called.",
+          "namesHost": true,
           "rows": [
+            {
+              "kind": "field",
+              "id": "name",
+              "placeholder": "Server name"
+            },
             {
               "kind": "value",
               "id": "scope",
               "label": "Scope",
               "value": "Global"
-            },
-            {
-              "kind": "field",
-              "id": "name",
-              "placeholder": "Server name"
             },
             {
               "kind": "choice",
@@ -556,19 +641,182 @@
               "options": [
                 {
                   "value": "codemode",
-                  "title": "Code Mode"
+                  "title": "Code Mode",
+                  "footer": "Scripts find and call tools; the model doesn't see them."
                 },
                 {
                   "value": "deferred",
-                  "title": "Deferred"
+                  "title": "Deferred",
+                  "footer": "Tool search loads matching tools into the model context."
                 },
                 {
                   "value": "direct",
-                  "title": "Direct"
+                  "title": "Direct",
+                  "footer": "Tools are always declared to the model."
                 },
                 {
                   "value": "hidden",
-                  "title": "Hidden"
+                  "title": "Hidden",
+                  "footer": "Tools cannot be called."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "http",
+          "header": "Streamable HTTP",
+          "footer": "Use ${NAME} references instead of literal secrets. For example: API_KEY=${TOOLS_KEY}, or Authorization=Bearer ${TOKEN}. Values are resolved on the host; literal values are redacted when read back.",
+          "when": {
+            "field": "transport",
+            "is": "http"
+          },
+          "rows": [
+            {
+              "kind": "field",
+              "id": "url",
+              "placeholder": "https://example.com/mcp",
+              "input": "url"
+            },
+            {
+              "kind": "field",
+              "id": "headers",
+              "placeholder": "Headers: one KEY=VALUE per line",
+              "input": "multiline"
+            }
+          ]
+        },
+        {
+          "id": "oauth",
+          "header": "Optional OAuth Client",
+          "when": {
+            "field": "transport",
+            "is": "http"
+          },
+          "rows": [
+            {
+              "kind": "field",
+              "id": "clientId",
+              "placeholder": "Client ID"
+            },
+            {
+              "kind": "field",
+              "id": "clientSecret",
+              "placeholder": "Client secret reference: ${NAME}"
+            },
+            {
+              "kind": "field",
+              "id": "callbackPort",
+              "placeholder": "Callback port (automatic if empty)",
+              "input": "number"
+            }
+          ]
+        },
+        {
+          "id": "stdio",
+          "header": "Standard Input / Output",
+          "footer": "Use ${NAME} references instead of literal secrets. For example: API_KEY=${TOOLS_KEY}, or Authorization=Bearer ${TOKEN}. Values are resolved on the host; literal values are redacted when read back.\nAdding a command authorizes Pi to run it on the host when the scope is trusted and the server is enabled.",
+          "when": {
+            "field": "transport",
+            "is": "stdio"
+          },
+          "rows": [
+            {
+              "kind": "field",
+              "id": "command",
+              "placeholder": "Executable (not a shell command)"
+            },
+            {
+              "kind": "field",
+              "id": "arguments",
+              "placeholder": "Arguments: one per line (no secrets)",
+              "input": "multiline"
+            },
+            {
+              "kind": "field",
+              "id": "cwd",
+              "placeholder": "Working directory (optional)"
+            },
+            {
+              "kind": "field",
+              "id": "environment",
+              "placeholder": "Environment: one KEY=VALUE per line",
+              "input": "multiline"
+            }
+          ]
+        }
+      ]
+    },
+    "workspaceAdd": {
+      "title": "Add MCP Server",
+      "submit": {
+        "title": "Add",
+        "action": "add",
+        "requires": [
+          "name",
+          "url",
+          "command"
+        ]
+      },
+      "sections": [
+        {
+          "id": "configuration",
+          "header": "Configuration",
+          "namesHost": true,
+          "footer": "Saved to this workspace’s .pi/mcp.json. Project trust: asks at session start.",
+          "rows": [
+            {
+              "kind": "field",
+              "id": "name",
+              "placeholder": "Server name"
+            },
+            {
+              "kind": "value",
+              "id": "scope",
+              "label": "Scope",
+              "value": "Project One"
+            },
+            {
+              "kind": "choice",
+              "id": "transport",
+              "label": "Transport",
+              "value": "http",
+              "options": [
+                {
+                  "value": "http",
+                  "title": "HTTP"
+                },
+                {
+                  "value": "stdio",
+                  "title": "stdio"
+                }
+              ]
+            },
+            {
+              "kind": "choice",
+              "id": "exposure",
+              "label": "Exposure",
+              "value": "codemode",
+              "options": [
+                {
+                  "value": "codemode",
+                  "title": "Code Mode",
+                  "footer": "Scripts find and call tools; the model doesn't see them."
+                },
+                {
+                  "value": "deferred",
+                  "title": "Deferred",
+                  "footer": "Tool search loads matching tools into the model context."
+                },
+                {
+                  "value": "direct",
+                  "title": "Direct",
+                  "footer": "Tools are always declared to the model."
+                },
+                {
+                  "value": "hidden",
+                  "title": "Hidden",
+                  "footer": "Tools cannot be called."
                 }
               ]
             }

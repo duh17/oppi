@@ -9,11 +9,19 @@ final class ServerFeaturesE2ETests: E2ETestCase {
     override var e2eLaunchesSessionsInboxOnly: Bool { true }
     override var e2eAutoCreatesSessionOnLaunch: Bool { false }
 
-    /// The sidebar rows a server switch hides, by accessibility identifier.
-    private static let switchedRows = [
-        "workspace.agents.open", "workspace.schedules.open", "workspace.skills.open",
-        "workspace.extensions.open", "workspace.mcpServers.open", "workspace.terminal.open",
-    ]
+    /// The sidebar rows a server switch hides, by accessibility identifier. MCP Servers is the
+    /// server's plugin entry, whose row the sidebar names by the entry's id, read from
+    /// `/server/info` while every switch is on.
+    private var switchedRows: [String] = []
+
+    private func readSwitchedRows() throws {
+        let sidebar = try e2eLabAPIJSON(method: "GET", path: "/server/info")["sidebar"] as? [[String: Any]]
+        let mcp = try XCTUnwrap(sidebar?.first { $0["feature"] as? String == "mcp" }?["id"] as? String, "No MCP Servers entry")
+        switchedRows = [
+            "workspace.agents.open", "workspace.schedules.open", "workspace.skills.open",
+            "workspace.extensions.open", "workspace.plugin.\(mcp).open", "workspace.terminal.open",
+        ]
+    }
 
     private var isPad: Bool { min(app.frame.width, app.frame.height) >= 700 }
 
@@ -29,6 +37,7 @@ final class ServerFeaturesE2ETests: E2ETestCase {
     ]
 
     func testPlainPiLeavesChatSessionsAndFilesAndOneSwitchComesBack() throws {
+        try readSwitchedRows()
         openFeatures()
         try saveLabScreenshot(name: "server-features-\(device)-all-on")
         // The presets sit at the top, above every switch.
@@ -103,7 +112,7 @@ final class ServerFeaturesE2ETests: E2ETestCase {
     }
 
     private func expectSidebar(showing shown: Set<String>) {
-        for row in Self.switchedRows {
+        for row in switchedRows {
             let element = app.buttons[row]
             if shown.contains(row) {
                 XCTAssertTrue(element.waitForExistence(timeout: 15), "\(row) is missing")

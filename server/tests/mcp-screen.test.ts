@@ -25,16 +25,32 @@ import { makeTempDir } from "./harness/temp-dir.js";
 /** The server's MCP management as the plugin sees it, over an in-memory `mcp.json`. */
 const servers: McpServerSummary[] = [];
 const calls: unknown[][] = [];
+/** The scopes the plugin probed. */
+const listed = new Set<string>();
 const mcp = {
-  list: async () => ({
-    scope: {
-      id: "global",
-      title: "Global",
-      kind: "global" as const,
-      servers: structuredClone(servers),
-      errors: [],
-    },
-  }),
+  list: async (scope: string) => {
+    listed.add(scope);
+    return {
+      scope:
+        scope === "global"
+          ? {
+              id: "global",
+              title: "Global",
+              kind: "global" as const,
+              servers: structuredClone(servers),
+              errors: [],
+            }
+          : {
+              id: scope,
+              title: "oppi",
+              kind: "project" as const,
+              projectTrust: "trusted" as const,
+              servers: [{ ...summary("local"), state: "unknown" }],
+              inherited: structuredClone(servers),
+              errors: [],
+            },
+    };
+  },
   add: async (scope: string, input: McpAddServerRequest) => {
     calls.push(["add", scope, input]);
     servers.push(summary(input.name));
@@ -120,10 +136,11 @@ class FakeSocket extends EventEmitter {
 }
 
 function connect() {
-  const mux = new ScreensStreamMux(
-    async () => host.screens(),
-    () => SERVER_FEATURE_PRESETS.all,
-  );
+  const mux = new ScreensStreamMux({
+    screens: async () => host.screens(),
+    features: () => SERVER_FEATURE_PRESETS.all,
+    workspaceExists: () => true,
+  });
   const ws = new FakeSocket();
   mux.handleWebSocket(ws as never);
   const send = (message: ScreensClientMessage) =>
@@ -143,8 +160,8 @@ function connect() {
       if (!found) throw new Error(`no result for ${call}`);
       return found;
     });
-  const watch = (id: string, page: string) =>
-    send({ type: "watch", watch: id, entry: "oppi.mcp", scope: "server", page, v: 1 });
+  const watch = (id: string, page: string, scope = "server") =>
+    send({ type: "watch", watch: id, entry: "oppi.mcp", scope, page, v: 1 });
   return { mux, ws, send, page, result, watch };
 }
 
@@ -182,7 +199,13 @@ describe("MCP Servers plugin screen", () => {
     );
 
     c.watch("add", "add");
-    await vi.waitFor(() => expect(c.page("add")?.submit).toEqual({ title: "Add", action: "add" }));
+    await vi.waitFor(() =>
+      expect(c.page("add")?.submit).toEqual({
+        title: "Add",
+        action: "add",
+        requires: ["name", "url", "command"],
+      }),
+    );
     c.send({
       type: "act",
       watch: "add",
@@ -239,6 +262,51 @@ describe("MCP Servers plugin screen", () => {
     await vi.waitFor(() => expect(rowIds(c.page("list"), "servers")).toEqual(["server.docs"]), {
       timeout: 3000,
     });
+    c.ws.emit("close");
+  });
+
+  it("draws and changes a host workspace's own servers, with the global ones it inherits", async () => {
+    servers.splice(0, servers.length, summary("echo"));
+    const c = connect();
+    c.watch("list", "list", "workspace:ws1");
+    await vi.waitFor(() => {
+      const page = c.page("list");
+      expect(page?.sections.find((s) => s.id === "servers")?.header).toBe("This Workspace");
+      expect(rowIds(page, "servers")).toEqual(["server.local"]);
+      // Inherited rows say where they come from and open nothing.
+      expect(page?.sections.find((s) => s.id === "inherited")?.rows).toEqual([
+        expect.objectContaining({ id: "inherited.echo", status: expect.anything() }),
+      ]);
+      expect(page?.sections.find((s) => s.id === "inherited")?.rows[0]).not.toHaveProperty("push");
+    });
+    expect(listed).toContain("ws1");
+
+    // The Add form names the workspace (and asks the app to name the host), and saves to the
+    // workspace's file.
+    c.watch("add", "add", "workspace:ws1");
+    await vi.waitFor(() => {
+      const configuration = c.page("add")?.sections.find((s) => s.id === "configuration");
+      expect(configuration?.rows.find((row) => row.id === "scope")).toMatchObject({
+        value: "oppi",
+      });
+      expect(configuration?.namesHost).toBe(true);
+      expect(configuration?.footer).toBe(
+        "Saved to this workspace\u2019s .pi/mcp.json. Project trust: trusted.",
+      );
+    });
+    c.send({
+      type: "act",
+      watch: "add",
+      call: "w1",
+      action: "add",
+      values: [
+        { field: "name", value: "tools" },
+        { field: "transport", value: "stdio" },
+        { field: "command", value: "node" },
+      ],
+    });
+    expect(await c.result("w1")).toMatchObject({ ok: true });
+    expect(calls.at(-1)).toEqual(["add", "ws1", { name: "tools", command: "node" }]);
     c.ws.emit("close");
   });
 });

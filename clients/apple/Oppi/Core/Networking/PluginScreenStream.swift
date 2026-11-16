@@ -9,8 +9,9 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Plug
 ///
 /// It reconnects with backoff while anything watches, and sends every watch again on connect,
 /// which answers with the current value: nothing is replayed. An `act` whose socket closes
-/// before its result fails with "connection lost" and is never sent again. While a socket is
-/// open, the connection's `StreamAuthRenewer` renews its access (`auth_renew`).
+/// before its result fails with "connection lost" and is never sent again; the socket stays
+/// open for a result still due after the last unwatch. While a socket is open, the
+/// connection's `StreamAuthRenewer` renews its access (`auth_renew`).
 @MainActor
 final class PluginScreenStream {
     struct Result: Equatable {
@@ -21,11 +22,14 @@ final class PluginScreenStream {
 
     private struct Watch {
         let entry: String
+        let scope: String
         let page: String
         let onMessage: (PluginScreenServerMessage) -> Void
     }
 
-    /// One stream per server connection, shared by its screens while any is alive.
+    /// One stream per server connection, shared by its screens while any is alive. Keyed by the
+    /// connection's identity, which a later connection can reuse: an entry counts only while its
+    /// own connection is alive.
     private static var streams: [ObjectIdentifier: WeakStream] = [:]
 
     private let url: URL
@@ -73,10 +77,10 @@ final class PluginScreenStream {
     /// The stream of `connection`'s server, made on first use.
     static func shared(for connection: ServerConnection) -> PluginScreenStream? {
         let key = ObjectIdentifier(connection)
-        if let stream = streams[key]?.stream { return stream }
+        if let held = streams[key], held.connection === connection, let stream = held.stream { return stream }
         guard let stream = connection.makePluginScreenStream() else { return nil }
-        streams = streams.filter { $0.value.stream != nil }
-        streams[key] = WeakStream(stream: stream)
+        streams = streams.filter { $0.value.stream != nil && $0.value.connection != nil }
+        streams[key] = WeakStream(stream: stream, connection: connection)
         return stream
     }
 
@@ -89,19 +93,28 @@ final class PluginScreenStream {
         return components.url
     }
 
-    /// Watches `page` of `entry`; `onMessage` gets its `value`, `ops`, `failed` and `ended`.
-    func watch(entry: String, page: String, onMessage: @escaping (PluginScreenServerMessage) -> Void) -> String {
+    /// Watches `page` of `entry` in `scope` (`server`, `workspace:<id>`); `onMessage` gets its
+    /// `value`, `ops`, `failed` and `ended`.
+    func watch(
+        entry: String, scope: String, page: String,
+        onMessage: @escaping (PluginScreenServerMessage) -> Void
+    ) -> String {
         nextId += 1
         let id = "w\(nextId)"
-        watches[id] = Watch(entry: entry, page: page, onMessage: onMessage)
-        if loop == nil { start() } else { send(.watch(watch: id, entry: entry, scope: "server", page: page)) }
+        watches[id] = Watch(entry: entry, scope: scope, page: page, onMessage: onMessage)
+        if loop == nil { start() } else { send(.watch(watch: id, entry: entry, scope: scope, page: page)) }
         return id
     }
 
     func unwatch(_ id: String) {
         guard watches.removeValue(forKey: id) != nil else { return }
         send(.unwatch(watch: id))
-        if watches.isEmpty { stop() }
+        stopWhenIdle()
+    }
+
+    /// Closes the socket once nothing watches and no result is due.
+    private func stopWhenIdle() {
+        if watches.isEmpty, calls.isEmpty { stop() }
     }
 
     /// Sends one action on `watch` and waits for its result.
@@ -165,10 +178,12 @@ final class PluginScreenStream {
             if self.socket?.identity == socket.identity {
                 self.socket = nil
                 failCalls()
+                // It stayed open only for a result: nothing watches, so it is done.
+                stopWhenIdle()
             }
         }
         for (id, watch) in watches {
-            send(.watch(watch: id, entry: watch.entry, scope: "server", page: watch.page), on: socket)
+            send(.watch(watch: id, entry: watch.entry, scope: watch.scope, page: watch.page), on: socket)
         }
         var opened = false
         do {
@@ -191,9 +206,10 @@ final class PluginScreenStream {
         case .ended(let id, _):
             // The server holds nothing for it any more; a later watch asks again.
             watches.removeValue(forKey: id)?.onMessage(message)
-            if watches.isEmpty { stop() }
+            stopWhenIdle()
         case let .result(call, ok, text, nav):
             calls.removeValue(forKey: call)?.resume(returning: Result(ok: ok, message: text, nav: nav))
+            stopWhenIdle()
         case .authRenewResult(let result):
             renewer?.handle(result)
         case .unknown:
@@ -204,6 +220,7 @@ final class PluginScreenStream {
 
 private struct WeakStream {
     weak var stream: PluginScreenStream?
+    weak var connection: ServerConnection?
 }
 
 extension ServerConnection {

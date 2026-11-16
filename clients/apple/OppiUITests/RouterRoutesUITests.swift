@@ -426,17 +426,6 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
         }
 
         revealSidebar(isSplit: isSplit)
-        app.buttons["workspace.mcpServers.open"].tap()
-        XCTAssertTrue(app.navigationBars["MCP Servers"].waitUntilExists(timeout: 5), "MCP Servers did not open in the UIKit bar")
-        XCTAssertTrue(app.buttons["mcp.add"].exists, "MCP Servers has no Add button")
-        attachScreenshot("shell-mcp-servers")
-        assertRunning()
-        if !isSplit {
-            app.buttons["BackButton"].tap()
-            XCTAssertTrue(drawerButton.waitUntilExists(timeout: 5), "Back must pop MCP Servers")
-        }
-
-        revealSidebar(isSplit: isSplit)
         app.buttons["workspace.open.oppi"].tap()
         let openSettings = app.buttons["workspace.edit.open"].firstMatch
         XCTAssertTrue(openSettings.waitUntilExists(timeout: 10), "The workspace did not show")
@@ -448,7 +437,6 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
             ("workspace.edit.instructions", "Instructions"),
             ("workspace.edit.skills", "Skills"),
             ("workspace.edit.extensions", "Extensions"),
-            ("workspace.edit.mcpServers", "MCP Servers"),
             ("workspace.edit.dictionary", "Dictation Dictionary"),
         ] {
             pushAndReturn(row: row, title: title, to: settings)

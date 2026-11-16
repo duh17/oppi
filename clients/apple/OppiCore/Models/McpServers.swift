@@ -5,26 +5,6 @@ enum McpExposure: String, Codable, CaseIterable, Sendable {
     case deferred
     case direct
     case hidden
-
-    /// Readable name for rows and pickers; `rawValue` is the `mcp.json` value.
-    var title: String {
-        switch self {
-        case .codemode: "Code Mode"
-        case .deferred: "Deferred"
-        case .direct: "Direct"
-        case .hidden: "Hidden"
-        }
-    }
-
-    var explanation: String {
-        switch self {
-        case .codemode: "Scripts find and call tools; the model doesn't see them."
-        case .deferred: "Tool search loads matching tools into the model context."
-        case .direct: "Tools are always declared to the model."
-        case .hidden: "Tools cannot be called."
-        }
-    }
-    var configurationValue: McpExposure? { self == .codemode ? nil : self }
 }
 
 struct McpServerConfig: Codable, Sendable, Equatable {
@@ -55,33 +35,11 @@ struct McpServerSummary: Codable, Sendable, Identifiable, Equatable {
     let error: String?
     let supportsOAuth: Bool
     var id: String { name }
-    /// MCP spec transport names. Unknown future values show raw rather than as a wrong guess.
-    var transportLabel: String {
-        switch transport {
-        case "stdio": "stdio"
-        case "http": "HTTP"
-        default: transport
-        }
-    }
-    var stateLabel: String {
-        switch state {
-        case "needs-auth": "Needs sign-in"
-        case "connected": "Connected"
-        case "disabled": "Disabled"
-        case "untrusted": "Needs remembered trust"
-        case "replaced": "Replaced by project"
-        case "available": "Available"
-        case "blocked": "Blocked in this sandbox"
-        case "failed", "disconnected": "Failed"
-        default: state.capitalized
-        }
-    }
 }
 
+/// One MCP scope as the server lists it. The app reads a sandbox workspace's (the global servers
+/// it may load); the global and host-workspace lists are the server's MCP Servers plugin page.
 struct McpScopeSnapshot: Codable, Sendable, Identifiable, Equatable {
-    /// Pi's global `~/.pi/agent/mcp.json`. Any other id is a host workspace's `.pi/mcp.json`.
-    static let globalId = "global"
-
     let id: String
     let title: String
     let kind: String
@@ -98,22 +56,6 @@ struct McpServersResponse: Codable, Sendable, Equatable {
     /// The host-wide sign-in still blocking MCP changes, whichever scope started it. While
     /// present, `scope` is the host's last live probe, not a fresh one.
     let activeSignIn: McpAuthFlowSnapshot?
-}
-struct McpPatchServerRequest: Encodable, Sendable {
-    var enabled: Bool?
-    var exposure: McpExposure?
-}
-/// Body of `POST /mcp/scopes/{scopeId}/servers`.
-struct McpAddServerRequest: Encodable, Sendable {
-    let name: String
-    var url: String?
-    var command: String?
-    var args: [String]?
-    var cwd: String?
-    var env: [String: String]?
-    var headers: [String: String]?
-    var oauth: McpServerConfig.OAuth?
-    var exposure: McpExposure?
 }
 struct McpAuthFlowSnapshot: Codable, Sendable, Equatable {
     let flowId: String

@@ -765,11 +765,12 @@ export class Server {
       renewAccess,
       origin: () => advertisedOrigin(this.storage.getConfig()),
     });
-    this.screensStreamMux = new ScreensStreamMux(
-      () => this.sessions.pluginScreens(),
-      () => serverFeatures(this.storage.getConfig()),
-      renewAccess,
-    );
+    this.screensStreamMux = new ScreensStreamMux({
+      screens: () => this.sessions.pluginScreens(),
+      features: () => serverFeatures(this.storage.getConfig()),
+      workspaceExists: (id) => this.storage.getWorkspace(id) !== undefined,
+      renew: renewAccess,
+    });
     this.boundSessionStreamMux = new BoundSessionStreamMux(streamContext);
     this.dictationStreamMux = new DictationStreamMux(streamContext);
 

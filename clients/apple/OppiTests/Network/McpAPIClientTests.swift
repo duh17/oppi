@@ -4,8 +4,7 @@ import Testing
 
 @Suite("MCP API probe deadline", .serialized)
 struct McpAPIClientTests {
-    @Test(arguments: ["list", "login", "add", "patch", "remove", "logout"])
-    func liveProbeRequestsLeaveHeadroomUnderResourceDeadline(operation: String) async throws {
+    @Test func liveProbeRequestLeavesHeadroomUnderResourceDeadline() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [McpDeadlineURLProtocol.self]
         configuration.timeoutIntervalForRequest = 15
@@ -19,33 +18,17 @@ struct McpAPIClientTests {
             #expect(request.timeoutInterval > 20)
             #expect(request.timeoutInterval < configuration.timeoutIntervalForResource)
             #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer test-token")
-            let routes = [
-                "list": ("GET", "/mcp/scopes/workspace-one/servers"),
-                "login": ("POST", "/mcp/scopes/global/servers/echo/login"),
-                "add": ("POST", "/mcp/scopes/workspace-one/servers"),
-                "patch": ("PATCH", "/mcp/scopes/global/servers/echo"),
-                "remove": ("DELETE", "/mcp/scopes/global/servers/echo"),
-                "logout": ("POST", "/mcp/scopes/global/servers/echo/logout")
-            ]
-            #expect(request.httpMethod == routes[operation]?.0)
-            #expect(request.url?.path == routes[operation]?.1)
+            #expect(request.httpMethod == "GET")
+            #expect(request.url?.path == "/mcp/scopes/workspace-one/servers")
             let response = try #require(HTTPURLResponse(
                 url: baseURL, statusCode: 200, httpVersion: nil,
                 headerFields: ["Content-Type": "application/json"]
             ))
-            let json = operation == "list" ? #"{"scope":{"id":"workspace-one","title":"One","kind":"project","projectTrust":"ask","servers":[],"inherited":[],"errors":[]}}"# : #"{"flow":{"flowId":"pa_test","scopeId":"global","serverName":"echo","launchMode":"phone_browser","status":"pending","createdAt":1,"updatedAt":1,"expiresAt":2}}"#
+            let json = #"{"scope":{"id":"workspace-one","title":"One","kind":"sandbox","servers":[],"errors":[]}}"#
             return (Data(json.utf8), response)
         }
 
-        switch operation {
-        case "list": #expect(try await client.listMcpServers(scopeId: "workspace-one").scope.id == "workspace-one")
-        case "login": #expect(try await client.startMcpAuthFlow(scopeId: "global", name: "echo").flowId == "pa_test")
-        case "add": try await client.addMcpServer(scopeId: "workspace-one", McpAddServerRequest(name: "echo", url: "https://example.test/mcp"))
-        case "patch": try await client.patchMcpServer(scopeId: "global", name: "echo", patch: McpPatchServerRequest(enabled: false))
-        case "remove": try await client.removeMcpServer(scopeId: "global", name: "echo")
-        case "logout": try await client.logoutMcpServer(scopeId: "global", name: "echo")
-        default: Issue.record("Unexpected operation")
-        }
+        #expect(try await client.listMcpServers(scopeId: "workspace-one").scope.id == "workspace-one")
     }
 }
 

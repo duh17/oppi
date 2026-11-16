@@ -1,46 +1,69 @@
 import XCTest
 
-/// A server plugin's sidebar entry against a real paired server: the MCP Servers plugin, drawn
-/// by the app's generic plugin page. Adding a server through its form, switching it off, and
-/// removing it all reach the server's `mcp.json` and come back as the page's own updates.
+/// MCP Servers against a real paired server: the server's MCP Servers plugin, drawn by the app's
+/// generic plugin page. Adding a server through its form, switching it off, and removing it all
+/// reach the server's `mcp.json` and come back as the page's own updates, in the sidebar's global
+/// list and in a host workspace's own list from Workspace Settings.
 @MainActor
 final class PluginScreenE2ETests: E2ETestCase {
-    /// The server's own MCP Servers entry, as `/server/info` lists it.
+    /// The server's MCP Servers entry, as `/server/info` lists it.
     private var entry = ""
 
-    /// The plugin-sidebar experiment is a launch argument, which only a fresh launch applies.
-    override var e2eRequiresFreshLaunch: Bool { true }
     override var e2eLaunchesSessionsInboxOnly: Bool { true }
     override var e2eAutoCreatesSessionOnLaunch: Bool { false }
-
-    override func configureE2ELaunch(_ application: XCUIApplication) {
-        application.launchArguments += ["-dev.chenda.Oppi.experiments.pluginSidebar", "YES"]
-    }
 
     private func id(_ page: String, _ section: String, _ row: String) -> String {
         "screen.\(entry).\(page).\(section).\(row)"
     }
 
-    func testPluginEntryAddsTogglesAndRemovesAServer() throws {
+    private func findEntry() throws {
         let sidebar = try e2eLabAPIJSON(method: "GET", path: "/server/info")["sidebar"] as? [[String: Any]]
-        entry = try XCTUnwrap(sidebar?.first { $0["title"] as? String == "MCP Servers" }?["id"] as? String, "No plugin MCP entry")
+        entry = try XCTUnwrap(sidebar?.first { $0["feature"] as? String == "mcp" }?["id"] as? String, "No MCP Servers entry")
+    }
+
+    /// The Add sheet: Add stays off until the name and URL are in, Cancel and swipe-down close
+    /// it, and Add saves and closes it.
+    private func addServer(_ name: String, on page: String) {
+        let add = app.buttons["screen.\(entry).\(page).bar.add"]
+        let sheet = app.navigationBars["Add MCP Server"]
+        tap(add, named: "Add bar button", timeout: 30)
+        XCTAssertTrue(sheet.waitForExistence(timeout: 15), "The Add sheet did not open")
+        let cancel = app.buttons["Cancel"]
+        tap(cancel, named: "Cancel")
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10), "Cancel did not close the Add sheet")
+        tap(add, named: "Add bar button")
+        XCTAssertTrue(sheet.waitForExistence(timeout: 15), "The Add sheet did not reopen")
+        // Swipe the sheet down by its bar, as a person does.
+        sheet.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(
+            forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.98)),
+            withVelocity: .fast, thenHoldForDuration: 0
+        )
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10), "Swipe-down did not close the Add sheet")
+
+        tap(add, named: "Add bar button")
+        let field = app.textFields[id("add", "configuration", "name")]
+        tap(field, named: "server name field", timeout: 30)
+        field.typeText(name)
+        let submit = app.buttons["screen.\(entry).add.submit"]
+        XCTAssertFalse(submit.isEnabled, "Add must stay off until the URL is in")
+        let url = app.textFields[id("add", "http", "url")]
+        tap(url, named: "URL field")
+        url.typeText("http://127.0.0.1:9/mcp")
+        XCTAssertTrue(submit.isEnabled, "Add must turn on once the name and URL are in")
+        tap(submit, named: "Add")
+        XCTAssertTrue(field.waitForNonExistence(timeout: 30), "The Add sheet did not close")
+    }
+
+    func testPluginEntryAddsTogglesAndRemovesAServer() throws {
+        try findEntry()
         let name = "e2e-\(UUID().uuidString.prefix(6).lowercased())"
         let detail = "server/\(name)"
 
         tap(app.buttons["workspace.sidebar.open"], named: "workspace sidebar button")
-        tap(app.buttons["workspace.plugin.\(entry).open"], named: "plugin MCP Servers entry")
-        XCTAssertTrue(app.navigationBars["MCP Servers"].waitForExistence(timeout: 15), "The plugin page did not open")
+        tap(app.buttons["workspace.plugin.\(entry).open"], named: "MCP Servers entry")
+        XCTAssertTrue(app.navigationBars["MCP Servers"].waitForExistence(timeout: 15), "MCP Servers did not open")
 
-        // Add, through the plugin's form: a sheet with a local draft and its own submit.
-        tap(app.buttons["screen.\(entry).list.bar.add"], named: "Add bar button", timeout: 30)
-        let field = app.textFields[id("add", "configuration", "name")]
-        tap(field, named: "server name field")
-        field.typeText(name)
-        let url = app.textFields[id("add", "http", "url")]
-        tap(url, named: "URL field")
-        url.typeText("http://127.0.0.1:9/mcp")
-        tap(app.buttons["screen.\(entry).add.submit"], named: "Add")
-        XCTAssertTrue(field.waitForNonExistence(timeout: 30), "The Add sheet did not close")
+        addServer(name, on: "list")
 
         // The list probes again by itself and shows the new server.
         let row = app.buttons[id("list", "servers", "server.\(name)")]
@@ -69,5 +92,28 @@ final class PluginScreenE2ETests: E2ETestCase {
         tap(app.buttons["\(id(detail, "remove", "remove")).confirm"].firstMatch, named: "Remove confirmation")
         XCTAssertTrue(app.navigationBars["MCP Servers"].waitForExistence(timeout: 30), "Remove did not return to the list")
         XCTAssertTrue(row.waitForNonExistence(timeout: 45), "The removed server is still listed")
+    }
+
+    /// A host workspace's own servers: Workspace Settings opens the same plugin page on the
+    /// workspace's scope, and a server added there lands in the workspace's `.pi/mcp.json`.
+    func testWorkspaceSettingsOpensTheWorkspacesOwnServers() throws {
+        try findEntry()
+        let workspaceId = try e2eWorkspaceId()
+        let name = "e2e-\(UUID().uuidString.prefix(6).lowercased())"
+
+        let open = app.buttons["workspace.open.e2e-workspace"]
+        if !(open.exists && open.isHittable) { tap(app.buttons["workspace.sidebar.open"], named: "workspace sidebar button") }
+        tap(open, named: "e2e workspace", timeout: 15)
+        tap(app.buttons["workspace.edit.open"].firstMatch, named: "Workspace Settings", timeout: 15)
+        tap(app.buttons["workspace.edit.mcpServers"], named: "MCP Servers row", timeout: 15)
+        XCTAssertTrue(app.navigationBars["MCP Servers"].waitForExistence(timeout: 15), "The workspace's MCP Servers did not open")
+
+        addServer(name, on: "list")
+        let row = app.buttons[id("list", "servers", "server.\(name)")]
+        XCTAssertTrue(row.waitForExistence(timeout: 45), "The added server is not listed")
+        let scope = try e2eLabAPIJSON(method: "GET", path: "/mcp/scopes/\(workspaceId)/servers?cached=true")["scope"] as? [String: Any]
+        let servers = scope?["servers"] as? [[String: Any]] ?? []
+        XCTAssertTrue(servers.contains { $0["name"] as? String == name }, "The server did not land in the workspace's own file")
+        _ = try? e2eLabAPIJSON(method: "DELETE", path: "/mcp/scopes/\(workspaceId)/servers/\(name)")
     }
 }

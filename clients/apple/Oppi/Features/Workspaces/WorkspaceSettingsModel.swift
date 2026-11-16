@@ -248,6 +248,11 @@ final class WorkspaceSettingsModel {
         scope.flatMap { serverStore.server(for: $0.serverId)?.name }
     }
 
+    /// The workspace's server's plugin entry for `feature` in `scope`, once the model is bound.
+    func pluginEntry(for feature: ServerFeature, scope: String) -> PluginScreenSidebarEntry? {
+        connection?.pluginEntry(for: feature, scope: scope)
+    }
+
     var instructionsSummary: String {
         guard let prompt = workspace.systemPrompt, !prompt.isEmpty else { return "None" }
         let lines = prompt.split(separator: "\n", omittingEmptySubsequences: false).count

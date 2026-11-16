@@ -11,10 +11,17 @@ import UIKit
 /// choices and fields, so typing never goes to the server until Submit. A tap's row shows as
 /// pending until its result; a failure shows under the row's section. Navigation comes only
 /// from the person's taps: an item's `push`, a bar button's `present`, or an action's result.
+///
+/// An entry's sidebar page (`showsHost`) leads with the host row, as the native catalogs do: it
+/// follows the window's server, and choosing another server watches the same page there.
 @MainActor
 final class PluginScreenViewController: ListScreenController<String, String> {
     let entry: String
+    /// `server`, or `workspace:<id>`.
+    let scope: String
     let page: String
+    /// The sidebar's root page of the entry: the host row, and the window's server.
+    let showsHost: Bool
     var showsSidebarToggle: Bool {
         didSet { setNeedsUpdateProperties() }
     }
@@ -37,13 +44,20 @@ final class PluginScreenViewController: ListScreenController<String, String> {
     private var barButtons: [String: UIBarButtonItem] = [:]
     private lazy var submitItem = UIBarButtonItem()
 
+    private static let hostSection = "\u{1}host"
+    private static let hostRow = "\u{1}host"
     private static let stateSection = "\u{1}state"
     private static let failureSection = "\u{1}failure"
     private static let failureRow = "\u{1}failure"
 
-    init(entry: String, page: String, title: String, root: AppRootEnvironment, showsSidebarToggle: Bool = false) {
+    init(
+        entry: String, scope: String = "server", page: String, title: String, root: AppRootEnvironment,
+        showsHost: Bool = false, showsSidebarToggle: Bool = false
+    ) {
         self.entry = entry
+        self.scope = scope
         self.page = page
+        self.showsHost = showsHost
         self.root = root
         self.fallbackTitle = title
         self.showsSidebarToggle = showsSidebarToggle
@@ -56,6 +70,12 @@ final class PluginScreenViewController: ListScreenController<String, String> {
 
     private var palette: ThemePalette { ThemeRuntimeState.currentPalette() }
     private var isForm: Bool { content?.submit != nil }
+    private var coordinator: ConnectionCoordinator { root.coordinator }
+
+    /// The window's server, which the host row shows.
+    private var hostServer: PairedServer? {
+        coordinator.serverStore.servers.first { $0.id == root.windowServerId }
+    }
 
     // MARK: - Watch
 
@@ -63,9 +83,31 @@ final class PluginScreenViewController: ListScreenController<String, String> {
     /// refresh asks the plugin to read its source again.
     override var loadPolicy: LoadPolicy { .eachAppearance }
 
+    /// The host page follows the window's server; any other page stays on the server it opened on.
+    override func loadSubject() -> AnyHashable? {
+        showsHost ? AnyHashable(root.windowServerId) : nil
+    }
+
+    /// Another server: the old one's page and draft go, and its watch with them.
+    override func subjectDidChange() {
+        if let watchId { stream?.unwatch(watchId) }
+        watchId = nil
+        stream = nil
+        replica = PluginScreenReplica()
+        content = nil
+        problem = nil
+        draft = [:]
+        failures = [:]
+    }
+
     override func load() async throws {
-        guard watchId != nil, loadTrigger == .ask else { return startWatching() }
-        await perform("refresh", row: nil, section: nil)
+        if watchId != nil, loadTrigger == .ask { return await perform("refresh", row: nil, section: nil) }
+        // The host page waits for the chosen server's client before it watches there.
+        if showsHost, stream == nil, let serverId = root.windowServerId {
+            _ = await coordinator.apiClientReady(for: serverId)
+            guard !Task.isCancelled, root.windowServerId == serverId else { return }
+        }
+        startWatching()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -82,7 +124,7 @@ final class PluginScreenViewController: ListScreenController<String, String> {
             return
         }
         problem = nil
-        watchId = stream.watch(entry: entry, page: page) { [weak self] message in self?.receive(message) }
+        watchId = stream.watch(entry: entry, scope: scope, page: page) { [weak self] message in self?.receive(message) }
     }
 
     func receive(_ message: PluginScreenServerMessage) {
@@ -102,12 +144,15 @@ final class PluginScreenViewController: ListScreenController<String, String> {
             problem = message
         case .ended(_, let reason):
             watchId = nil
-            if reason == "gone" {
+            if reason == "gone", !showsHost {
                 Router.finish(self)
             } else {
-                problem = reason == "off"
-                    ? String(localized: "This page is turned off on this server. Turn it on in Server Settings › Features.")
-                    : String(localized: "Update Oppi to open this page.")
+                // The host page stays: another server may have it.
+                problem = switch reason {
+                case "off": String(localized: "This page is turned off on this server. Turn it on in Server Settings › Features.")
+                case "gone": String(localized: "This server does not have this page.")
+                default: String(localized: "Update Oppi to open this page.")
+                }
             }
         case .result, .authRenewResult, .unknown:
             break
@@ -143,11 +188,11 @@ final class PluginScreenViewController: ListScreenController<String, String> {
     }
 
     private func open(page: String) {
-        Router.push(PluginScreenViewController(entry: entry, page: page, title: "", root: root), from: self)
+        Router.push(PluginScreenViewController(entry: entry, scope: scope, page: page, title: "", root: root), from: self)
     }
 
     private func present(page: String) {
-        let screen = PluginScreenViewController(entry: entry, page: page, title: "", root: root)
+        let screen = PluginScreenViewController(entry: entry, scope: scope, page: page, title: "", root: root)
         Router.present(screen, presentation: .sheet.inNavigation(), from: self)
     }
 
@@ -176,7 +221,7 @@ final class PluginScreenViewController: ListScreenController<String, String> {
         if let submit = content?.submit {
             submitItem.title = submit.title
             submitItem.accessibilityIdentifier = "screen.\(entry).\(page).submit"
-            submitItem.isEnabled = !pending.contains(submit.action)
+            submitItem.isEnabled = !pending.contains(submit.action) && requirementsMet
             isModalInPresentation = pending.contains(submit.action)
             let cancel = barButtons["\u{1}cancel"] ?? UIBarButtonItem(systemItem: .cancel, primaryAction: UIAction { [weak self] _ in
                 guard let self else { return }
@@ -226,8 +271,26 @@ final class PluginScreenViewController: ListScreenController<String, String> {
         return [toggle]
     }
 
+    /// Whether every field the submit requires, among the shown sections, holds text.
+    private var requirementsMet: Bool {
+        guard let content, let required = content.submit?.requires else { return true }
+        let shown = Set(content.sections.filter(shows).flatMap(\.rows).map(\.id))
+        return required.filter(shown.contains).allSatisfy { id in
+            if case .string(let text) = draft[id] { return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            return false
+        }
+    }
+
+    /// A field's text, kept in the draft. The bar redraws only when Submit turns on or off, so
+    /// typing never redraws the list.
+    private func type(_ text: String, into id: String) {
+        let before = requirementsMet
+        draft[id] = .string(text)
+        if requirementsMet != before { setNeedsUpdateProperties() }
+    }
+
     private func submit() {
-        guard let submit = content?.submit else { return }
+        guard let submit = content?.submit, requirementsMet else { return }
         view.endEditing(true)
         let values = draft.keys.sorted().compactMap { key in draft[key].map { PluginScreenValue(field: key, value: $0) } }
         act(submit.action, row: nil, section: nil, values: values)
@@ -239,15 +302,18 @@ final class PluginScreenViewController: ListScreenController<String, String> {
     override var animatesUpdates: Bool { false }
 
     override func sections() -> [ListSection<String, String>] {
+        var sections: [ListSection<String, String>] = []
+        if showsHost, hostServer != nil {
+            sections.append(ListSection(Self.hostSection, items: [Self.hostRow]))
+        }
         guard let content else {
             let state: LoadState = problem.map { .failed(title: $0, message: nil, retry: nil) } ?? .loading(nil)
-            return [ListSection(Self.stateSection, items: [], state: ListStateRow(state: state, identifier: stateRowIdentifier))]
+            return sections + [ListSection(Self.stateSection, items: [], state: ListStateRow(state: state, identifier: stateRowIdentifier))]
         }
         if let state = content.state {
-            return [ListSection(Self.stateSection, items: [], state: ListStateRow(state: loadState(state), identifier: stateRowIdentifier))]
+            return sections + [ListSection(Self.stateSection, items: [], state: ListStateRow(state: loadState(state), identifier: stateRowIdentifier))]
         }
         seedDraft(content)
-        var sections: [ListSection<String, String>] = []
         if let problem {
             sections.append(ListSection(Self.stateSection, items: [], state: ListStateRow(
                 state: .failed(title: problem, message: nil, retry: nil), identifier: stateRowIdentifier
@@ -256,7 +322,7 @@ final class PluginScreenViewController: ListScreenController<String, String> {
         for section in content.sections where shows(section) {
             var items = section.rows.map(\.id)
             if failures[section.id] != nil { items.append(Self.failureRow + section.id) }
-            sections.append(ListSection(section.id, header: section.header, footer: section.footer, items: items))
+            sections.append(ListSection(section.id, header: header(of: section), footer: footer(of: section), items: items))
         }
         if failures[Self.failureSection] != nil {
             sections.append(ListSection(Self.failureSection, items: [Self.failureRow]))
@@ -264,13 +330,37 @@ final class PluginScreenViewController: ListScreenController<String, String> {
         return sections
     }
 
+    /// The host row sits under an empty header, as on the native catalogs.
     override func showsHeader(for section: String) -> Bool {
-        content?.sections.first { $0.id == section }?.header != nil
+        section == Self.hostSection || content?.sections.first { $0.id == section }?.header != nil
+    }
+
+    /// A footnote alone in its section is a note under the list, drawn bare like a footer.
+    private func isNote(_ row: PluginScreenRow, in section: String) -> Bool {
+        row.kind == "text" && row.style == "footnote"
+            && content?.sections.first { $0.id == section }?.rows.count == 1
     }
 
     private func shows(_ section: PluginScreenPage.Section) -> Bool {
         guard let when = section.when else { return true }
         return draft[when.field] == .string(when.is)
+    }
+
+    /// The section's header, with this app's name for the server when it asks for it.
+    private func header(of section: PluginScreenPage.Section) -> String? {
+        guard section.namesHost == true, let name = hostServer?.name else { return section.header }
+        return [section.header, name].compactMap { $0 }.joined(separator: " \u{00B7} ")
+    }
+
+    /// The chosen options' footers, then the section's own.
+    private func footer(of section: PluginScreenPage.Section) -> String? {
+        let chosen = section.rows.compactMap { row -> String? in
+            guard row.kind == "choice" else { return nil }
+            let value = choice(of: row)
+            return row.options?.first { $0.value == value }?.footer
+        }
+        let lines = chosen + [section.footer].compactMap { $0 }
+        return lines.isEmpty ? nil : lines.joined(separator: " ")
     }
 
     /// A form starts from the values its rows carry; the person's edits win from then on.
@@ -310,6 +400,15 @@ final class PluginScreenViewController: ListScreenController<String, String> {
     /// A row redraws when what it draws changes. A field never redraws from the draft, so typing
     /// keeps its keyboard and selection.
     override func inputs(of item: String) -> AnyHashable {
+        if item == Self.hostRow {
+            // A reconfigured host row would close the server menu it has open.
+            let server = hostServer
+            return AnyHashable([
+                AnyHashable(server?.id), AnyHashable(server?.name), AnyHashable(server?.resolvedBadgeIcon),
+                AnyHashable(server.map { HostSwitcherBadgeState.make(for: $0, coordinator: coordinator).title }),
+                AnyHashable(coordinator.serverStore.servers.count),
+            ])
+        }
         if item.hasPrefix(Self.failureRow) {
             let section = String(item.dropFirst(Self.failureRow.count))
             return AnyHashable(failures[section.isEmpty ? Self.failureSection : section])
@@ -320,6 +419,21 @@ final class PluginScreenViewController: ListScreenController<String, String> {
     }
 
     // MARK: - Rows
+
+    private lazy var hostCell = UICollectionView.CellRegistration<ServerCatalogServerRowCell, String> { [weak self] cell, _, _ in
+        guard let self, let server = hostServer else { return }
+        cell.configure(
+            server: server,
+            state: HostSwitcherBadgeState.make(for: server, coordinator: coordinator),
+            palette: palette,
+            menu: coordinator.serverStore.servers.count > 1
+                ? ServerCatalogServerMenu.make(
+                    coordinator: coordinator, navigation: root.navigation,
+                    shownServerId: { [weak self] in self?.hostServer?.id }
+                )
+                : nil
+        )
+    }
 
     private lazy var fieldCell = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, String> { [weak self] cell, _, id in
         self?.configureField(cell, id: id)
@@ -338,11 +452,14 @@ final class PluginScreenViewController: ListScreenController<String, String> {
     }
 
     override func prepareRegistrations() {
-        _ = (fieldCell, editorCell, menuCell, segmentedCell)
+        _ = (hostCell, fieldCell, editorCell, menuCell, segmentedCell)
     }
 
     override func dequeue(_ item: String, at indexPath: IndexPath) -> UICollectionViewCell {
-        guard let (row, _) = locate(item) else { return cardCell(for: item, at: indexPath) }
+        if item == Self.hostRow {
+            return collectionView.dequeueConfiguredReusableCell(using: hostCell, for: indexPath, item: item)
+        }
+        guard let (row, section) = locate(item) else { return cardCell(for: item, at: indexPath) }
         switch row.kind {
         case "field" where row.input == "multiline":
             return collectionView.dequeueConfiguredReusableCell(using: editorCell, for: indexPath, item: item)
@@ -353,6 +470,8 @@ final class PluginScreenViewController: ListScreenController<String, String> {
         case "choice":
             return collectionView.dequeueConfiguredReusableCell(using: menuCell, for: indexPath, item: item)
         case "item", "button":
+            return cardCell(for: item, at: indexPath)
+        case "text" where isNote(row, in: section):
             return cardCell(for: item, at: indexPath)
         default:
             return super.dequeue(item, at: indexPath)
@@ -386,7 +505,13 @@ final class PluginScreenViewController: ListScreenController<String, String> {
             var content = UIListContentConfiguration.valueCell()
             content.text = row.label
             content.secondaryText = row.stringValue
-            if row.mono == true { content.secondaryTextProperties.font = .scaledMonospaced(.body) }
+            if row.mono == true {
+                // A key and its value: both monospaced, the key quieter.
+                content.textProperties.font = .scaledMonospaced(.body)
+                content.textProperties.color = palette.ui.comment
+                content.secondaryTextProperties.font = .scaledMonospaced(.body)
+                content.secondaryTextProperties.color = palette.ui.fg
+            }
             cell.contentConfiguration = content
             cell.accessibilityIdentifier = id
             cell.isAccessibilityElement = true
@@ -434,6 +559,13 @@ final class PluginScreenViewController: ListScreenController<String, String> {
             return
         }
         let id = identifier(row.id, in: section)
+        if row.kind == "text" {
+            // A note: the text row's own content, with no card behind it.
+            ListScreen.staticRow(cell, identifier: id)
+            configure(cell, item: item)
+            ListScreen.background(cell, grouped: false, palette: palette)
+            return
+        }
         let enabled = row.disabled != true && !pending.contains(row.id)
         if row.kind == "item" {
             let status = row.status
@@ -495,7 +627,7 @@ final class PluginScreenViewController: ListScreenController<String, String> {
             keyboard: row.input == "number" ? .numberPad : row.input == "url" ? .URL : .default,
             textColor: palette.ui.fg,
             enabled: pending.isEmpty
-        ) { [weak self] text in self?.draft[id] = .string(text) }
+        ) { [weak self] text in self?.type(text, into: id) }
     }
 
     private func configureEditor(_ cell: SettingsTextViewRowCell, id: String) {
@@ -509,7 +641,7 @@ final class PluginScreenViewController: ListScreenController<String, String> {
             accessibilityLabel: placeholder,
             minHeight: lineHeight * 3 + SettingsTextViewRowCell.verticalInsets,
             maxHeight: lineHeight * 8 + SettingsTextViewRowCell.verticalInsets,
-            onChange: { [weak self] text in self?.draft[id] = .string(text) },
+            onChange: { [weak self] text in self?.type(text, into: id) },
             onCaretMove: { [weak self] textView in
                 guard let self, let range = textView.selectedTextRange else { return }
                 let caret = textView.convert(textView.caretRect(for: range.end), to: collectionView)

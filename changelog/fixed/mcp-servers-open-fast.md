@@ -1,1 +1,1 @@
-- **Client:** MCP Servers opens at once with each server's last known status, or **Checking…** right after the server starts, and updates when the server's background check finishes; pull to refresh still waits for a fresh check. The Plugin Sidebar's MCP Servers page also opens without its "Probing MCP servers…" wait.
+- **Client:** MCP Servers opens at once with each server's last known status, or **Checking…** right after the server starts, and updates when the server's background check finishes; pull to refresh still waits for a fresh check.

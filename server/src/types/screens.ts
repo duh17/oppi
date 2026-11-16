@@ -5,6 +5,7 @@
 // code. Fixtures: `protocol/screens.json` (server `screens-fixtures.test.ts`, Apple
 // `PluginScreenProtocolTests`).
 
+import type { ServerFeature } from "./config.js";
 import type { ConversationDocOp } from "./protocol.js";
 
 /** A word's colour, the only styling a page has. Status is always a word, never tone alone. */
@@ -28,7 +29,7 @@ export interface ScreenItemRow {
   url?: string;
 }
 
-/** A label and its value. */
+/** A label and its value. `mono` sets both in monospace, the label quieter: a key and its value. */
 export interface ScreenValueRow {
   kind: "value";
   id: string;
@@ -61,13 +62,17 @@ export interface ScreenToggleRow {
   disabled?: boolean;
 }
 
-/** One of a few values; the app picks a menu or a segmented control. Acts or drafts as a toggle. */
+/**
+ * One of a few values; the app picks a menu or a segmented control. Acts or drafts as a toggle.
+ * The chosen option's `footer` leads its section's footer, so a form explains what is picked as
+ * the person picks it, without a round trip.
+ */
 export interface ScreenChoiceRow {
   kind: "choice";
   id: string;
   label: string;
   value: string;
-  options: { value: string; title: string }[];
+  options: { value: string; title: string; footer?: string }[];
   action?: string;
   disabled?: boolean;
 }
@@ -116,6 +121,11 @@ export type ScreenRowKind = ScreenRow["kind"];
 export interface ScreenSection {
   id: string;
   header?: string;
+  /**
+   * The app adds its own name for this server to the header (`<header> · <server>`): only the
+   * app knows what the person calls the host.
+   */
+  namesHost?: boolean;
   footer?: string;
   rows: ScreenRow[];
   when?: { field: string; is: string };
@@ -141,14 +151,15 @@ export interface ScreenPageState {
 
 /**
  * One page. A page with `submit` is a form: the app keeps a local draft of its toggles, choices
- * and fields, so typing never round-trips, and sends it with `submit.action`.
+ * and fields, so typing never round-trips, and sends it with `submit.action`. Submit stays off
+ * until every field `requires` names is filled, among the sections the draft shows.
  */
 export interface ScreenPage {
   title: string;
   state?: ScreenPageState;
   bar?: ScreenBarItem[];
   sections: ScreenSection[];
-  submit?: { title: string; action: string };
+  submit?: { title: string; action: string; requires?: string[] };
 }
 
 /** What an action asks the app to do next; only the person's own tap leads here. */
@@ -168,7 +179,13 @@ export interface ScreenSidebarEntry {
   /** An SF Symbol from the surface icon allow-list. */
   icon: string;
   order: number;
+  /**
+   * `server`: a sidebar entry. `workspace`: the same screen scoped to one host workspace, which
+   * the app opens from Workspace Settings by the entry's `feature`.
+   */
   scopes: ("server" | "workspace")[];
+  /** The server switch the entry belongs to; the app finds a workspace's page by it. */
+  feature?: ServerFeature;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -181,7 +198,7 @@ export type ScreensClientMessage =
       /** The app's id for this watch on this socket. */
       watch: string;
       entry: string;
-      /** `server`; a workspace scope (`workspace:<id>`) is not served yet. */
+      /** `server`, or `workspace:<id>` for an entry whose scopes include `workspace`. */
       scope: string;
       page: string;
       /** The vocabulary version the app draws (`capabilities.screens.v`). */

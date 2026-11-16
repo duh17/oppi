@@ -95,16 +95,11 @@ enum ShellRouteScreens {
             return SchedulesViewController(root: root, showsSidebarToggle: showsSidebarToggle)
         case .agents:
             return AgentListViewController(root: root, showsSidebarToggle: showsSidebarToggle)
-        case .mcpServers:
-            return McpServersViewController(
-                scopeId: McpScopeSnapshot.globalId,
-                root: root,
-                showsSidebarToggle: showsSidebarToggle
-            )
         case .pluginScreen(let entry):
             let title = root.windowConnection?.serverCapabilities?.pluginSidebar?.first { $0.id == entry }?.title
             return PluginScreenViewController(
-                entry: entry, page: "list", title: title ?? "", root: root, showsSidebarToggle: showsSidebarToggle
+                entry: entry, page: "list", title: title ?? "", root: root,
+                showsHost: true, showsSidebarToggle: showsSidebarToggle
             )
         case .skills:
             return ServerSkillsViewController(root: root, showsSidebarToggle: showsSidebarToggle)
@@ -152,10 +147,6 @@ enum ShellRouteScreens {
             return
         }
         if let list = screen as? ServerExtensionsViewController {
-            list.showsSidebarToggle = placement == .splitDetailRoot
-            return
-        }
-        if let list = screen as? McpServersViewController {
             list.showsSidebarToggle = placement == .splitDetailRoot
             return
         }

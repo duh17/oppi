@@ -41,6 +41,8 @@ struct WorkspaceSidebarPrimaryUtilityItem: Equatable {
     let accessibilityLabel: String
     let accessibilityIdentifier: String
     let accessibilityHint: String?
+    /// Its place among the sidebar's rows, on the scale plugin entries use (`order`).
+    var order: Double = 0
 }
 
 enum WorkspaceSidebarPrimaryUtilities {
@@ -51,7 +53,8 @@ enum WorkspaceSidebarPrimaryUtilities {
             systemImage: "person.crop.circle",
             accessibilityLabel: "Agents",
             accessibilityIdentifier: "workspace.agents.open",
-            accessibilityHint: nil
+            accessibilityHint: nil,
+            order: 10
         ),
         .init(
             target: .schedules,
@@ -59,7 +62,8 @@ enum WorkspaceSidebarPrimaryUtilities {
             systemImage: "clock",
             accessibilityLabel: "Schedules",
             accessibilityIdentifier: "workspace.schedules.open",
-            accessibilityHint: nil
+            accessibilityHint: nil,
+            order: 20
         ),
         .init(
             target: .skills,
@@ -67,7 +71,8 @@ enum WorkspaceSidebarPrimaryUtilities {
             systemImage: "sparkles.rectangle.stack",
             accessibilityLabel: "Open Skills",
             accessibilityIdentifier: "workspace.skills.open",
-            accessibilityHint: nil
+            accessibilityHint: nil,
+            order: 30
         ),
         .init(
             target: .extensions,
@@ -75,15 +80,8 @@ enum WorkspaceSidebarPrimaryUtilities {
             systemImage: "shippingbox",
             accessibilityLabel: "Open Extensions",
             accessibilityIdentifier: "workspace.extensions.open",
-            accessibilityHint: nil
-        ),
-        .init(
-            target: .mcpServers,
-            title: "MCP Servers",
-            systemImage: "network",
-            accessibilityLabel: "Open MCP Servers",
-            accessibilityIdentifier: "workspace.mcpServers.open",
-            accessibilityHint: nil
+            accessibilityHint: nil,
+            order: 40
         ),
         .init(
             target: .sshTerminal,
@@ -91,32 +89,33 @@ enum WorkspaceSidebarPrimaryUtilities {
             systemImage: "terminal",
             accessibilityLabel: "Open Terminal",
             accessibilityIdentifier: "workspace.terminal.open",
-            accessibilityHint: "Opens your saved hosts"
+            accessibilityHint: "Opens your saved hosts",
+            order: 60
         ),
     ]
 
-    /// `items` the server offers (`offers`, its feature switches), with its plugin entries among
-    /// them by `order`: the native rows count 10, 20, 30 and on, and an entry sorts after a
-    /// native row of the same order. While its experiment is on, a plugin entry says so in its
-    /// title. The server lists only plugin entries whose feature is on.
+    /// `items` the server offers (`offers`, its feature switches), with its plugin entries that
+    /// have a sidebar row among them by `order`; an entry sorts after a native row of the same
+    /// order. The server lists only plugin entries whose feature is on.
     static func items(
         plugins: [PluginScreenSidebarEntry],
         offers: (ServerFeature) -> Bool
     ) -> [WorkspaceSidebarPrimaryUtilityItem] {
-        let native = items.enumerated()
-            .filter { $0.element.target.serverFeature.map(offers) ?? true }
-            .map { (order: Double($0.offset + 1) * 10, rank: 0, item: $0.element) }
-        let added = plugins.map { entry in
-            (order: entry.order, rank: 1, item: WorkspaceSidebarPrimaryUtilityItem(
+        let native = items
+            .filter { $0.target.serverFeature.map(offers) ?? true }
+            .map { (rank: 0, item: $0) }
+        let added = plugins.filter { $0.scopes.contains("server") }.map { entry in
+            (rank: 1, item: WorkspaceSidebarPrimaryUtilityItem(
                 target: .pluginScreen(entry.id),
-                title: "\(entry.title) (plugin)",
+                title: entry.title,
                 systemImage: entry.icon,
-                accessibilityLabel: "Open \(entry.title) (plugin)",
+                accessibilityLabel: "Open \(entry.title)",
                 accessibilityIdentifier: "workspace.plugin.\(entry.id).open",
-                accessibilityHint: nil
+                accessibilityHint: nil,
+                order: entry.order
             ))
         }
-        return (native + added).sorted { ($0.order, $0.rank) < ($1.order, $1.rank) }.map(\.item)
+        return (native + added).sorted { ($0.item.order, $0.rank) < ($1.item.order, $1.rank) }.map(\.item)
     }
 
     /// Pinned below New Workspace; not part of `items`.

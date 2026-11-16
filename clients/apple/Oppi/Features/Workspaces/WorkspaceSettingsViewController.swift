@@ -326,7 +326,10 @@ final class WorkspaceSettingsViewController: ListScreenController<
         var pages: [Item] = [.instructions]
         if offers(.skills) { pages.append(.skills) }
         if offers(.extensions) { pages.append(.extensions) }
-        if offers(.mcp) { pages.append(.mcpServers) }
+        // A host workspace's MCP Servers is the server's plugin page, which an older server lacks.
+        if offers(.mcp), model.isSandbox || connection?.pluginEntry(for: .mcp, scope: "workspace") != nil {
+            pages.append(.mcpServers)
+        }
         pages.append(.dictionary)
         if model.isSandbox { pages.append(.networkAccess) }
         sections.append(ListSection(.pages, items: pages))
@@ -635,12 +638,14 @@ final class WorkspaceSettingsViewController: ListScreenController<
         case .extensions:
             Router.push(WorkspaceExtensionsViewController(model: model, root: root), from: self)
         case .mcpServers:
-            // A host workspace manages its own `.pi/mcp.json`; a sandbox picks
-            // from the global servers.
+            // A host workspace manages its own `.pi/mcp.json` on the server's plugin page; a
+            // sandbox picks from the global servers.
             if model.isSandbox {
                 Router.push(WorkspaceSandboxMcpViewController(model: model, root: root), from: self)
-            } else {
-                Router.push(McpServersViewController(scopeId: workspaceId, root: root), from: self)
+            } else if let entry = connection.pluginEntry(for: .mcp, scope: "workspace") {
+                Router.push(PluginScreenViewController(
+                    entry: entry.id, scope: "workspace:\(workspaceId)", page: "list", title: entry.title, root: root
+                ), from: self)
             }
         case .dictionary:
             guard let serverId = connection.currentServerId else { return }

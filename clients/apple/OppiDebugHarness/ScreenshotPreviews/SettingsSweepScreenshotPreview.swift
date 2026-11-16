@@ -4,14 +4,13 @@ import UIKit
 /// The settings-like pages outside App, Server, and Workspace Settings: the
 /// real views over one fixture server, with API pages answered by
 /// `SettingsSweepFixtureURLProtocol`. `SCREENSHOT_SWEEP_PAGE` picks the page:
-/// `ssh-hosts`, `mcp`, `theme-import` (`theme-import-failed`: the themes request
+/// `ssh-hosts`, `theme-import` (`theme-import-failed`: the themes request
 /// answers 404),
 /// `experiments`, `skills`, `skills-offline` (the seeded catalog, cached while the refresh fails), `skill-detail`, `skill-detail-failed`, `skill-browser`, `extensions`, `extensions-offline` (the catalog
 /// request fails over a cached catalog), `extensions-unavailable` (the
 /// request fails with nothing cached), `extensions-builtin-only`, `extension-detail`,
 /// `extension-detail-builtin` (a built-in plugin the runtime needs),
-/// `agents-pi`, `agent-detail-failed`, `workspace-create`, `workspace-create-configure`, `mcp-add`,
-/// `mcp-detail` (`mcp-detail-failed`: the scope request answers 404), `mcp-failed`,
+/// `agents-pi`, `agent-detail-failed`, `workspace-create`, `workspace-create-configure`,
 /// `model-providers` (the connected and available groups over fixture usage),
 /// `model-providers-failed` (the status request answers 404); `schedules-failed`
 /// does the same for the schedules list. Terminal: `ssh-hosts` (the tab over two
@@ -25,7 +24,7 @@ import UIKit
 /// `agents-pi-file`, `schedules`, `skill-file-review`, `skill-file-edit` (a
 /// server that also edits Skill files in place),
 /// `pairing-approval`, `onboarding-add-server`, `onboarding-tailscale` (the
-/// same onboarding over a running tailnet); `mcp`, `theme-import`, and
+/// same onboarding over a running tailnet); `theme-import` and
 /// `agents-pi` serve them too. `SCREENSHOT_SWEEP_SHOWS_WRITES=1` shows the
 /// last write the fixture server received (`settingsSweep.lastWrite`);
 /// `SCREENSHOT_SWEEP_WRITE_DELAY=<seconds>` holds each write's answer that long.
@@ -199,28 +198,6 @@ final class SettingsSweepPreviewController: PreviewRootController {
         )
     }
 
-    static let mcpGlobal = McpScopeSnapshot(
-        id: McpScopeSnapshot.globalId, title: "Global", kind: "global", projectTrust: nil,
-        servers: [
-            mcpServer("github", config: McpServerConfig(url: "https://api.github.com/mcp"), state: "connected", tools: ["search_issues", "get_pull_request"], exposure: .deferred, oauth: true),
-            mcpServer("filesystem", config: McpServerConfig(command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem"]), state: "connected", tools: ["read_file", "list_directory", "write_file"], exposure: .codemode),
-            mcpServer("docs", config: McpServerConfig(url: "https://docs.example.com/mcp"), state: "needs-auth", tools: [], exposure: .direct, oauth: true),
-            mcpServer("notes", config: McpServerConfig(url: "https://notes.example.com/mcp"), state: "disabled", tools: [], exposure: .hidden, enabled: false),
-        ],
-        inherited: nil, errors: []
-    )
-
-    private static func mcpServer(
-        _ name: String, config: McpServerConfig, state: String, tools: [String],
-        exposure: McpExposure, enabled: Bool = true, oauth: Bool = false
-    ) -> McpServerSummary {
-        McpServerSummary(
-            name: name, transport: config.url == nil ? "stdio" : "http", config: config,
-            enabled: enabled, exposure: exposure, state: state, tools: tools,
-            toolExposure: nil, error: nil, supportsOAuth: oauth
-        )
-    }
-
     init() {
         let environment = ProcessInfo.processInfo.environment
         ScreenshotVolatileDefaults.applyThemeScheme(environment["SCREENSHOT_COLOR_SCHEME"])
@@ -275,10 +252,10 @@ final class SettingsSweepPreviewController: PreviewRootController {
 
         let coordinator = ConnectionCoordinator(serverStore: ServerStore())
         coordinator.serverStore.replaceServersForPreview([server])
-        if ["mcp", "mcp-failed", "model-providers", "model-providers-failed",
+        if ["model-providers", "model-providers-failed",
             "server-settings", "paired-devices", "paired-devices-offline", "about", "about-failed"]
             .contains(page) {
-            // The MCP and provider screens wait for `apiClientReady`, so their
+            // The provider and server screens wait for `apiClientReady`, so their
             // connection is a ready one whose requests the fixture answers, as
             // the Router and Metrics previews build theirs.
             coordinator.activatePreviewServer(server, apiClient: client)
@@ -422,10 +399,6 @@ final class SettingsSweepPreviewController: PreviewRootController {
                 },
                 content: { stack { ServerExtensionsViewController(root: root) } }
             )
-        case "mcp", "mcp-failed":
-            // `mcp-failed`: the host's probe answers 404, so the list shows its
-            // one failed row.
-            return stack { McpServersViewController(scopeId: McpScopeSnapshot.globalId, root: root) }
         case "model-providers", "model-providers-failed":
             // The status request answers 404 (`-failed`).
             return stack { ModelProvidersViewController(target: .init(serverId: server.id), root: root) }
@@ -452,28 +425,6 @@ final class SettingsSweepPreviewController: PreviewRootController {
         case "agent-detail-failed":
             return stack {
                 AgentDetailViewController(root: root, agentId: Self.agent.id) { _ in }
-            }
-        case "mcp-detail", "mcp-detail-failed":
-            // `-failed`: the scope request answers 404, so the page shows its
-            // failed row over the server it was opened for.
-            return stack {
-                McpServerDetailViewController(
-                    scope: Self.mcpGlobal,
-                    entry: Self.mcpGlobal.servers[0],
-                    client: client,
-                    serverId: server.id,
-                    serverName: server.name,
-                    signIn: McpSignInOwner(),
-                    root: root
-                )
-            }
-        case "mcp-add":
-            // The add-server form at the root instead of in its sheet, for a
-            // capture of the form itself.
-            return stack {
-                McpAddServerViewController(
-                    client: client, scope: Self.mcpGlobal, serverName: server.name, root: root
-                ) {}
             }
         case "ssh-hosts", "ssh-hosts-rex":
             // Off the tailnet whatever machine runs it, so the capture shows the hosts
@@ -661,7 +612,6 @@ final class SettingsSweepPreviewController: PreviewRootController {
         struct Schedules: Encodable { let schedules: [AgentScheduleSummary] }
         struct ScheduleBody: Encodable { let schedule: AgentSchedule }
         struct ScheduleSummaryBody: Encodable { let schedule: AgentScheduleSummary }
-        struct McpFlowBody: Encodable { let flow: McpAuthFlowSnapshot }
         struct Providers: Encodable { let providers: [ProviderAuthProviderStatus] }
 
         let agentSummary = AgentDefinitionSummary(
@@ -676,12 +626,6 @@ final class SettingsSweepPreviewController: PreviewRootController {
             ),
             version: schedule.version,
             createdAt: schedule.createdAt, updatedAt: schedule.updatedAt, archivedAt: nil
-        )
-        let mcpFlow = McpAuthFlowSnapshot(
-            flowId: "mcp-flow", scopeId: McpScopeSnapshot.globalId, serverName: "github",
-            launchMode: .phoneBrowser, status: .awaitingManualCode,
-            auth: .init(url: "https://github.com/login/oauth", instructions: nil), error: nil,
-            createdAt: 1, updatedAt: 1, expiresAt: 9_999_999_999_999
         )
         let systemPrompt = page == "agents-pi-file"
             ? PiSystemPromptSnapshot(
@@ -708,7 +652,6 @@ final class SettingsSweepPreviewController: PreviewRootController {
             ])),
             "/server/metrics/settings": Data(#"{"enabled":true,"revision":3}"#.utf8),
             "/server/mobile-output-guide": Data(#"{"enabled":true,"revision":3}"#.utf8),
-            "/mcp/scopes/global/servers": json(McpServersResponse(scope: mcpGlobal, activeSignIn: nil)),
             // Server Settings' pages: the server's facts, its providers and its
             // devices. `paired-devices-offline` and `about-failed` drop one.
             "/auth/devices": Data(#"{"devices":[{"id":"dev-iphone","name":"Alex's iPhone","scope":"device","createdAt":1770000000000,"lastUsedAt":1770000900000,"revokedAt":null,"keyEnrolled":true},{"id":"dev-ipad","name":"Alex's iPad","scope":"device","createdAt":1769000000000,"lastUsedAt":1769900000000,"revokedAt":null,"keyEnrolled":true}]}"#.utf8),
@@ -749,9 +692,6 @@ final class SettingsSweepPreviewController: PreviewRootController {
             "/server/resources/extensions/oppi-control": json(controlDetail),
             "/agents": json(Agents(agents: [agentSummary])),
             "/schedules/\(schedule.id)/runs": Data(#"{"runs":[]}"#.utf8),
-            "/servers/github/login": json(McpFlowBody(flow: mcpFlow)),
-            "/mcp/auth/flows/mcp-flow": json(McpFlowBody(flow: mcpFlow)),
-            "/mcp/auth/flows/mcp-flow/cancel": Data(#"{"flow":{"flowId":"mcp-flow","scopeId":"global","serverName":"github","launchMode":"phone_browser","status":"cancelled","createdAt":1,"updatedAt":2,"expiresAt":9999999999999}}"#.utf8),
         ]
         // A record's reads and writes answer from one state, so a save is what
         // the next read shows: the editor's version, the reader's definition, and
@@ -855,9 +795,6 @@ final class SettingsSweepPreviewController: PreviewRootController {
         }
         if page == "agent-detail-failed" {
             SettingsSweepFixtureURLProtocol.routes["/agents/\(agent.id)"] = nil
-        }
-        if page == "mcp-failed" || page == "mcp-detail-failed" {
-            SettingsSweepFixtureURLProtocol.routes["/mcp/scopes/global/servers"] = nil
         }
         if page == "theme-import-failed" {
             SettingsSweepFixtureURLProtocol.routes["/themes"] = nil
