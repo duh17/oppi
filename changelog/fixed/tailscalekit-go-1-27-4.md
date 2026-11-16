@@ -1,0 +1,1 @@
+- **Client:** The in-app Tailscale connection is built with Go 1.27.4, which fixes a published `net/http` security advisory.
