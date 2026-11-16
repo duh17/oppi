@@ -13,7 +13,10 @@ afterEach(() => {
 });
 
 /** A classic session in an empty agent dir, so no user extension or tool joins in. */
-async function classicSession(notify: SessionNotifyPort): Promise<SdkBackend> {
+async function classicSession(
+  notify: SessionNotifyPort,
+  notifyEnabled: () => boolean,
+): Promise<SdkBackend> {
   const cwd = mkdtempSync(join(tmpdir(), "oppi-notify-cwd-"));
   const agentDir = mkdtempSync(join(tmpdir(), "oppi-notify-agent-"));
   mkdirSync(join(agentDir, "extensions"), { recursive: true });
@@ -43,6 +46,7 @@ async function classicSession(notify: SessionNotifyPort): Promise<SdkBackend> {
     onEvent: vi.fn(),
     onEnd: vi.fn(),
     notify,
+    notifyEnabled,
   });
   cleanups.push(() => void backend.dispose());
   return backend;
@@ -53,22 +57,33 @@ function activeTools(backend: SdkBackend): string[] {
 }
 
 describe("classic notify tool", () => {
-  it("is offered while the server offers it, and a reload follows push turning off", async () => {
+  it("is offered while the server offers it and its plugin is on, and a reload follows both", async () => {
     let offered = true;
+    let on = true;
     const sent: Array<[string, NotifyInput]> = [];
-    const backend = await classicSession({
-      offersNotify: () => offered,
-      notify: async (sessionId, input) => {
-        sent.push([sessionId, input]);
-        return { status: "sent", devices: 2 };
+    const backend = await classicSession(
+      {
+        offersNotify: () => offered,
+        notify: async (sessionId, input) => {
+          sent.push([sessionId, input]);
+          return { status: "sent", devices: 2 };
+        },
       },
-    });
+      () => on,
+    );
 
     expect(activeTools(backend)).toContain("notify");
     const tool = backend.session.agent.state.tools.find((entry) => entry.name === "notify");
     const result = await tool!.execute("call-1", { title: "Report ready", body: "Read it." });
     expect(result.content).toEqual([{ type: "text", text: "Notification sent to 2 devices." }]);
     expect(sent).toEqual([["classic-1", { title: "Report ready", body: "Read it." }]]);
+
+    on = false;
+    await backend.reloadResources();
+    expect(activeTools(backend)).not.toContain("notify");
+    on = true;
+    await backend.reloadResources();
+    expect(activeTools(backend)).toContain("notify");
 
     offered = false;
     await backend.reloadResources();

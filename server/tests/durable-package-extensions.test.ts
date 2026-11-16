@@ -344,23 +344,46 @@ describe("plugins from Pi packages", () => {
       durableExtensions: { disabled: ["sql-explorer"] },
     });
     // A new session starts without what is off.
-    const fresh = f.storage.createSession("Fresh", "faux/faux-1");
-    fresh.serverDurable = { storeId: fresh.id };
-    fresh.workspaceId = f.workspace.id;
-    f.storage.saveSession(fresh);
-    await f.manager.startSession(fresh.id, f.workspace);
-    const freshHarness = await f.harness();
-    const freshConversation = f.storage.getSession(fresh.id)!.serverDurable!
-      .conversationId as ConversationId;
-    const freshAgent = await (await freshHarness.conversation(freshConversation, context))!.agent(
-      context,
-    );
-    expect(freshAgent.tools.map((tool) => tool.name)).toContain("probe_version");
-    expect(freshAgent.tools.map((tool) => tool.name)).not.toContain("sqlite_query");
-    expect(freshAgent.extensions.map((extension) => extension.name)).toContain("working-words");
+    const freshSession = async () => {
+      const fresh = f.storage.createSession("Fresh", "faux/faux-1");
+      fresh.serverDurable = { storeId: fresh.id };
+      fresh.workspaceId = f.workspace.id;
+      f.storage.saveSession(fresh);
+      await f.manager.startSession(fresh.id, f.workspace);
+      const harness = await f.harness();
+      const conversation = f.storage.getSession(fresh.id)!.serverDurable!
+        .conversationId as ConversationId;
+      const agent = await (await harness.conversation(conversation, context))!.agent(context);
+      return { harness, conversation, agent, tools: agent.tools.map((tool) => tool.name) };
+    };
+    const fresh = await freshSession();
+    expect(fresh.tools).toContain("probe_version");
+    expect(fresh.tools).not.toContain("sqlite_query");
+    expect(fresh.agent.extensions.map((extension) => extension.name)).toContain("working-words");
     expect(
-      (await freshHarness.snapshot(WordsOwner, freshConversation, context))?.task,
+      (await fresh.harness.snapshot(WordsOwner, fresh.conversation, context))?.task,
     ).toBeDefined();
+
+    // Oppi's `notify` is one plugin among others: with push on, its row takes the tool away
+    // from new sessions and brings it back.
+    f.manager.notifyPort = {
+      offersNotify: () => true,
+      notify: async () => ({ status: "sent", devices: 1 }),
+    };
+    expect((await freshSession()).tools).toContain("notify");
+    const notifyRow = rowNamed(await f.rows(), "oppi-notify");
+    expect(notifyRow).toMatchObject({ source: "built-in", plugin: { required: false } });
+    expect(await enabled(notifyRow, false)).toMatchObject({
+      status: 200,
+      body: { name: "oppi-notify", state: "off" },
+    });
+    expect(f.storage.getConfig().experimental?.durableExtensions?.disabled).toEqual([
+      "sql-explorer",
+      "oppi.notify",
+    ]);
+    expect((await freshSession()).tools).not.toContain("notify");
+    expect(await enabled(notifyRow, true)).toMatchObject({ status: 200, body: { state: "on" } });
+    expect((await freshSession()).tools).toContain("notify");
   });
 
   it("offers a package's tool to a durable session and runs the reloaded code without a restart", async () => {

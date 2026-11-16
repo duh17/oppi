@@ -22,6 +22,7 @@ import {
 } from "./session-runtime-state.js";
 import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
+import { NOTIFY_EXTENSION } from "../plugins/notify/contract.js";
 import { applyLifecycle } from "./session-lifecycle-state.js";
 import type { SessionMessageQueueStore } from "./session-queue.js";
 import type { Storage } from "./storage.js";
@@ -175,6 +176,11 @@ export class SessionStartCoordinator {
                   onUIBridgeReady: (bridge) => this.deps.onUIBridgeReady?.(key, bridge),
                   hasUI: () => this.deps.hasUI?.(key) ?? false,
                   notify: this.deps.getNotifyPort() ?? undefined,
+                  // The same switch as the plugin row's for durable sessions.
+                  notifyEnabled: () =>
+                    !(
+                      this.deps.storage.getConfig().experimental?.durableExtensions?.disabled ?? []
+                    ).includes(NOTIFY_EXTENSION),
                   ...(this.deps.liveVoiceExtension
                     ? { liveVoiceExtension: this.deps.liveVoiceExtension }
                     : {}),

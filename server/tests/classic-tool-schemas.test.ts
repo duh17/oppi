@@ -36,7 +36,7 @@ function classicSchemas(): Record<string, unknown> {
     ...registeredParameters(backgroundJobsExtension),
     ...registeredParameters(subagentsExtension),
     ...registeredParameters(
-      createNotifyExtension("s", { offersNotify: () => true } as never).factory,
+      createNotifyExtension("s", { offersNotify: () => true } as never, () => true).factory,
     ),
     ...registeredParameters(new LiveVoiceSpeech({} as never).extension("s").factory),
     grep: createSandboxGrepToolDefinition({} as GondolinVm, "/work").parameters,

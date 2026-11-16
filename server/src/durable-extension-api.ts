@@ -28,6 +28,8 @@ import type {
 } from "./types.js";
 
 export type { InternalTarget, SchemeReader } from "./internal-urls.js";
+/** What `oppiHost().notify` sends and what it reports back. */
+export type { NotifyInput, NotifyOutcome } from "../plugins/notify/contract.js";
 
 /**
  * The host API a plugin reaches through `oppi/v1` (`oppi-v1.ts` re-exports this module) for what
@@ -152,8 +154,11 @@ export interface OppiDurableHost {
    */
   surfaces(env: ExecutionEnv | undefined): SurfacePublisher | undefined;
   /**
-   * `notify`'s send for the Session bound to the conversation running `env`. Undefined for an
-   * env the server did not make, or a conversation without a Session.
+   * A push to the user's devices for the Session bound to the conversation running `env`, the
+   * send behind Oppi's `notify` tool and open to any plugin. It sends only for a top-level
+   * Session while a device has push on (`{ status: "off" }` otherwise), at most once a minute per
+   * Session across every plugin (`throttled`). Undefined for an env the server did not make, or a
+   * conversation without a Session.
    */
   notify(
     env: ExecutionEnv | undefined,

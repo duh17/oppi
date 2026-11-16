@@ -636,7 +636,9 @@ export class DurableBackend implements AgentBackend {
                 // The host default selection includes all three.
                 remove: [
                   ...(spawn ? [] : [host.runtime.sessionsExtension]),
-                  ...(notifies ? [] : [host.runtime.notifyExtension]),
+                  ...(notifies || !host.runtime.notifyExtension
+                    ? []
+                    : [host.runtime.notifyExtension]),
                   ...unofferedGodot,
                   ...(codemode ? [] : [host.runtime.codemode]),
                 ],

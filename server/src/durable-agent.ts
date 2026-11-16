@@ -351,8 +351,11 @@ interface DurableAgentInput {
   /** Oppi's extension that offers `subagent`. */
   sessions: Extension;
   spawn: boolean;
-  /** Oppi's extension that offers `notify`, and whether this conversation selects it. */
-  notify: Extension;
+  /**
+   * Oppi's extension that offers `notify` (none while its plugin fails to load), and whether this
+   * conversation selects it. A disabled one leaves with the other disabled extensions.
+   */
+  notify: Extension | undefined;
   notifies: boolean;
   grant: boolean;
   /** Where the instructions come from; unset keeps the base agent's (a child without an Agent). */
@@ -383,7 +386,7 @@ export function resolveDurableAgent(input: DurableAgentInput): {
     (extension) =>
       !extension.name.startsWith(DURABLE_MCP_EXTENSION_PREFIX) &&
       extension.name !== input.sessions.name &&
-      extension.name !== input.notify.name &&
+      extension.name !== input.notify?.name &&
       // A call belongs to the session it attached to; a child spawned during one has no voice.
       extension.name !== LIVE_VOICE_EXTENSION &&
       // A saved Agent picks its own packages; a copy keeps the parent's.
@@ -416,7 +419,7 @@ export function resolveDurableAgent(input: DurableAgentInput): {
   const extensions = [
     ...base,
     ...(input.spawn ? [input.sessions] : []),
-    ...(input.notifies ? [input.notify] : []),
+    ...(input.notifies && input.notify ? [input.notify] : []),
     ...packages,
   ].filter((extension) => input.enabled(extension.name));
 

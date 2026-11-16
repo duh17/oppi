@@ -4,6 +4,7 @@ import { defineExtension, defineFacet, Extensions, oppiHost } from "oppi/v1";
 import {
   NOTIFY_BODY,
   NOTIFY_DESCRIPTION,
+  NOTIFY_EXTENSION,
   NOTIFY_GUIDELINES,
   NOTIFY_TITLE,
   NOTIFY_TOOL_NAME,
@@ -28,7 +29,7 @@ const notify = defineTool({
  * sees a tool that cannot reach anyone.
  */
 export const DurableNotify = defineExtension({
-  name: "oppi.notify",
+  name: NOTIFY_EXTENSION,
   runtimes: ["host", "sandbox"],
   tools: [notify],
   sections: [section("notify-guidelines", () => NOTIFY_GUIDELINES.join("\n"))],

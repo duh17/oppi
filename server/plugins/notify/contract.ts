@@ -4,6 +4,8 @@
 // Pi, closed for durable. Imports nothing from `oppi/v1`, which only the plugin host resolves. The server decides who is offered the tool and what a call sends
 // (`SessionPushNotifier`).
 
+/** The durable extension's name, which `experimental.durableExtensions.disabled` lists to turn it off. */
+export const NOTIFY_EXTENSION = "oppi.notify";
 export const NOTIFY_TOOL_NAME = "notify";
 
 /**

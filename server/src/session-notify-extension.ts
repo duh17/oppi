@@ -16,14 +16,19 @@ const NotifyParams = obj({ title: str(NOTIFY_TITLE), body: str(NOTIFY_BODY) }, {
 
 /**
  * The agent `notify` tool for a classic session. Registered on each resource load only while
- * the server offers it to this session (top-level, push on), so a reload after push turns on
- * or off adds or drops it. The durable built-in (`plugins/notify`) is the same tool.
+ * the server offers it to this session (top-level, push on) and its plugin row is on
+ * (`enabled`), so a reload after either changes adds or drops it. The durable built-in
+ * (`plugins/notify`) is the same tool.
  */
-export function createNotifyExtension(sessionId: string, port: SessionNotifyPort): InlineExtension {
+export function createNotifyExtension(
+  sessionId: string,
+  port: SessionNotifyPort,
+  enabled: () => boolean,
+): InlineExtension {
   return {
     name: "oppi-notify",
     factory: (pi) => {
-      if (!port.offersNotify(sessionId)) return;
+      if (!enabled() || !port.offersNotify(sessionId)) return;
       pi.registerTool({
         name: NOTIFY_TOOL_NAME,
         label: "Notify",

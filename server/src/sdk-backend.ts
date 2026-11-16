@@ -720,6 +720,8 @@ export interface SdkBackendConfig {
   hasUI?: () => boolean;
   /** Offers the agent `notify` tool while the server allows it for this session. */
   notify?: SessionNotifyPort;
+  /** Whether the `oppi-notify` plugin row is on, read at each resource load. Absent means on. */
+  notifyEnabled?: () => boolean;
   /** Live Voice `speak` for this session's agent, active only while a call is attached. */
   liveVoiceExtension?: (sessionId: string) => InlineExtension | undefined;
 }
@@ -1378,7 +1380,15 @@ export class SdkBackend implements AgentBackend {
         appendSystemPromptOverride: (base) => buildCurrentAppendSystemPrompt(base),
         extensionFactories: [
           createLifecycleJournalExtension(sessionManager),
-          ...(config.notify ? [createNotifyExtension(session.id, config.notify)] : []),
+          ...(config.notify
+            ? [
+                createNotifyExtension(
+                  session.id,
+                  config.notify,
+                  () => config.notifyEnabled?.() ?? true,
+                ),
+              ]
+            : []),
           ...[config.liveVoiceExtension?.(session.id)].filter((ext) => ext !== undefined),
           ...createMcpBuiltinExtensions(loadedBuiltinNames, sandboxMcp),
           ...(sandboxSkillCommand ? [sandboxSkillCommand] : []),

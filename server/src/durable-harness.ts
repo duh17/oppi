@@ -77,6 +77,7 @@ import type { SurfaceConversation, SurfacePublisher } from "./durable-surface.js
 import type { SurfaceLoop } from "./session-surfaces.js";
 import type { LiveVoiceRuntimePort } from "./live-voice-speech.js";
 import { LIVE_VOICE_EXTENSION } from "../plugins/live-voice/contract.js";
+import { NOTIFY_EXTENSION } from "../plugins/notify/contract.js";
 import { OPPI_CALLER_SESSION_ID_ENV } from "./session-caller-identity.js";
 import { properLockfile } from "./pi-lockfile.js";
 import { DURABLE_STORE_LOCK_STALE_MS } from "./durable-store-lock.js";
@@ -258,9 +259,11 @@ export const BUILT_IN_PLUGINS_DIR = fileURLToPath(new URL("../plugins/", import.
 
 /**
  * The built-in plugins the server cannot run without, by plugin name: its code names their
- * extensions (Oppi Control's selection, `subagent`, `notify`, `speak`, the background-jobs and
+ * extensions (Oppi Control's selection, `subagent`, `speak`, the background-jobs and
  * working-words documents), or a durable session needs them to match a classic one (file tools,
  * project context). They load first or the runtime does not open, and cannot be disabled.
+ * `oppi-notify` is not one: it is one way to use push (`oppiHost().notify`), and its row turns
+ * it off like any other plugin's.
  */
 const REQUIRED_PLUGINS: ReadonlySet<string> = new Set([
   "oppi-file-tools",
@@ -269,7 +272,6 @@ const REQUIRED_PLUGINS: ReadonlySet<string> = new Set([
   "background-jobs",
   "subagents",
   "oppi-project-context",
-  "oppi-notify",
   "oppi-live-voice",
   "oppi-control",
 ]);
@@ -289,8 +291,6 @@ const OFF_BY_DEFAULT_PLUGINS: ReadonlySet<string> = new Set([
 const CONTROL_EXTENSION = "oppi.control";
 /** Offers `subagent`; a session selects it only when it may spawn. */
 const SESSIONS_EXTENSION = "oppi.sessions";
-/** Offers `notify`; a session selects it only while the server offers it (`offersNotify`). */
-const NOTIFY_EXTENSION = "oppi.notify";
 /**
  * Built-ins no default selection carries: Oppi Control's, and `oppi.live-voice`,
  * which `DurableBackend` enrolls only while a Live Voice call is attached.
@@ -1623,9 +1623,9 @@ export class DurableHarness {
     return this.builtIn(SESSIONS_EXTENSION);
   }
 
-  /** The installed `oppi.notify`, which offers `notify`. */
-  get notifyExtension(): Extension {
-    return this.builtIn(NOTIFY_EXTENSION);
+  /** The installed `oppi.notify`, which offers `notify`; none while its plugin fails to load. */
+  get notifyExtension(): Extension | undefined {
+    return this.bundled.find((builtIn) => builtIn.extension.name === NOTIFY_EXTENSION)?.extension;
   }
 
   /** The installed `oppi.live-voice`, which offers `speak`. */
