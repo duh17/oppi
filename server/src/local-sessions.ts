@@ -18,7 +18,7 @@ import {
   closeSync,
   realpathSync,
 } from "node:fs";
-import { stat, readdir } from "node:fs/promises";
+import { stat, readdir, realpath } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import {
@@ -244,34 +244,56 @@ export interface KnownLocalSessionIdentities {
 
 type KnownLocalSessions = Set<string> | KnownLocalSessionIdentities | undefined;
 
-function canonicalLocalSessionFilePath(path: string): string {
-  const resolved = resolve(path);
-  if (!existsSync(resolved)) return resolved;
-  try {
-    return realpathSync(resolved);
-  } catch {
-    return resolved;
-  }
+/**
+ * Real paths of session files already found on disk, by resolved path. Each session list
+ * request canonicalizes every stored session's files (tens of thousands on a long-lived server),
+ * and each catalog refresh every file under the Pi sessions root. Doing that with sync
+ * `existsSync` + `realpathSync` held the event loop for seconds on a busy disk, so lookups run
+ * off the event loop and hits are kept; a path not on disk yet is looked up again next time.
+ * A file's real path does not change while it exists.
+ */
+const canonicalSessionFilePaths = new Map<string, string>();
+
+/** Concurrent off-loop lookups, so a cold fill does not take every fs worker thread. */
+const CANONICAL_LOOKUP_CONCURRENCY = 16;
+
+/** Real path of each resolved path, in order; null when it cannot be resolved (missing). */
+async function canonicalSessionFiles(resolvedPaths: readonly string[]): Promise<(string | null)[]> {
+  const result = resolvedPaths.map((path) => canonicalSessionFilePaths.get(path) ?? null);
+  const pending = result.flatMap((canonical, index) => (canonical === null ? [index] : []));
+  const lookUp = async (): Promise<void> => {
+    for (let index = pending.pop(); index !== undefined; index = pending.pop()) {
+      const path = resolvedPaths[index];
+      try {
+        const canonical = await realpath(path);
+        canonicalSessionFilePaths.set(path, canonical);
+        result[index] = canonical;
+      } catch {
+        // Missing or unresolvable: stays null.
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: CANONICAL_LOOKUP_CONCURRENCY }, lookUp));
+  return result;
 }
 
-export function collectKnownLocalSessionIdentities(
+export async function collectKnownLocalSessionIdentities(
   sessions: Iterable<Pick<Session, "id" | "piSessionFile" | "piSessionFiles">>,
-): KnownLocalSessionIdentities {
-  const files = new Set<string>();
+): Promise<KnownLocalSessionIdentities> {
+  const resolvedFiles = new Set<string>();
   const piSessionIds = new Set<string>();
-
   for (const session of sessions) {
     if (session.id) {
       piSessionIds.add(session.id);
     }
-    if (session.piSessionFile) {
-      files.add(canonicalLocalSessionFilePath(session.piSessionFile));
-    }
-    for (const file of session.piSessionFiles ?? []) {
-      files.add(canonicalLocalSessionFilePath(file));
-    }
+    if (session.piSessionFile) resolvedFiles.add(resolve(session.piSessionFile));
+    for (const file of session.piSessionFiles ?? []) resolvedFiles.add(resolve(file));
   }
 
+  const resolved = [...resolvedFiles];
+  const canonical = await canonicalSessionFiles(resolved);
+  // A file not written yet keeps its resolved path.
+  const files = new Set(canonical.map((path, index) => path ?? resolved[index]));
   return { files, piSessionIds };
 }
 
@@ -634,23 +656,21 @@ export async function discoverLocalSessions(
     }
   }
 
-  // Collect all file paths + resolve symlinks
-  const allFiles: string[] = [];
+  // Collect all file paths + resolve symlinks (unresolvable ones are skipped)
+  const listedFiles: string[] = [];
   for (const dir of cwdDirs) {
     try {
       const entries = await readdir(dir);
       for (const f of entries) {
-        if (!f.endsWith(".jsonl")) continue;
-        try {
-          allFiles.push(realpathSync(join(dir, f)));
-        } catch {
-          // skip unresolvable symlinks
-        }
+        if (f.endsWith(".jsonl")) listedFiles.push(join(dir, f));
       }
     } catch {
       continue;
     }
   }
+  const allFiles = (await canonicalSessionFiles(listedFiles)).filter(
+    (path): path is string => path !== null,
+  );
 
   // Track which paths are still on disk (to prune stale cache entries)
   const livePaths = new Set(allFiles);

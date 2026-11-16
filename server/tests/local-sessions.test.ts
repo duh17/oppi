@@ -3,7 +3,15 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdirSync, writeFileSync, rmSync, mkdtempSync, utimesSync, realpathSync } from "node:fs";
+import {
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  mkdtempSync,
+  utimesSync,
+  realpathSync,
+  symlinkSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir, homedir } from "node:os";
 import {
@@ -327,7 +335,7 @@ describe("discoverLocalSessions", () => {
         before.close();
       }
 
-      const known = collectKnownLocalSessionIdentities([
+      const known = await collectKnownLocalSessionIdentities([
         { id: "uuid-managed", piSessionFile: managedPath },
       ]);
       const sessions = await discoverLocalSessions(known, { dataDir });
@@ -348,8 +356,8 @@ describe("discoverLocalSessions", () => {
     }
   });
 
-  it("collects imported Session.id as the catalog Pi identity", () => {
-    const known = collectKnownLocalSessionIdentities([
+  it("collects imported Session.id as the catalog Pi identity", async () => {
+    const known = await collectKnownLocalSessionIdentities([
       {
         id: "uuid-imported",
         piSessionFile: "/tmp/imported.jsonl",
@@ -360,6 +368,27 @@ describe("discoverLocalSessions", () => {
     expect(known.piSessionIds.has("uuid-imported")).toBe(true);
     expect(known.files.has("/tmp/imported.jsonl")).toBe(true);
     expect(known.files.has("/tmp/older.jsonl")).toBe(true);
+  });
+
+  it("canonicalizes a known session file written after an earlier collection", async () => {
+    // The file is reached through a symlinked folder, so only its real path matches the catalog.
+    const root = mkdtempSync(join(tmpdir(), "oppi-known-late-"));
+    try {
+      const realDir = join(root, "real");
+      mkdirSync(realDir);
+      symlinkSync(realDir, join(root, "link"));
+      const viaLink = join(root, "link", "late.jsonl");
+      const sessions = [{ id: "uuid-late", piSessionFile: viaLink }];
+
+      const before = await collectKnownLocalSessionIdentities(sessions);
+      expect(before.files).toEqual(new Set([viaLink]));
+
+      writeFileSync(join(realDir, "late.jsonl"), makeSessionJsonl({ id: "uuid-late" }));
+      const after = await collectKnownLocalSessionIdentities(sessions);
+      expect(after.files).toEqual(new Set([realpathSync(join(realDir, "late.jsonl"))]));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("filters out known session identities by piSessionId", async () => {

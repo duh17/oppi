@@ -15,7 +15,10 @@ const localSessionState = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/local-sessions.js", () => ({
-  collectKnownLocalSessionIdentities: vi.fn(() => ({ files: new Set(), piSessionIds: new Set() })),
+  collectKnownLocalSessionIdentities: vi.fn(async () => ({
+    files: new Set(),
+    piSessionIds: new Set(),
+  })),
   discoverLocalSessions: vi.fn(async () => localSessionState.snapshot),
   invalidateLocalSessionsCache: vi.fn(),
   listCatalogedLocalSessions: vi.fn(() => localSessionState.snapshot),

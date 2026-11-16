@@ -112,6 +112,9 @@ export interface SessionListServiceDeps {
  * merging live runtime snapshots, or joining attention counts themselves.
  */
 export class SessionListService {
+  /** One catalog refresh at a time: list requests arriving during a scan do not start another. */
+  private localCatalogRefreshing = false;
+
   constructor(private readonly deps: SessionListServiceDeps) {}
 
   listRecentWorkspaceSessionSummaries(params: {
@@ -320,7 +323,7 @@ export class SessionListService {
     workspace: Workspace,
     worktreeId?: string,
   ): Promise<LocalSessionCatalogSnapshot> {
-    const knownPiSessionIdentities = this.collectKnownPiSessionIdentities();
+    const knownPiSessionIdentities = await this.collectKnownPiSessionIdentities();
     const snapshot = listCatalogedLocalSessions(knownPiSessionIdentities, {
       dataDir: this.deps.storage.getDataDir(),
     });
@@ -354,23 +357,31 @@ export class SessionListService {
     if (lastScannedAt !== undefined && nowMs - lastScannedAt < LOCAL_SESSION_CATALOG_MAX_AGE_MS) {
       return;
     }
+    if (this.localCatalogRefreshing) return;
+    this.localCatalogRefreshing = true;
 
-    const knownPiSessionIdentities = this.collectKnownPiSessionIdentities();
     const dataDir = this.deps.storage.getDataDir();
     // Defer off the request stack so workspace session list responses never pay
-    // for cold Pi-home enumeration inline, even before discoverLocalSessions
-    // hits its first await.
+    // for cold Pi-home enumeration inline.
     setImmediate(() => {
-      void discoverLocalSessions(knownPiSessionIdentities, { dataDir }).catch((error: unknown) => {
-        log.warn("local_session_catalog.refresh_failed", {
-          error: safeErrorMessage(error),
+      void this.collectKnownPiSessionIdentities()
+        .then((known) => discoverLocalSessions(known, { dataDir }))
+        .catch((error: unknown) => {
+          log.warn("local_session_catalog.refresh_failed", {
+            error: safeErrorMessage(error),
+          });
+        })
+        .finally(() => {
+          this.localCatalogRefreshing = false;
         });
-      });
     });
   }
 
-  private collectKnownPiSessionIdentities(): { files: Set<string>; piSessionIds: Set<string> } {
-    return collectKnownLocalSessionIdentities(this.deps.storage.listSessions()) as {
+  private async collectKnownPiSessionIdentities(): Promise<{
+    files: Set<string>;
+    piSessionIds: Set<string>;
+  }> {
+    return (await collectKnownLocalSessionIdentities(this.deps.storage.listSessions())) as {
       files: Set<string>;
       piSessionIds: Set<string>;
     };
