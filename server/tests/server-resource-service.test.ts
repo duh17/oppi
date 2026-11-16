@@ -462,6 +462,44 @@ describe("ServerResourceService mutations and skill details", () => {
     expect(settings.packages[0]?.skills).toEqual([]);
   });
 
+  it("offers Oppi's Auto-Name off without writing Pi's settings, and lists it there only while it is on", async () => {
+    const fixture = makeFixture();
+    const settingsPath = join(fixture.agentDir, "settings.json");
+    writeFileSync(settingsPath, JSON.stringify({ packages: ["npm:other"] }));
+    const service = makeService(fixture);
+    const readPackages = (): unknown =>
+      (JSON.parse(readFileSync(settingsPath, "utf8")) as { packages?: unknown }).packages;
+
+    const offered = (await service.listExtensions()).extensions.find(
+      (row) => row.name === "auto-name",
+    );
+    expect(offered).toMatchObject({ state: "off", kinds: ["plugin", "pi-extension"] });
+    expect(readPackages()).toEqual(["npm:other"]);
+
+    expect(await service.setExtensionEnabled(offered!.id, true)).toMatchObject({ state: "on" });
+    const autoName = join(import.meta.dirname, "../plugins/auto-name");
+    expect(readPackages()).toEqual(["npm:other", { source: autoName, extensions: ["+index.ts"] }]);
+
+    expect(await service.setExtensionEnabled(offered!.id, false)).toMatchObject({ state: "off" });
+    expect(readPackages()).toEqual(["npm:other"]);
+  });
+
+  it("offers nothing beside the user's own linked copy of Auto-Name", async () => {
+    const fixture = makeFixture();
+    mkdirSync(join(fixture.agentDir, "extensions"), { recursive: true });
+    symlinkSync(
+      join(import.meta.dirname, "../plugins/auto-name"),
+      join(fixture.agentDir, "extensions", "auto-name"),
+    );
+
+    const rows = (await makeService(fixture).listExtensions()).extensions.filter(
+      (row) => row.name === "auto-name",
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.provenance).not.toMatchObject({ kind: "package" });
+  });
+
   it("says whether the package behind an extension holds a plugin", async () => {
     const fixture = makeFixture();
     const packages = ["classic-only", "with-plugin", "listed-plugin", "broken-list"].map((name) => {
@@ -545,7 +583,8 @@ describe("ServerResourceService mutations and skill details", () => {
     // A client that asked for plugins learns why there are none.
     expect(catalog.pluginsUnavailable).toContain("Oppi's built-in plugins failed to load");
     expect((await service.listExtensions()).pluginsUnavailable).toBeUndefined();
-    const listed = catalog.extensions;
+    // Oppi's own Auto-Name is offered beside them (see its own test).
+    const listed = catalog.extensions.filter((row) => row.name !== "auto-name");
     expect(listed.map((row) => row.name)).toEqual(["classic-only", "with-plugin"]);
     const withPlugin = listed.find((row) => row.name === "with-plugin")!;
     expect(withPlugin).toMatchObject({ state: "on", kinds: ["plugin", "pi-extension"] });
@@ -683,7 +722,9 @@ describe("ServerResourceService mutations and skill details", () => {
     mkdirSync(agentExtensions, { recursive: true });
     symlinkSync(packagedExtension, join(agentExtensions, "extension-alias.js"));
 
-    const listed = (await makeService(fixture).listExtensions()).extensions;
+    const listed = (await makeService(fixture).listExtensions()).extensions.filter(
+      (row) => row.name !== "auto-name",
+    );
 
     expect(listed).toHaveLength(1);
     expect(listed[0]?.id).toMatch(/^extension_[a-f0-9]{64}$/);

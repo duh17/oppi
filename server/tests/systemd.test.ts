@@ -3,11 +3,20 @@
  * Environment carry exact paths through systemd's quoting, specifier (`%`),
  * and ExecStart variable (`$`) rules.
  */
-import { describe, expect, it } from "vitest";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { parseCliArgs } from "../src/cli/args.js";
 import { unsupportedFlagsMessage } from "../src/cli/help.js";
-import { buildSystemdUnit, parseSystemdUnit, systemdUnitPath } from "../src/systemd.js";
+import {
+  buildSystemdUnit,
+  installService,
+  parseSystemdUnit,
+  systemdUnitPath,
+  undoLinger,
+} from "../src/systemd.js";
 
 function line(unit: string, prefix: string): string[] {
   return unit.split("\n").filter((l) => l.startsWith(prefix));
@@ -86,5 +95,68 @@ describe("parseSystemdUnit", () => {
   it("returns null for a unit that does not run oppi serve --data-dir", () => {
     expect(parseSystemdUnit("[Service]\nExecStart=/usr/bin/true\n")).toBeNull();
     expect(parseSystemdUnit("[Service]\n")).toBeNull();
+  });
+});
+
+describe("lingering", () => {
+  let root: string;
+  let calls: string;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "oppi-linger-"));
+    calls = join(root, "calls");
+    const bin = join(root, "bin");
+    mkdirSync(bin);
+    // A user manager that accepts everything, and a loginctl whose linger state is a file.
+    writeFileSync(join(bin, "systemctl"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    writeFileSync(
+      join(bin, "loginctl"),
+      [
+        "#!/bin/sh",
+        `echo "$*" >>"${calls}"`,
+        `state="${join(root, "linger")}"`,
+        'case "$1" in',
+        '  show-user) cat "$state" 2>/dev/null || echo no ;;',
+        '  enable-linger) echo yes >"$state" ;;',
+        '  disable-linger) echo no >"$state" ;;',
+        "esac",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const cli = join(root, "cli.js");
+    writeFileSync(cli, "");
+    vi.stubEnv("PATH", `${bin}:${process.env.PATH ?? ""}`);
+    vi.stubEnv("HOME", root);
+    vi.stubEnv("XDG_CONFIG_HOME", join(root, "config"));
+    vi.stubEnv("XDG_RUNTIME_DIR", root);
+    vi.stubEnv("OPPI_NODE", process.execPath);
+    vi.spyOn(process, "argv", "get").mockReturnValue([process.execPath, cli]);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    rmSync(root, { recursive: true, force: true });
+  });
+  const loginctlCalls = (): string[] =>
+    existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n") : [];
+
+  it("is turned off at uninstall only when Oppi turned it on", () => {
+    const dataDir = join(root, "data");
+
+    expect(installService(dataDir)).toMatchObject({ ok: true, lingerNote: undefined });
+    expect(loginctlCalls()).toContain("enable-linger");
+    expect(undoLinger(dataDir)).toMatchObject({ ok: true });
+    expect(loginctlCalls()).toContain("disable-linger");
+    // Done once: a second uninstall leaves lingering alone.
+    expect(undoLinger(dataDir)).toBeNull();
+  });
+
+  it("stays on at uninstall when it was on before Oppi", () => {
+    const dataDir = join(root, "data");
+    writeFileSync(join(root, "linger"), "yes\n");
+
+    expect(installService(dataDir)).toMatchObject({ ok: true });
+    expect(undoLinger(dataDir)).toBeNull();
+    expect(loginctlCalls()).not.toContain("enable-linger");
+    expect(loginctlCalls()).not.toContain("disable-linger");
   });
 });

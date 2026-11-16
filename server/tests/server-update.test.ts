@@ -72,6 +72,21 @@ afterEach(() => {
   restoreEnv();
 });
 
+/**
+ * Every service a test makes, stopped after it: `snapshot()` starts a registry lookup the test
+ * may not wait for, and a lookup still running keeps its npm process and temp cache alive.
+ */
+const services: ServerUpdateService[] = [];
+class TrackedService extends ServerUpdateService {
+  constructor(...args: ConstructorParameters<typeof ServerUpdateService>) {
+    super(...args);
+    services.push(this);
+  }
+}
+afterEach(async () => {
+  await Promise.all(services.splice(0).map((service) => service.stop()));
+});
+
 function writeFakeNpm(dir: string): string {
   const bin = join(dir, "bin");
   mkdirSync(bin, { recursive: true });
@@ -190,7 +205,7 @@ function npmCalls(dir: string): string[] {
 }
 
 async function resolvedService(packageDir: string | undefined): Promise<ServerUpdateService> {
-  const service = new ServerUpdateService({ packageDir });
+  const service = new TrackedService({ packageDir });
   service.start();
   await vi.waitFor(() => expect(service.infoSnapshot()).toBeDefined(), SUBPROCESS_WAIT);
   return service;
@@ -226,7 +241,7 @@ describe("ServerUpdateService", () => {
       process.env.FAKE_NPM_ROOT_SLEEP = "30";
       const pidFile = join(dir, "root.pid");
       process.env.FAKE_NPM_ROOT_PID_FILE = pidFile;
-      const service = new ServerUpdateService();
+      const service = new TrackedService();
       service.start();
       await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true), SUBPROCESS_WAIT);
       const pid = Number(readFileSync(pidFile, "utf8"));
@@ -249,7 +264,7 @@ describe("ServerUpdateService", () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-update-reg-"));
     try {
       useFakeNpm(dir, { viewFail: true });
-      const service = new ServerUpdateService();
+      const service = new TrackedService();
       const latest = await service.refreshLatest();
       expect(latest).toBeNull();
       const snap = service.snapshot();
@@ -266,7 +281,7 @@ describe("ServerUpdateService", () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-update-ver-"));
     try {
       const packageDir = useFakeNpm(dir, { global: "npm", latest: "9.9.9" });
-      const service = new ServerUpdateService({ packageDir });
+      const service = new TrackedService({ packageDir });
       expect(await service.refreshLatest()).toBe("9.9.9");
       const result = await service.beginUpdate("1.0.0");
       expect(result.ok).toBe(false);
@@ -283,7 +298,7 @@ describe("ServerUpdateService", () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-update-kind-"));
     try {
       useFakeNpm(dir, { latest: "9.9.9" });
-      const service = new ServerUpdateService();
+      const service = new TrackedService();
       expect(await service.refreshLatest()).toBe("9.9.9");
       const result = await service.beginUpdate("9.9.9");
       expect(result.ok).toBe(false);
@@ -303,7 +318,7 @@ describe("ServerUpdateService", () => {
         latest: "9.9.9",
         installSleepSec: "1",
       });
-      const service = new ServerUpdateService({ packageDir });
+      const service = new TrackedService({ packageDir });
       expect(await service.refreshLatest()).toBe("9.9.9");
       const first = await service.beginUpdate("9.9.9");
       expect(first.ok).toBe(true);
@@ -324,7 +339,7 @@ describe("ServerUpdateService", () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-update-fail-"));
     try {
       const packageDir = useFakeNpm(dir, { global: "npm", latest: "9.9.9", installFail: true });
-      const service = new ServerUpdateService({ packageDir });
+      const service = new TrackedService({ packageDir });
       expect(await service.refreshLatest()).toBe("9.9.9");
       const started = await service.beginUpdate("9.9.9");
       expect(started.ok).toBe(true);
@@ -342,7 +357,7 @@ describe("ServerUpdateService", () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-update-ok-"));
     try {
       const packageDir = useFakeNpm(dir, { global: "npm", latest: "9.9.9" });
-      const service = new ServerUpdateService({ packageDir });
+      const service = new TrackedService({ packageDir });
       expect(await service.refreshLatest()).toBe("9.9.9");
       const started = await service.beginUpdate("9.9.9");
       expect(started.ok).toBe(true);
@@ -363,7 +378,7 @@ describe("ServerUpdateService", () => {
       Object.defineProperty(process, "execve", { configurable: true, value: undefined });
       const stop = vi.fn(async () => {});
       const restore = vi.fn(async () => {});
-      const service = new ServerUpdateService({
+      const service = new TrackedService({
         packageDir,
         onRestart: (mode) => {
           void serveUpdatedProcess(mode, stop, restore);
@@ -628,7 +643,7 @@ describe("ServerUpdateService", () => {
         buildFail: true,
       });
       const onRestart = vi.fn();
-      const service = new ServerUpdateService({ packageDir, onRestart });
+      const service = new TrackedService({ packageDir, onRestart });
       service.start();
       await vi.waitFor(() => expect(service.infoSnapshot()).toBeDefined(), SUBPROCESS_WAIT);
       expect((await service.beginUpdate("0.0.1")).ok).toBe(true);
@@ -642,7 +657,7 @@ describe("ServerUpdateService", () => {
   });
 
   it("rejects arbitrary and empty versions at the boundary", async () => {
-    const service = new ServerUpdateService();
+    const service = new TrackedService();
     for (const version of ["latest", "", 1, null, undefined, { version: "1.0.0" }]) {
       const result = await service.beginUpdate(version);
       expect(result.ok).toBe(false);
@@ -657,7 +672,7 @@ describe("POST /server/update and GET /server/info", () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-update-info-"));
     try {
       useFakeNpm(dir, { viewFail: true });
-      const service = new ServerUpdateService();
+      const service = new TrackedService();
       process.env.FAKE_NPM_ROOT_SLEEP = "1";
       service.start();
       const dispatch = createIdentityRoutes(identityCtx(service), createRouteHelpers());
@@ -701,7 +716,7 @@ describe("POST /server/update and GET /server/info", () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-update-http-"));
     try {
       const packageDir = useFakeNpm(dir, { global: "npm", latest: "9.9.9" });
-      const service = new ServerUpdateService({ packageDir });
+      const service = new TrackedService({ packageDir });
       await service.refreshLatest();
       const dispatch = createServerUpdateRoutes(identityCtx(service), createRouteHelpers());
       const res = makeResponse();

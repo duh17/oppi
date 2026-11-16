@@ -133,7 +133,7 @@ function findLoadedDomain(label: string): LaunchdDomain | null {
   return loadedDomains(label)[0] ?? null;
 }
 
-function plistPath(): string {
+export function plistPath(): string {
   return join(homedir(), "Library", "LaunchAgents", `${LABEL}.plist`);
 }
 

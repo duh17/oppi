@@ -3,11 +3,18 @@
 # background service. No sudo, no package managers.
 #
 #   curl -fsSL https://raw.githubusercontent.com/duh17/oppi/main/install.sh | sh
-#   sh install.sh [--non-interactive] [--version <x.y.z>] [--package <oppi-server.tgz>] [--no-service]
+#   sh install.sh [--non-interactive] [--no-profile] [--version <x.y.z>] [--package <oppi-server.tgz>] [--no-service]
+#
+# `oppi uninstall` removes what this installs, including the profile line.
 #
 # Options:
 #   --non-interactive  Never prompt. The iOS app runs this file over SSH as
-#                      `/bin/sh -s -- --non-interactive` with the script on stdin.
+#                      `/bin/sh -s -- --non-interactive` with the script on stdin,
+#                      after asking about the profile line itself (--plan-profile).
+#   --no-profile       Do not add the launcher's directory to PATH in a shell
+#                      profile (the answer `n` to the terminal's question).
+#   --plan-profile     Change nothing; print the profile line a run would add
+#                      (`oppi-install: plan …`, see plan_profile) and exit.
 #   --version <spec>   Install oppi-server <spec> (a version, tag, or range)
 #                      instead of npm `latest`.
 #   --package <tgz>    Install a local `npm pack` tarball of server/ (testing
@@ -46,6 +53,8 @@
 #   oppi-install: step=<node|oppi|service|start> status=<begin|ok|warn|skip|fail> detail=<one line>
 #   oppi-install: done version=<x.y.z> port=<n>
 #   oppi-install: error code=<code> detail=<one line>
+#   oppi-install: plan profile=<file>   (--plan-profile only; empty: no line to add)
+#   oppi-install: plan path=<dir>       (--plan-profile only, after a non-empty profile)
 #
 # Statuses: `ok`, `warn`, `skip`, and `fail` end a step. `skip` means nothing new
 # was done, or a fallback ran (already installed, an offline rerun kept the old
@@ -72,6 +81,8 @@ OPPI_PACKAGE_NAME=oppi-server
 # process facts in `oppi server status --json`.
 OPPI_MIN_SERVER_VERSION=0.54.0
 OPPI_START_TIMEOUT=90
+# `oppi uninstall` finds the PATH line by this comment above it.
+PROFILE_MARKER="# Added by the Oppi installer"
 
 say() {
   printf '%s\n' "$*"
@@ -104,7 +115,7 @@ fail() {
 
 usage() {
   cat <<'EOF'
-Usage: install.sh [--non-interactive] [--version <x.y.z>] [--package <oppi-server.tgz>] [--no-service]
+Usage: install.sh [--non-interactive] [--no-profile] [--version <x.y.z>] [--package <oppi-server.tgz>] [--no-service]
 
 Installs Node.js 22 when needed, oppi-server, and the background service, then
 waits for the server to answer. No sudo. See the comment at the top of this file.
@@ -343,7 +354,9 @@ choose_node() {
 
 npm_run() {
   # npm's own scripts start with `#!/usr/bin/env node`; give them the chosen node.
-  PATH="${oppi_node%/*}:$PATH" "$oppi_npm" "$@" </dev/null
+  # Its cache and logs stay in ~/.oppi, which `oppi uninstall` removes, instead of ~/.npm.
+  PATH="${oppi_node%/*}:$PATH" npm_config_cache="$OPPI_HOME/install/npm-cache" \
+    npm_config_update_notifier=false "$oppi_npm" "$@" </dev/null
 }
 
 package_version() {
@@ -558,6 +571,18 @@ prune_releases() {
   done
 }
 
+# `oppi uninstall` removes what this run created outside ~/.oppi and nothing else: each
+# directory or profile that did not exist goes into ~/.oppi/install/created, deepest first.
+record_created() {
+  # record_created <path>: before creating <path> (mkdir -p or a first write)
+  rc_path=$1
+  while [ -n "$rc_path" ] && [ "$rc_path" != "$HOME" ] && [ "$rc_path" != / ] &&
+    [ ! -e "$rc_path" ] && [ ! -L "$rc_path" ]; do
+    printf '%s\n' "$rc_path" >>"$OPPI_HOME/install/created"
+    rc_path=$(dirname "$rc_path")
+  done
+}
+
 path_has() {
   # path_has <dir> <path-list>
   case ":$2:" in *":$1:"*) return 0 ;; esac
@@ -578,16 +603,28 @@ profile_file() {
   esac
 }
 
+# profile_to_edit <dir>: the profile ensure_on_login_path would add <dir> to, or
+# nothing when the login PATH has it or the profile already has Oppi's line.
+profile_to_edit() {
+  path_has "$1" "$PATH" && return 0
+  # Some profiles (Ubuntu's ~/.profile) add ~/.local/bin only once it exists.
+  path_has "$1" "$(login_shell_path)" && return 0
+  pte_profile=$(profile_file)
+  if [ -f "$pte_profile" ] && grep -F "$PROFILE_MARKER" "$pte_profile" >/dev/null 2>&1; then
+    return 0
+  fi
+  printf '%s' "$pte_profile"
+}
+
 # The app finds `oppi` on the login PATH after install, so the link directory
-# must be on it. Interactive runs ask first; --non-interactive adds it.
+# must be on it. Interactive runs ask first; --non-interactive adds it unless
+# --no-profile says the app asked and the answer was no.
 ensure_on_login_path() {
   dir=$1
-  path_has "$dir" "$PATH" && return 0
-  # Some profiles (Ubuntu's ~/.profile) add ~/.local/bin only once it exists.
-  path_has "$dir" "$(login_shell_path)" && return 0
-  profile=$(profile_file)
-  marker="# Added by the Oppi installer"
-  if [ -f "$profile" ] && grep -F "$marker" "$profile" >/dev/null 2>&1; then
+  profile=$(profile_to_edit "$dir")
+  [ -n "$profile" ] || return 0
+  if [ "$no_profile" = 1 ]; then
+    link_note="${link_note:+$link_note; }$dir is not on PATH; add it to use oppi by name"
     return 0
   fi
   if [ "$interactive" = 1 ] && (: </dev/tty) 2>/dev/null; then
@@ -600,6 +637,7 @@ ensure_on_login_path() {
         ;;
     esac
   fi
+  record_created "$profile"
   mkdir -p "$(dirname "$profile")"
   # Write $HOME, not the expanded path, so a renamed home keeps working.
   case "$dir" in
@@ -607,17 +645,55 @@ ensure_on_login_path() {
     *) profile_dir=$dir ;;
   esac
   if [ "${profile##*.}" = fish ]; then
-    printf '%s\nfish_add_path -g "%s"\n' "$marker" "$profile_dir" >>"$profile"
+    printf '%s\nfish_add_path -g "%s"\n' "$PROFILE_MARKER" "$profile_dir" >>"$profile"
   else
-    printf '\n%s\nexport PATH="%s:$PATH"\n' "$marker" "$profile_dir" >>"$profile"
+    printf '\n%s\nexport PATH="%s:$PATH"\n' "$PROFILE_MARKER" "$profile_dir" >>"$profile"
   fi
   # Append: link_launcher may already have noted a foreign file at the link path.
   link_note="${link_note:+$link_note; }added $dir to PATH in $profile"
 }
 
+# The directory link_launcher puts on the login PATH, without creating anything:
+# ~/.local/bin when it can hold Oppi's link, else ~/.oppi/bin.
+path_dir() {
+  pd_dir=$link_dir
+  while [ ! -e "$pd_dir" ] && [ ! -L "$pd_dir" ]; do pd_dir=$(dirname "$pd_dir"); done
+  if [ -d "$pd_dir" ] && [ -w "$pd_dir" ]; then
+    pd_target=$link_dir/oppi
+    if { [ -e "$pd_target" ] || [ -L "$pd_target" ]; } &&
+      [ "$(readlink "$pd_target" 2>/dev/null)" != "$launcher" ]; then
+      printf '%s' "$OPPI_HOME/bin"
+    else
+      printf '%s' "$link_dir"
+    fi
+  else
+    printf '%s' "$OPPI_HOME/bin"
+  fi
+}
+
+# --plan-profile: what the app's Install & Start shows and asks before it runs.
+# Reads only. Prints `oppi-install: plan profile=<file>` and `oppi-install: plan
+# path=<dir>` (paths under HOME as ~/…), or `oppi-install: plan profile=` when
+# the profile needs no line.
+plan_profile() {
+  plan_dir=$(path_dir)
+  plan_file=$(profile_to_edit "$plan_dir")
+  say "oppi-install: plan profile=$(tilde "$plan_file")"
+  [ -n "$plan_file" ] && say "oppi-install: plan path=$(tilde "$plan_dir")"
+  return 0
+}
+
+tilde() {
+  case "$1" in
+    "$HOME"/*) printf '~/%s' "${1#"$HOME"/}" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
 link_launcher() {
   link_note=
   dir=$link_dir
+  [ -d "$dir" ] || record_created "$dir"
   if mkdir -p "$dir" 2>/dev/null && [ -w "$dir" ]; then
     target=$dir/oppi
     if [ -e "$target" ] || [ -L "$target" ]; then
@@ -893,12 +969,16 @@ offer_pairing_code() {
 main() {
   interactive=1
   no_service=0
+  no_profile=0
+  plan=0
   requested_version=
   package_file=
   while [ $# -gt 0 ]; do
     case "$1" in
       --non-interactive) interactive=0 ;;
       --no-service) no_service=1 ;;
+      --no-profile) no_profile=1 ;;
+      --plan-profile) plan=1 ;;
       --version)
         [ $# -ge 2 ] || fail usage "--version needs a value"
         requested_version=$2
@@ -931,6 +1011,10 @@ main() {
   serve_mode=service
 
   adopt_login_path
+  if [ "$plan" = 1 ]; then
+    plan_profile
+    return 0
+  fi
   detect_platform
   acquire_lock
   trap 'release_lock' EXIT

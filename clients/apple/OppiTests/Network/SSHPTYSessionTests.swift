@@ -81,7 +81,7 @@ struct SSHPTYSessionTests {
         await #expect(throws: SSHPreflightFailure.authenticationFailed) {
             _ = try await SSHPreflightClient.run(
                 .init(username: "fixture", password: "fixture-wrong", savedHostKey: fixture.savedHostKey),
-                socket: fixture.clientSocket
+                socket: fixture.clientSocket, installer: nil
             )
         }
         #expect(fixture.authKinds == ["password"])
@@ -91,7 +91,7 @@ struct SSHPTYSessionTests {
         do {
             _ = try await SSHPreflightClient.run(
                 .init(username: "fixture", password: "fixture-correct", savedHostKey: nil),
-                socket: unknown.clientSocket
+                socket: unknown.clientSocket, installer: nil
             )
             Issue.record("Unknown host key unexpectedly signed in")
         } catch SSHPreflightFailure.unknownHostKey(let presented) {
@@ -108,7 +108,7 @@ struct SSHPTYSessionTests {
         let checking = Task {
             try await SSHPreflightClient.run(
                 .init(username: "fixture", password: "fixture-correct", savedHostKey: fixture.savedHostKey),
-                socket: fixture.clientSocket
+                socket: fixture.clientSocket, installer: nil
             )
         }
         try await fixture.authenticationHeld.futureResult.get()
@@ -575,6 +575,8 @@ private final class ControlledPresenceContext: SSHKeyPresenceContext, Sendable {
 struct SSHInstallTransportTests {
     private static func data(_ text: String) -> Data { Data(text.utf8) }
 
+    private static let installCommand = SSHInstallScript.command(editProfile: true)
+
     private static func request(_ fixture: SSHFixture) -> SSHPreflightClient.Request {
         .init(username: "fixture", password: "fixture-correct", savedHostKey: fixture.savedHostKey)
     }
@@ -596,7 +598,9 @@ struct SSHInstallTransportTests {
     /// our EOF arrives and its exit status is what `mint` checks.
     private static func machine(installer: FixtureExecReply) -> @Sendable (String, Data) -> FixtureExecReply {
         { command, stdin in
-            if command == SSHInstallScript.command { return installer }
+            if command == installCommand || command == SSHInstallScript.command(editProfile: false) {
+                return installer
+            }
             let script = String(decoding: stdin, as: UTF8.self)
             if script == SSHPreflightProbe.script {
                 return FixtureExecReply(chunks: [data("""
@@ -644,7 +648,7 @@ struct SSHInstallTransportTests {
         let received = Mutex<[Data]>([])
         let script = Data(repeating: UInt8(ascii: "#"), count: 3 * 1024 * 1024)
         let result = try await connection.run(
-            SSHInstallScript.command, input: script, maximumOutputBytes: 1 << 20, timeout: .seconds(10)
+            Self.installCommand, input: script, maximumOutputBytes: 1 << 20, timeout: .seconds(10)
         ) { chunk in received.withLock { $0.append(chunk) } }
         #expect(received.withLock { $0.reduce(Data(), +) } == chunks.reduce(Data(), +))
         // Streaming keeps nothing: stdout went to the callback, stderr was counted and dropped.
@@ -659,7 +663,7 @@ struct SSHInstallTransportTests {
         defer { fixture.close() }
         let log = ProgressLog()
         let outcome = try await SSHPreflightClient.install(
-            Self.request(fixture), script: Self.data("#!/bin/sh\n"), socket: fixture.clientSocket
+            Self.request(fixture), script: Self.data("#!/bin/sh\n"), editProfile: true, socket: fixture.clientSocket
         ) { log.states.append($0) }
         guard case .ready(let report, let invite) = outcome else {
             Issue.record("Expected an invite, got \(outcome)")
@@ -673,7 +677,57 @@ struct SSHInstallTransportTests {
         #expect(last.verdict(exitStatus: 0) == .success(.init(version: "0.53.0", port: 17749)))
         // One sign-in: installer, fresh check, status, pair.
         #expect(fixture.authKinds == ["password"])
-        #expect(fixture.channelRequests == ["exec:\(SSHInstallScript.command)"] + Array(repeating: "exec:\(SSHPreflightProbe.command)", count: 3))
+        #expect(fixture.channelRequests == ["exec:\(Self.installCommand)"] + Array(repeating: "exec:\(SSHPreflightProbe.command)", count: 3))
+    }
+
+    /// The check asks the bundled installer, which changes nothing, what it
+    /// would add to a shell profile, only when Install & Start is next.
+    @Test func theCheckNamesTheProfileLineAnInstallWouldAdd() async throws {
+        let installer = Self.data("#!/bin/sh\n# install.sh\n")
+        let bareLinux = Self.data("user=alex\nkernel=Linux\nrelease=6.8.0\narch=x86_64\nend=1\n")
+        let fixture = try await SSHFixture.start(auth: .passwordOnly) { command, stdin in
+            if command == SSHInstallScript.planCommand, stdin == installer {
+                return FixtureExecReply(chunks: [Self.data(
+                    "oppi-install: plan profile=~/.profile\noppi-install: plan path=~/.local/bin\n"
+                )])
+            }
+            if String(decoding: stdin, as: UTF8.self) == SSHPreflightProbe.script {
+                return FixtureExecReply(chunks: [bareLinux])
+            }
+            return FixtureExecReply(exitStatus: 127)
+        }
+        defer { fixture.close() }
+        let report = try await SSHPreflightClient.run(
+            Self.request(fixture), socket: fixture.clientSocket, installer: installer
+        )
+        #expect(report.profileEdit == SSHProfileEdit(profile: "~/.profile", path: "~/.local/bin"))
+        let row = try #require(report.checks.first { $0.title == "Shell Profile" })
+        #expect(row.detail.contains("~/.local/bin to PATH in ~/.profile"))
+        #expect(row.status == .installs)
+        #expect(fixture.channelRequests == ["exec:\(SSHPreflightProbe.command)", "exec:\(SSHInstallScript.planCommand)"])
+
+        // A computer whose Oppi answers needs no install, so the installer is not asked.
+        let ready = try await SSHFixture.start(
+            auth: .passwordOnly, execReply: Self.machine(installer: FixtureExecReply(exitStatus: 1))
+        )
+        defer { ready.close() }
+        let paired = try await SSHPreflightClient.run(Self.request(ready), socket: ready.clientSocket, installer: installer)
+        #expect(paired.profileEdit == nil)
+        #expect(!paired.checks.contains { $0.title == "Shell Profile" })
+        #expect(ready.channelRequests == ["exec:\(SSHPreflightProbe.command)"])
+    }
+
+    /// "Install Without It" is the terminal's `n`: the installer runs with `--no-profile`.
+    @Test func installingWithoutTheProfileLineTellsTheInstaller() async throws {
+        let fixture = try await SSHFixture.start(
+            auth: .passwordOnly,
+            execReply: Self.machine(installer: FixtureExecReply(chunks: Self.splitProgress, exitStatus: 0))
+        )
+        defer { fixture.close() }
+        _ = try await SSHPreflightClient.install(
+            Self.request(fixture), script: Self.data("#!/bin/sh\n"), editProfile: false, socket: fixture.clientSocket
+        ) { _ in }
+        #expect(fixture.channelRequests.first == "exec:/bin/sh -s -- --non-interactive --no-profile")
     }
 
     @Test func anErrorLineFailsTheInstallEvenWhenTheScriptExitsZero() async throws {
@@ -685,11 +739,11 @@ struct SSHInstallTransportTests {
         defer { fixture.close() }
         await #expect(throws: SSHPreflightFailure.installFailed(code: "npm", detail: "ETIMEDOUT registry.npmjs.org")) {
             _ = try await SSHPreflightClient.install(
-                Self.request(fixture), script: Self.data("#!/bin/sh\n"), socket: fixture.clientSocket
+                Self.request(fixture), script: Self.data("#!/bin/sh\n"), editProfile: true, socket: fixture.clientSocket
             ) { _ in }
         }
         // Nothing after the installer ran: no check, no invite.
-        #expect(fixture.channelRequests == ["exec:\(SSHInstallScript.command)"])
+        #expect(fixture.channelRequests == ["exec:\(Self.installCommand)"])
     }
 
     @Test func anInstallerThatStopsBeforeReadingAllOfStdinReportsItsOwnError() async throws {
@@ -709,10 +763,10 @@ struct SSHInstallTransportTests {
         let script = Data(repeating: UInt8(ascii: "#"), count: 3 * 1024 * 1024)
         await #expect(throws: SSHPreflightFailure.installFailed(code: "busy", detail: "another install holds ~/.oppi/install/.lock")) {
             _ = try await SSHPreflightClient.install(
-                Self.request(fixture), script: script, socket: fixture.clientSocket
+                Self.request(fixture), script: script, editProfile: true, socket: fixture.clientSocket
             ) { _ in }
         }
-        #expect(fixture.channelRequests == ["exec:\(SSHInstallScript.command)"])
+        #expect(fixture.channelRequests == ["exec:\(Self.installCommand)"])
     }
 
     @Test func losingTheConnectionMidInstallSaysSetupWasInterrupted() async throws {
@@ -725,7 +779,7 @@ struct SSHInstallTransportTests {
         let (progress, reported) = AsyncStream.makeStream(of: Void.self)
         let installing = Task {
             try await SSHPreflightClient.install(
-                Self.request(fixture), script: Self.data("#!/bin/sh\n"), socket: fixture.clientSocket
+                Self.request(fixture), script: Self.data("#!/bin/sh\n"), editProfile: true, socket: fixture.clientSocket
             ) { _ in reported.yield() }
         }
         // Mid-install: the first step has started and the script is still running.
@@ -744,7 +798,7 @@ struct SSHInstallTransportTests {
         defer { fixture.close() }
         let installing = Task {
             try await SSHPreflightClient.install(
-                Self.request(fixture), script: Self.data("#!/bin/sh\n"), socket: fixture.clientSocket
+                Self.request(fixture), script: Self.data("#!/bin/sh\n"), editProfile: true, socket: fixture.clientSocket
             ) { _ in }
         }
         try await fixture.execStarted.futureResult.get()

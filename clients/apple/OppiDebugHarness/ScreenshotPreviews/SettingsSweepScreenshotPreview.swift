@@ -19,7 +19,8 @@ import UIKit
 /// (Settings › Terminal › Rex on Your Tailnet). Server Settings and
 /// its pages: `server-settings`, `paired-devices` (`paired-devices-offline`:
 /// the devices request answers 404) and `about` (`about-failed`: the server info
-/// request answers 404).
+/// request answers 404). `ssh-setup-install-ask`: Set Up a Computer after a
+/// check of a Mac without Oppi, with Install & Start's shell profile question up.
 /// Router modal pages (`RouterSettingsModalsUITests`): `agents`,
 /// `agents-pi-file`, `schedules`, `skill-file-review`, `skill-file-edit` (a
 /// server that also edits Skill files in place),
@@ -463,6 +464,15 @@ final class SettingsSweepPreviewController: PreviewRootController {
             return stack {
                 SSHTerminalRexTailnetSettingsViewController(reach: { .systemOnly })
             }
+        case "ssh-setup-install-ask":
+            return stack {
+                SSHPreflightViewController(
+                    coordinator: root.coordinator,
+                    previewReport: Self.macWithoutOppi,
+                    host: "mac-mini.tail1234.ts.net",
+                    asksToInstall: true
+                )
+            }
         case "theme-import", "theme-import-failed":
             // `-failed`: the themes request answers 404, so the list shows its
             // failed row.
@@ -547,6 +557,18 @@ final class SettingsSweepPreviewController: PreviewRootController {
         guard let host = RexTailnetHost(address: "rex.tail1234.ts.net"),
               let data = try? JSONEncoder().encode([host]) else { return }
         ScreenshotVolatileDefaults.apply([RexDirectStore.tailnetHostsKey: data])
+    }
+
+    /// A Mac before Oppi is installed, whose installer would add a PATH line to `~/.zprofile`.
+    private static var macWithoutOppi: SSHPreflightReport {
+        var report = SSHPreflightReport(
+            user: "alex", kernel: "Darwin", release: "25.1.0", arch: "arm64", macOSVersion: "26.1",
+            osRelease: nil, nodePath: "/opt/homebrew/bin/node", nodeVersion: "v22.19.0", oppiNodeVersion: nil,
+            gitPath: "/usr/bin/git", oppiPath: nil, tailscalePath: "/opt/homebrew/bin/tailscale",
+            oppiStatus: nil, oppiAnswers: false, hasCommandLineTools: true
+        )
+        report.profileEdit = SSHProfileEdit(profile: "~/.zprofile", path: "~/.local/bin")
+        return report
     }
 
     private static let workspace = Workspace(

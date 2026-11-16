@@ -9,7 +9,15 @@ import Foundation
 /// The bundled installer and how it is invoked over SSH.
 enum SSHInstallScript {
     /// The script arrives on stdin, so the login shell only has to start `sh`.
-    static let command = "/bin/sh -s -- --non-interactive"
+    /// There is no terminal to ask at, so the app asks about the profile line
+    /// itself (`SSHProfileEdit`) and passes the answer: `--no-profile` is the
+    /// terminal's `n`.
+    static func command(editProfile: Bool) -> String {
+        editProfile ? "/bin/sh -s -- --non-interactive" : "/bin/sh -s -- --non-interactive --no-profile"
+    }
+
+    /// Changes nothing: prints the profile line a run would add (`SSHProfileEdit`).
+    static let planCommand = "/bin/sh -s -- --plan-profile"
 
     /// `install.sh` from the repo root, copied into the app by `project.yml`.
     static func bundled(in bundle: Bundle = .main) throws(SSHPreflightFailure) -> Data {
@@ -18,6 +26,34 @@ enum SSHInstallScript {
             throw .installerMissing
         }
         return data
+    }
+}
+
+/// The line Install & Start would add to a shell profile so `oppi` runs by
+/// name, from the installer's `--plan-profile` run: `oppi-install: plan
+/// profile=<file>` and `oppi-install: plan path=<dir>`, paths under the home as
+/// `~/…`. The app shows it in the check and asks before the install, as the
+/// installer asks in a terminal.
+struct SSHProfileEdit: Equatable, Sendable {
+    /// The profile, such as `~/.zprofile`.
+    let profile: String
+    /// The directory the line puts on `PATH`, such as `~/.local/bin`.
+    let path: String
+
+    /// Nil when the plan adds no line (`profile=` is empty), or for output
+    /// without both plan lines.
+    static func parse(_ output: String) -> Self? {
+        var values: [String: String] = [:]
+        let prefix = "\(SSHInstallEvent.prefix) plan "
+        for line in output.split(whereSeparator: \.isNewline) where line.hasPrefix(prefix) {
+            let field = line.dropFirst(prefix.count)
+            guard let equals = field.firstIndex(of: "=") else { continue }
+            values[String(field[..<equals])] = String(field[field.index(after: equals)...])
+                .trimmingCharacters(in: .whitespaces)
+        }
+        guard let profile = values["profile"], !profile.isEmpty,
+              let path = values["path"], !path.isEmpty else { return nil }
+        return Self(profile: profile, path: path)
     }
 }
 

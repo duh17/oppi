@@ -464,6 +464,42 @@ struct SSHTerminalSetupPageTests {
         #expect(installPage.element("sshPreflight.pair") == nil)
     }
 
+    /// The installer's one change outside Oppi's folders is a check row, and
+    /// Install & Start asks about it before anything runs, as the installer asks
+    /// in a terminal.
+    @Test func installAsksBeforeItAddsTheShellProfileLine() async throws {
+        var report = Self.bareReport
+        report.profileEdit = SSHProfileEdit(profile: "~/.zprofile", path: "~/.local/bin")
+        let page = try mountPage(
+            SSHPreflightViewController(
+                coordinator: ConnectionCoordinator(serverStore: ServerStore()), previewReport: report, host: "mac-mini.tail1234.ts.net"
+            ),
+            height: Self.tall
+        )
+        defer { hideTestWindow(page.window) }
+
+        let row = try #require(page.element("sshPreflight.result.Shell Profile"), "the check names the profile edit")
+        #expect(row.accessibilityLabel?.contains("~/.local/bin to PATH in ~/.zprofile") == true)
+        let password = try #require(page.element("sshPreflight.password") as? UITextField)
+        password.text = "secret"
+        password.sendActions(for: .editingChanged)
+        page.reload()
+        let install = try #require(page.element("sshPreflight.install") as? UIButton)
+        install.sendActions(for: .touchUpInside)
+
+        var alert: UIAlertController?
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            alert = page.window.rootViewController?.presentedViewController as? UIAlertController
+            return alert != nil
+        }, "Install & Start started without asking")
+        #expect(alert?.title == "Add Oppi to PATH in ~/.zprofile?")
+        #expect(alert?.actions.map(\.title) == ["Add the Line", "Install Without It", "Cancel"])
+        #expect(alert?.preferredAction?.title == "Add the Line")
+        // Nothing runs until an answer.
+        #expect(page.element("sshPreflight.install.cancel") == nil)
+        alert?.dismiss(animated: false)
+    }
+
     /// A first connection is the trust decision: the message, and the one action
     /// that sends the password, under the ids the screen has always used.
     @Test func thePreviewFailureShowsTheMessageAndTrustKey() async throws {

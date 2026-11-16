@@ -1376,6 +1376,11 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
     await cmdServer(positional[0], flags);
     return;
   }
+  if (command === "uninstall") {
+    const { cmdUninstall } = await import("./cli/commands/uninstall.js");
+    await cmdUninstall(flags);
+    return;
+  }
   if (command === "version" || command === "--version" || command === "-v") {
     const info = getPackageInfo();
     if (flags.json === "true") {
@@ -1403,10 +1408,7 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
         const storage = new StorageClass(process.env.OPPI_DATA_DIR || undefined, {
           migrateWorkspaceFolders: true,
         });
-        await setUpAutoNamePackage({
-          dataDir: storage.getDataDir(),
-          once: (key, run) => storage.runMigrationOnce(key, run),
-        });
+        await setUpAutoNamePackage({ dataDir: storage.getDataDir() });
         await cmdServe(storage, flags.host);
       }
       break;

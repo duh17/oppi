@@ -8,7 +8,8 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 
 import { isNpmVersionNewer, isValidNpmVersion } from "./cli/npm-version.js";
@@ -56,10 +57,14 @@ export async function fetchLatestPublishedVersion(
   packageName: string,
   signal?: AbortSignal,
 ): Promise<string | null> {
+  // A cache of its own, removed after: the check runs at every start, and npm's default cache
+  // and logs (~/.npm) would otherwise be created in a home that has no npm of its own.
+  const cache = mkdtempSync(join(tmpdir(), "oppi-npm-view-"));
   const result = await runNpm(["view", packageName, "version"], {
     timeoutMs: REGISTRY_TIMEOUT_MS,
     signal,
-  });
+    env: { npm_config_cache: cache, npm_config_update_notifier: "false" },
+  }).finally(() => rmSync(cache, { recursive: true, force: true }));
   if (result.code !== 0) return null;
   const version = result.output.trim().split(/\s+/).pop() ?? "";
   return isValidNpmVersion(version) ? version : null;
@@ -228,7 +233,13 @@ export async function serveUpdatedProcess(
 
 function runNpm(
   args: string[],
-  options: { timeoutMs: number; inheritStdio?: boolean; cwd?: string; signal?: AbortSignal },
+  options: {
+    timeoutMs: number;
+    inheritStdio?: boolean;
+    cwd?: string;
+    signal?: AbortSignal;
+    env?: NodeJS.ProcessEnv;
+  },
 ): Promise<{ code: number | null; output: string }> {
   return new Promise((resolve, reject) => {
     const { signal } = options;
@@ -240,7 +251,7 @@ function runNpm(
       stdio: options.inheritStdio ? "inherit" : ["ignore", "pipe", "pipe"],
       timeout: options.timeoutMs,
       cwd: options.cwd,
-      env: process.env,
+      env: { ...process.env, ...options.env },
       shell: process.platform === "win32",
     });
     const chunks: Buffer[] = [];

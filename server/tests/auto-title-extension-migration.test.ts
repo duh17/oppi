@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 
-import { setUpAutoNamePackage } from "../src/auto-name-package.js";
+import { removeShippedAutoName, setUpAutoNamePackage } from "../src/auto-name-package.js";
 import { Storage } from "../src/storage.js";
 import {
   extractAutoTitle,
@@ -73,15 +73,9 @@ const readConfig = (): Record<string, unknown> =>
 const readSettings = (): { packages?: unknown[] } & Record<string, unknown> =>
   JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8"));
 
-/** `oppi serve`'s step, over a real migration ledger. */
+/** `oppi serve`'s step. */
 async function serve(packageDir = AUTO_NAME): Promise<void> {
-  const storage = new Storage(dataDir);
-  await setUpAutoNamePackage({
-    dataDir,
-    agentDir,
-    packageDir,
-    once: (key, run) => storage.runMigrationOnce(key, run),
-  });
+  await setUpAutoNamePackage({ dataDir, agentDir, packageDir });
 }
 
 /** Whether Pi resolves the package's extension as enabled, as the Extensions list asks it. */
@@ -189,21 +183,41 @@ describe("autoTitle in config.json, before the config loads", () => {
 });
 
 describe("the shipped auto-name package in Pi's settings", () => {
-  it("lists a fresh install's package as a disabled row, once", async () => {
-    writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultProvider: "mock" }));
+  it("writes nothing to Pi's settings when the owner never turned it on", async () => {
+    await serve();
+    expect(existsSync(join(agentDir, "settings.json"))).toBe(false);
+
+    const before = JSON.stringify({ defaultProvider: "mock", packages: ["npm:other"] });
+    writeFileSync(join(agentDir, "settings.json"), before);
+    await serve();
+    await serve();
+    expect(readFileSync(join(agentDir, "settings.json"), "utf8")).toBe(before);
+  });
+
+  it("removes an off entry an older server listed unasked, keeping the other packages", async () => {
+    writeFileSync(
+      join(agentDir, "settings.json"),
+      JSON.stringify({
+        defaultProvider: "mock",
+        packages: [
+          "npm:other",
+          { source: AUTO_NAME, extensions: [] },
+          {
+            source: "/gone/lib/node_modules/oppi-server/dist/plugins/auto-name",
+            extensions: ["-index.ts"],
+          },
+          { source: "/gone/elsewhere", extensions: [] },
+        ],
+      }),
+    );
 
     await serve();
 
     expect(readSettings()).toEqual({
       defaultProvider: "mock",
-      packages: [{ source: AUTO_NAME, extensions: [] }],
+      packages: ["npm:other", { source: "/gone/elsewhere", extensions: [] }],
     });
-    expect(await piSeesEnabled()).toBe(false);
-
-    // The user deletes the row: a later start does not bring it back.
-    writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ packages: [] }));
-    await serve();
-    expect(readSettings().packages).toEqual([]);
+    expect(await piSeesEnabled()).toBeUndefined();
   });
 
   it("tries again at the next start when Pi's settings cannot be written, and keeps the carried model", async () => {
@@ -243,8 +257,7 @@ describe("the shipped auto-name package in Pi's settings", () => {
         context: { operation: "write", code: "EACCES" },
       });
       expect(readSettings()).toEqual({ defaultProvider: "mock" });
-      // Pending, not carried over: nothing reached Pi's settings, and the one-time offer was not
-      // spent on a start that could not write it.
+      // Pending, not carried over: nothing reached Pi's settings.
       expect(JSON.parse(readFileSync(join(agentDir, "auto-name.json"), "utf8"))).toEqual({
         model: "anthropic/claude-haiku-5",
       });
@@ -255,34 +268,6 @@ describe("the shipped auto-name package in Pi's settings", () => {
 
       expect(readSettings().packages).toEqual([{ source: AUTO_NAME, extensions: ["+index.ts"] }]);
       expect(readAutoTitleCarryover(dataDir)).toBeUndefined();
-    },
-  );
-
-  it.skipIf(process.getuid?.() === 0)(
-    "leaves the one-time offer pending while Pi's settings file is read-only, and lists the row once it can write",
-    async () => {
-      const settingsPath = join(agentDir, "settings.json");
-      writeFileSync(settingsPath, JSON.stringify({ defaultProvider: "mock" }));
-      chmodSync(settingsPath, 0o444);
-
-      await serve();
-
-      // The offer's own write never landed: one warning, and nothing reported as offered.
-      expect(logged.filter((entry) => entry.level === "error")).toEqual([]);
-      expect(logged).toContainEqual({
-        level: "warn",
-        event: "auto_name_package.settings_unwritable",
-        context: { operation: "write", code: "EACCES" },
-      });
-      expect(logged.some((entry) => entry.event === "auto_name_package.offered")).toBe(false);
-      expect(readSettings()).toEqual({ defaultProvider: "mock" });
-
-      chmodSync(settingsPath, 0o644);
-      await serve();
-
-      // The offer was still pending, and lists the row disabled as on a fresh install.
-      expect(readSettings().packages).toEqual([{ source: AUTO_NAME, extensions: [] }]);
-      expect(await piSeesEnabled()).toBe(false);
     },
   );
 
@@ -346,16 +331,12 @@ describe("the shipped auto-name package in Pi's settings", () => {
     expect(readSettings().packages).toEqual([{ source: AUTO_NAME, extensions: ["+index.ts"] }]);
   });
 
-  it("points a copy whose path is gone at this install, keeping its on or off", async () => {
+  it("points a copy the owner turned on whose path is gone at this install", async () => {
     const moved = "/gone/lib/node_modules/oppi-server/dist/extensions/pi/auto-name";
     writeFileSync(
       join(agentDir, "settings.json"),
       JSON.stringify({
-        packages: [
-          "npm:some-other-package",
-          { source: moved, extensions: ["+index.ts"] },
-          { source: "/gone/elsewhere", extensions: [] },
-        ],
+        packages: ["npm:some-other-package", { source: moved, extensions: ["+index.ts"] }],
       }),
     );
 
@@ -364,7 +345,6 @@ describe("the shipped auto-name package in Pi's settings", () => {
     expect(readSettings().packages).toEqual([
       "npm:some-other-package",
       { source: AUTO_NAME, extensions: ["+index.ts"] },
-      { source: "/gone/elsewhere", extensions: [] },
     ]);
   });
 
@@ -373,12 +353,12 @@ describe("the shipped auto-name package in Pi's settings", () => {
     mkdirSync(other, { recursive: true });
     writeFileSync(
       join(agentDir, "settings.json"),
-      JSON.stringify({ packages: [{ source: other, extensions: [] }] }),
+      JSON.stringify({ packages: [{ source: other, extensions: ["+index.ts"] }] }),
     );
 
     await serve();
 
-    expect(readSettings().packages).toEqual([{ source: other, extensions: [] }]);
+    expect(readSettings().packages).toEqual([{ source: other, extensions: ["+index.ts"] }]);
   });
 
   it("does not list the package beside the user's own install of the extension", async () => {
@@ -396,8 +376,10 @@ describe("the shipped auto-name package in Pi's settings", () => {
   });
 
   it("removes the shipped entry once the user links their own copy, so there is one", async () => {
-    await serve();
-    expect(readSettings().packages).toEqual([{ source: AUTO_NAME, extensions: [] }]);
+    writeFileSync(
+      join(agentDir, "settings.json"),
+      JSON.stringify({ packages: [{ source: AUTO_NAME, extensions: ["+index.ts"] }] }),
+    );
 
     mkdirSync(join(agentDir, "extensions"), { recursive: true });
     symlinkSync(AUTO_NAME, join(agentDir, "extensions", "auto-name"));
@@ -413,5 +395,22 @@ describe("the shipped auto-name package in Pi's settings", () => {
   it("does nothing, and does not fail, when the install lacks the package", async () => {
     await serve(join(dataDir, "no-such-package"));
     expect(existsSync(join(agentDir, "settings.json"))).toBe(false);
+  });
+
+  it("is removed by an uninstall, which keeps other packages and the model file", async () => {
+    writeFileSync(join(agentDir, "auto-name.json"), '{"model":"openai/gpt-5-mini"}');
+    writeFileSync(
+      join(agentDir, "settings.json"),
+      JSON.stringify({
+        defaultProvider: "mock",
+        packages: ["npm:other", { source: AUTO_NAME, extensions: ["+index.ts"] }],
+      }),
+    );
+
+    expect(await removeShippedAutoName(agentDir)).toBe(true);
+
+    expect(readSettings()).toEqual({ defaultProvider: "mock", packages: ["npm:other"] });
+    expect(existsSync(join(agentDir, "auto-name.json"))).toBe(true);
+    expect(await removeShippedAutoName(agentDir)).toBe(false);
   });
 });

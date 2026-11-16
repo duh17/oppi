@@ -149,10 +149,12 @@ describe("skills module", () => {
       });
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.body) as {
-        extensions: Array<{ name: string }>;
+        extensions: Array<{ name: string; path: string }>;
         projectTrust: string;
       };
-      return { names: body.extensions.map((ext) => ext.name), projectTrust: body.projectTrust };
+      // Oppi's own Auto-Name is offered at user scope whatever the project's trust.
+      const project = body.extensions.filter((ext) => !ext.path.includes("/plugins/auto-name/"));
+      return { names: project.map((ext) => ext.name), projectTrust: body.projectTrust };
     };
     const trust = (decision: boolean) =>
       writeFileSync(

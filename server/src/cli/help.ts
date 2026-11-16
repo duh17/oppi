@@ -101,11 +101,12 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "token", summary: "rotate the owner bearer token" },
       { name: "devices", summary: "list paired devices or revoke one" },
       { name: "update", summary: "check or update the npm-installed server and CLI" },
+      { name: "uninstall", summary: "remove Oppi and everything it added to this computer" },
       { name: "version", summary: "print the installed package version" },
     ],
     notes: [
       "Default output is terminal-friendly for humans and agents; use '--json' for strict machine parsing.",
-      "Help, version, init, serve, pair, status, doctor, config, server, update, and layout are available during setup; quota, models, workspace, worktree, session, Agent, schedule, devices, and wait commands require local owner credentials and a running server.",
+      "Help, version, init, serve, pair, status, doctor, config, server, update, uninstall, and layout are available during setup; quota, models, workspace, worktree, session, Agent, schedule, devices, and wait commands require local owner credentials and a running server.",
       "Use '<noun> help' or '<command> --help' for flags and deeper examples.",
       "Use '--json' with help for an agent-readable description of the same topic.",
     ],
@@ -273,6 +274,22 @@ const HELP_TOPICS: HelpTopic[] = [
       "Restart the running server after a CLI update. An in-app update restarts the process itself.",
     ],
     examples: [{ command: "oppi update --check" }, { command: "oppi update" }],
+  },
+  {
+    path: ["uninstall"],
+    title: "Uninstall",
+    summary: "Remove Oppi and everything it added to this computer.",
+    usage: "oppi uninstall [--delete-data | --keep-data]",
+    flags: [
+      { name: "--delete-data", summary: "also delete the data folder without asking" },
+      { name: "--keep-data", summary: "keep the data folder without asking" },
+    ],
+    notes: [
+      "Removes the background service, a server install.sh started without one, Linux lingering if Oppi turned it on, Oppi's Auto-Name entry in Pi's settings.json, the PATH line install.sh added to your shell profile, the ~/.local/bin/oppi link, and ~/.oppi.",
+      "Then asks whether to delete the data folder (~/.config/oppi, or OPPI_DATA_DIR): your chats, settings, and paired devices. Without a terminal and without a flag, it keeps the folder.",
+      "An npm global install stays; the command prints how to remove it. 'oppi server uninstall' removes only the service.",
+    ],
+    examples: [{ command: "oppi uninstall" }, { command: "oppi uninstall --delete-data" }],
   },
   {
     path: ["token"],
@@ -503,6 +520,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Uninstall background server",
     summary: "Stop and remove the Oppi background service.",
     usage: "oppi server uninstall",
+    notes: ["To remove Oppi and everything it added, run 'oppi uninstall'."],
     examples: [{ command: "oppi server uninstall" }],
   },
   {

@@ -37,6 +37,11 @@ import {
   type ServerToolDefinition,
 } from "./extension-definitions.js";
 import { packageHasPlugin } from "./plugin-discovery.js";
+import {
+  isShippedAutoNameSource,
+  offerShippedAutoName,
+  withShippedAutoNameEnabled,
+} from "./auto-name-package.js";
 import type { PluginCatalog, PluginListing } from "./plugin-host.js";
 import {
   PiGlobalConfigError,
@@ -621,7 +626,7 @@ export class ServerResourceService {
     const packageManager = new DefaultPackageManager({
       cwd: this.catalogCwd,
       agentDir: this.agentDir,
-      settingsManager,
+      settingsManager: offerShippedAutoName(settingsManager, this.agentDir),
       builtinExtensions: [...HOST_BUILTIN_EXTENSION_NAMES],
     });
     let resolvedPaths;
@@ -895,6 +900,12 @@ export class ServerResourceService {
   ): void {
     const settings = context.settingsManager.getGlobalSettings();
     const packages: PackageSource[] = [...(settings.packages ?? [])];
+    if (isShippedAutoNameSource(resource.metadata.source)) {
+      context.settingsManager.setPackages(
+        withShippedAutoNameEnabled(packages, resource.metadata.source, enabled),
+      );
+      return;
+    }
     const packageIndex = packages.findIndex(
       (entry) => (typeof entry === "string" ? entry : entry.source) === resource.metadata.source,
     );

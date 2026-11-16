@@ -1,0 +1,2 @@
+- **Client:** **Set Up a Computer** now lists the line Install & Start would add to your shell profile (such as `~/.local/bin` on `PATH` in `~/.zprofile`) as **Shell Profile**, and Install & Start asks before it runs: **Add the Line**, **Install Without It**, or **Cancel**. Before, the app added the line without asking and said so afterward. See [Set up from the app over SSH](docs/onboarding.md#set-up-from-the-app-over-ssh).
+- **Server:** The installer takes `--no-profile` to leave your shell profile alone. See [Install](docs/onboarding.md#install).

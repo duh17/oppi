@@ -17,7 +17,7 @@ The installer runs as your user and never asks for `sudo`. It:
 3. Installs a background service: a LaunchAgent on macOS, a systemd user service on Linux.
 4. Waits until the server it just started answers over HTTPS on `127.0.0.1`. If another program already holds the server port, it stops with `port_in_use` instead.
 
-Server data (config, TLS, paired devices) lives in `~/.config/oppi`.
+Server data (config, TLS, paired devices) lives in `~/.config/oppi`. `oppi uninstall` removes all of this again ([Uninstall Oppi](uninstall.md)).
 
 ## Install
 
@@ -36,12 +36,13 @@ curl -fsSL https://raw.githubusercontent.com/duh17/oppi/main/install.sh | sh -s 
 | `--version <spec>` | Install that `oppi-server` version, tag, or range instead of the latest. Versions older than the installer supports stop with `server_too_old`. |
 | `--no-service` | Skip the LaunchAgent or systemd unit and start `oppi serve` in the background. It does not start again after a reboot. |
 | `--non-interactive` | Never prompt. Without it, the installer asks before it edits your shell profile. |
+| `--no-profile` | Do not add the `oppi` link's directory to `PATH` in your shell profile. Run `oppi` by its full path, `~/.oppi/bin/oppi`, or add the directory yourself. |
 
 If you already manage Node.js and prefer npm, `npm install -g oppi-server` followed by `oppi server install` gives the same service. To run Oppi from a source checkout, see [server/README.md](../server/README.md).
 
 ## Set up from the app over SSH
 
-The app can do the install for you. In Oppi, choose **Set Up a Computer** in onboarding, or open the Tailscale screen later. Choose **Set Up a Mac or Linux Computer**, pick the machine on the **Set Up a Computer** screen, and sign in over SSH to a Mac (Remote Login) or a Linux machine (`sshd`). If Oppi is missing or stopped, **Install & Start Oppi** sends the same installer over SSH with `--non-interactive`, then pairs your iPhone.
+The app can do the install for you. In Oppi, choose **Set Up a Computer** in onboarding, or open the Tailscale screen later. Choose **Set Up a Mac or Linux Computer**, pick the machine on the **Set Up a Computer** screen, and sign in over SSH to a Mac (Remote Login) or a Linux machine (`sshd`). If Oppi is missing or stopped, **Install & Start Oppi** sends the same installer over SSH with `--non-interactive`, then pairs your iPhone. When the installer would add a line to your shell profile, the check lists it as **Shell Profile**, and Install & Start asks first, as the installer does in a terminal: **Add the Line**, **Install Without It** (`--no-profile`), or **Cancel**. Oppi works either way; the app finds `oppi` without the line.
 
 Oppi runs `oppi pair --json` only after `oppi status` says HTTPS and `https://127.0.0.1:<port>/health` answers, so a stopped server mints no invite. A `*.ts.net` name uses Oppi's Tailscale connection; any other host uses the current network. An unknown or changed SSH host key sends no password.
 
@@ -53,7 +54,7 @@ Oppi runs `oppi pair --json` only after `oppi status` says HTTPS and `https://12
 oppi server status     # installed, running, runtime, data dir
 oppi server restart    # after config or runtime changes
 oppi server stop
-oppi server uninstall
+oppi server uninstall  # the service only; `oppi uninstall` removes Oppi
 ```
 
 - **macOS:** the LaunchAgent `dev.chaosdonkey.oppi` starts Oppi at login and restarts it after a crash. Logs go to `~/.config/oppi/server.log`; each finished day moves to `server-YYYY-MM-DD.log` next to it, kept 14 days (`OPPI_SERVER_LOG_RETENTION_DAYS` changes that).

@@ -16,6 +16,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { PiSettingsOperationError } from "./settings/pi-resource-errors.js";
+import { offerShippedAutoName } from "./auto-name-package.js";
 
 const DEFAULT_AGENT_DIR = join(homedir(), ".pi", "agent");
 
@@ -186,7 +187,7 @@ async function resolveConfiguredHostExtensionResources(
   const packageManager = new DefaultPackageManager({
     cwd,
     agentDir,
-    settingsManager,
+    settingsManager: offerShippedAutoName(settingsManager, agentDir),
   });
 
   // Do not auto-install missing packages from the server route.

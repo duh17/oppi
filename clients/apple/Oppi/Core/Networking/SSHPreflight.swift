@@ -189,6 +189,9 @@ struct SSHPreflightReport: Equatable, Sendable {
     /// Status says HTTPS and loopback `/health` answered as Oppi.
     let oppiAnswers: Bool
     let hasCommandLineTools: Bool
+    /// The profile line Install & Start would add; nil when it adds none or
+    /// the check did not ask the installer (the next step is not an install).
+    var profileEdit: SSHProfileEdit?
 
     var isMacOS: Bool { kernel == "Darwin" }
     var isLinux: Bool { kernel == "Linux" }
@@ -216,6 +219,7 @@ struct SSHPreflightReport: Equatable, Sendable {
     var checks: [SSHPreflightCheck] {
         var checks = [systemCheck, nodeCheck, oppiCheck, gitCheck, tailscaleCheck]
         if let tailscaleHTTPSCheck { checks.append(tailscaleHTTPSCheck) }
+        if let profileCheck { checks.append(profileCheck) }
         // Install & Start is not offered on other systems, so nothing there
         // is something it would take care of.
         guard isSupportedHost else {
@@ -288,6 +292,18 @@ struct SSHPreflightReport: Equatable, Sendable {
             detail += paired ? " A device is paired." : " No device is paired yet."
         }
         return SSHPreflightCheck(title: title, detail: detail, status: .ok)
+    }
+
+    /// The one change Install & Start makes outside Oppi's own folders, named
+    /// before it runs. It asks again when you tap it.
+    private var profileCheck: SSHPreflightCheck? {
+        guard nextStep == .install, let profileEdit else { return nil }
+        return SSHPreflightCheck(
+            title: "Shell Profile",
+            detail: "Install & Start asks before it adds \(profileEdit.path) to PATH in \(profileEdit.profile), "
+                + "so oppi runs by name in a terminal.",
+            status: .installs
+        )
     }
 
     /// Optional: neither the installer nor pairing needs git. macOS ships

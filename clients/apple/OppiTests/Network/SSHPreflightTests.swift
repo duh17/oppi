@@ -109,6 +109,14 @@ struct SSHPreflightProbeTests {
         #expect(report.checks.first { $0.title == "System" }?.detail == "macOS 26.1 (arm64)")
     }
 
+    /// The installer's plan, among login-shell noise; an empty profile means no line to add.
+    @Test func profilePlanNamesTheLineOrNothing() {
+        let plan = "motd\r\noppi-install: plan profile=~/.bash_profile\noppi-install: plan path=/opt/my home/.oppi/bin\n"
+        #expect(SSHProfileEdit.parse(plan) == SSHProfileEdit(profile: "~/.bash_profile", path: "/opt/my home/.oppi/bin"))
+        #expect(SSHProfileEdit.parse("oppi-install: plan profile=\n") == nil)
+        #expect(SSHProfileEdit.parse("") == nil)
+    }
+
     @Test func installedButStoppedOppiOffersInstallToStartIt() throws {
         let report = try SSHPreflightProbe.parse(Self.output(oppi: "/opt/homebrew/bin/oppi"))
         #expect(report.oppiPath == "/opt/homebrew/bin/oppi")

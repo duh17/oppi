@@ -7,6 +7,7 @@ The docs have two tracks: **daily use** and **extension authoring**. Pi owns the
 ## Daily use
 
 - [Onboarding and pairing](onboarding.md): install the server, pair devices, approve new devices
+- [Uninstall Oppi](uninstall.md): remove the server and everything it added
 - [Using Oppi](usage.md): screens, prompt vs steer vs follow-up, Quick Session, files, voice, keyboard and pointer, Agents and schedules, **Edit with Oppi**, server settings
 - [Custom themes](themes.md): JSON themes on the server, tokens, contrast
 - [Server configuration](server-configuration.md): config CLI, voice, push, MCP, project trust, auth module

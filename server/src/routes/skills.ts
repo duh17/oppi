@@ -24,6 +24,11 @@ import {
   scanDirectories,
 } from "../host.js";
 import { listConfiguredHostExtensionResources } from "../extension-loader.js";
+import {
+  isShippedAutoNameSource,
+  offerShippedAutoName,
+  withShippedAutoNameEnabled,
+} from "../auto-name-package.js";
 import { projectTrustState } from "../project-trust.js";
 import { serverResourceId } from "../server-resource-id.js";
 import { workspaceMountRoot } from "../session-work-root.js";
@@ -95,7 +100,11 @@ async function resolvePiResources(
   const agentDir = getAgentDir();
   const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted });
   throwIfPiSettingsErrors(settingsManager, "load");
-  const packageManager = new DefaultPackageManager({ cwd, agentDir, settingsManager });
+  const packageManager = new DefaultPackageManager({
+    cwd,
+    agentDir,
+    settingsManager: offerShippedAutoName(settingsManager, agentDir),
+  });
   const resolved = await packageManager.resolve(async () => "skip");
   throwIfPiSettingsErrors(settingsManager, "resolve");
   return { agentDir, settingsManager, resolved };
@@ -478,6 +487,12 @@ function writePackageResourceSettings(
       ? settingsManager.getProjectSettings()
       : settingsManager.getGlobalSettings();
   const packages = [...(settings.packages ?? [])] as PackageSource[];
+  if (targetScope === "user" && isShippedAutoNameSource(resource.metadata.source)) {
+    settingsManager.setPackages(
+      withShippedAutoNameEnabled(packages, resource.metadata.source, enabled),
+    );
+    return;
+  }
   const packageSource = packageSourceForSettingsScope(resource, targetScope, cwd, agentDir);
   const resourceScope =
     resource.metadata.scope === "project" || resource.metadata.scope === "user"

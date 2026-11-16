@@ -119,7 +119,8 @@ final class SSHPreflightViewController: ListScreenController<
         previewReport: SSHPreflightReport,
         host: String,
         installProgress: SSHInstallProgress? = nil,
-        installFailure: SSHPreflightFailure? = nil
+        installFailure: SSHPreflightFailure? = nil,
+        asksToInstall: Bool = false
     ) {
         self.init(coordinator: coordinator)
         selection = host
@@ -128,6 +129,20 @@ final class SSHPreflightViewController: ListScreenController<
         if let installProgress {
             install = installFailure.map { .failed(installProgress, $0) } ?? .running(installProgress)
         }
+        if asksToInstall {
+            // Signed in, and Install & Start tapped: its profile question is up.
+            password = "preview-password"
+            asksToInstallOnAppear = true
+        }
+    }
+
+    private var asksToInstallOnAppear = false
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        guard asksToInstallOnAppear else { return }
+        asksToInstallOnAppear = false
+        profileQuestion?.present(from: self, anchor: nil) {}
     }
 
     /// Screenshot harness: a settled failure without dialing SSH.
@@ -458,19 +473,23 @@ final class SSHPreflightViewController: ListScreenController<
         case .install:
             cell.configure(
                 title: String(localized: "Install & Start Oppi"), systemImage: "arrow.down.circle", identifier: "sshPreflight.install",
-                isEnabled: !isBusy && canSignIn
+                isEnabled: !isBusy && canSignIn,
+                confirmation: profileQuestion
             ) { [weak self] in
                 guard let self, let (_, address) = currentReport else { return }
-                startInstall(address: address)
+                startInstall(address: address, editProfile: true)
             }
         case .installCancel:
             cell.configure(title: String(localized: "Cancel Setup"), tint: .destructive, identifier: "sshPreflight.install.cancel") { [weak self] in
                 self?.cancel()
             }
         case .installRetry:
-            cell.configure(title: String(localized: "Retry"), identifier: "sshPreflight.install.retry", isEnabled: !isBusy && canSignIn) { [weak self] in
+            cell.configure(
+                title: String(localized: "Retry"), identifier: "sshPreflight.install.retry",
+                isEnabled: !isBusy && canSignIn, confirmation: profileQuestion
+            ) { [weak self] in
                 guard let self, let (_, address) = currentReport else { return }
-                startInstall(address: address)
+                startInstall(address: address, editProfile: true)
             }
         default:
             break
@@ -820,7 +839,9 @@ final class SSHPreflightViewController: ListScreenController<
             let outcome: Phase?
             do {
                 let socket = try await dialSSH(address)
-                let report = try await SSHPreflightClient.run(request, socket: socket)
+                let report = try await SSHPreflightClient.run(
+                    request, socket: socket, installer: try? SSHInstallScript.bundled()
+                )
                 outcome = .finished(report, address)
             } catch let failure as SSHPreflightFailure {
                 outcome = .failed(failure, address)
@@ -885,7 +906,35 @@ final class SSHPreflightViewController: ListScreenController<
 
     /// Install & Start: the installer, a fresh check, and the invite on one
     /// signed-in connection, then the same enrollment as Pair.
-    private func startInstall(address: SSHSetupAddress) {
+    /// Install & Start's one change outside Oppi's own folders, asked before it
+    /// runs, as the installer asks in a terminal: add the profile line (the
+    /// row's own action), install without it, or neither. Nil when the check
+    /// found no line to add.
+    private var profileQuestion: Confirmation? {
+        guard let edit = currentReport?.0.profileEdit else { return nil }
+        return Confirmation(
+            title: String(localized: "Add Oppi to PATH in \(edit.profile)?"),
+            message: String(
+                localized: "Install & Start can add one line to \(edit.profile) that puts \(edit.path) on PATH, so oppi runs by name in a terminal. Oppi works either way, and oppi uninstall removes the line."
+            ),
+            actionTitle: String(localized: "Add the Line"),
+            style: .alert,
+            isDestructive: false,
+            prefersAction: true,
+            actionIdentifier: "sshPreflight.install.profile.add",
+            additionalActions: [
+                .init(
+                    title: String(localized: "Install Without It"),
+                    identifier: "sshPreflight.install.profile.skip"
+                ) { [weak self] in
+                    guard let self, let (_, address) = currentReport else { return }
+                    startInstall(address: address, editProfile: false)
+                },
+            ]
+        )
+    }
+
+    private func startInstall(address: SSHSetupAddress, editProfile: Bool) {
         guard !isBusy, canSignIn else { return }
         let request: SSHPreflightClient.Request
         let script: Data
@@ -905,7 +954,9 @@ final class SSHPreflightViewController: ListScreenController<
             guard let self else { return }
             do {
                 let socket = try await dialSSH(address)
-                let outcome = try await SSHPreflightClient.install(request, script: script, socket: socket) { [weak self] next in
+                let outcome = try await SSHPreflightClient.install(
+                    request, script: script, editProfile: editProfile, socket: socket
+                ) { [weak self] next in
                     guard isCurrent() else { return }
                     self?.install = .running(next)
                 }

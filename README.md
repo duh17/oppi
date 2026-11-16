@@ -127,8 +127,10 @@ The installer and `oppi server install` set up a background service that restart
 ```bash
 oppi server status     # check if running
 oppi server restart    # restart
-oppi server uninstall  # remove
+oppi server uninstall  # remove the service
 ```
+
+To remove Oppi and everything it added to the machine, run `oppi uninstall` ([Uninstall Oppi](docs/uninstall.md)).
 
 ## Commands
 
@@ -170,6 +172,7 @@ Start at [docs/index.md](docs/index.md). Public docs are two tracks: daily use a
 ### Daily use
 
 - [Onboarding and pairing](docs/onboarding.md)
+- [Uninstall Oppi](docs/uninstall.md)
 - [Using Oppi](docs/usage.md) — screens, prompt vs steer vs follow-up, Quick Session, files, voice, Edit with Oppi
 - [Custom themes](docs/themes.md)
 - [Server configuration](docs/server-configuration.md)

@@ -187,17 +187,45 @@ function lingerEnabled(): boolean | null {
   }
 }
 
+/**
+ * Marks lingering as Oppi's doing: `oppi uninstall` turns it off only when this file says Oppi
+ * turned it on. Lingering keeps every user service running, so one the user had stays theirs.
+ */
+export function lingerMarkerPath(dataDir: string): string {
+  return join(dataDir, "linger-enabled-by-oppi");
+}
+
 /** Keep the user manager (and Oppi) running without a login session. */
-function ensureLinger(): string | undefined {
+function ensureLinger(dataDir: string): string | undefined {
   if (lingerEnabled()) return undefined;
   try {
     run("loginctl", ["enable-linger"]);
   } catch {
     // Reported below.
   }
-  if (lingerEnabled()) return undefined;
+  if (lingerEnabled()) {
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(lingerMarkerPath(dataDir), `${Date.now()}\n`, { mode: 0o600 });
+    return undefined;
+  }
   const user = userInfo().username;
   return `Oppi stops when you log out until an admin runs: sudo loginctl enable-linger ${user}`;
+}
+
+/**
+ * Turns lingering off if Oppi turned it on (`lingerMarkerPath`), and says what happened; null
+ * when Oppi did not turn it on, which leaves it as it is.
+ */
+export function undoLinger(dataDir: string): { ok: boolean; message: string } | null {
+  const marker = lingerMarkerPath(dataDir);
+  if (!existsSync(marker)) return null;
+  try {
+    run("loginctl", ["disable-linger"]);
+  } catch (err: unknown) {
+    return { ok: false, message: `Could not turn lingering off: ${errorMessage(err)}` };
+  }
+  unlinkSync(marker);
+  return { ok: true, message: "Lingering turned off (Oppi had turned it on)" };
 }
 
 export interface SystemdStatus {
@@ -249,7 +277,7 @@ export function installService(dataDir?: string): {
     message: `systemd user service ${UNIT} installed and started`,
     runtimePath,
     cliPath,
-    lingerNote: ensureLinger(),
+    lingerNote: ensureLinger(resolvedDataDir),
   };
 }
 

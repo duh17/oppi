@@ -28,9 +28,22 @@ enum SSHPreflightClient {
 
     /// Takes ownership of `socket`. Cancelling the task closes the SSH
     /// connection. Throws `SSHPreflightFailure` or `CancellationError`.
-    static func run(_ request: Request, socket: Int32) async throws -> SSHPreflightReport {
+    ///
+    /// When the next step is Install & Start, `installer` (the bundled
+    /// `install.sh`) runs with `--plan-profile`, which changes nothing, so the
+    /// report can name the profile line the install would add.
+    static func run(_ request: Request, socket: Int32, installer: Data?) async throws -> SSHPreflightReport {
         try await signedIn(request, socket: socket, outputTooLarge: .probeIncomplete) { connection in
-            try await probe(on: connection)
+            var report = try await probe(on: connection)
+            guard report.nextStep == .install, let installer else { return report }
+            let plan = try await connection.run(
+                SSHInstallScript.planCommand,
+                input: installer,
+                maximumOutputBytes: maxProbeOutput,
+                timeout: commandTimeout
+            )
+            report.profileEdit = SSHProfileEdit.parse(String(decoding: plan.output, as: UTF8.self))
+            return report
         }
     }
 
@@ -53,13 +66,15 @@ enum SSHPreflightClient {
     }
 
     /// Install & Start on one signed-in connection: runs `script` (the bundled
-    /// `install.sh`) with progress, then checks the machine again and, when
+    /// `install.sh`) with progress, adding the profile line only with
+    /// `editProfile` (the person's answer), then checks the machine again and, when
     /// Oppi answers, mints an invite through the same status-then-pair path
     /// as `mintInvite`. `progress` gets the folded state after each
     /// progress line, in order. Takes ownership of `socket`.
     static func install(
         _ request: Request,
         script: Data,
+        editProfile: Bool,
         socket: Int32,
         progress: @escaping @MainActor @Sendable (SSHInstallProgress) -> Void
     ) async throws -> InstallOutcome {
@@ -72,7 +87,7 @@ enum SSHPreflightClient {
                     defer { continuation.finish() }
                     do {
                         return try await connection.run(
-                            SSHInstallScript.command,
+                            SSHInstallScript.command(editProfile: editProfile),
                             input: script,
                             maximumOutputBytes: maxInstallOutput,
                             timeout: installTimeout,
