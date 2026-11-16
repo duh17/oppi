@@ -4,9 +4,10 @@
 // built-ins' order), every plugin's package.json, and the TypeScript of each Pi package (one whose
 // package.json declares `pi.extensions`), because Pi loads a classic entry's TypeScript itself.
 // A facet file (`server.ts`) is never copied: tsc emits `server.js`, and a folder with both would
-// have two facets. The build fails when a listed built-in has no `server.js` afterwards, or a Pi
-// package misses a declared entry.
-import { cpSync, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+// have two facets. The build fails when a listed built-in has no `server.js` afterwards, a Pi
+// package misses a declared entry, or a built-in fails to load (check-built-plugins.mjs).
+import { spawnSync } from "node:child_process";
+import { cpSync, existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -25,6 +26,12 @@ const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
 const problems = [];
 
 cpSync(join(source, "package.json"), join(target, "package.json"));
+// Bun applies the nearest tsconfig.json's `paths` when it imports a file, and a build inside the
+// checkout (server/dist) would find server/tsconfig.json, which maps `oppi/v1` to src/oppi-v1.ts.
+// The plugin host hands plugins its own `oppi/v1`, but jiti imports a built plugin natively
+// first, so a plugin would get a second `oppi/v1` (and Chord) from the sources. This one has no
+// paths: `oppi/v1` does not resolve, and jiti falls back to its loader, as it does under Node.
+writeFileSync(join(target, "tsconfig.json"), "{}\n");
 for (const name of readdirSync(source)) {
   const dir = join(source, name);
   if (!statSync(dir).isDirectory()) continue;
@@ -59,4 +66,18 @@ for (const listed of readJson(join(source, "package.json")).chord.plugins) {
 if (problems.length > 0) {
   console.error(`copy-plugins: ${problems.join("; ")}`);
   process.exit(1);
+}
+
+// Load the built-ins under this runtime and, where installed, the other one the server runs on.
+const check = join(serverRoot, "scripts", "check-built-plugins.mjs");
+for (const runtime of [process.execPath, process.versions.bun ? "node" : "bun"]) {
+  const run = spawnSync(runtime, [check, buildRoot], { encoding: "utf8" });
+  if (run.error?.code === "ENOENT" && runtime !== process.execPath) continue;
+  if (run.status !== 0) {
+    // Its output is the server log of the load, kept for a failure.
+    console.error(run.stdout, run.stderr, run.error ?? "");
+    console.error(`copy-plugins: built-in plugins fail to load under ${runtime}`);
+    process.exit(1);
+  }
+  console.error(run.stderr.trim().split("\n").at(-1));
 }

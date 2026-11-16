@@ -97,14 +97,15 @@ export default function buildCliOnce(): () => void {
         stdio: "inherit",
       },
     );
+    // Before the copy steps: copy-plugins.mjs loads the built plugins, which import packages.
+    symlinkSync(join(serverRoot, "node_modules"), join(buildRoot, "node_modules"), "dir");
+
     for (const script of ["copy-oppi-docs.mjs", "copy-plugins.mjs"])
       execFileSync(process.execPath, [join(serverRoot, "scripts", script)], {
         cwd: serverRoot,
         env: { ...process.env, OPPI_BUILD_DIR: buildRoot },
         stdio: "inherit",
       });
-
-    symlinkSync(join(serverRoot, "node_modules"), join(buildRoot, "node_modules"), "dir");
 
     const cliPath = join(buildRoot, "src", "cli.js");
     chmodSync(cliPath, 0o755);
