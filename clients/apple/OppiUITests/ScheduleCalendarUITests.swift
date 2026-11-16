@@ -336,8 +336,11 @@ final class ScheduleCalendarUITests: XCTestCase, PreviewUITestCase {
 
     /// Calendar Events: the day's meetings sit between the runs, an all-day event above them,
     /// and touching and holding one offers Schedule Agent…, which opens a one-time schedule
-    /// 30 minutes before the meeting with its details in the prompt.
+    /// at the meeting's offset (30 minutes before it, until the device clock passes that)
+    /// with its details in the prompt.
     func testCalendarEventsShowBesideRunsAndScheduleAnAgent() {
+        // The fixture's meeting is today at 10:00 by the device clock, the day the app launches.
+        let meeting = Calendar.autoupdatingCurrent.date(bySettingHour: 10, minute: 0, second: 0, of: Date())!
         launch(calendarEvents: "1")
         openSchedules()
         app.segmentedControls["schedules.mode"].buttons[dayTitle].tap()
@@ -356,12 +359,19 @@ final class ScheduleCalendarUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(scheduleAgent.waitUntilExists(timeout: 5), "An event's menu offers Schedule Agent…")
         XCTAssertFalse(menuButton("Run Now").exists, "An event has no run actions")
         capture("event-menu")
+        let offsetBeforeTap = Self.initialOffsetTitle(meetingAt: meeting, now: Date())
         scheduleAgent.tap()
 
         let when = app.buttons["schedule.nativeEdit.eventOffset"]
         XCTAssertTrue(when.waitUntilExists(timeout: 10), "Schedule Agent opens the schedule editor")
         let offset = when.value as? String ?? ""
-        XCTAssertEqual(offset, "30 Minutes Before", "It runs in time to prepare for the meeting")
+        // The editor reads the clock between these two samples; they differ only when the
+        // tap straddles one of the rule's boundaries.
+        let offsetAfterOpen = Self.initialOffsetTitle(meetingAt: meeting, now: Date())
+        XCTAssertTrue(
+            [offsetBeforeTap, offsetAfterOpen].contains(offset),
+            "It starts at the meeting's offset for this time of day (\(offsetBeforeTap)): \(offset)"
+        )
         XCTAssertFalse(app.buttons["schedule.nativeEdit.cadence"].exists, "An event's schedule runs once")
         let prompt = app.textViews["schedule.nativeEdit.prompt"]
         XCTAssertTrue(prompt.waitUntilExists(timeout: 5))
@@ -511,6 +521,17 @@ final class ScheduleCalendarUITests: XCTestCase, PreviewUITestCase {
 
     private func subagentsStrip(of scheduleId: String) -> XCUIElement {
         app.cells.matching(NSPredicate(format: "identifier BEGINSWITH %@", "schedules.calendar.subagents.\(scheduleId).")).firstMatch
+    }
+
+    /// The When a new schedule for the fixture's 45-minute meeting at `meeting` starts with
+    /// at `now`, by the app's rule (`ScheduleEventOffset.initialDate`, which this target cannot
+    /// import): 30 minutes before while that is to come, else its start, else its end, else
+    /// a time no offset matches.
+    private static func initialOffsetTitle(meetingAt meeting: Date, now: Date) -> String {
+        if meeting.addingTimeInterval(-30 * 60) > now { return "30 Minutes Before" }
+        if meeting > now { return "At Start" }
+        if meeting.addingTimeInterval(45 * 60) > now { return "At End" }
+        return "Custom"
     }
 
     /// A popover menu's actions are buttons whose whole label is the title.
