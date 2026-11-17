@@ -165,7 +165,7 @@ enum PaneMinimumSize {
         switch route {
         case .session, .thread: chat
         case .sessions, .files, .hostFiles, .git, .panel, .unsupported: list
-        case .file, .commit: document
+        case .file, .commit, .read: document
         case .browser: browser
         case .godot: godot
         case .local: nil

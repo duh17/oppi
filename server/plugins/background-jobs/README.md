@@ -45,18 +45,25 @@ short title (the program and its first plain arguments, without a leading
 `cd … &&`, options, pipes, or redirects). A running job's first line also holds
 a live age counter, which the client ticks itself, and a **Stop** button, which
 kills the job as `background_job cancel` does. The next line, at the card's full
-width, holds the job id and its state: `Running`, or how the job ended
-(`Exit 1`, `Stopped`, `Timed out`). Under that, a running job shows its folder,
-the time left before its timeout if it has one, and its live output: the last 3
-lines, at most 160 characters, so the card fits in the drawer without
-scrolling. Escape codes are
-removed, and a progress line that redraws itself with a carriage return is
-shown at its latest state. When the output passes the 64,000 characters the
-result keeps, the card says "Output truncated". **Details**, folded by default,
-holds the full command and, while the job runs, the full working directory. It
-also holds the end of the output, up to the last 12 lines and 480 characters:
-always for a finished job, and for a running job when that is more than the
-card shows.
+width, holds the job id and its state: `Running`, or how the job ended and how
+long it ran (`Exit 65 after 1:48`, `Stopped`, `Timed out`), in red or orange when
+it failed. A running job then shows its folder and the time left before its
+timeout if it has one. Under that come the whole command, wrapped, in a code
+block that copies it, and the end of the output: the last 8 lines, at most 480
+characters. Escape codes are removed, and a progress line that redraws itself
+with a carriage return is shown at its latest state. When the output passes the
+64,000 characters the runner keeps, the card says "Output truncated".
+
+The title opens the job's own view (`proc://<id>`): beside the chat on an iPad,
+full screen on an iPhone. It shows the status with the time and Stop, the
+folder, start and end times, the command, and all the output the runner keeps,
+following new lines while the job runs. The app reads it through the server's
+internal-URL routes only while the view is on screen, so live output costs
+nothing while nobody watches. After delivery the view reads the result card's
+output. Each job records when it ended (`endedAt`) and how many characters of
+output it dropped (`dropped`), so a long job's output keeps its place after it
+ends. After a server restart, a job still listed as running shows blank output
+until it is marked interrupted: its live output lived only in the old process.
 
 New output redraws the panel at most once every 2 seconds, and only when a
 running card's lines would change. Several jobs printing at once share that

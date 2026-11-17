@@ -54,6 +54,9 @@ enum PaneRoute: Hashable, Sendable {
     case git(workspace: String, worktree: String?)
     case commit(workspace: String, sha: String)
     case panel(session: String, id: String)
+    /// One of a session's internal URLs (`proc://bash-3`) in the viewer: its
+    /// status, facts, command, and live output.
+    case read(session: String, url: String)
     /// A web page (http or https). A link or a layout names one by the
     /// `PaneWebAddress` rules; a page the person opened directly may be any
     /// http or https page, and one with no link is not restored.
@@ -63,6 +66,17 @@ enum PaneRoute: Hashable, Sendable {
     case local(PaneLocalToken)
     /// A leaf kind from a newer layout file: kept and restored, never written.
     case unsupported(kind: String, raw: [String: JSONValue])
+}
+
+extension PaneRoute {
+    /// The session whose chat a panel route opens beside (`.panel`, `.read`):
+    /// it shows only there, and closes with that chat.
+    var chatPanelSessionId: String? {
+        switch self {
+        case .panel(let session, _), .read(let session, _): session
+        default: nil
+        }
+    }
 }
 
 /// One screen in a leaf's stack. `serverId` is the server's identity

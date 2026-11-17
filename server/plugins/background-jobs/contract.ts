@@ -18,6 +18,13 @@ export type Job = {
   cwd: string;
   status: Status;
   startedAt: number;
+  /** When the job ended (epoch ms); none while it runs, and for a job that ended before it was kept. */
+  endedAt?: number;
+  /**
+   * Characters dropped from the front of its output past the kept 64,000, recorded with `endedAt`;
+   * none for nothing dropped, or a job that ended before it was kept.
+   */
+  dropped?: number;
   timeout?: number;
   decision: "waiting" | "foreground" | "background";
   deadline: number;

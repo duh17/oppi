@@ -173,6 +173,9 @@ extension ChatViewController {
             case .panel(let surfaceId)?:
                 model.panel = nil
                 Router.push(makeExtensionPanel(surfaceId, closes: false), from: self)
+            case .read(let url)?:
+                model.panel = nil
+                Router.push(makeInternalURLViewer(url, closes: false), from: self)
             default:
                 break
             }
@@ -199,13 +202,16 @@ extension ChatViewController {
         if case .panel(let surfaceId) = panel {
             return PaneStackEntry(serverId: serverId, route: .panel(session: sessionId, id: surfaceId))
         }
+        if case .read(let url) = panel {
+            return PaneStackEntry(serverId: serverId, route: .read(session: sessionId, url: url))
+        }
         guard let workspaceId = session?.workspaceId ?? workspaceIdHint else { return nil }
         switch panel {
         case .files:
             return PaneStackEntry(serverId: serverId, route: .files(workspace: workspaceId, path: nil))
         case .git:
             return PaneStackEntry(serverId: serverId, route: .git(workspace: workspaceId, worktree: session?.worktreeId))
-        case .outline, .context, .share, .reader, .timeline, .linkedFile, .panel:
+        case .outline, .context, .share, .reader, .timeline, .linkedFile, .panel, .read:
             return nil
         }
     }
@@ -236,6 +242,7 @@ extension ChatViewController {
             case .files where opensPanelsBeside: showPanel(.files)
             case .git where opensPanelsBeside: showPanel(.git)
             case .panel(_, let surfaceId): openExtensionPanel(surfaceId)
+            case .read(_, let url): openInternalURL(url)
             default: break
             }
         }
@@ -286,6 +293,52 @@ extension ChatViewController {
         )
     }
 
+    /// Opens one of this session's internal URLs (`proc://bash-3`) in the
+    /// viewer beside this chat, or full screen where panels do not open beside.
+    func openInternalURL(_ url: String) {
+        if opensPanelsBeside {
+            showPanel(.read(url))
+        } else {
+            Router.push(makeInternalURLViewer(url, closes: false), from: self)
+        }
+    }
+
+    /// The viewer for one of this session's internal URLs. `closes`: it is the
+    /// attached leaf, with Close; a pushed page leaves by Back.
+    func makeInternalURLViewer(_ url: String, closes: Bool) -> InternalURLViewController {
+        let connection = connection
+        let sessionId = sessionId
+        // The session's routes as the chat reaches them now; none while it has none yet.
+        let routes: @MainActor () throws -> (APIClient, SessionRouteScope) = { [weak self] in
+            guard let self, let api = self.connection.apiClient, let scope = self.focusedRouteScope else {
+                throw CancellationError()
+            }
+            return (api, scope)
+        }
+        return InternalURLViewController(
+            source: InternalURLViewerSource(
+                url: url,
+                read: { from in
+                    let (api, scope) = try routes()
+                    return try await api.getInternalURLView(scope: scope, sessionId: sessionId, url: url, from: from)
+                },
+                stop: {
+                    let (api, scope) = try routes()
+                    try await api.stopInternalURL(scope: scope, sessionId: sessionId, url: url)
+                },
+                pinMenu: { [weak self, weak connection] in
+                    guard let self, let connection, connection.pinsAvailable, let api = connection.apiClient else { return [] }
+                    return [PinMenu.toggle(
+                        route: .read(session: sessionId, url: url),
+                        identifiers: ("internalURL.menu.pin", "internalURL.menu.unpin"),
+                        pins: connection.pins, api: api, view: view
+                    ).action]
+                }
+            ),
+            onClose: closes ? { [weak self] in self?.showPanel(nil) } : nil
+        )
+    }
+
     /// The surface this chat's panel pane shows beside it, for its pill.
     var shownPanelSurfaceId: String? {
         if case .panel(let surfaceId)? = panelBeside { return surfaceId }
@@ -314,6 +367,10 @@ extension ChatViewController {
             panelController("The extension panel presents only while its chat is alive") {
                 $0.makeExtensionPanel(surfaceId, closes: true)
             }
+        case .read(let url):
+            panelController("The internal URL viewer presents only while its chat is alive") {
+                $0.makeInternalURLViewer(url, closes: true)
+            }
         }
     }
 
@@ -322,7 +379,7 @@ extension ChatViewController {
     private func panelRole(_ panel: ChatPanel) -> PaneContentRole {
         switch panel {
         case .files, .outline, .git, .context: .list
-        case .reader, .share, .timeline, .linkedFile: .reader
+        case .reader, .share, .timeline, .linkedFile, .read: .reader
         case .panel(let surfaceId): .custom(ExtensionPanelSnapshot.widths(for: panelHints(surfaceId)))
         }
     }

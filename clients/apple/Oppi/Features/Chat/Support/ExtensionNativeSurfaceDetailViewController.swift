@@ -241,6 +241,7 @@ final class ExtensionSurfaceDetailViewController: UIViewController {
         scrollView.alwaysBounceVertical = true
         scrollView.contentInsetAdjustmentBehavior = .never
         scrollView.accessibilityIdentifier = "extension.surfaceReader.scroll.\(suffix)"
+        if let openURL = content.openURL { cards.openURL = { _ = openURL($0) } }
         cards.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(cards)
         scrollView.translatesAutoresizingMaskIntoConstraints = false

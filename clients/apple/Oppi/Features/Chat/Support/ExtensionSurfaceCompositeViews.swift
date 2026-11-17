@@ -83,6 +83,9 @@ struct ExtensionSurfaceCompositeContext {
     var openText: ((_ language: String?, _ text: String) -> Void)?
     /// The server the surface's session lives on: where a tile's place is read and opened.
     var server: ExtensionSurfaceServer?
+    /// Opens a node's `link` through the chat's link handling. Nil where links have nowhere to
+    /// go: a linked node then draws without a tap.
+    var openURL: ((URL) -> Void)?
 
     var palette: ThemePalette { themeID.palette }
 
@@ -170,6 +173,7 @@ final class ExtensionSurfaceCompositesView: UIView {
         let sendsActions: Bool
         let opensText: Bool
         let serverID: String?
+        let opensLinks: Bool
         let sizeCategory: UIContentSizeCategory
     }
 
@@ -188,6 +192,20 @@ final class ExtensionSurfaceCompositesView: UIView {
     var openText: ((_ language: String?, _ text: String) -> Void)?
     /// The server the surface's session lives on, for its tiles. Set before `apply`.
     var server: ExtensionSurfaceServer?
+    /// Where a linked node's tap sends its URL. Set before the first `apply`.
+    var openURL: ((URL) -> Void)?
+
+    /// A code block's expand opens its text in the chat's reader, and a linked node's tap goes
+    /// through the chat's link handling. `actions` is read at each tap, so a drawer that
+    /// outlives its host sends nothing.
+    func opens(through actions: @escaping () -> ExtensionSurfaceDrawerActions?) {
+        openText = { language, text in
+            actions()?.openReader(.document(
+                content: .code(content: text, language: language, filePath: nil, startLine: 1)
+            ))
+        }
+        openURL = { url in _ = actions()?.onOpenURL?(url) }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -226,10 +244,12 @@ final class ExtensionSurfaceCompositesView: UIView {
         latest = (surface, pending, themeID)
         let sendsActions = onAction != nil
         let opensText = openText != nil
+        let opensLinks = openURL != nil
         let sizeCategory = traitCollection.preferredContentSizeCategory
         let inputs = DrawnInputs(
             surface: surface, pending: pending, themeID: themeID,
-            sendsActions: sendsActions, opensText: opensText, serverID: server?.id, sizeCategory: sizeCategory
+            sendsActions: sendsActions, opensText: opensText, serverID: server?.id, opensLinks: opensLinks,
+            sizeCategory: sizeCategory
         )
         if drawn == inputs { return }
         drawn = inputs
@@ -240,7 +260,8 @@ final class ExtensionSurfaceCompositesView: UIView {
             pending: pending,
             onAction: sendsActions ? { [weak self] in self?.onAction?($0) } : nil,
             openText: opensText ? { [weak self] in self?.openText?($0, $1) } : nil,
-            server: server
+            server: server,
+            openURL: opensLinks ? { [weak self] in self?.openURL?($0) } : nil
         )
         var kept: [String: UIView] = [:]
         var nextKinds: [String: String] = [:]

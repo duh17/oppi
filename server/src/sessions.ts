@@ -600,7 +600,8 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     return session.serverDurable.conversationId as ConversationId;
   }
 
-  private async withDurableConversation<T>(
+  /** Runs `read` against the session's durable conversation; null without one. */
+  async withDurableConversation<T>(
     sessionId: string,
     read: (harness: Harness, conversationId: ConversationId) => Promise<T>,
   ): Promise<T | null> {

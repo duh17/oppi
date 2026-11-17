@@ -12,6 +12,7 @@ import { normalizeDeviceName, parseDevicePublicKey } from "../storage/device-aut
 import { inviteHostForTlsMode, proveSameTailscaleUser } from "../tailscale-whois.js";
 import { SourceRateLimiter } from "../source-rate-limit.js";
 import { EXTENSION_NATIVE_UI_SERVER_CAPABILITIES } from "../extension-ui-contract.js";
+import { internalUrlViewSchemes } from "../internal-urls.js";
 import { readyVoiceFeatures } from "../voice-backend-health.js";
 import { GODOT_CAPABILITY_VERSION } from "../godot/godot-protocol.js";
 import {
@@ -543,6 +544,9 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         // pane other than Git and commits: sessions, files, panels, web pages, games), and a list
         // read gives a game pin its game's `name`. v2 targets (`origin` with a `kind`) are gone.
         pins: { version: 3 },
+        // `GET|POST …/sessions/{id}/internal-url[/stop]`: the app shows these schemes' URLs in
+        // its viewer (a status, facts, a command, live output) and opens them from links.
+        internalUrlViews: { version: 1, schemes: internalUrlViewSchemes() },
         // Godot pane (`types/godot.ts`): `/godot` routes and `WS /godot/{id}/link` for players that
         // declare `godot-pane:v1`.
         godot: { version: GODOT_CAPABILITY_VERSION },

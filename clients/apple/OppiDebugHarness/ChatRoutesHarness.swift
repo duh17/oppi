@@ -23,6 +23,7 @@ import UIKit
 /// of `protocol/surfaces/panel-hints.json`), whose pill opens its pane with no drawer.
 /// `CHAT_ROUTES_NATIVE_WIDGET_FILE=<path>` publishes a version 1 native widget read from that file
 /// (`ChatRoutesNativeWidget`); `CHAT_ROUTES_SURFACE=subagents` publishes the Subagents widget.
+/// `CHAT_ROUTES_INTERNAL_URL_FILE=<path>` serves `proc://` views from that file (`ChatRoutesInternalURL`).
 /// `CHAT_ROUTES_SURFACE_FILE=<path>[,<path>...]` publishes the
 /// surface JSON in those files instead (a server's rendered `ExtensionUISurface`, so a panel is shown
 /// as the phone receives it). `CHAT_ROUTES_REVIEW_COMMENT=none` stages no review comment, leaving
@@ -412,6 +413,7 @@ enum ChatRoutesFixture {
         let connection = ServerConnection()
         connection.setPreviewServerId(serverId)
         connection.setAPIClientForTesting(api)
+        if ChatRoutesInternalURL.isEnabled { connection.setInternalURLViewSchemesForTesting(["proc"]) }
         // Context's usage and loaded skills come over the session socket,
         // which the harness never opens: answer `get_session_stats`, and fail
         // every other send the way an unopened socket does.
@@ -1011,6 +1013,9 @@ private final class ChatRoutesURLProtocol: URLProtocol {
         let workspace = "/workspaces/chat-routes-ws"
         let body: Data?
         var contentType = "application/json"
+        if let view = ChatRoutesInternalURL.answer(request.httpMethod ?? "GET", url) {
+            return respond(url, body: view, contentType: "application/json")
+        }
         if let game = ChatRoutesGodot.answer(request.httpMethod ?? "GET", url.path) {
             if game.hangs { return }
             return respond(url, body: game.body, contentType: game.contentType)

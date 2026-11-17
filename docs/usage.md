@@ -241,6 +241,8 @@ A durable session's `read` tool can also read these internal URLs. They are read
 - `mcp://<resource-uri>`: a resource from one of the session's MCP servers.
 - `ssh://[user@]host[:port]/<path>`: a UTF-8 file of up to 1 MiB, or a directory listing, read with the server account's `ssh`. `/~` is the remote home folder.
 
+In the app, a `proc://` link (such as a job's title in the Background jobs drawer) opens that job beside the chat, or full screen on a narrow window. The top shows the job's status with how long it has run or ran, **Stop** while it runs, its folder, start and end times, and the whole command with **Copy**. Under that is all the output the server keeps, the last 64,000 characters, in the terminal reader with Find, Copy, and Share. While the job runs, the view follows its newest line, and it reads new output only while it is on screen. After the job's result reaches the chat, the view shows the output from that result. Pin it like any pane.
+
 A bare scheme, such as `agent://`, lists what the session can read, and an id can be a unique prefix. Sessions in other workspaces are never readable. `history://` and `agent://` read only server-durable sessions; for other sessions, use `oppi session trace`.
 
 `ssh://` uses the server account's keys, SSH agent, and `~/.ssh/config`. It never prompts for a password or a host key, so a host that needs one fails with an error. It does not use the hosts or keys saved for [Terminal](ssh-terminal.md), and it is off in sandbox sessions.

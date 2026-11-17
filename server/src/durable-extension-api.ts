@@ -14,7 +14,7 @@ import type { SurfacePublisher } from "./durable-surface.js";
 import type { Job } from "../plugins/background-jobs/contract.js";
 import type { SubagentWorktree, SubagentWorktreeState } from "../plugins/subagents/contract.js";
 import type { NotifyInput, NotifyOutcome } from "../plugins/notify/contract.js";
-import type { SchemeReader } from "./internal-urls.js";
+import type { SchemeReader, SchemeViewer } from "./internal-urls.js";
 import type { McpService } from "./mcp-service.js";
 import type { ServerResourceService } from "./server-resource-service.js";
 import type { TraceEvent } from "./trace.js";
@@ -27,7 +27,7 @@ import type {
   Session,
 } from "./types.js";
 
-export type { InternalTarget, SchemeReader } from "./internal-urls.js";
+export type { InternalTarget, SchemeReader, SchemeView, SchemeViewer } from "./internal-urls.js";
 /** What `oppiHost().notify` sends and what it reports back. */
 export type { NotifyInput, NotifyOutcome } from "../plugins/notify/contract.js";
 
@@ -576,8 +576,12 @@ export interface OppiInternalUrlsHost {
     api: ToolExecutionApi,
     context: Context,
   ): Promise<Pick<ToolExecutionResult, "output" | "structuredOutput"> | undefined>;
-  /** Serve `scheme://` with `reader`, replacing an earlier registration. Throws for a server scheme. */
-  register(scheme: string, reader: SchemeReader): void;
+  /**
+   * Serve `scheme://` with `reader`, replacing an earlier registration. Throws for a server scheme.
+   * With `viewer`, the app shows the scheme's URLs too: a status, facts, a command, and live
+   * terminal output, opened from a link (`InternalUrlView`).
+   */
+  register(scheme: string, reader: SchemeReader, viewer?: SchemeViewer): void;
 }
 
 // --- godot (`godot_*` tools) -------------------------------------------------------------------

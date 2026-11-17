@@ -206,7 +206,8 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
                 align: try? c.decodeIfPresent(String.self, forKey: .align),
                 selected: try? c.decodeIfPresent(Bool.self, forKey: .selected),
                 disabled: try? c.decodeIfPresent(Bool.self, forKey: .disabled),
-                action: action
+                action: action,
+                link: try? c.decodeIfPresent(String.self, forKey: .link)
             )
             self = type == "row" ? .row(layout) : .stack(layout)
         case "group":
@@ -318,7 +319,8 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
                 ExtensionUISurfaceCodeNode(
                     base: base,
                     language: try? c.decodeIfPresent(String.self, forKey: .language),
-                    text: (try? c.decode(String.self, forKey: .text)) ?? ""
+                    text: (try? c.decode(String.self, forKey: .text)) ?? "",
+                    wrap: try? c.decodeIfPresent(Bool.self, forKey: .wrap)
                 )
             )
         case "divider":
@@ -388,6 +390,7 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
             try c.encodeIfPresent(value.selected, forKey: .selected)
             try c.encodeIfPresent(value.disabled, forKey: .disabled)
             try c.encodeIfPresent(value.action, forKey: .action)
+            try c.encodeIfPresent(value.link, forKey: .link)
         case .group(let value):
             try encodeNodeBase(value.base, into: &c)
             try c.encode(value.title, forKey: .title)
@@ -447,6 +450,7 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
             try encodeNodeBase(value.base, into: &c)
             try c.encodeIfPresent(value.language, forKey: .language)
             try c.encode(value.text, forKey: .text)
+            try c.encodeIfPresent(value.wrap, forKey: .wrap)
         case .divider(let base):
             try encodeNodeBase(base, into: &c)
         case .spacer(let value):
@@ -483,7 +487,7 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
 
 /// The key namespace every node encodes into.
 enum ExtensionUISurfaceNodeCodingKeys: String, CodingKey {
-    case type, id, accessibility, children, spacing, align, action
+    case type, id, accessibility, children, spacing, align, action, link, wrap
     case text, style, tone, markdown, name, label, value, kind
     case pairs
     case columns, rows, truncated, title, series, labels
@@ -511,6 +515,9 @@ struct ExtensionUISurfaceLayoutNode: Sendable, Equatable, Codable {
     /// A disabled region sends nothing; the host refuses a tap that names one.
     let disabled: Bool?
     let action: ExtensionUISurfaceNodeAction?
+    /// A URL a tap opens in the app, in place of an action (an internal URL of
+    /// the surface's session opens its viewer).
+    var link: String? = nil
 }
 
 /// A titled region the reader can fold away; the host owns the disclosure control.
@@ -641,6 +648,8 @@ struct ExtensionUISurfaceCodeNode: Sendable, Equatable, Codable {
     let base: ExtensionUISurfaceNodeBase
     let language: String?
     let text: String
+    /// Opens with its lines wrapped.
+    var wrap: Bool? = nil
 }
 
 struct ExtensionUISurfaceSpacerNode: Sendable, Equatable, Codable {

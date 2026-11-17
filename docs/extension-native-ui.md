@@ -545,8 +545,8 @@ How the parts fit:
 
 | `type` | Fields | Notes |
 | --- | --- | --- |
-| `row` | `children`, `spacing?`, `align?`, `selected?`, `disabled?`, `action?` | Children side by side. `spacing`: `tight`, `normal`. `align`: `leading`, `center`, `trailing`, `spread`. |
-| `stack` | `children`, `spacing?`, `disabled?`, `action?` | Children one above another. |
+| `row` | `children`, `spacing?`, `align?`, `selected?`, `disabled?`, `action?`, `link?` | Children side by side. `spacing`: `tight`, `normal`. `align`: `leading`, `center`, `trailing`, `spread`. |
+| `stack` | `children`, `spacing?`, `disabled?`, `action?`, `link?` | Children one above another. |
 | `group` | `title`, `children`, `collapsed?` | A titled region the reader can fold. |
 | `text` | `text`, `style?`, `tone?`, `selected?`, `disabled?`, `action?` | `style`: `body`, `headline`, `caption`, `mono`. |
 | `markdown` | `markdown` | |
@@ -557,13 +557,15 @@ How the parts fit:
 | `keyValue` | `pairs` | Each pair is `{ key, value, tone? }`; at most 24. |
 | `table` | `columns`, `rows`, `truncated?` | A row is `{ id?, cells, actions? }`. A row with actions needs an `id`, and so does its table. |
 | `chart` | `kind`, `labels`, `series`, `title?`, `truncated?` | `kind`: `bar`, `line`, `pie`. |
-| `code` | `text`, `language?` | In a drawer, the block's header opens the text full screen. |
+| `code` | `text`, `language?`, `wrap?` | In a drawer, the block's header opens the text full screen. `wrap: true` opens it with its lines wrapped, for a command meant to be read whole; the reader can turn wrapping off. |
 | `divider` | | |
 | `spacer` | `size?` | `small`, `medium`, `large`. |
 | `button` | `id`, `title`, `action`, `role?`, `icon?`, `selected?`, `disabled?` | `role`: `primary`, `secondary`, `destructive`. |
 | `toggle` | `id`, `title`, `value`, `action`, `disabled?` | A tap sends the new value as `values.value`. |
 | `menu` | `id`, `items`, `title?`, `icon?`, `disabled?` | An item is `{ id?, title, role?, action }`. |
 | `tiles` | `items` | Places drawn as the Pinned screen's tiles. See [Tiles](#tiles). |
+
+A `link` makes a row or a stack open a URL when tapped, in place of an `action`; a node takes one or the other. The URL opens through the chat's link handling: an `oppi://` link, a web page, or an internal URL of the surface's session that the server shows, such as a background job's `proc://bash-3`, which opens that job's view beside the chat. A linked region is one tap target, so keep controls such as buttons out of it. A client without links draws the node without the tap.
 
 `tone` is `neutral`, `accent`, `success`, `warning`, or `danger`. A field that a node kind does not take, such as a `tone` on `markdown` or an `action` on `icon`, makes the surface invalid. A body is at most 5 nodes deep, a layout node holds 1 to 12 children, a surface holds at most 300 nodes, and node text is at most 500 characters.
 

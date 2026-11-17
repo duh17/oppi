@@ -57,6 +57,12 @@ extension ChatViewController {
     }
 
     func openExtensionSurfaceURL(_ url: URL) -> Bool {
+        // An internal URL the server shows (`proc://bash-3`) belongs to this session: its viewer
+        // opens here, as the opener's `PaneRoute.read` would, without leaving the chat.
+        if connection.showsInternalURL(url) {
+            openInternalURL(url.absoluteString)
+            return true
+        }
         let context = extensionSurfaceLinkContext
         guard let outcome = ExtensionSurfaceLinkRouting.outcome(
             for: url,

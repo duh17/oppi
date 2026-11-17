@@ -62,8 +62,14 @@ extension AppOpener {
             navigation.showAllWorkspaceSessions()
             return .finished
         }
-        if case .panel(let sessionId, _) = link.route,
-           let connection = coordinator.connection(for: serverId),
+        let connection = coordinator.connection(for: serverId)
+        // An internal URL opens in the viewer only when its server shows the scheme.
+        if case .read(_, let target) = link.route, let url = URL(string: target),
+           connection?.showsInternalURL(url) != true {
+            toast(AppOpenRequest.unsupportedLinkMessage(url))
+            return .finished
+        }
+        if let sessionId = link.route.chatPanelSessionId, let connection,
            connection.sessionStore.session(id: sessionId) != nil {
             // The chat opens as a session link does, and the panel beside it.
             navigation.panes.openPanel(link.route, beside: sessionId)

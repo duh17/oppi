@@ -913,6 +913,8 @@ enum ChatPanel: Hashable {
     case linkedFile(WorkspaceLinkedFileNavTarget)
     /// An extension surface's panel pane, by surface id (`PaneRoute.panel`).
     case panel(String)
+    /// One of the session's internal URLs in the viewer (`PaneRoute.read`).
+    case read(String)
 }
 
 extension ChatViewController {

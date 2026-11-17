@@ -195,6 +195,13 @@ final class ServerConnection {
     /// The server keeps pins as pane routes (`capabilities.pins` v3); without it no Pin item or
     /// Pinned screen shows. An older server's pins have another shape, which this app does not read.
     var pinsAvailable: Bool { serverCapabilities?.pins?.version ?? 0 >= 3 }
+    /// Whether the viewer shows `url`: its scheme is one the server lists in
+    /// `capabilities.internalUrlViews`, so a link to it opens the session's viewer.
+    func showsInternalURL(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(),
+              let capability = serverCapabilities?.internalUrlViews, capability.version >= 1 else { return false }
+        return capability.schemes.contains(scheme)
+    }
     /// Whether this server offers `feature` (its switch in `/server/info`). Every feature reads on
     /// until capabilities load, so a pane restored at launch waits for them rather than closing.
     func offers(_ feature: ServerFeature) -> Bool {
@@ -2180,6 +2187,15 @@ final class ServerConnection {
 
     func prepareFocusedSessionStreamEndpointForTesting(sessionId: String, routeScope: SessionRouteScope) {
         prepareFocusedSessionStreamEndpoint(sessionId: sessionId, routeScope: routeScope)
+    }
+
+    /// The internal URL schemes the viewer shows (`capabilities.internalUrlViews`), on whatever
+    /// capabilities the connection holds.
+    func setInternalURLViewSchemesForTesting(_ schemes: [String]) {
+        var capabilities = serverCapabilities
+            ?? ServerInfo.Capabilities(sessionStream: nil, dictationStream: nil, appEventStream: nil, extensionNativeUI: nil)
+        capabilities.internalUrlViews = ServerInfo.InternalURLViewsCapability(version: 1, schemes: schemes)
+        serverCapabilities = capabilities
     }
 
     func setSplitStreamCapabilitiesForTesting(

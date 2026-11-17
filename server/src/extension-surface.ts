@@ -297,6 +297,14 @@ function actionRef(value: unknown, actions: Record<string, unknown>): string {
   return actionId;
 }
 
+/** A node's link: a URL with a scheme, as long as a node's text may be. */
+function nodeLink(value: unknown): string {
+  const link = text(value, EXTENSION_UI_SURFACE_MAX_NODE_TEXT_CHARS, true);
+  if (!/^[a-z][a-z0-9+.-]*:\S+$/i.test(link))
+    throw new SurfaceShapeError("a node link is not a URL with a scheme");
+  return link;
+}
+
 /** A tap a node offers: the action id, the values it sends, and its declared pending state. */
 function nodeAction(
   value: unknown,
@@ -440,7 +448,16 @@ function node(
     throw new SurfaceShapeError(`a "${type}" node does not take a disabled state`);
   if (value.selected !== undefined && !SELECTABLE_NODE_TYPES.has(type))
     throw new SurfaceShapeError(`a "${type}" node does not take a selected state`);
-  const tappable = value.action === undefined ? {} : { action: nodeAction(value.action, actions) };
+  if (value.link !== undefined && type !== "row" && type !== "stack")
+    throw new SurfaceShapeError(`a "${type}" node does not take a link`);
+  if (value.link !== undefined && value.action !== undefined)
+    throw new SurfaceShapeError("a node offers an action or a link, not both");
+  const tappable =
+    value.action !== undefined
+      ? { action: nodeAction(value.action, actions) }
+      : value.link !== undefined
+        ? { link: nodeLink(value.link) }
+        : {};
   const tone = value.tone === undefined ? {} : { tone: oneOf(TONES, value.tone) };
   const selected =
     value.selected === undefined ? {} : { selected: boolean(value.selected, "selected") };
@@ -658,6 +675,7 @@ function node(
           ? {}
           : { language: text(value.language, EXTENSION_UI_SURFACE_MAX_TITLE_CHARS) }),
         text: text(value.text, EXTENSION_UI_SURFACE_MAX_NODE_TEXT_CHARS, true),
+        ...(value.wrap === undefined ? {} : { wrap: boolean(value.wrap, "wrap") }),
       };
     case "divider":
       return { ...base, type };

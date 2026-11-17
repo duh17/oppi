@@ -1,6 +1,6 @@
-import type { Context } from "@earendil-works/chord/context";
+import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
-import type { ToolExecutionApi } from "@earendil-works/pi-durable";
+import type { ConversationId, Harness, ToolExecutionApi } from "@earendil-works/pi-durable";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import {
   oppiHost,
@@ -9,15 +9,22 @@ import {
 } from "./durable-extension-api.js";
 import { createSshReader } from "./internal-url-ssh.js";
 import {
+  internalUrlViewers,
+  InternalUrlNotFound,
+  outputFrom,
   pageText,
+  parseInternalUrl,
   pickRow,
   readInternalUrl,
   type InternalTarget,
   type SchemeReader,
+  type SchemeViewer,
 } from "./internal-urls.js";
+import { surfaceConversation } from "./durable-surface.js";
+import { readDurableInputCardOutputByRequest } from "./durable-input-cards.js";
 import { isRecord } from "./json-shape.js";
 import type { TraceEvent } from "./trace.js";
-import type { Session } from "./types.js";
+import type { InternalUrlView, Session } from "./types.js";
 
 // What the durable `read` tool resolves for `agent://`, `history://`, `mcp://`, and `ssh://`, and
 // the registry other built-ins add a scheme to (`register`; `proc://` is background-jobs'). Read only.
@@ -33,9 +40,11 @@ import type { Session } from "./types.js";
 const registered = new Map<string, SchemeReader>();
 
 export const internalUrls: OppiInternalUrlsHost = {
-  register(scheme, reader) {
+  register(scheme, reader, viewer) {
     if (BUILT_IN_READERS.has(scheme)) throw new Error(`${scheme}:// is the server's own scheme`);
     registered.set(scheme, reader);
+    if (viewer) internalUrlViewers.set(scheme, viewer);
+    else internalUrlViewers.delete(scheme);
   },
   async read(args, api, context) {
     // Built-ins last: a plugin registration can never shadow one (`register` refuses them too).
@@ -47,6 +56,71 @@ export const internalUrls: OppiInternalUrlsHost = {
     return { output: [{ type: "text", text: paged }], structuredOutput: paged };
   },
 };
+
+// --- the app's viewer ------------------------------------------------------------------------
+//
+// The app shows an internal URL of a chat (`GET …/sessions/{id}/internal-url`) when its scheme
+// registered a viewer. It reads only the wire `InternalUrlView`, never a scheme's name.
+
+function viewerTarget(url: string): { target: InternalTarget; viewer: SchemeViewer } {
+  const target = parseInternalUrl(url);
+  const viewer = target && internalUrlViewers.get(target.scheme);
+  if (!target || !viewer) throw new InternalUrlNotFound(`Oppi cannot show ${url}`);
+  return { target, viewer };
+}
+
+/**
+ * The view of `url` in conversation `id`, its output from UTF-16 offset `from` when the caller
+ * holds the output before it. A delivered result's output is read from its transcript card.
+ * Throws `InternalUrlNotFound` for a URL no viewer shows or whose id names nothing
+ * (`InternalTarget.pick`); any other failure is the server's own.
+ */
+export async function viewInternalUrl(
+  url: string,
+  harness: Harness,
+  id: ConversationId,
+  from?: number,
+): Promise<InternalUrlView> {
+  const { target, viewer } = viewerTarget(url);
+  const view = await viewer.view(
+    target,
+    surfaceConversation(id, async () => harness),
+    BACKGROUND_CONTEXT,
+  );
+  const { id: fullId, output, stoppable, ...shown } = view;
+  // A delivered card holds the same kept output the job ended with: what the producer dropped
+  // still comes off its front, so a reader resuming at an offset lands where it left off.
+  const card =
+    "inputCard" in output
+      ? await readDurableInputCardOutputByRequest(harness, id, output.inputCard)
+      : undefined;
+  const { text, truncated } =
+    "inputCard" in output
+      ? { text: card?.output ?? "", truncated: card?.truncated === true }
+      : { text: output.text, truncated: output.truncated === true };
+  return {
+    ...shown,
+    url: `${target.scheme}://${fullId}`,
+    output: { ...outputFrom(output.dropped ?? 0, text, from), truncated },
+    stoppable: stoppable === true && viewer.stop !== undefined,
+  };
+}
+
+/** Stops what `url` names; resolves why it could not, or undefined once asked. */
+export async function stopInternalUrl(
+  url: string,
+  harness: Harness,
+  id: ConversationId,
+): Promise<string | undefined> {
+  const { target, viewer } = viewerTarget(url);
+  const stop = viewer.stop?.bind(viewer);
+  if (!stop) throw new InternalUrlNotFound(`Oppi cannot stop ${url}`);
+  return stop(
+    target,
+    surfaceConversation(id, async () => harness),
+    BACKGROUND_CONTEXT,
+  );
+}
 
 // --- sessions --------------------------------------------------------------------------------
 

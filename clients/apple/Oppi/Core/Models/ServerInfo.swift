@@ -167,6 +167,9 @@ struct ServerInfo: Codable, Sendable, Equatable {
         /// routes, the only shape this app reads. Below v3 the app offers no Pin
         /// items and no Pinned screen.
         var pins: CapabilityVersion? = nil
+        /// `GET|POST …/sessions/{id}/internal-url[/stop]`: the internal URL
+        /// schemes (`proc`) the app shows in its viewer and opens from links.
+        var internalUrlViews: InternalURLViewsCapability? = nil
 
         /// The relay origin, when the server pushes and names an https relay (http only on
         /// loopback, for local testing).
@@ -185,6 +188,11 @@ struct ServerInfo: Codable, Sendable, Equatable {
             if feature == .rex || feature == .herdr, !offers(.terminal) { return false }
             return feature != .godotPane || godot?.version ?? 0 >= 1
         }
+    }
+
+    struct InternalURLViewsCapability: Codable, Sendable, Equatable {
+        let version: Int
+        let schemes: [String]
     }
 
     struct PushNotificationsCapability: Codable, Sendable, Equatable {

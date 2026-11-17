@@ -54,6 +54,8 @@ struct ExtensionSurfaceReaderContent {
     var sendAction: ((ExtensionSurfaceActionIntent) -> Void)? = nil
     /// The server the surface's session lives on, for its tiles.
     var server: ExtensionSurfaceServer? = nil
+    /// Opens a linked node's URL through the chat's link handling; nil draws links without a tap.
+    var openURL: ((URL) -> Bool)? = nil
 }
 
 /// Timeline/chat reader body. Only the ``ChatReaderNavTarget`` id rides the path.

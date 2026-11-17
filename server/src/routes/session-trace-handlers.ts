@@ -7,6 +7,7 @@ import {
   type SessionTraceViewMode,
 } from "../session-trace-service.js";
 import { admitSessionRoute } from "../session-route-scope.js";
+import { InternalUrlNotFound } from "../internal-urls.js";
 import type { Session, SessionEventsResponse } from "../types.js";
 import { getSessionAttachment, streamSessionAttachment } from "../session-attachments.js";
 import { streamFullToolOutputSidecar } from "../tool-output-sidecar.js";
@@ -28,6 +29,8 @@ type SessionTraceRouteHandlers = {
     entryId: string,
     res: ServerResponse,
   ) => Promise<void>;
+  handleGetInternalUrl: (session: Session, url: URL, res: ServerResponse) => Promise<void>;
+  handleStopInternalUrl: (session: Session, url: URL, res: ServerResponse) => Promise<void>;
   sessionFileHandlers: ReturnType<typeof createSessionFileHandlers>;
   handleGetSessionAttachment: (
     sessionId: string,
@@ -121,6 +124,75 @@ export function createSessionTraceRouteHandlers(
       return;
     }
     helpers.json(res, result);
+  }
+
+  // ─── Internal URLs (`?url=proc://bash-3`) ───
+
+  /** The `url` query, or a 400 answered. */
+  function internalUrlParam(url: URL, res: ServerResponse): string | undefined {
+    const value = url.searchParams.get("url");
+    if (!value) helpers.error(res, 400, "url is required");
+    return value || undefined;
+  }
+
+  /** A URL no viewer shows, or that names nothing, is a 404 that says which. */
+  async function answerInternalUrl<T>(
+    res: ServerResponse,
+    run: () => Promise<T>,
+  ): Promise<T | undefined> {
+    try {
+      return await run();
+    } catch (error) {
+      if (!(error instanceof InternalUrlNotFound)) throw error;
+      helpers.error(res, 404, error.message);
+      return undefined;
+    }
+  }
+
+  async function handleGetInternalUrl(
+    session: Session,
+    url: URL,
+    res: ServerResponse,
+  ): Promise<void> {
+    const target = internalUrlParam(url, res);
+    if (!target) return;
+    const fromParam = url.searchParams.get("from");
+    const from = fromParam === null ? undefined : Number(fromParam);
+    if (from !== undefined && (!Number.isSafeInteger(from) || from < 0)) {
+      helpers.error(res, 400, "from must be a non-negative integer");
+      return;
+    }
+    const answered = await answerInternalUrl(res, async () => ({
+      view: await ctx.sessionRuntimes.viewInternalUrl(session.id, target, from),
+    }));
+    if (!answered) return;
+    if (!answered.view) {
+      helpers.error(res, 404, "This session has no internal URLs");
+      return;
+    }
+    helpers.json(res, answered.view);
+  }
+
+  async function handleStopInternalUrl(
+    session: Session,
+    url: URL,
+    res: ServerResponse,
+  ): Promise<void> {
+    const target = internalUrlParam(url, res);
+    if (!target) return;
+    const answered = await answerInternalUrl(res, async () => ({
+      refusal: await ctx.sessionRuntimes.stopInternalUrl(session.id, target),
+    }));
+    if (!answered) return;
+    if (answered.refusal === null) {
+      helpers.error(res, 404, "This session has no internal URLs");
+      return;
+    }
+    if (answered.refusal !== undefined) {
+      helpers.error(res, 409, answered.refusal);
+      return;
+    }
+    helpers.json(res, { ok: true });
   }
 
   // ─── Tool Output by ID ───
@@ -542,6 +614,8 @@ export function createSessionTraceRouteHandlers(
     handleGetFullToolOutputForSession,
     handleGetToolOutputForSession,
     handleGetInputCardOutput,
+    handleGetInternalUrl,
+    handleStopInternalUrl,
     handleGetSessionEventsForSession,
     handleGetSessionForSession,
     handleGetSessionTracePageForSession,

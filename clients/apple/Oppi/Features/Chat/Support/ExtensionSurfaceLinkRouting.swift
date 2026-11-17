@@ -41,7 +41,8 @@ enum ExtensionSurfaceLinkRouting {
         guard var request = MarkdownLinkInteractionSupport.classify(
             url,
             serverID: serverID,
-            workspaceID: workspaceID
+            workspaceID: workspaceID,
+            sessionID: currentSessionId
         ) else {
             // A non-HTTP scheme (mailto:, tel:, another app's URL) has no
             // in-app destination, but the surface still consumes the tap, so it

@@ -532,6 +532,24 @@ extension APIClientEndpoint {
                 scope: .control, sessionId: Placeholder.session, entryId: "e1"
             )
         },
+        APIClientEndpoint("getInternalURLView(workspace)") {
+            _ = try? await $0.getInternalURLView(
+                scope: .workspace(Placeholder.workspace), sessionId: Placeholder.session, url: "proc://bash-1", from: 12
+            )
+        },
+        APIClientEndpoint("getInternalURLView(control)") {
+            _ = try? await $0.getInternalURLView(
+                scope: .control, sessionId: Placeholder.session, url: "proc://bash-1", from: nil
+            )
+        },
+        APIClientEndpoint("stopInternalURL(workspace)") {
+            try? await $0.stopInternalURL(
+                scope: .workspace(Placeholder.workspace), sessionId: Placeholder.session, url: "proc://bash-1"
+            )
+        },
+        APIClientEndpoint("stopInternalURL(control)") {
+            try? await $0.stopInternalURL(scope: .control, sessionId: Placeholder.session, url: "proc://bash-1")
+        },
         APIClientEndpoint("getNonEmptyToolOutput(workspaceId:)") {
             _ = try? await $0.getNonEmptyToolOutput(
                 workspaceId: Placeholder.workspace, sessionId: Placeholder.session, toolCallId: Placeholder.toolCall

@@ -139,6 +139,8 @@ export function tileTitle(tile: ExtensionUISurfaceTile): string {
       return "Sessions";
     case "panel":
       return route.id;
+    case "read":
+      return route.url;
     case "browser":
       return new URL(route.url).host;
     case "godot":

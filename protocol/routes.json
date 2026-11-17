@@ -1,7 +1,7 @@
 {
   "_meta": {
     "description": "Every HTTP and WebSocket route server/src/routes/registry.ts declares: method, path template, path params, operationId, surface, auth, and transport. Generated from the registry by server/tests/route-fixtures.ts; server/tests/route-fixtures.test.ts fails when the committed bytes differ. The Apple client's APIClientRouteContractTests requires every request an APIClient endpoint method builds to match a row, so a client path the server does not serve fails there.",
-    "routeCount": 216
+    "routeCount": 220
   },
   "routes": [
     {
@@ -573,6 +573,28 @@
       "transport": "http"
     },
     {
+      "method": "GET",
+      "path": "/control-sessions/{sessionId}/internal-url",
+      "params": [
+        "sessionId"
+      ],
+      "operationId": "getControlSessionInternalUrl",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/control-sessions/{sessionId}/internal-url/stop",
+      "params": [
+        "sessionId"
+      ],
+      "operationId": "stopControlSessionInternalUrl",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
       "method": "POST",
       "path": "/control-sessions/{sessionId}/command",
       "params": [
@@ -1049,6 +1071,30 @@
         "cardId"
       ],
       "operationId": "getSessionInputCardOutput",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/sessions/{sessionId}/internal-url",
+      "params": [
+        "workspaceId",
+        "sessionId"
+      ],
+      "operationId": "getSessionInternalUrl",
+      "surface": "core",
+      "auth": "owner",
+      "transport": "http"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/sessions/{sessionId}/internal-url/stop",
+      "params": [
+        "workspaceId",
+        "sessionId"
+      ],
+      "operationId": "stopSessionInternalUrl",
       "surface": "core",
       "auth": "owner",
       "transport": "http"

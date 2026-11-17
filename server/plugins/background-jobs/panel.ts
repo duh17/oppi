@@ -5,7 +5,6 @@ import {
   code,
   divider,
   elapsed,
-  group,
   icon,
   pill,
   row,
@@ -13,9 +12,11 @@ import {
   surface,
   text,
   type Surface,
+  type SurfaceConversation,
   type SurfaceDefinition,
   type SurfaceView,
 } from "oppi/v1";
+import type { Context } from "@earendil-works/chord/context";
 import { DurableJobs } from "./contract.js";
 import { backgroundPill, displayCommand, displayLines, type JobStatus } from "./jobs.js";
 
@@ -28,25 +29,21 @@ import { backgroundPill, displayCommand, displayLines, type JobStatus } from "./
 export const PANEL_ID = "background-jobs";
 /** Jobs the panel draws: a body is a stack of at most 12 children, and one is left for the count. */
 const MAX_SHOWN_JOBS = 11;
-/** A row's command and output tail stay inside the wire's 500 characters a node. */
-const COMMAND_CHARS = 200;
+/** A card's command and output tail stay inside the wire's 500 characters a node. */
+const NODE_CHARS = 500;
 /**
  * A row's title is one line: the host wraps a card's text rather than cutting it, so the cut is
  * made here, at what fits beside the status glyph and Stop on a phone.
  */
 const TITLE_CHARS = 24;
-const TAIL_LINES = 12;
 /**
- * What a running job's card shows of that tail. A drawer scrolls a body taller than its cap only
- * from Build 58; before that a long block is cut off at the bottom of the card, unreachable. Three
- * lines of at most this many characters (a phone wraps a line at about 40) keep the card, its
- * header, and the Details fold inside the cap, and the whole tail waits behind Details.
+ * A card's output: its last lines, within a node's characters. The whole output is one tap away,
+ * in the job's own view (`proc://<id>`), so the card shows only how it is going.
  */
-const PREVIEW_LINES = 3;
-const PREVIEW_CHARS = 160;
+const TAIL_LINES = 8;
+const TAIL_CHARS = 480;
 /** The pill's live line: what fits beside the count and the age on a phone's strip. */
 const PILL_LINE_CHARS = 40;
-const TAIL_CHARS = 480;
 /** The surface's fallback text is capped at 2,000 characters on the wire. */
 const FALLBACK_CHARS = 1_900;
 
@@ -60,8 +57,10 @@ export interface PanelJob {
   exitCode?: number | null;
   /** A finished job's saved output, or a running job's live tail (memory only, never saved). */
   output?: string;
-  /** The job's working directory; shown for a running job. */
+  /** The job's working directory. */
   cwd?: string;
+  /** When a finished job ended, for how long it ran. */
+  endedAt?: number;
   /** When a running job's timeout kills it, if it has one. */
   timeoutAt?: number;
   /** Whether the runner has dropped the start of this job's output. */
@@ -188,18 +187,28 @@ function runningDetail(job: PanelJob, at: number): string | undefined {
   return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
+/** How long a finished job ran: `0:42`, `5:07`, `1:05:10`. */
+function ranFor(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = String(total % 60).padStart(2, "0");
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${seconds}`
+    : `${minutes}:${seconds}`;
+}
+
 function jobNode(job: PanelJob, at: number, first: boolean): ReturnType<typeof stack> {
   const tail = outputTail(job.output);
   const running = job.status === "running";
-  // A running job's card shows only the end of the tail; the rest of it waits behind Details.
-  const preview = running ? outputTail(job.output, PREVIEW_LINES, PREVIEW_CHARS) : tail;
   const mark = glyph(job.status);
-  const detail = running ? runningDetail(job, at) : undefined;
-  // A running job's last lines are the point of opening the panel, so they are not folded away; a
-  // finished job's output stays behind Details.
-  const tailNode = preview
-    ? code({ id: `tail:${job.id}`, language: "output", text: preview })
-    : text({ id: `tail:${job.id}`, text: "No output yet", style: "caption" });
+  // A finished job says how long it ran on the line a running one gives its folder and timeout:
+  // beside the linked title, words would take the row's width from it.
+  const detail = running
+    ? runningDetail(job, at)
+    : job.endedAt === undefined
+      ? undefined
+      : `ran ${ranFor(job.endedAt - job.startedAt)}`;
   return stack({
     id: `job:${job.id}`,
     spacing: "tight",
@@ -208,8 +217,17 @@ function jobNode(job: PanelJob, at: number, first: boolean): ReturnType<typeof s
       row({
         id: `head:${job.id}`,
         children: [
-          icon({ id: `status:${job.id}`, name: mark.name, tone: mark.tone }),
-          text({ id: `title:${job.id}`, text: commandTitle(job.command), style: "headline" }),
+          // The title opens the job's own view: where and when it ran, and all of its output.
+          row({
+            id: `open:${job.id}`,
+            spacing: "tight",
+            link: `proc://${job.id}`,
+            children: [
+              icon({ id: `status:${job.id}`, name: mark.name, tone: mark.tone }),
+              text({ id: `title:${job.id}`, text: commandTitle(job.command), style: "headline" }),
+              icon({ id: `chevron:${job.id}`, name: "chevron.right", tone: "neutral" }),
+            ],
+          }),
           // A running job's age is a node the client ticks, so the panel is not republished each
           // minute. `clock` (5:07): the row has room, and the seconds show the job is alive.
           ...(running
@@ -237,35 +255,23 @@ function jobNode(job: PanelJob, at: number, first: boolean): ReturnType<typeof s
         id: `meta:${job.id}`,
         text: `${job.id} · ${running ? "Running" : outcome(job)}`,
         style: "caption",
+        ...(running || job.status === "completed" ? {} : { tone: mark.tone }),
       }),
       ...(detail ? [text({ id: `detail:${job.id}`, text: detail, style: "caption" })] : []),
-      ...(running ? [tailNode] : []),
-      ...(running && job.truncated
+      // What was run, whole and wrapped; the block copies it and opens it full screen.
+      code({
+        id: `command:${job.id}`,
+        language: "bash",
+        text: clamp(displayCommand(job.command), NODE_CHARS),
+        wrap: true,
+      }),
+      // The `code` node's header carries its label: this is output, not source.
+      tail
+        ? code({ id: `tail:${job.id}`, language: "output", text: tail })
+        : text({ id: `tail:${job.id}`, text: "No output yet", style: "caption" }),
+      ...(job.truncated
         ? [text({ id: `truncated:${job.id}`, text: "Output truncated", style: "caption" })]
         : []),
-      group({
-        id: `output:${job.id}`,
-        title: "Details",
-        collapsed: true,
-        children: [
-          // The whole command on its own line, in the host's monospace. The row's title is the
-          // short form; this is what was run.
-          text({
-            id: `command:${job.id}`,
-            text: clamp(displayCommand(job.command), COMMAND_CHARS),
-            style: "mono",
-          }),
-          ...(running && job.cwd
-            ? [text({ id: `cwd:${job.id}`, text: clamp(job.cwd, COMMAND_CHARS), style: "mono" })]
-            : []),
-          // The `code` node's header carries its label: this is output, not source.
-          ...(running
-            ? tail && tail !== preview
-              ? [code({ id: `log:${job.id}`, language: "output", text: tail })]
-              : []
-            : [tailNode]),
-        ],
-      }),
     ],
   });
 }
@@ -373,6 +379,25 @@ export function jobsView(state: PanelState): SurfaceView {
 }
 
 /**
+ * Asks for job `jobId`'s kill as `background_job cancel` does: it marks the job, if it still runs,
+ * and the job's runner, which watches the list, kills the process. False when it does not run.
+ */
+export async function requestJobStop(
+  conversation: SurfaceConversation,
+  jobId: string,
+  context: Context,
+): Promise<boolean> {
+  return conversation.commit(async (tx) => {
+    const current = (await tx.doc(DurableJobs, conversation.conversationId)).jobs.find(
+      (item) => item.id === jobId,
+    );
+    if (current?.status !== "running") return false;
+    current.cancelRequested = true;
+    return true;
+  }, context);
+}
+
+/**
  * The jobs panel, one object for every conversation: `surface()` keeps what each Session loop was
  * drawn. `load` reads a conversation's panel state from its saved job list.
  */
@@ -389,18 +414,7 @@ export function jobsPanel(
   });
   panel.action("stop", async (_state, { values, compositeId, conversation, context }) => {
     const job = values?.job;
-    // A tap on Stop asks for the kill as `background_job cancel` does: it marks the job, if it
-    // still runs, and the job's runner, which watches the list, kills the process.
-    const stopped =
-      typeof job === "string" &&
-      (await conversation.commit(async (tx) => {
-        const current = (await tx.doc(DurableJobs, conversation.conversationId)).jobs.find(
-          (item) => item.id === job,
-        );
-        if (current?.status !== "running") return false;
-        current.cancelRequested = true;
-        return true;
-      }, context));
+    const stopped = typeof job === "string" && (await requestJobStop(conversation, job, context));
     if (!stopped)
       return {
         error: {

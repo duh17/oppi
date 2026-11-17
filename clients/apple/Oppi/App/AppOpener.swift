@@ -55,8 +55,9 @@ enum AppOpenRequest: Equatable, Sendable {
     /// `origin` says whether a session link replaces the visible route or
     /// keeps the back stack. `sourceServerID` is an in-app link's source
     /// server; a scene URL carries no server, so session resolution falls
-    /// back to the cached stores.
-    init(url: URL, origin: SessionNavigationSource, sourceServerID: String? = nil) {
+    /// back to the cached stores. `sourceSessionID` is the session an in-app
+    /// link was tapped in, for the internal URLs that belong to it.
+    init(url: URL, origin: SessionNavigationSource, sourceServerID: String? = nil, sourceSessionID: String? = nil) {
         let scheme = url.scheme?.lowercased()
         if let decoded = PaneLinkCodec.decode(url) {
             switch decoded {
@@ -73,7 +74,9 @@ enum AppOpenRequest: Equatable, Sendable {
             self = valid ? .pinned : .invalidLink(url)
         } else if scheme == "oppi" {
             self = InAppInviteLink.claims(url) ? .invite(url) : .unsupportedLink(url)
-        } else if let request = Self.agentInternalURL(url, origin: origin, sourceServerID: sourceServerID) {
+        } else if let request = Self.agentInternalURL(
+            url, origin: origin, sourceServerID: sourceServerID, sourceSessionID: sourceSessionID
+        ) {
             self = request
         } else if let reference = ResourceReferenceURL.parse(url) {
             self = .resourceReference(reference)

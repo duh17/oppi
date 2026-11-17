@@ -131,6 +131,7 @@ export function createPinRoutes(
       case "thread":
         return { status: sessionStatus(route.id) };
       case "panel":
+      case "read":
         return { status: sessionStatus(route.session) };
       case "file":
         if (route.origin === "host")
@@ -181,6 +182,7 @@ export function createPinRoutes(
       case "session":
       case "thread":
       case "panel":
+      case "read":
         return "Session not found";
       case "godot":
         return "Game not found";

@@ -1,0 +1,1 @@
+- **Client:** In an extension panel, tapping a row or group that offers an action now runs it. Before, a touch on its words or glyphs did nothing; only VoiceOver could activate it.

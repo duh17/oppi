@@ -207,7 +207,7 @@ struct AppOpenerTests {
             #expect(AppOpenRequest.unsupportedLinkMessage(url) == "Oppi can\u{2019}t open this link")
         }
         let messages = [
-            "proc://job-7": "Job output opens from the Background jobs panel",
+            "proc://job-7": "Oppi can\u{2019}t open proc:// links here",
             "mcp://docs/readme": "Oppi can\u{2019}t open mcp:// links here",
             "ssh://mini/~/notes.md": "Oppi can\u{2019}t open ssh:// links here",
         ]
@@ -575,7 +575,31 @@ struct AppOpenerTests {
         #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
         #expect(harness.recorder.systemURLs.isEmpty)
         #expect(harness.opener.invitePairingTask == nil)
-        #expect(harness.connection("server-a").extensionToast == "Job output opens from the Background jobs panel")
+        #expect(harness.connection("server-a").extensionToast == "Oppi can\u{2019}t open proc:// links here")
+    }
+
+    /// An internal URL tapped in a session opens that session's viewer, and only where its server
+    /// shows the scheme; elsewhere it says it can't.
+    @Test func anInternalURLInASessionOpensItsViewerWhereTheServerShowsIt() async throws {
+        let url = try #require(URL(string: "proc://bash-3"))
+        let request = AppOpenRequest(url: url, origin: .inAppHyperlink, sourceServerID: "server-a", sourceSessionID: "s1")
+        #expect(request == .pane(
+            PaneLink(server: nil, route: .read(session: "s1", url: "proc://bash-3")),
+            sourceServerID: "server-a"
+        ))
+
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
+        harness.addSession("s1", workspaceId: "w1", to: "server-a")
+        harness.opener.open(request)
+        await harness.settle()
+        #expect(harness.connection("server-a").extensionToast == "Oppi can\u{2019}t open proc:// links here")
+        #expect(harness.navigation.panes.pendingPanel(for: "s1") == nil)
+
+        harness.connection("server-a").setInternalURLViewSchemesForTesting(["proc"])
+        harness.opener.open(request)
+        await harness.settle()
+        // The chat opens, with the viewer waiting to open beside it.
+        #expect(harness.navigation.panes.pendingPanel(for: "s1") == .read(session: "s1", url: "proc://bash-3"))
     }
 
     @Test func inAppLinkWithoutASourceUsesTheUniqueMatch() async throws {

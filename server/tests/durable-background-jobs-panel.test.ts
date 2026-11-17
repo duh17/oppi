@@ -52,41 +52,44 @@ describe("background jobs panel view", () => {
     expect(Object.keys(surface.actions)).toEqual(["stop"]);
   });
 
-  it("titles a row by what the job runs, and keeps the full command behind the fold", () => {
+  it("titles a row by what the job runs, and shows the whole command wrapped", () => {
     const command =
       "cd ~/work/app && bun ~/tools/scripts/land.ts run --workspace web --owner 4f1c9d2e-7b3a 2>&1 | tail -8";
     const surface = render([job("bash-262", { command })]);
     const list = body(surface);
     expect(find(list, "title:bash-262")).toMatchObject({ text: "bun land.ts run" });
-    // The id and the age are the secondary line; nothing before the fold repeats the command.
     expect(find(list, "meta:bash-262")).toMatchObject({ text: "bash-262 · Running" });
-    const folded = find(list, "output:bash-262");
-    expect(folded).toMatchObject({ type: "group", collapsed: true });
-    const outside = words(list).filter((word) => !words(folded!).includes(word));
-    expect(outside.join("\n")).not.toContain("4f1c9d2e");
-    expect(find(folded!, "command:bash-262")).toMatchObject({
-      type: "text",
-      style: "mono",
-      text: expect.stringContaining("--owner 4f1c9d2e"),
+    expect(find(list, "command:bash-262")).toMatchObject({
+      type: "code",
+      language: "bash",
+      wrap: true,
+      text: command,
     });
     // The header and the pill say how many jobs run, never which command.
     expect(JSON.stringify([surface.header, surface.pill])).not.toContain("land.ts");
   });
 
-  it("keeps the id and state line out of the head row, at the card's full width", () => {
-    // In a stack beside a short title (`ls`), Build 57 and earlier can squeeze the caption to a few
-    // points and wrap it a character a line.
+  it("opens the job's own view from its title, with Stop outside the link", () => {
     const list = body(render([job("bash-8", { command: "ls" })]));
     const card = find(list, "job:bash-8");
     const head = find(list, "head:bash-8");
-    if (card?.type !== "stack" || head?.type !== "row")
-      throw new Error("expected a card and its head row");
-    expect(head.children.map((child) => child.id)).toEqual([
+    const open = find(list, "open:bash-8");
+    if (card?.type !== "stack" || head?.type !== "row" || open?.type !== "row")
+      throw new Error("expected a card, its head row, and its title link");
+    expect(open.link).toBe("proc://bash-8");
+    expect(open.children.map((child) => child.id)).toEqual([
       "status:bash-8",
       "title:bash-8",
+      "chevron:bash-8",
+    ]);
+    // A linked region is one tap target: Stop stays a control of its own beside it.
+    expect(head.children.map((child) => child.id)).toEqual([
+      "open:bash-8",
       "elapsed:bash-8",
       "stop:bash-8",
     ]);
+    // In a stack beside a short title (`ls`), Build 57 and earlier can squeeze the caption to a few
+    // points and wrap it a character a line, so it stays out of the head row.
     expect(card.children.map((child) => child.id)).toContain("meta:bash-8");
   });
 
@@ -140,6 +143,9 @@ describe("background jobs panel view", () => {
     expect(meta("lost")).toBe("lost · Failed");
     expect(meta("stopped")).toBe("stopped · Stopped");
     expect(meta("slow")).toBe("slow · Timed out");
+    // A failure reads as one in words and tone; a success needs no colour.
+    expect(find(list, "meta:bad")).toMatchObject({ tone: "danger" });
+    expect(find(list, "meta:ok")).not.toHaveProperty("tone");
     // Success and failure differ by more than colour: the glyph is another shape.
     const glyph = (id: string) => (find(list, `status:${id}`) as { name: string }).name;
     expect(new Set(["ok", "bad", "stopped", "slow"].map(glyph)).size).toBe(4);
@@ -162,15 +168,31 @@ describe("background jobs panel view", () => {
     expect(pillWords(render([job("a"), job("b")]))[0]).toBe("2 jobs running");
   });
 
-  it("folds each job's output tail away, plain and cut to the node cap", () => {
+  it("says how long a finished job ran under its state", () => {
+    const list = body(
+      render([
+        job("bad", {
+          status: "failed",
+          exitCode: 65,
+          startedAt: AT - 200_000,
+          endedAt: AT - 92_000,
+        }),
+        job("old", { status: "failed", exitCode: 1 }),
+      ]),
+    );
+    expect(find(list, "detail:bad")).toMatchObject({ type: "text", text: "ran 1:48" });
+    expect(find(list, "elapsed:bad")).toBeUndefined();
+    // A job that ended before its end was kept has no duration to show.
+    expect(find(list, "detail:old")).toBeUndefined();
+  });
+
+  it("shows each job's output tail, plain and cut to the node cap", () => {
     const output = [
       "\u001b[32mgreen\u001b[0m start",
       "progress 10%\rprogress 100%",
       ...Array.from({ length: 40 }, (_, index) => `line ${index} ${"x".repeat(60)}`),
     ].join("\n");
     const surface = render([job("bash-1", { status: "completed", exitCode: 0, output })]);
-    const group = find(body(surface), "output:bash-1");
-    expect(group).toMatchObject({ type: "group", collapsed: true });
     const tail = find(body(surface), "tail:bash-1");
     // The block says what it holds in its header: output, not source.
     expect(tail).toMatchObject({ type: "code", language: "output" });
@@ -231,7 +253,7 @@ describe("background jobs panel view", () => {
     );
   });
 
-  it("shows a running job's last lines, folder, time left, and truncation outside the fold", () => {
+  it("shows a running job's last lines, folder, time left, and truncation", () => {
     const output = Array.from({ length: 30 }, (_, index) => `step ${index}`).join("\n");
     const list = body(
       render([
@@ -243,32 +265,18 @@ describe("background jobs panel view", () => {
         }),
       ]),
     );
-    const folded = find(list, "output:a")!;
     const tail = find(list, "tail:a") as { text: string };
-    expect(find(folded, "tail:a")).toBeUndefined();
-    // The card keeps to the end of the tail, so it fits a drawer that cannot scroll it; the whole
-    // tail is behind Details.
-    expect(tail.text.split("\n")).toEqual(["step 27", "step 28", "step 29"]);
-    const log = find(folded, "log:a") as { text: string };
-    expect(log.text.split("\n")).toHaveLength(12);
-    expect(log.text.endsWith(tail.text)).toBe(true);
+    expect(tail.text.split("\n")).toEqual(
+      Array.from({ length: 8 }, (_, index) => `step ${22 + index}`),
+    );
     expect(find(list, "detail:a")).toMatchObject({ text: "app · times out in 5m" });
     expect(find(list, "truncated:a")).toBeDefined();
-    expect(find(folded, "cwd:a")).toMatchObject({ text: "/work/app/" });
-  });
-
-  it("cuts a running job's preview to a few short lines, and shows the whole tail behind Details only when it cut", () => {
+    // Wide lines give way to the node cap from the front, so the newest line stays whole.
     const wide = Array.from({ length: 5 }, (_, index) => `${index} ${"w".repeat(120)}`).join("\n");
-    const list = body(render([job("a", { output: wide })]));
-    const tail = find(list, "tail:a") as { text: string };
-    expect(Array.from(tail.text).length).toBeLessThanOrEqual(160);
-    expect(tail.text.startsWith("…")).toBe(true);
-    expect(tail.text.endsWith("w")).toBe(true);
-    expect(find(find(list, "output:a")!, "log:a")).toMatchObject({ type: "code" });
-    // A tail the card already shows whole is not repeated behind Details.
-    const short = body(render([job("b", { output: "one\ntwo\n" })]));
-    expect(find(short, "tail:b")).toMatchObject({ text: "one\ntwo" });
-    expect(find(find(short, "output:b")!, "log:b")).toBeUndefined();
+    const cut = find(body(render([job("b", { output: wide })])), "tail:b") as { text: string };
+    expect(Array.from(cut.text).length).toBeLessThanOrEqual(480);
+    expect(cut.text.startsWith("…")).toBe(true);
+    expect(cut.text.endsWith(`4 ${"w".repeat(120)}`)).toBe(true);
   });
 
   it("lists running jobs first and counts what it cannot draw", () => {

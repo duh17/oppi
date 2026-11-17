@@ -116,7 +116,7 @@ enum PaneLeafState: Hashable, Sendable {
 
     private static func missingContent(_ route: PaneRoute) -> PaneMissingContent {
         switch route {
-        case .session, .thread, .panel: .session
+        case .session, .thread, .panel, .read: .session
         case .file, .hostFiles: .file
         case .sessions, .files, .git, .commit: .workspace
         // A Godot leaf states its own project (`GodotPaneViewController`).

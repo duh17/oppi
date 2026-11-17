@@ -382,6 +382,51 @@ struct ExtensionSurfaceBlocksViewsTests {
         #expect(intents.map(\.actionId) == ["openLog"])
     }
 
+    @Test func aLinkedRowOpensItsURLFromAnywhereOnIt() throws {
+        // The headline row links where an action would go, and its title is a text node of its own.
+        let linked = try surface("blocks-panel.json") { object in
+            var sections = testUnwrap(object["sections"] as? [[String: Any]])
+            var body = testUnwrap(sections[0]["body"] as? [String: Any])
+            var children = testUnwrap(body["children"] as? [[String: Any]])
+            children[0]["link"] = "proc://bash-3"
+            body["children"] = children
+            sections[0]["body"] = body
+            object["sections"] = sections
+        }
+        var opened: [URL] = []
+        var intents: [ExtensionSurfaceActionIntent] = []
+        let view = composites(linked, onAction: { intents.append($0) }, openURL: { opened.append($0) })
+
+        let row = testUnwrap(control(node("blocks-panel", "panel", "headline"), in: view) as? UIControl)
+        #expect(row.accessibilityTraits.contains(.button))
+        // A touch on the title lands on the row: the title has no tap of its own to keep it.
+        let title = testUnwrap(row.subviews.lazy.flatMap(\.subviews).first { $0 is BlocksTextView })
+        let point = title.convert(CGPoint(x: title.bounds.midX, y: title.bounds.midY), to: row.window)
+        #expect(row.window?.hitTest(point, with: nil) === row)
+        row.sendActions(for: .touchUpInside)
+        #expect(row.accessibilityActivate())
+        #expect(opened.map(\.absoluteString) == ["proc://bash-3", "proc://bash-3"])
+        #expect(intents.isEmpty, "a link sent a surface action")
+    }
+
+    @Test func aCodeBlockInsideALinkedRegionKeepsItsOwnTouches() throws {
+        // The whole body links, and it holds the `tail` code block.
+        let linked = try surface("blocks-panel.json") { object in
+            var sections = testUnwrap(object["sections"] as? [[String: Any]])
+            var body = testUnwrap(sections[0]["body"] as? [String: Any])
+            body["link"] = "proc://bash-3"
+            sections[0]["body"] = body
+            object["sections"] = sections
+        }
+        let view = composites(linked, onAction: { _ in }, openURL: { _ in })
+        let code = testUnwrap(control(node("blocks-panel", "panel", "tail"), in: view))
+        let text = testUnwrap(subviews(of: UITextView.self, in: code).first)
+        let point = text.convert(CGPoint(x: text.bounds.midX, y: text.bounds.midY), to: code.window)
+        let hit = testUnwrap(code.window?.hitTest(point, with: nil))
+        // The code's text (a scroll view) takes the touch, so it still scrolls and selects.
+        #expect(hit.isDescendant(of: code), "the linked region took a touch on its code block")
+    }
+
     @Test func aTappableRegionHonoursTheWaitingActionsDisableList() throws {
         var intents: [ExtensionSurfaceActionIntent] = []
         let waiting = composites(
@@ -1241,9 +1286,11 @@ struct ExtensionSurfaceBlocksViewsTests {
         _ surface: ExtensionUISurface,
         pending: ExtensionSurfacePendingAction? = nil,
         sizeCategory: UIContentSizeCategory = .large,
-        onAction: ((ExtensionSurfaceActionIntent) -> Void)? = nil
+        onAction: ((ExtensionSurfaceActionIntent) -> Void)? = nil,
+        openURL: ((URL) -> Void)? = nil
     ) -> ExtensionSurfaceCompositesView {
         let view = ExtensionSurfaceCompositesView()
+        view.openURL = openURL
         view.traitOverrides.preferredContentSizeCategory = sizeCategory
         show(view)
         // Fonts are built while the views are created, so the category is current for `apply`.

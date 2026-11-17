@@ -971,11 +971,7 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
             stack.addArrangedSubview(viewport)
         case .composable:
             let composites = ExtensionSurfaceCompositesView()
-            composites.openText = { [weak self] language, text in
-                self?.actions.openReader(.document(
-                    content: .code(content: text, language: language, filePath: nil, startLine: 1)
-                ))
-            }
+            composites.opens(through: { [weak self] in self?.actions })
             compositesViewport = composites
             let capped = CappedScrollView(content: composites, maxHeight: ExtensionNativeSurfaceLayout.expandedMaxHeight)
             capped.onOverflowChange = { [weak self] overflows in self?.setOffersFullScreen(overflows) }
@@ -1179,7 +1175,7 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
                 title: entry.title, subtitle: entry.subtitle,
                 liveSurface: liveSurface,
                 pendingAction: actions.pendingAction,
-                sendAction: actions.sendAction, server: actions.server
+                sendAction: actions.sendAction, server: actions.server, openURL: actions.onOpenURL
             )))
         case .title, .status, .messageQueue:
             break

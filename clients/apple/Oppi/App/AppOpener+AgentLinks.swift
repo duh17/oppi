@@ -3,14 +3,22 @@ import Foundation
 extension AppOpenRequest {
     /// The request an agent's internal URL (`AgentInternalURL`) makes, or nil for any other URL.
     /// `history://<id>` and `agent://<id>` name a session; a bare scheme, a
-    /// sub-path, or anything after the id has no place in the app.
+    /// sub-path, or anything after the id has no place in the app. Any other
+    /// one tapped in a session (`sourceSessionID`) opens in that session's
+    /// viewer when its server shows the scheme (`PaneRoute.read`), else says
+    /// it cannot open.
     static func agentInternalURL(
         _ url: URL,
         origin: SessionNavigationSource,
-        sourceServerID: String?
+        sourceServerID: String?,
+        sourceSessionID: String?
     ) -> AppOpenRequest? {
         guard let scheme = url.scheme?.lowercased(), AgentInternalURL.schemes.contains(scheme) else { return nil }
-        guard scheme == "history" || scheme == "agent" else { return .unsupportedLink(url) }
+        guard scheme == "history" || scheme == "agent" else {
+            guard let sourceSessionID else { return .unsupportedLink(url) }
+            let link = PaneLink(server: nil, route: .read(session: sourceSessionID, url: url.absoluteString))
+            return .pane(link, sourceServerID: sourceServerID)
+        }
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               let id = components.percentEncodedHost?.removingPercentEncoding?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
@@ -24,9 +32,7 @@ extension AppOpenRequest {
     /// What a tap on an `.unsupportedLink` says.
     static func unsupportedLinkMessage(_ url: URL) -> String {
         switch url.scheme?.lowercased() {
-        case "proc":
-            String(localized: "Job output opens from the Background jobs panel")
-        case let scheme? where scheme == "mcp" || scheme == "ssh":
+        case let scheme? where scheme == "proc" || scheme == "mcp" || scheme == "ssh":
             String(localized: "Oppi can\u{2019}t open \(scheme):// links here")
         default:
             String(localized: "Oppi can\u{2019}t open this link")

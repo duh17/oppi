@@ -67,6 +67,21 @@ class BlocksTapControl: UIControl {
         accessibilityTraits = traits
     }
 
+    /// A region with a tap is one touch target, whatever it draws inside: its stack, a glyph, or
+    /// its words, except a control or a scroll view of its own (a button keeps its touches, and a
+    /// code block or table still scrolls and selects). A region with none is no target, so a title
+    /// inside a tappable row opens the row rather than ending on the title.
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard let hit = super.hitTest(point, with: event) else { return nil }
+        if onTap == nil { return hit === self ? nil : hit }
+        var view: UIView? = hit
+        while let candidate = view, candidate !== self {
+            if candidate is UIControl || candidate is UIScrollView { return hit }
+            view = candidate.superview
+        }
+        return self
+    }
+
     @objc private func dimForPress() {
         guard onTap != nil, isEnabled else { return }
         alpha = 0.6
@@ -170,7 +185,7 @@ final class BlocksLayoutView: BlocksTapControl, BlocksColumnFillable {
     func apply(
         children: [UIView],
         node: ExtensionUISurfaceNode,
-        action: ExtensionUISurfaceNodeAction?,
+        layout: ExtensionUISurfaceLayoutNode,
         spacing: CGFloat,
         align: String?,
         isRow: Bool,
@@ -225,8 +240,9 @@ final class BlocksLayoutView: BlocksTapControl, BlocksColumnFillable {
         appliedVertical = nil
         applyLayout()
         arrangeChildren()
+        let action = layout.action
         applyTap(
-            action.flatMap { environment.tap(for: node, action: $0) },
+            environment.tap(for: node, layout: layout),
             label: node.base?.accessibility?.label ?? ExtensionSurfaceBlockWords.words(of: node),
             identifier: environment.identifier(for: node),
             hint: node.base?.accessibility?.hint,

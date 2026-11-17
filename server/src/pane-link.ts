@@ -40,7 +40,16 @@ export interface PaneLinkError {
 
 export type PaneLinkResult = { ok: true; link: PaneLink } | { ok: false; error: PaneLinkError };
 
-const STRICT_ROUTES = new Set(["sessions", "file", "files", "git", "panel", "browser", "godot"]);
+const STRICT_ROUTES = new Set([
+  "sessions",
+  "file",
+  "files",
+  "git",
+  "panel",
+  "read",
+  "browser",
+  "godot",
+]);
 
 function fail(code: PaneLinkErrorCode, detail?: string): PaneLinkResult {
   return { ok: false, error: detail === undefined ? { code } : { code, detail } };
@@ -169,6 +178,7 @@ const ALLOWED: Record<string, readonly string[]> = {
   browser: ["url"],
   godot: ["project"],
   panel: ["session", "id"],
+  read: ["session", "url"],
 };
 
 function decodeStrict(
@@ -228,6 +238,16 @@ function decodeStrict(
     case "godot": {
       const project = required("project");
       return project ? ok({ kind: "godot", project }) : fail("missing", "project");
+    }
+    case "read": {
+      const session = required("session");
+      if (!session) return fail("missing", "session");
+      const url = required("url");
+      if (!url) return fail("missing", "url");
+      // An internal URL: a scheme and what follows it (`proc://bash-3`).
+      return /^[a-z][a-z0-9+.-]*:\/\//i.test(url)
+        ? ok({ kind: "read", session, url })
+        : fail("invalidValue", "url");
     }
     default: {
       const session = required("session");

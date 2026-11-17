@@ -1757,6 +1757,43 @@ actor APIClient: ClientLogUploading {
         return try JSONDecoder().decode(Response.self, from: data).output
     }
 
+    /// The viewer's read of a session's internal URL (`proc://bash-3`), its
+    /// output after UTF-16 offset `from` when the viewer already holds that much.
+    func getInternalURLView(
+        scope: SessionRouteScope,
+        sessionId: String,
+        url: String,
+        from: Int?
+    ) async throws -> InternalURLView {
+        var query = [URLQueryItem(name: "url", value: url)]
+        if let from { query.append(URLQueryItem(name: "from", value: String(from))) }
+        let data = try await get(url: makeURL(
+            pathSegments: internalURLPathSegments(scope: scope, sessionId: sessionId),
+            queryItems: query
+        ))
+        return try JSONDecoder().decode(InternalURLView.self, from: data)
+    }
+
+    /// Stops what a session's internal URL names (`InternalURLView.stoppable`).
+    func stopInternalURL(scope: SessionRouteScope, sessionId: String, url: String) async throws {
+        let (data, response) = try await request(
+            "POST",
+            url: makeURL(
+                pathSegments: internalURLPathSegments(scope: scope, sessionId: sessionId) + ["stop"],
+                queryItems: [URLQueryItem(name: "url", value: url)]
+            ),
+            body: EmptyBody()
+        )
+        try checkStatus(response, data: data)
+    }
+
+    private func internalURLPathSegments(scope: SessionRouteScope, sessionId: String) -> [String] {
+        switch scope {
+        case .workspace(let workspaceId): ["workspaces", workspaceId, "sessions", sessionId, "internal-url"]
+        case .control: ["control-sessions", sessionId, "internal-url"]
+        }
+    }
+
     // MARK: - Tool Output & Files
 
     /// Fetch the full tool output for a specific tool call ID from the session's JSONL trace.

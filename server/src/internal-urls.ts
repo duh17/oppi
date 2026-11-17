@@ -1,10 +1,13 @@
 import type { Context } from "@earendil-works/chord/context";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@earendil-works/pi-coding-agent";
 import type { ToolExecutionApi } from "@earendil-works/pi-durable";
+import type { SurfaceConversation } from "./durable-surface.js";
+import type { InternalUrlView } from "./types/protocol.js";
 
 // Internal URLs (`agent://`, `history://`, `mcp://`, `ssh://`, `proc://`) that the agent's `read` tool
 // resolves, read only. This module is the pure part: parsing, id-prefix matching, the refusal
-// text for schemes Oppi does not serve, and paging. The scheme readers live with their owners:
+// text for schemes Oppi does not serve, paging, and the registry of schemes the app can show
+// (`internalUrlViewers`), which `/server/info` lists. The scheme readers live with their owners:
 // sessions, MCP, and ssh in `durable-internal-urls.ts`, background jobs in `plugins/background-jobs`.
 
 /** One parsed `scheme://id/path` URL. */
@@ -29,6 +32,72 @@ export type SchemeReader = (
   api: ToolExecutionApi,
   context: Context,
 ) => Promise<string>;
+
+/**
+ * What a scheme's viewer says of one URL. The host turns it into the wire `InternalUrlView`:
+ * it fills `url`, reads the output of a delivered transcript card (`{ inputCard }`, the request
+ * id the card was submitted under, whose own flag says whether it was truncated), and cuts the
+ * output at what the app already holds.
+ */
+export interface SchemeView extends Omit<InternalUrlView, "url" | "output" | "stoppable"> {
+  /** The full id the target named, for the view's `url`. */
+  id: string;
+  output:
+    | {
+        text: string;
+        /** Characters the producer dropped from the front; 0 when it kept everything. */
+        dropped?: number;
+        truncated?: boolean;
+      }
+    | {
+        inputCard: string;
+        /** Characters the producer dropped from the front of what the card holds. */
+        dropped?: number;
+      };
+  stoppable?: boolean;
+}
+
+/** The app's view of a scheme: `view` for its viewer, `stop` for its Stop. Read outside any tool call. */
+export interface SchemeViewer {
+  view(
+    target: InternalTarget,
+    conversation: SurfaceConversation,
+    context: Context,
+  ): Promise<SchemeView>;
+  /** Stops what `target` names; resolves a reason when it cannot (it already ended). */
+  stop?(
+    target: InternalTarget,
+    conversation: SurfaceConversation,
+    context: Context,
+  ): Promise<string | undefined>;
+}
+
+/** The registered schemes the app can show, by name; `internalUrls.register` fills it. */
+export const internalUrlViewers = new Map<string, SchemeViewer>();
+
+/** The schemes the app can show, for `/server/info`. */
+export function internalUrlViewSchemes(): string[] {
+  return [...internalUrlViewers.keys()].sort();
+}
+
+/**
+ * A URL the app asked for that no viewer shows, or whose id names nothing (`InternalTarget.pick`):
+ * answered 404. The `read` tool reports it as any other error.
+ */
+export class InternalUrlNotFound extends Error {}
+
+/**
+ * `text`, which starts at UTF-16 offset `start` of the whole output, from offset `from`: the part
+ * after what the caller holds, or all of it when `from` is outside the window.
+ */
+export function outputFrom(
+  start: number,
+  text: string,
+  from: number | undefined,
+): { start: number; text: string } {
+  if (from === undefined || from < start || from > start + text.length) return { start, text };
+  return { start: from, text: text.slice(from - start) };
+}
 
 /** Schemes Oppi does not serve, each with the tool that does the same job. */
 const UNSUPPORTED: Readonly<Record<string, string>> = {
@@ -81,10 +150,10 @@ function pickId(kind: string, id: string, ids: readonly string[]): string {
   const [only] = matches;
   if (only !== undefined && matches.length === 1) return only;
   if (matches.length > 1)
-    throw new Error(
+    throw new InternalUrlNotFound(
       `Ambiguous ${kind} id prefix "${id}": ${listIds(matches)}. Use more of the id.`,
     );
-  throw new Error(
+  throw new InternalUrlNotFound(
     ids.length === 0
       ? `No ${kind} "${id}": there are none to read.`
       : `No ${kind} "${id}". Valid ids: ${listIds(ids)}.`,

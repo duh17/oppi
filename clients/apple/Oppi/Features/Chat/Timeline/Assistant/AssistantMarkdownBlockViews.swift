@@ -151,6 +151,7 @@ final class NativeCodeBlockView: UIView {
     private var installedHighlightIdentity: SyntaxHighlightIdentity?
     private var highlightTask: Task<Void, Never>?
     private var isLineWrappingEnabled = false
+    private var startedWrapped = false
     private var onExpand: (() -> Void)?
     private var measuredUnwrappedCodeWidth: CGFloat = 0
     /// Pretty-printed JSON shown while wrap is on. `currentCode` stays original.
@@ -370,6 +371,8 @@ final class NativeCodeBlockView: UIView {
         }
 
         let contentChanged = code != currentCode || language != currentLanguage
+        // Another block's code in this view: its author's `startWrapped` applies again.
+        if contentChanged { startedWrapped = false }
         currentCode = code
         currentLanguage = language
 
@@ -523,6 +526,15 @@ final class NativeCodeBlockView: UIView {
         }
         applyCurrentLineWrapping(resetHorizontalOffset: true)
         invalidateTimelineLayout()
+    }
+
+    /// Wraps the lines of a block its author asked to open wrapped (a surface
+    /// code node's `wrap`). Once per block: a later draw of the same code keeps
+    /// the reader's own choice; other code in this view starts over.
+    func startWrapped() {
+        guard !startedWrapped else { return }
+        startedWrapped = true
+        if !isLineWrappingEnabled { wrapTapped() }
     }
 
     /// Shows the header's expand button, which runs `action`, or hides it for nil. A host that

@@ -24,7 +24,9 @@ import {
   DurableUI,
   Extensions,
   oppiHost,
+  type InternalTarget,
   type SchemeReader,
+  type SchemeViewer,
   type SurfaceConversation,
   type SurfacePublisher,
 } from "oppi/v1";
@@ -39,7 +41,14 @@ import {
 } from "./jobs.js";
 import { RESULT_GUIDANCE } from "./delivery.js";
 import { DurableJobs, type Job, type Status } from "./contract.js";
-import { jobsPanel, outputTail, type PanelJob, type PanelState } from "./panel.js";
+import {
+  commandTitle,
+  jobsPanel,
+  outputTail,
+  requestJobStop,
+  type PanelJob,
+  type PanelState,
+} from "./panel.js";
 
 type Output = { output: string; truncated: boolean };
 /**
@@ -128,12 +137,15 @@ const LIVE_REDRAW_MS = 2_000;
  */
 const LIVE_TAIL_CHARS = 16_384;
 
+/** A running job's output as its runner holds it: the last 64,000 characters, and how many came before. */
+type LiveOutput = { output: string; truncated: boolean; dropped: number };
+
 /**
  * Running jobs' output, by runner task: a read of the string the runner already holds, so a live
- * tail costs no copy and no write. Memory only: the terminal commit in `JobOutput` stays the only
+ * read costs no copy and no write. Memory only: the terminal commit in `JobOutput` stays the only
  * write of a job's output, and nothing here reaches the transcript or the model.
  */
-const liveTails = new Map<TaskId, () => { output: string; truncated: boolean }>();
+const liveOutputs = new Map<TaskId, () => LiveOutput>();
 
 /** The Session loop of the conversation that runs `env`; none for a bare Harness or a stopped Session. */
 function surfacesOf(env: ExecutionEnv | undefined): SurfacePublisher | undefined {
@@ -176,7 +188,7 @@ async function loadPanel(
       job.status === "running"
         ? undefined
         : (await conversation.snapshot(JobOutput, job.taskId, context))?.output;
-    const live = job.status === "running" ? liveTails.get(job.taskId)?.() : undefined;
+    const live = job.status === "running" ? liveOutputs.get(job.taskId)?.() : undefined;
     shown.push({
       id: job.id,
       command: job.command,
@@ -184,10 +196,11 @@ async function loadPanel(
       ...(job.status === "running" && job.timeout !== undefined
         ? { timeoutAt: job.startedAt + job.timeout * 1000 }
         : {}),
-      ...(live ? { output: live.output, truncated: live.truncated } : {}),
+      ...(live ? { output: live.output.slice(-LIVE_TAIL_CHARS), truncated: live.truncated } : {}),
       // The classic pill treats every non-success terminal outcome as an error.
       status: job.status === "interrupted" ? "failed" : job.status,
       startedAt: job.startedAt,
+      ...(job.endedAt === undefined ? {} : { endedAt: job.endedAt }),
       ...(job.status === "running" ? {} : { exitCode: job.exitCode }),
       ...(output === undefined ? {} : { output }),
     });
@@ -321,18 +334,21 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
       let status: Status = "interrupted";
       let output = "";
       let truncated = false;
+      /** Characters dropped from the front, so the app's viewer can append to what it holds. */
+      let dropped = 0;
       let exitCode: number | null = null;
       const appendOutput = (text: string): void => {
         output += text;
         if (output.length > 64_000) {
+          dropped += output.length - 64_000;
           output = output.slice(-64_000);
           truncated = true;
         }
       };
-      // The panel reads the end of this run's output while it runs. The entry stays until the
-      // terminal commit, so the panel never draws this job as running without its output.
+      // The panel and the app's viewer read this run's output while it runs. The entry stays until
+      // the terminal commit, so neither draws this job as running without its output.
       const liveOutput = (): string => output.slice(-LIVE_TAIL_CHARS);
-      liveTails.set(runtime.taskId, () => ({ output: liveOutput(), truncated }));
+      liveOutputs.set(runtime.taskId, () => ({ output, truncated, dropped }));
       try {
         if (winner === claim) {
           try {
@@ -430,7 +446,12 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
         }
         await runtime.commit(async (tx) => {
           const current = jobById((await tx.doc(DurableJobs, runtime.conversationId)).jobs, job.id);
-          Object.assign(current, { status, exitCode });
+          Object.assign(current, {
+            status,
+            exitCode,
+            endedAt: runtime.now(),
+            ...(dropped > 0 ? { dropped } : {}),
+          });
           Object.assign(await tx.doc(JobOutput, runtime.taskId), {
             output,
             truncated,
@@ -444,7 +465,7 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
           return { status: "running", checkpoint: { phase: "report" } };
         }, context);
       } finally {
-        liveTails.delete(runtime.taskId);
+        liveOutputs.delete(runtime.taskId);
       }
     },
     async report(task, runtime, context) {
@@ -551,6 +572,7 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
         task.input.jobId,
       );
       job.status = "cancelled";
+      job.endedAt ??= runtime.now();
       job.delivered = true;
       await retireLegacyPill(tx, runtime.conversationId);
       return { status: "terminal", outcome: { status: "aborted" } };
@@ -834,13 +856,98 @@ const readProc: SchemeReader = async (target, api, context) => {
     job.status === "running" ? "running" : `${job.status} (exit ${job.exitCode ?? "none"})`;
   const head = `${job.id}  ${state}\ncommand: ${job.command}\ncwd: ${job.cwd}\nstarted: ${new Date(job.startedAt).toISOString()}`;
   if (job.status === "running") {
-    const live = liveTails.get(job.taskId)?.();
+    const live = liveOutputs.get(job.taskId)?.();
     return `${head}\n\n${live ? `Output${live.truncated ? " (latest part)" : ""}:\n${live.output}` : "No output yet."}`;
   }
   const saved = job.delivered
     ? undefined
     : await api.snapshot(JobOutput, job.taskId, context).catch(() => undefined);
   return `${head}\n\n${saved ? saved.output : "The output was delivered to the conversation when the job finished."}`;
+};
+
+/** The backgrounded job `target` names, as `read` lists them: a foreground call is not one. */
+async function procJob(
+  target: InternalTarget,
+  conversation: SurfaceConversation,
+  context: Context,
+): Promise<Job> {
+  const jobs =
+    (await conversation.snapshot(DurableJobs, conversation.conversationId, context))?.jobs ?? [];
+  const shown = jobs.filter((job) => job.decision !== "foreground");
+  return jobById(
+    shown,
+    target.pick(
+      "background job",
+      shown.map((job) => job.id),
+    ),
+  );
+}
+
+/** How a job's state reads at the top of its view: the word, and its tone. */
+function procStatus(job: Job): { text: string; tone: "accent" | "success" | "warning" | "danger" } {
+  switch (job.status) {
+    case "running":
+      return { text: "Running", tone: "accent" };
+    case "completed":
+      return { text: "Done", tone: "success" };
+    case "cancelled":
+      return { text: "Stopped", tone: "warning" };
+    case "timed_out":
+      return { text: "Timed out", tone: "warning" };
+    case "interrupted":
+      return { text: "Interrupted", tone: "danger" };
+    case "failed":
+      return { text: job.exitCode === null ? "Failed" : `Exit ${job.exitCode}`, tone: "danger" };
+  }
+}
+
+// `proc://` in the app: one job's status, where and when it ran, its command, and its output. A
+// running job's output is the runner's live window; a finished one's is saved until its result is
+// delivered, and then the result card in the transcript holds it.
+const viewProc: SchemeViewer = {
+  async view(target, conversation, context) {
+    const job = await procJob(target, conversation, context);
+    const running = job.status === "running";
+    const live = running ? liveOutputs.get(job.taskId)?.() : undefined;
+    const saved =
+      running || job.delivered
+        ? undefined
+        : await conversation.snapshot(JobOutput, job.taskId, context);
+    const timeoutAt =
+      running && job.timeout !== undefined ? job.startedAt + job.timeout * 1000 : undefined;
+    return {
+      id: job.id,
+      title: commandTitle(job.command),
+      status: {
+        ...procStatus(job),
+        live: running,
+        startedAt: job.startedAt,
+        ...(job.endedAt === undefined ? {} : { endedAt: job.endedAt }),
+      },
+      facts: [
+        { label: "Folder", value: job.cwd },
+        { label: "Started", time: job.startedAt },
+        ...(job.endedAt === undefined ? [] : [{ label: "Ended", time: job.endedAt }]),
+        ...(timeoutAt === undefined ? [] : [{ label: "Times out", time: timeoutAt }]),
+        { label: "Job", value: job.id },
+      ],
+      command: job.command,
+      output: live
+        ? { text: live.output, dropped: live.dropped, truncated: live.truncated }
+        : saved
+          ? { text: saved.output, dropped: job.dropped ?? 0, truncated: saved.truncated }
+          : job.delivered && job.decision === "background"
+            ? { inputCard: job.receiptId || `background-job:${job.id}`, dropped: job.dropped ?? 0 }
+            : { text: "" },
+      stoppable: running,
+    };
+  },
+  async stop(target, conversation, context) {
+    const job = await procJob(target, conversation, context);
+    return (await requestJobStop(conversation, job.id, context))
+      ? undefined
+      : `${job.id} is not running.`;
+  },
 };
 
 export const DurableBackgroundJobs = defineExtension({
@@ -867,6 +974,6 @@ export const DurableBackgroundJobs = defineExtension({
  * in `~/.pi/agent/extensions`) and lets its classic ID stand for this one.
  */
 export default defineFacet((_host, self) => {
-  oppiHost().files.internalUrls.register("proc", readProc);
+  oppiHost().files.internalUrls.register("proc", readProc, viewProc);
   return self.contribute(Extensions, DurableBackgroundJobs);
 });

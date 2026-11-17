@@ -75,7 +75,7 @@ final class PaneLeafStateViewController: UIViewController {
         if state == .missing(.workspace), rereadsCatalog() {
             state = .connecting
         }
-        if state == .content, case .panel = entry.route {
+        if state == .content, entry.route.chatPanelSessionId != nil {
             // A panel shows only beside its own chat until panels can be
             // pinned; this entry stands without it.
             state = .chatNotShown
@@ -151,7 +151,7 @@ final class PaneLeafStateViewController: UIViewController {
         }
         let sessionId: String
         switch entry.route {
-        case .session(let id), .file(.session(let id), _, _), .panel(let id, _): sessionId = id
+        case .session(let id), .file(.session(let id), _, _), .panel(let id, _), .read(let id, _): sessionId = id
         default: return
         }
         let serverId = entry.serverId
@@ -222,7 +222,7 @@ final class PaneLeafStateViewController: UIViewController {
     /// The panel's chat takes this entry's place, and opens the panel beside
     /// itself as it shows.
     private func openChat() {
-        guard case .panel(let sessionId, _) = entry.route,
+        guard let sessionId = entry.route.chatPanelSessionId,
               let session = coordinator.connection(for: entry.serverId)?.sessionStore.session(id: sessionId) else { return }
         let navigation = root.navigation
         navigation.panes.openPanel(entry.route, beside: sessionId)
@@ -322,7 +322,7 @@ final class PaneLeafStateViewController: UIViewController {
     private static func title(for route: PaneRoute) -> String {
         switch route {
         case .session, .thread: String(localized: "Session")
-        case .panel: String(localized: "Panel")
+        case .panel, .read: String(localized: "Panel")
         case .file: String(localized: "File")
         case .files, .hostFiles: String(localized: "Files")
         case .sessions: String(localized: "Sessions")

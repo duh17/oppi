@@ -114,6 +114,8 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     handleGetFullToolOutputForSession,
     handleGetToolOutputForSession,
     handleGetInputCardOutput,
+    handleGetInternalUrl,
+    handleStopInternalUrl,
     handleGetSessionEventsForSession,
     handleGetSessionForSession,
     handleGetSessionTracePageForSession,
@@ -614,6 +616,20 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return true;
     }
 
+    const controlInternalUrlMatch = path.match(
+      /^\/control-sessions\/([^/]+)\/internal-url(\/stop)?$/,
+    );
+    if (controlInternalUrlMatch && method === (controlInternalUrlMatch[2] ? "POST" : "GET")) {
+      const session = requireControlSession(controlInternalUrlMatch[1], res);
+      if (session)
+        await (controlInternalUrlMatch[2] ? handleStopInternalUrl : handleGetInternalUrl)(
+          session,
+          url,
+          res,
+        );
+      return true;
+    }
+
     const controlToolOutputMatch = path.match(
       /^\/control-sessions\/([^/]+)\/tool-output\/([^/]+)$/,
     );
@@ -786,6 +802,20 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     if (wsCardOutputMatch && method === "GET") {
       const admitted = requireWorkspaceSession(wsCardOutputMatch[1], wsCardOutputMatch[2], res);
       if (admitted) await handleGetInputCardOutput(admitted.session, wsCardOutputMatch[3], res);
+      return true;
+    }
+
+    const wsInternalUrlMatch = path.match(
+      /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/internal-url(\/stop)?$/,
+    );
+    if (wsInternalUrlMatch && method === (wsInternalUrlMatch[3] ? "POST" : "GET")) {
+      const admitted = requireWorkspaceSession(wsInternalUrlMatch[1], wsInternalUrlMatch[2], res);
+      if (admitted)
+        await (wsInternalUrlMatch[3] ? handleStopInternalUrl : handleGetInternalUrl)(
+          admitted.session,
+          url,
+          res,
+        );
       return true;
     }
 

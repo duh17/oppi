@@ -34,6 +34,13 @@ struct ExtensionSurfaceBlocksEnvironment {
         node.id.map { ExtensionSurfaceIdentity.element(root: identifierRoot, key: $0) }
     }
 
+    /// The tap of a row or stack: its action sent to the host, or its link opened.
+    func tap(for node: ExtensionUISurfaceNode, layout: ExtensionUISurfaceLayoutNode) -> (() -> Void)? {
+        if let action = layout.action { return tap(for: node, action: action) }
+        guard let link = layout.link, let url = URL(string: link), let openURL = context.openURL else { return nil }
+        return { openURL(url) }
+    }
+
     /// The tap a node's own action asks the host to send.
     func tap(for node: ExtensionUISurfaceNode, action: ExtensionUISurfaceNodeAction) -> (() -> Void)? {
         guard let nodeId = node.id else { return nil }
@@ -266,7 +273,7 @@ final class BlocksRenderer {
                     rowAccessories: layout.children.contains { !Self.isControl($0) }
                 ),
                 node: node,
-                action: layout.action,
+                layout: layout,
                 spacing: environment.topLevelSpacing
                     ?? ExtensionSurfaceBlockMetrics.spacing(layout.spacing, inline: environment.inline),
                 align: layout.align,
@@ -282,7 +289,7 @@ final class BlocksRenderer {
             view.apply(
                 children: children(layout.children, path: path, environment: environment),
                 node: node,
-                action: layout.action,
+                layout: layout,
                 spacing: environment.topLevelSpacing
                     ?? ExtensionSurfaceBlockMetrics.spacing(layout.spacing, inline: environment.inline),
                 align: nil,
@@ -356,6 +363,7 @@ final class BlocksRenderer {
             )
             let identifier = environment.identifier(for: node)
             view.accessibilityIdentifier = identifier
+            if code.wrap == true { view.startWrapped() }
             let language = code.language, text = code.text
             view.configureExpand(
                 identifier: identifier.map { "\($0).expand" },
@@ -955,7 +963,7 @@ final class ExtensionSurfacePillContentView: UIView, BlocksColumnFillable {
         }
         return .row(ExtensionUISurfaceLayoutNode(
             base: row.base, children: kept, spacing: row.spacing, align: row.align,
-            selected: row.selected, disabled: row.disabled, action: row.action
+            selected: row.selected, disabled: row.disabled, action: row.action, link: row.link
         ))
     }
 

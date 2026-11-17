@@ -15,7 +15,7 @@ enum PinKind: Int, Hashable, Sendable, CaseIterable {
         case .session, .thread, .sessions: self = .sessions
         case .godot: self = .games
         case .browser: self = .web
-        case .panel: self = .panels
+        case .panel, .read: self = .panels
         case .files, .hostFiles: self = .folders
         case .file: self = .files
         case .git, .commit, .local, .unsupported: return nil
@@ -75,7 +75,7 @@ extension PaneRoute {
     /// The session the route belongs to, if it names one.
     var sessionId: String? {
         switch self {
-        case .session(let id), .thread(let id), .panel(let id, _), .file(.session(let id), _, _): id
+        case .session(let id), .thread(let id), .panel(let id, _), .read(let id, _), .file(.session(let id), _, _): id
         default: nil
         }
     }
@@ -97,6 +97,7 @@ extension PaneRoute {
         case .git(let id, let worktree): "git:\(id)" + (worktree.map { "@\($0)" } ?? "")
         case .commit(let id, let sha): "commit:\(id):\(sha)"
         case .panel(let session, let id): "panel:\(session):\(id)"
+        case .read(let session, let url): "read:\(session):\(url)"
         case .browser(let url): "browser:\(url.absoluteString)"
         case .godot(let project): "game:\(project)"
         case .local(let token): "local:\(token.raw)"
@@ -169,6 +170,7 @@ extension PaneRoute {
         case .sessions(nil): return String(localized: "All Sessions")
         case .sessions: return names.workspace ?? String(localized: "Sessions")
         case .panel(_, let id): return id
+        case .read(_, let url): return url
         case .browser(let url): return url.host() ?? url.absoluteString
         case .godot: return gameName ?? String(localized: "Game")
         case .git, .commit, .local, .unsupported: return ""
@@ -194,7 +196,7 @@ extension PaneRoute {
             return crumbs([workspace] + (worktree == nil ? [] : [String(localized: "Worktree")]) + folders(path))
         case .file(.session, let path, _):
             return crumbs([names.session ?? String(localized: "Session")] + folders(path))
-        case .panel:
+        case .panel, .read:
             return names.session
         case .browser(let url):
             let path = url.path()

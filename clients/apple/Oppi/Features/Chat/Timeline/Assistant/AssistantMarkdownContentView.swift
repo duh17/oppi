@@ -437,7 +437,8 @@ enum MarkdownLinkInteractionSupport {
             return AppOpenRequest(
                 url: normalizedURL,
                 origin: .inAppHyperlink,
-                sourceServerID: serverID
+                sourceServerID: serverID,
+                sourceSessionID: sessionID
             )
         }
         if scheme == "http" || scheme == "https" {

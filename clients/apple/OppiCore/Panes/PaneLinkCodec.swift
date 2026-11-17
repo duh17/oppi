@@ -27,7 +27,7 @@ enum PaneLinkError: Error, Hashable, Sendable {
 /// `terminal` links are not pane links and decode to nil.
 ///
 /// Every pane link only opens and takes an optional `server=`. On the pane
-/// links new in v1 (sessions, file, files, git, panel, browser, godot) an unknown or repeated
+/// links new in v1 (sessions, file, files, git, panel, read, browser, godot) an unknown or repeated
 /// parameter, user-info or a port makes the link invalid; only a file link
 /// takes a fragment, `#L<line>`. Session and thread links keep their older
 /// rule and ignore everything but `server` (a `?workspaceId=` most of all: a
@@ -52,7 +52,7 @@ enum PaneLinkCodec {
         switch name {
         case "session", "thread":
             return decodeSession(name: name, path: path, query: query)
-        case "sessions", "file", "files", "git", "panel", "browser", "godot":
+        case "sessions", "file", "files", "git", "panel", "read", "browser", "godot":
             if let component = [
                 ("user", components.user), ("password", components.password),
                 ("port", components.port.map(String.init)),
@@ -112,6 +112,10 @@ enum PaneLinkCodec {
             path = "panel"
             query.append(("session", session))
             query.append(("id", id))
+        case .read(let session, let url):
+            path = "read"
+            query.append(("session", session))
+            query.append(("url", url))
         case .browser(let url):
             guard case .success = PaneWebAddress.check(url.absoluteString) else { return nil }
             path = "browser"
@@ -155,6 +159,7 @@ enum PaneLinkCodec {
         case "files": ["workspace", "host", "path"]
         case "git": path.isEmpty ? ["workspace", "worktree"] : ["workspace"]
         case "browser": ["url"]
+        case "read": ["session", "url"]
         case "godot": ["project"]
         default: ["session", "id"]
         }
@@ -205,6 +210,17 @@ enum PaneLinkCodec {
         case "godot":
             guard path.isEmpty else { return .failure(.unexpectedPath) }
             route = required("project").map { .godot(project: $0) }
+        case "read":
+            guard path.isEmpty else { return .failure(.unexpectedPath) }
+            route = required("session").flatMap { session in
+                required("url").flatMap { url in
+                    // An internal URL: a scheme and what follows it (`proc://bash-3`).
+                    guard let scheme = URL(string: url)?.scheme, !scheme.isEmpty, url.contains("://") else {
+                        return .failure(.invalidValue("url"))
+                    }
+                    return .success(.read(session: session, url: url))
+                }
+            }
         default:
             guard path.isEmpty else { return .failure(.unexpectedPath) }
             route = required("session").flatMap { session in

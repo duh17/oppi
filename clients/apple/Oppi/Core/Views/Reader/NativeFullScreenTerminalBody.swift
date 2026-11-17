@@ -1,6 +1,6 @@
 import UIKit
 
-private final class FullScreenTerminalChunkCell: UICollectionViewCell {
+final class FullScreenTerminalChunkCell: UICollectionViewCell {
     static let reuseIdentifier = "FullScreenTerminalChunkCell"
 
     let textView = FullScreenReviewCommentTextView()
@@ -141,6 +141,12 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     private var tailFollowCoordinator: TailFollowScrollCoordinator {
         virtualizedCollectionView.isHidden ? standardTailFollowCoordinator : virtualizedTailFollowCoordinator
     }
+
+    /// Find's bar, made the first time Find opens.
+    var findInteraction: UIFindInteraction?
+    /// The match find shows, as a range of the whole output, and where it is marked now.
+    var findMatch: NSRange?
+    var findMarked: (view: UITextView, range: NSRange)?
 
     private var sidecarSource: ToolOutputSidecarWindowSource?
     private var sidecarTerminalResolved = false
@@ -863,6 +869,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
                 cacheAttributedChunk(attributed, at: chunkIndex)
             }
             cell.install(attributedChunkCache[chunkIndex])
+            applyFindMark(to: cell, chunk: chunkIndex)
         }
         return cell
     }
@@ -941,6 +948,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
                     at: IndexPath(item: item, section: 0)
                 ) as? FullScreenTerminalChunkCell {
                     cell.install(attributed)
+                    self.applyFindMark(to: cell, chunk: chunkIndex)
                 }
             }
         }
@@ -988,7 +996,80 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     }
 }
 
+// MARK: - Find
+
+extension NativeFullScreenTerminalBody {
+    /// The output as find searches it: each part's displayed text and its UTF-16 start in the
+    /// whole. One part while the output is one text view, one a chunk once it is virtualized.
+    var findSegments: [(start: Int, text: NSString)] {
+        guard let index = virtualizedIndex, !virtualizedCollectionView.isHidden else {
+            return [(0, outputView.textStorage.string as NSString)]
+        }
+        return index.chunks.map { ($0.displayedUTF16Range.lowerBound, ANSIParser.strip($0.rawText) as NSString) }
+    }
+
+    /// Scrolls to the match at `range` of the whole output and marks it; nil clears the mark. A
+    /// match the reader goes to stops it following the newest line.
+    func markFindMatch(_ range: NSRange?) {
+        if let marked = findMarked, NSMaxRange(marked.range) <= marked.view.textStorage.length {
+            marked.view.textStorage.removeAttribute(.backgroundColor, range: marked.range)
+        }
+        findMarked = nil
+        findMatch = range
+        guard let range else { return }
+        tailFollowCoordinator.shouldAutoFollowTail = false
+        let textView: UITextView
+        if let index = virtualizedIndex, !virtualizedCollectionView.isHidden {
+            guard let chunk = index.chunks.firstIndex(where: { $0.displayedUTF16Range.contains(range.location) }) else { return }
+            let item = IndexPath(item: virtualizedCommandItemCount + chunk, section: 0)
+            virtualizedCollectionView.scrollToItem(at: item, at: .centeredVertically, animated: false)
+            virtualizedCollectionView.layoutIfNeeded()
+            guard let cell = virtualizedCollectionView.cellForItem(at: item) as? FullScreenTerminalChunkCell else { return }
+            applyFindMark(to: cell, chunk: chunk)
+            textView = cell.textView
+        } else {
+            guard NSMaxRange(range) <= outputView.textStorage.length else { return }
+            outputView.textStorage.addAttribute(.backgroundColor, value: findMarkColor, range: range)
+            findMarked = (outputView, range)
+            textView = outputView
+        }
+        guard let marked = findMarked, marked.view === textView else { return }
+        let glyphs = textView.layoutManager.glyphRange(forCharacterRange: marked.range, actualCharacterRange: nil)
+        let rect = textView.layoutManager.boundingRect(forGlyphRange: glyphs, in: textView.textContainer)
+            .offsetBy(dx: textView.textContainerInset.left, dy: textView.textContainerInset.top)
+        let scroller = activeTerminalScrollView
+        scroller.scrollRectToVisible(textView.convert(rect, to: scroller).insetBy(dx: -24, dy: -80), animated: true)
+    }
+
+    /// Marks the current match in a chunk's cell when the match is in that chunk: again each time
+    /// the cell gets its text, which replaces the mark.
+    func applyFindMark(to cell: FullScreenTerminalChunkCell, chunk: Int) {
+        guard let match = findMatch, let index = virtualizedIndex, index.chunks.indices.contains(chunk) else { return }
+        let start = index.chunks[chunk].displayedUTF16Range.lowerBound
+        guard index.chunks[chunk].displayedUTF16Range.contains(match.location) else { return }
+        let local = NSRange(location: match.location - start, length: match.length)
+        guard NSMaxRange(local) <= cell.textView.textStorage.length else { return }
+        cell.textView.textStorage.addAttribute(.backgroundColor, value: findMarkColor, range: local)
+        findMarked = (cell.textView, local)
+    }
+
+    private var findMarkColor: UIColor { palette.ui.yellow.withAlphaComponent(0.45) }
+}
+
 extension NativeFullScreenTerminalBody: ReaderBody {
+    var supportsFind: Bool { true }
+
+    func presentFind() {
+        if findInteraction == nil {
+            let interaction = UIFindInteraction(sessionDelegate: self)
+            addInteraction(interaction)
+            findInteraction = interaction
+        }
+        // The find bar rides on the first responder.
+        becomeFirstResponder()
+        findInteraction?.presentFindNavigator(showingReplace: false)
+    }
+
     func applyReaderPreferences(_ preferences: FullScreenReaderPreferences) {
         guard preferences != readerPreferences else { return }
         let textSizeChanged = preferences.textScale != readerPreferences.textScale

@@ -476,7 +476,7 @@ final class ScenePanes {
         switch entry.route {
         case .sessions(let id): return id
         case .files(let id, _), .git(let id, _), .commit(let id, _), .file(.workspace(let id, _), _, _): return id
-        case .session(let id), .file(.session(let id), _, _), .panel(let id, _):
+        case .session(let id), .file(.session(let id), _, _), .panel(let id, _), .read(let id, _):
             return coordinator?.connection(for: entry.serverId)?.sessionStore.session(id: id)?.workspaceId
         case .local(let token):
             return PaneLocalScreen(token)?.workspaceId
@@ -914,7 +914,7 @@ final class ScenePanes {
             var leaf = leaf
             leaf.stack = leaf.stack.map { entry in
                 let sessionId: String? = switch entry.route {
-                case .session(let id), .file(.session(let id), _, _), .panel(let id, _): id
+                case .session(let id), .file(.session(let id), _, _), .panel(let id, _), .read(let id, _): id
                 default: nil
                 }
                 guard let sessionId,

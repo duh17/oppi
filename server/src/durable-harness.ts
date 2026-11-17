@@ -74,7 +74,7 @@ import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import { safeErrorMessage } from "./log-utils.js";
 import type { DurableThreads } from "./durable-threads.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
-import type { SurfaceConversation, SurfacePublisher } from "./durable-surface.js";
+import { surfaceConversation, type SurfacePublisher } from "./durable-surface.js";
 import type { SurfaceLoop } from "./session-surfaces.js";
 import type { LiveVoiceRuntimePort } from "./live-voice-speech.js";
 import { LIVE_VOICE_EXTENSION } from "../plugins/live-voice/contract.js";
@@ -538,25 +538,7 @@ export class SessionHost {
     if (!loop) return undefined;
     let publisher = loopPublishers.get(loop);
     if (!publisher) {
-      const conversation: SurfaceConversation = {
-        conversationId: id,
-        // The Harness is read at each use: a store that failed and reopened has a new one.
-        // Both reads are overloaded, so they forward their arguments as they came.
-        snapshot: (async (...args: unknown[]) => {
-          const { harness } = await this.open();
-          return (harness.snapshot as (...read: unknown[]) => Promise<unknown>)(...args);
-        }) as SurfaceConversation["snapshot"],
-        snapshotAsOf: (async (...args: unknown[]) => {
-          const { harness } = await this.open();
-          return (harness.snapshotAsOf as (...read: unknown[]) => Promise<unknown>)(...args);
-        }) as SurfaceConversation["snapshotAsOf"],
-        commit: async (change, context, options) => {
-          const { harness } = await this.open();
-          const handle = await harness.conversation(id, context);
-          if (!handle) throw new Error(`Server durable conversation ${id} is missing`);
-          return handle.commit(change, context, options);
-        },
-      };
+      const conversation = surfaceConversation(id, async () => (await this.open()).harness);
       publisher = Object.freeze({
         publish: loop.publish,
         dismiss: loop.dismiss,

@@ -86,7 +86,7 @@ extension SceneNavigation {
                 return target
             case .paneEntry(let entry):
                 switch entry.route {
-                case .session(let id), .panel(let id, _):
+                case .session(let id), .panel(let id, _), .read(let id, _):
                     return WorkspaceSessionNavTarget(serverId: entry.serverId, sessionId: id)
                 default:
                     return nil

@@ -317,6 +317,23 @@
       "error": { "code": "unknownParameter", "detail": "size" }
     },
     {
+      "name": "internal URL in the viewer",
+      "input": "oppi://read?session=2f6c1a9e-session&url=proc%3A%2F%2Fbash-3",
+      "server": null,
+      "route": { "kind": "read", "session": "2f6c1a9e-session", "url": "proc://bash-3" },
+      "canonical": "oppi://read?session=2f6c1a9e-session&url=proc://bash-3"
+    },
+    {
+      "name": "internal URL without a scheme",
+      "input": "oppi://read?session=2f6c1a9e-session&url=bash-3",
+      "error": { "code": "invalidValue", "detail": "url" }
+    },
+    {
+      "name": "internal URL without a session",
+      "input": "oppi://read?url=proc%3A%2F%2Fbash-3",
+      "error": { "code": "missing", "detail": "session" }
+    },
+    {
       "name": "browser link",
       "input": "oppi://browser?url=https%3A%2F%2Fexample.com%2Fdocs",
       "server": null,

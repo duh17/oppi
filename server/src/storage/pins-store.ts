@@ -77,6 +77,11 @@ function isName(value: unknown): value is string {
   );
 }
 
+/** An internal URL a viewer pin may name (`proc://bash-3`): a scheme and an id, at most 256 bytes. */
+function isInternalURL(value: unknown): value is string {
+  return isName(value) && /^[a-z][a-z0-9+.-]*:\/\/\S+$/i.test(value);
+}
+
 /** A web page a pin may name: the rules a layout's `web` and a browser link follow. */
 export function isPinnableURL(value: unknown): value is string {
   if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > MAX_PIN_URL_BYTES) {
@@ -187,6 +192,11 @@ export function validatePinRoute(value: unknown): PinRoute {
         bad("panel pin names a session and a panel id");
       }
       return { kind: "panel", session: v.session as string, id: v.id as string };
+    case "read":
+      if (!has("session", "url") || !isName(v.session) || !isInternalURL(v.url)) {
+        bad("read pin names a session and an internal URL");
+      }
+      return { kind: "read", session: v.session as string, url: v.url as string };
     case "browser":
       if (!has("url") || !isPinnableURL(v.url)) {
         bad("web page pin names an http or https URL that is not loopback, at most 2 KiB");

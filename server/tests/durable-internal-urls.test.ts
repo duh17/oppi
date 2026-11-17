@@ -12,6 +12,7 @@ import {
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { Storage } from "../src/storage.js";
 import { SessionManager } from "../src/sessions.js";
+import { SessionRuntimes } from "../src/runtime-router.js";
 import type { ServerMessage } from "../src/types.js";
 import { makeTempDir } from "./harness/temp-dir.js";
 import { bootDurablePlugins, DURABLE_BOOT_TIMEOUT_MS } from "./harness/durable-boot.js";
@@ -213,6 +214,146 @@ describe("internal URLs through the durable read tool", () => {
     expect(one!.text).toContain("live line one");
     expect(missing).toMatchObject({ isError: true });
     expect(missing!.text).toContain("Valid ids: bash-1");
+  });
+});
+
+describe("the app's view of an internal URL", () => {
+  it("shows a running job's live output, appends from an offset, stops it, then reads the delivered card", async () => {
+    const f = await fixture([]);
+    // The app's route reads through the runtimes; a durable session never reaches the pi-tui runtime.
+    const runtimes = new SessionRuntimes(f.storage, f.manager, undefined as never);
+    const session = f.create("Jobs", f.workspace.id);
+    let print: (text: string) => void = () => {};
+    vi.spyOn(NodeExecutionEnv.prototype, "exec").mockImplementation(
+      async (_command, options, execContext) => {
+        print = (text) => options?.onOutput?.(text);
+        print("\u001b[32mline one\u001b[0m\n");
+        // Runs until Stop, then reports the kill as the real environment does.
+        await new Promise<void>((resolve) =>
+          execContext.abortSignal!.addEventListener("abort", () => resolve(), { once: true }),
+        );
+        return { ok: false, error: { code: "aborted", message: "aborted" } };
+      },
+    );
+    f.faux.setResponses([
+      fauxAssistantMessage(
+        [
+          fauxToolCall("background_job", {
+            action: "start",
+            command: "cd /tmp && make build",
+          }),
+        ],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage("STARTED"),
+      fauxAssistantMessage("SEEN"),
+    ]);
+    await f.manager.startSession(session.id, f.workspace);
+    await f.turn(session.id, "start");
+
+    const running = await runtimes.viewInternalUrl(session.id, "proc://bash");
+    expect(running).toMatchObject({
+      url: "proc://bash-1",
+      title: "make build",
+      status: { text: "Running", tone: "accent", live: true },
+      command: "cd /tmp && make build",
+      output: { start: 0, text: "\u001b[32mline one\u001b[0m\n", truncated: false },
+      stoppable: true,
+    });
+    expect(running!.facts.map((fact) => fact.label)).toEqual(["Folder", "Started", "Job"]);
+
+    // A read from the end of what the app holds returns only what came after it.
+    print("line two\n");
+    const held = running!.output.text.length;
+    const next = await runtimes.viewInternalUrl(session.id, "proc://bash-1", held);
+    expect(next!.output).toEqual({ start: held, text: "line two\n", truncated: false });
+
+    expect(await runtimes.stopInternalUrl(session.id, "proc://bash-1")).toBeUndefined();
+    await vi.waitFor(
+      async () => {
+        const view = await runtimes.viewInternalUrl(session.id, "proc://bash-1");
+        expect(view!.status).toMatchObject({ text: "Stopped", live: false });
+        expect(view!.status.endedAt).toBeGreaterThanOrEqual(view!.status.startedAt!);
+        expect(view!.stoppable).toBe(false);
+        // Delivered or not, the output is the job's: its saved output, then the result card's.
+        expect(view!.output.text).toContain("line two");
+      },
+      { timeout: 8_000 },
+    );
+    // Once the result is delivered and the model has read it, the output comes from its card.
+    await vi.waitFor(
+      async () => {
+        const messages = (await f.manager.runCommand(session.id, {
+          type: "get_messages",
+        })) as Array<{
+          role: string;
+          content?: unknown;
+        }>;
+        expect(JSON.stringify(messages.filter((m) => m.role === "assistant"))).toContain("SEEN");
+      },
+      { timeout: 5_000 },
+    );
+    const delivered = await runtimes.viewInternalUrl(session.id, "proc://bash-1");
+    expect(delivered!.output.text).toContain("line one");
+    expect(delivered!.output.text).toContain("line two");
+    expect(await runtimes.stopInternalUrl(session.id, "proc://bash-1")).toBe(
+      "bash-1 is not running.",
+    );
+
+    await expect(runtimes.viewInternalUrl(session.id, "proc://nope")).rejects.toThrow(
+      "Valid ids: bash-1",
+    );
+    await expect(runtimes.viewInternalUrl(session.id, "history://x")).rejects.toThrow(
+      "Oppi cannot show history://x",
+    );
+  });
+
+  it("keeps a long job's output at its true offsets after it ends, so a reader resumes where it left off", async () => {
+    const f = await fixture([]);
+    const runtimes = new SessionRuntimes(f.storage, f.manager, undefined as never);
+    const session = f.create("Long", f.workspace.id);
+    // 70,000 characters where each one names its offset mod 10: 6,000 drop off the front.
+    const whole = "0123456789".repeat(7_000);
+    vi.spyOn(NodeExecutionEnv.prototype, "exec").mockImplementation(async (_command, options) => {
+      options?.onOutput?.(whole);
+      return { ok: true, value: { exitCode: 0, stdout: "", stderr: "" } };
+    });
+    f.faux.setResponses([
+      fauxAssistantMessage(
+        [fauxToolCall("background_job", { action: "start", command: "make logs" })],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage("STARTED"),
+      fauxAssistantMessage("SEEN"),
+    ]);
+    await f.manager.startSession(session.id, f.workspace);
+    await f.turn(session.id, "start");
+
+    const resumeAt = 66_000;
+    const expectTrueOffsets = async (): Promise<void> => {
+      const view = await runtimes.viewInternalUrl(session.id, "proc://bash-1");
+      expect(view!.status.live).toBe(false);
+      expect(view!.output).toEqual({ start: 6_000, text: whole.slice(6_000), truncated: true });
+      const resumed = await runtimes.viewInternalUrl(session.id, "proc://bash-1", resumeAt);
+      expect(resumed!.output).toEqual({
+        start: resumeAt,
+        text: whole.slice(resumeAt),
+        truncated: true,
+      });
+    };
+    // Saved output, or already the card's: both keep the job's offsets.
+    await vi.waitFor(expectTrueOffsets, { timeout: 8_000 });
+    await vi.waitFor(
+      async () => {
+        const messages = (await f.manager.runCommand(session.id, {
+          type: "get_messages",
+        })) as Array<{ role: string; content?: unknown }>;
+        expect(JSON.stringify(messages.filter((m) => m.role === "assistant"))).toContain("SEEN");
+      },
+      { timeout: 5_000 },
+    );
+    // The delivered card's output.
+    await expectTrueOffsets();
   });
 });
 

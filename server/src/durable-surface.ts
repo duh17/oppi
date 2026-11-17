@@ -1,5 +1,11 @@
 import { BACKGROUND_CONTEXT, withAbortSignal, type Context } from "@earendil-works/chord/context";
-import type { CommitOptions, ConversationId, DocumentReader, Tx } from "@earendil-works/pi-durable";
+import type {
+  CommitOptions,
+  ConversationId,
+  DocumentReader,
+  Harness,
+  Tx,
+} from "@earendil-works/pi-durable";
 import { readExtensionUISurface } from "./extension-surface.js";
 import type {
   ExtensionUIBlocksComposite,
@@ -158,6 +164,8 @@ export interface RowNodeFields {
   selected?: boolean;
   disabled?: boolean;
   action?: NodeActionFields;
+  /** A URL a tap opens in the app instead of an action; see `ExtensionUISurfaceNode` `row`. */
+  link?: string;
 }
 
 export interface StackNodeFields {
@@ -166,6 +174,8 @@ export interface StackNodeFields {
   spacing?: ExtensionUISurfaceNodeSpacing;
   disabled?: boolean;
   action?: NodeActionFields;
+  /** A URL a tap opens in the app instead of an action; see `ExtensionUISurfaceNode` `row`. */
+  link?: string;
 }
 
 /** A titled region that folds away; the host owns the disclosure control. */
@@ -336,6 +346,7 @@ export function row(fields: RowNodeFields): ExtensionUISurfaceNode {
     ...(fields.align ? { align: fields.align } : {}),
     ...nodeFlags(fields),
     ...(fields.action ? { action: wireNodeAction(fields.action) } : {}),
+    ...(fields.link ? { link: fields.link } : {}),
   };
 }
 
@@ -348,6 +359,7 @@ export function stack(fields: StackNodeFields): ExtensionUISurfaceNode {
     ...(fields.spacing ? { spacing: fields.spacing } : {}),
     ...nodeFlags(fields),
     ...(fields.action ? { action: wireNodeAction(fields.action) } : {}),
+    ...(fields.link ? { link: fields.link } : {}),
   };
 }
 
@@ -422,12 +434,15 @@ export function code(fields: {
   id?: string;
   language?: string;
   text: string;
+  /** Opens wrapped (a command read whole), rather than in long lines that scroll sideways. */
+  wrap?: boolean;
 }): ExtensionUISurfaceNode {
   return {
     type: "code",
     ...(fields.id ? { id: fields.id } : {}),
     ...(fields.language ? { language: fields.language } : {}),
     text: fields.text,
+    ...(fields.wrap === undefined ? {} : { wrap: fields.wrap }),
   };
 }
 
@@ -657,6 +672,33 @@ export interface SurfaceConversation extends DocumentReader {
     context: Context,
     options?: CommitOptions,
   ): Promise<T>;
+}
+
+/**
+ * Conversation `id`'s reads and commits, outside any task. `harness` is read at each use: a store
+ * that failed and reopened has a new one.
+ */
+export function surfaceConversation(
+  id: ConversationId,
+  harness: () => Promise<Harness>,
+): SurfaceConversation {
+  return {
+    conversationId: id,
+    // Both reads are overloaded, so they forward their arguments as they came.
+    snapshot: (async (...args: unknown[]) =>
+      ((await harness()).snapshot as (...read: unknown[]) => Promise<unknown>)(
+        ...args,
+      )) as SurfaceConversation["snapshot"],
+    snapshotAsOf: (async (...args: unknown[]) =>
+      ((await harness()).snapshotAsOf as (...read: unknown[]) => Promise<unknown>)(
+        ...args,
+      )) as SurfaceConversation["snapshotAsOf"],
+    commit: async (change, context, options) => {
+      const handle = await (await harness()).conversation(id, context);
+      if (!handle) throw new Error(`Server durable conversation ${id} is missing`);
+      return handle.commit(change, context, options);
+    },
+  };
 }
 
 export interface SurfacePublisher {

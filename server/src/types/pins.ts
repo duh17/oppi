@@ -31,6 +31,8 @@ export type PinRoute =
   | { kind: "files"; workspace: string; path: string | null }
   | { kind: "files"; origin: "host"; path: string | null }
   | { kind: "panel"; session: string; id: string }
+  /** A session's internal URL in the app's viewer (`proc://bash-3`). */
+  | { kind: "read"; session: string; url: string }
   | { kind: "browser"; url: string }
   | { kind: "godot"; project: string };
 

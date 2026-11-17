@@ -54,6 +54,21 @@ export async function readDurableInputCards(
   return { entries, submissions };
 }
 
+/**
+ * The output of the card submitted under `requestId` in conversation `id`, once its input became
+ * an entry, and whether its producer dropped earlier output; null before that, or when the card
+ * has no output.
+ */
+export async function readDurableInputCardOutputByRequest(
+  harness: Harness,
+  id: ConversationId,
+  requestId: string,
+): Promise<{ output: string; truncated: boolean } | null> {
+  const receipt = await harness.commit((tx) => tx.submissionByRequest(id, requestId), context);
+  if (receipt?.type !== "input" || receipt.entry === undefined) return null;
+  return cardOutput(harness, id, String(receipt.entry));
+}
+
 /** Read the explicitly advertised slice, scoped to the session's visible ancestry.
  * No background-job naming/text heuristics; no raw model prompt returned.
  */
@@ -62,6 +77,15 @@ export async function readDurableInputCardOutput(
   id: ConversationId,
   entryId: string,
 ): Promise<{ output: string } | null> {
+  const card = await cardOutput(harness, id, entryId);
+  return card && { output: card.output };
+}
+
+async function cardOutput(
+  harness: Harness,
+  id: ConversationId,
+  entryId: string,
+): Promise<{ output: string; truncated: boolean } | null> {
   if (!/^[1-9]\d*$/.test(entryId) || !Number.isSafeInteger(Number(entryId))) return null;
   const conversation = await harness.conversation(id, context);
   if (!conversation) return null;
@@ -87,5 +111,8 @@ export async function readDurableInputCardOutput(
           .map((part) => part.text)
           .join("\n");
   if (output.offset + output.length > text.length) return null;
-  return { output: text.slice(output.offset, output.offset + output.length) };
+  return {
+    output: text.slice(output.offset, output.offset + output.length),
+    truncated: output.truncated === true,
+  };
 }

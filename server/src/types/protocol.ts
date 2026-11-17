@@ -632,6 +632,12 @@ export type ExtensionUISurfaceNode =
       selected?: boolean;
       disabled?: boolean;
       action?: ExtensionUISurfaceNodeAction;
+      /**
+       * A URL a tap opens in the app, in place of an `action`: an `oppi://` link, a web page, or an
+       * internal URL of the surface's session that the app shows (`proc://bash-3`). A client
+       * without links draws the node without the tap.
+       */
+      link?: string;
     })
   | (ExtensionUISurfaceNodeBase & {
       type: "stack";
@@ -639,6 +645,8 @@ export type ExtensionUISurfaceNode =
       spacing?: ExtensionUISurfaceNodeSpacing;
       disabled?: boolean;
       action?: ExtensionUISurfaceNodeAction;
+      /** As on `row`. */
+      link?: string;
     })
   | (ExtensionUISurfaceNodeBase & {
       type: "group";
@@ -706,7 +714,13 @@ export type ExtensionUISurfaceNode =
       series: Array<{ name?: string; values: number[] }>;
       truncated?: boolean;
     })
-  | (ExtensionUISurfaceNodeBase & { type: "code"; language?: string; text: string })
+  | (ExtensionUISurfaceNodeBase & {
+      type: "code";
+      language?: string;
+      text: string;
+      /** Opens with its lines wrapped; the reader can still turn wrapping off. */
+      wrap?: boolean;
+    })
   | (ExtensionUISurfaceNodeBase & { type: "divider" })
   | (ExtensionUISurfaceNodeBase & {
       type: "spacer";
@@ -1517,4 +1531,40 @@ export interface ModelInfo {
   authKind?: ModelAuthKind;
   thinkingLevels?: ThinkingLevel[];
   isDefault?: boolean;
+}
+
+// ── HTTP internal-URL view (GET /…/sessions/{id}/internal-url) ──
+
+/**
+ * One internal URL (`proc://bash-3`) as the app's viewer shows it: a status line, facts, the
+ * command, and terminal output. The scheme's plugin fills it (`SchemeViewer`); the app reads only
+ * these fields, so every scheme with a viewer takes the same screen.
+ */
+export interface InternalUrlView {
+  /** The URL the view is of, with the full id (`proc://bash-3` for `proc://bash`). */
+  url: string;
+  /** A short name for the bar. */
+  title: string;
+  status: {
+    /** The state in a word or two: `Running`, `Exit 65`, `Done`. */
+    text: string;
+    tone: "neutral" | "accent" | "success" | "warning" | "danger";
+    /** Still changing: the app reads it again while it shows it. */
+    live: boolean;
+    /** Epoch milliseconds; with `endedAt`, the app shows how long it took, else how long so far. */
+    startedAt?: number;
+    endedAt?: number;
+  };
+  /** Label and value rows under the status. A `time` (epoch ms) is shown in the viewer's clock. */
+  facts: Array<{ label: string; value?: string; time?: number }>;
+  /** The command that made the output, shown whole. */
+  command?: string;
+  /**
+   * The output from UTF-16 offset `start`, after the part the request said it holds (`from`) or,
+   * when that is not in the window the server keeps, the whole window. `start` counts output the
+   * producer dropped, so an appended read continues where the last one ended.
+   */
+  output: { start: number; text: string; truncated: boolean };
+  /** `POST …/internal-url/stop` stops what the URL names. */
+  stoppable: boolean;
 }

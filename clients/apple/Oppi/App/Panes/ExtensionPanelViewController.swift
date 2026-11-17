@@ -255,7 +255,8 @@ final class ExtensionPanelViewController: UIViewController {
                     liveSurface: liveComposable,
                     pendingAction: actions.pendingAction,
                     sendAction: actions.sendAction,
-                    server: actions.server
+                    server: actions.server,
+                    openURL: actions.onOpenURL
                 ),
                 showsHeader: false,
                 onLeave: {}

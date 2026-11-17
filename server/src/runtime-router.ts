@@ -1,4 +1,5 @@
 import type { AgentRuntimeTransport } from "./agent-runtime-transport.js";
+import { stopInternalUrl, viewInternalUrl } from "./durable-internal-urls.js";
 import type { PiTuiMirrorRuntime } from "./pi-tui-mirror-runtime.js";
 import type { SessionManager } from "./sessions.js";
 import type { Storage } from "./storage.js";
@@ -6,7 +7,7 @@ import type { LiveEntryRendererSet, TraceEvent } from "./trace.js";
 import type { CacheMissNoticeSource } from "./cache-miss.js";
 import type { TracePageOptions, TracePageResult } from "./trace-paging.js";
 import type { TraceOutlineResult } from "./trace-outline.js";
-import type { ServerMessage, Session } from "./types.js";
+import type { InternalUrlView, ServerMessage, Session } from "./types.js";
 
 /**
  * Concrete facade for the two runtime owners Oppi supports.
@@ -102,6 +103,20 @@ export class SessionRuntimes implements AgentRuntimeTransport {
     entryId: string,
   ): Promise<{ output: string } | null> {
     return this.oppi.getServerDurableInputCardOutput(sessionId, entryId);
+  }
+
+  /** The app's view of internal URL `url` (`viewInternalUrl`); null with no durable conversation. */
+  viewInternalUrl(sessionId: string, url: string, from?: number): Promise<InternalUrlView | null> {
+    return this.oppi.withDurableConversation(sessionId, (harness, id) =>
+      viewInternalUrl(url, harness, id, from),
+    );
+  }
+
+  /** Stops what `url` names (`stopInternalUrl`); null with no durable conversation. */
+  stopInternalUrl(sessionId: string, url: string): Promise<string | undefined | null> {
+    return this.oppi.withDurableConversation(sessionId, (harness, id) =>
+      stopInternalUrl(url, harness, id),
+    );
   }
 
   getServerDurableTracePage(

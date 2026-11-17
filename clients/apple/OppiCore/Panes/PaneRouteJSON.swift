@@ -32,6 +32,7 @@ extension PaneRoute: Codable {
         case "git": self = .git(workspace: try string(.workspace), worktree: try optional(.worktree))
         case "commit": self = .commit(workspace: try string(.workspace), sha: try string(.sha))
         case "panel": self = .panel(session: try string(.session), id: try string(.id))
+        case "read": self = .read(session: try string(.session), url: try string(.url))
         case "browser":
             guard let url = URL(string: try string(.url)) else {
                 throw DecodingError.dataCorruptedError(forKey: .url, in: c, debugDescription: "not a URL")
@@ -90,6 +91,10 @@ extension PaneRoute: Codable {
             try c.encode("panel", forKey: .kind)
             try c.encode(session, forKey: .session)
             try c.encode(id, forKey: .id)
+        case .read(let session, let url):
+            try c.encode("read", forKey: .kind)
+            try c.encode(session, forKey: .session)
+            try c.encode(url, forKey: .url)
         case .browser(let url):
             try c.encode("browser", forKey: .kind)
             try c.encode(url.absoluteString, forKey: .url)
