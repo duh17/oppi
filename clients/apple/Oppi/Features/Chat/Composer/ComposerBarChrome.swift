@@ -617,260 +617,6 @@ extension UIFont {
     }
 }
 
-/// Horizontal strip of pending image tiles and file pills.
-final class ComposerAttachmentStripView: UIView {
-    var onAnnotate: ((PendingAttachment) -> Void)?
-    var onRemove: ((String) -> Void)?
-
-    private let scrollView = UIScrollView()
-    private let stack = UIStackView()
-    private var colors = ComposerThemeColors.placeholder
-    private var allowsMutation = true
-    private var uploads: ComposerAttachmentUploads?
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        scrollView.showsHorizontalScrollIndicator = false
-        scrollView.alwaysBounceHorizontal = false
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        stack.axis = .horizontal
-        stack.alignment = .center
-        stack.spacing = 8
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(scrollView)
-        scrollView.addSubview(stack)
-        NSLayoutConstraint.activate([
-            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: topAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            scrollView.heightAnchor.constraint(equalToConstant: ComposerShared.attachmentTileSize),
-
-            stack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-            stack.heightAnchor.constraint(equalToConstant: ComposerShared.attachmentTileSize),
-        ])
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    func apply(
-        attachments: [PendingAttachment],
-        colors: ComposerThemeColors,
-        allowsMutation: Bool,
-        uploads: ComposerAttachmentUploads? = nil
-    ) {
-        self.colors = colors
-        self.allowsMutation = allowsMutation
-        self.uploads = uploads
-        // Upload progress redraws the strip every percent. Rebuilding the tiles each
-        // time would swap a Cancel button out from under a finger mid-tap, so a
-        // change that keeps every tile's controls updates the tiles in place.
-        let structure = attachments.map(tileStructure) + ["mutable:\(allowsMutation)", "fg:\(colors.fg)"]
-        if structure == builtStructure {
-            for attachment in attachments {
-                if let pill = pillViews[attachment.id] {
-                    configure(pill, name: attachment.displayName, id: attachment.id)
-                } else if let overlay = overlayViews[attachment.id], let display = uploadDisplay(for: attachment.id) {
-                    overlay.apply(display, colors: colors)
-                }
-            }
-        } else {
-            builtStructure = structure
-            pillViews = [:]
-            overlayViews = [:]
-            tileViews = [:]
-            stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-            for attachment in attachments {
-                let tile = makeTile(for: attachment)
-                tileViews[attachment.id] = tile
-                stack.addArrangedSubview(tile)
-            }
-            isHidden = attachments.isEmpty
-        }
-        revealUploadingTile()
-    }
-
-    private var tileViews: [String: UIView] = [:]
-    private var revealedUploadID: String?
-
-    /// A narrow strip scrolls; when the next file starts uploading, bring it into view.
-    private func revealUploadingTile() {
-        let current = uploads?.batch.current?.id
-        guard current != revealedUploadID else { return }
-        revealedUploadID = current
-        guard let current, let tile = tileViews[current] else { return }
-        layoutIfNeeded()
-        scrollView.scrollRectToVisible(tile.frame.insetBy(dx: -8, dy: 0), animated: true)
-    }
-
-    private var builtStructure: [String] = []
-    private var pillViews: [String: ComposerAttachmentFilePillView] = [:]
-    private var overlayViews: [String: ComposerAttachmentUploadOverlay] = [:]
-
-    /// Which controls a tile has; progress alone does not change it.
-    private func tileStructure(_ attachment: PendingAttachment) -> String {
-        let kind = if attachment.source == .image, let thumbnail = attachment.thumbnail {
-            "image:\(ObjectIdentifier(thumbnail).hashValue)"
-        } else {
-            "file"
-        }
-        let corner: String = switch cornerAction(for: attachment.id) {
-        case .cancel: "cancel"
-        case .remove: "remove"
-        case nil: "none"
-        }
-        let display = uploadDisplay(for: attachment.id)
-        return "\(attachment.id)|\(kind)|\(corner)|retry:\(retryAction(for: attachment.id) != nil)"
-            + "|upload:\(display != nil)|bar:\(display?.fraction != nil)"
-    }
-
-    private func configure(_ pill: ComposerAttachmentFilePillView, name: String, id: String) {
-        pill.apply(
-            name: name,
-            id: id,
-            colors: colors,
-            corner: cornerAction(for: id),
-            upload: uploadDisplay(for: id),
-            onRetry: retryAction(for: id)
-        )
-    }
-
-    private func makeTile(for attachment: PendingAttachment) -> UIView {
-        if attachment.source == .image, let thumbnail = attachment.thumbnail {
-            return makeImageTile(attachment: attachment, thumbnail: thumbnail)
-        }
-        return makeFilePill(name: attachment.displayName, id: attachment.id)
-    }
-
-    /// What an attachment's corner button does: Cancel while its upload runs (even
-    /// mid-send), Remove otherwise when the draft can change.
-    private func cornerAction(for id: String) -> ComposerAttachmentFilePillView.CornerAction? {
-        if let uploads, let item = uploads.batch.item(id), item.isActive {
-            let onCancel = uploads.onCancel
-            return .cancel(onCancel)
-        }
-        guard allowsMutation else { return nil }
-        return .remove { [weak self] in self?.onRemove?(id) }
-    }
-
-    /// Retry on a file whose upload failed or was cancelled, once the send has stopped.
-    private func retryAction(for id: String) -> (() -> Void)? {
-        guard allowsMutation, let uploads, let item = uploads.batch.item(id) else { return nil }
-        switch item.state {
-        case .failed, .cancelled: return uploads.onRetry
-        default: return nil
-        }
-    }
-
-    private func uploadDisplay(for id: String) -> ComposerAttachmentFilePillView.UploadDisplay? {
-        guard let batch = uploads?.batch, let item = batch.item(id), let badge = batch.badge(for: id) else { return nil }
-        let isProblem: Bool
-        switch item.state {
-        case .failed, .cancelled: isProblem = true
-        default: isProblem = false
-        }
-        return .init(badge: badge, fraction: item.isActive ? item.fraction : nil, isProblem: isProblem)
-    }
-
-    private func makeImageTile(attachment: PendingAttachment, thumbnail: UIImage) -> UIView {
-        let tile = UIView()
-        tile.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            tile.widthAnchor.constraint(equalToConstant: ComposerShared.attachmentTileSize),
-            tile.heightAnchor.constraint(equalToConstant: ComposerShared.attachmentTileSize),
-        ])
-        tile.accessibilityIdentifier = "chat.attachment.image.\(attachment.id)"
-
-        let imageButton = UIButton(type: .custom)
-        imageButton.setImage(thumbnail, for: .normal)
-        imageButton.imageView?.contentMode = .scaleAspectFill
-        imageButton.clipsToBounds = true
-        imageButton.layer.cornerRadius = 8
-        imageButton.layer.cornerCurve = .continuous
-        imageButton.layer.borderWidth = 1
-        imageButton.layer.borderColor = colors.comment.withAlphaComponent(0.3).cgColor
-        imageButton.isEnabled = allowsMutation
-        imageButton.accessibilityLabel = "Annotate photo"
-        imageButton.accessibilityIdentifier = "chat.attachment.image.annotate.\(attachment.id)"
-        imageButton.addAction(UIAction { [weak self] _ in
-            self?.onAnnotate?(attachment)
-        }, for: .touchUpInside)
-        imageButton.translatesAutoresizingMaskIntoConstraints = false
-        tile.addSubview(imageButton)
-        NSLayoutConstraint.activate([
-            imageButton.leadingAnchor.constraint(equalTo: tile.leadingAnchor),
-            imageButton.bottomAnchor.constraint(equalTo: tile.bottomAnchor),
-            imageButton.widthAnchor.constraint(equalToConstant: ComposerShared.attachmentThumbnailSize),
-            imageButton.heightAnchor.constraint(equalToConstant: ComposerShared.attachmentThumbnailSize),
-        ])
-
-        if let display = uploadDisplay(for: attachment.id) {
-            let overlay = ComposerAttachmentUploadOverlay()
-            overlay.apply(display, colors: colors)
-            overlayViews[attachment.id] = overlay
-            overlay.accessibilityIdentifier = "chat.attachment.upload.\(attachment.id)"
-            overlay.translatesAutoresizingMaskIntoConstraints = false
-            imageButton.addSubview(overlay)
-            NSLayoutConstraint.activate([
-                overlay.leadingAnchor.constraint(equalTo: imageButton.leadingAnchor),
-                overlay.trailingAnchor.constraint(equalTo: imageButton.trailingAnchor),
-                overlay.bottomAnchor.constraint(equalTo: imageButton.bottomAnchor),
-            ])
-        }
-        if let onRetry = retryAction(for: attachment.id) {
-            let retry = UIButton(type: .system)
-            let config = UIImage.SymbolConfiguration(pointSize: 20, weight: .semibold)
-                .applying(UIImage.SymbolConfiguration(paletteColors: [colors.fg, colors.scrim]))
-            retry.setImage(UIImage(systemName: "arrow.clockwise.circle.fill", withConfiguration: config), for: .normal)
-            retry.accessibilityLabel = "Retry upload"
-            retry.accessibilityIdentifier = "chat.attachment.retry.\(attachment.id)"
-            retry.addAction(UIAction { _ in onRetry() }, for: .touchUpInside)
-            retry.translatesAutoresizingMaskIntoConstraints = false
-            imageButton.addSubview(retry)
-            NSLayoutConstraint.activate([
-                retry.centerXAnchor.constraint(equalTo: imageButton.centerXAnchor),
-                retry.centerYAnchor.constraint(equalTo: imageButton.centerYAnchor, constant: -6),
-            ])
-        }
-
-        if let action = cornerAction(for: attachment.id) {
-            let remove = UIButton(type: .system)
-            // Palette rendering: glyph on scrim, matching SwiftUI `.palette`.
-            remove.setImage(Self.removeImage(fg: colors.fg, scrim: colors.scrim), for: .normal)
-            remove.accessibilityLabel = action.accessibilityLabel(for: "photo")
-            remove.accessibilityIdentifier = action.identifier(for: attachment.id)
-            remove.addAction(UIAction { _ in action.perform() }, for: .touchUpInside)
-            remove.translatesAutoresizingMaskIntoConstraints = false
-            tile.addSubview(remove)
-            NSLayoutConstraint.activate([
-                remove.widthAnchor.constraint(equalToConstant: ComposerShared.attachmentRemoveHitSize),
-                remove.heightAnchor.constraint(equalToConstant: ComposerShared.attachmentRemoveHitSize),
-                remove.trailingAnchor.constraint(equalTo: tile.trailingAnchor, constant: 8),
-                remove.topAnchor.constraint(equalTo: tile.topAnchor, constant: -8),
-            ])
-        }
-        return tile
-    }
-
-    private func makeFilePill(name: String, id: String) -> UIView {
-        let pill = ComposerAttachmentFilePillView()
-        configure(pill, name: name, id: id)
-        pillViews[id] = pill
-        pill.accessibilityIdentifier = "chat.attachment.file.\(id)"
-        return pill
-    }
-
-    private static func removeImage(fg: UIColor, scrim: UIColor) -> UIImage {
-        let config = UIImage.SymbolConfiguration(pointSize: 17, weight: .regular)
-            .applying(UIImage.SymbolConfiguration(paletteColors: [fg, scrim]))
-        return UIImage(systemName: "xmark.circle.fill", withConfiguration: config) ?? UIImage()
-    }
-}
-
 final class ComposerFilePillStripView: UIView {
     var onRemove: ((String) -> Void)?
 
@@ -994,186 +740,6 @@ final class ComposerRepoFilePillView: UIView {
         removeButton.addAction(UIAction { _ in onRemove() }, for: .touchUpInside)
         backgroundColor = accent.withAlphaComponent(0.10)
         layer.borderColor = accent.withAlphaComponent(0.18).cgColor
-    }
-}
-
-final class ComposerAttachmentFilePillView: UIView {
-    /// The pill's trailing X: Cancel while the file uploads, Remove otherwise.
-    enum CornerAction {
-        case cancel(() -> Void)
-        case remove(() -> Void)
-
-        func perform() {
-            switch self {
-            case .cancel(let action), .remove(let action): action()
-            }
-        }
-
-        func accessibilityLabel(for noun: String) -> String {
-            switch self {
-            case .cancel: return "Cancel upload"
-            case .remove: return "Remove \(noun)"
-            }
-        }
-
-        func identifier(for id: String) -> String {
-            switch self {
-            case .cancel: return "chat.attachment.cancel.\(id)"
-            case .remove: return "chat.attachment.remove.\(id)"
-            }
-        }
-    }
-
-    /// The upload state shown on an attachment: a short badge ("48%", "Paused",
-    /// "Failed"), and the file's progress while it is in flight.
-    struct UploadDisplay: Equatable {
-        let badge: String
-        let fraction: Double?
-        let isProblem: Bool
-    }
-
-    private let iconView = UIImageView()
-    private let nameLabel = UILabel()
-    private let badgeLabel = UILabel()
-    private let retryButton = UIButton(type: .system)
-    private let removeButton = UIButton(type: .system)
-    private let bar = UIProgressView(progressViewStyle: .bar)
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        nameLabel.font = UIFont.monospacedSystemFont(
-            ofSize: UIFont.preferredFont(forTextStyle: .caption2).pointSize,
-            weight: .regular
-        )
-        nameLabel.lineBreakMode = .byTruncatingMiddle
-        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        badgeLabel.font = UIFont.monospacedDigitSystemFont(
-            ofSize: UIFont.preferredFont(forTextStyle: .caption2).pointSize,
-            weight: .semibold
-        )
-        badgeLabel.setContentHuggingPriority(.required, for: .horizontal)
-        badgeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        iconView.contentMode = .scaleAspectFit
-        let xConfig = UIImage.SymbolConfiguration(pointSize: 9, weight: .bold)
-        removeButton.setImage(UIImage(systemName: "xmark", withConfiguration: xConfig), for: .normal)
-        retryButton.setImage(UIImage(systemName: "arrow.clockwise", withConfiguration: xConfig), for: .normal)
-        retryButton.accessibilityLabel = "Retry upload"
-        bar.layer.cornerRadius = 1
-        bar.clipsToBounds = true
-        bar.translatesAutoresizingMaskIntoConstraints = false
-        let stack = UIStackView(arrangedSubviews: [iconView, nameLabel, badgeLabel, retryButton, removeButton])
-        stack.axis = .horizontal
-        stack.alignment = .center
-        stack.spacing = 4
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
-        addSubview(bar)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
-            iconView.widthAnchor.constraint(equalToConstant: 12),
-            iconView.heightAnchor.constraint(equalToConstant: 12),
-            nameLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 220),
-            retryButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 22),
-            retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 22),
-            removeButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 22),
-            removeButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 22),
-            bar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            bar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            bar.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
-            bar.heightAnchor.constraint(equalToConstant: 2),
-        ])
-        layer.cornerRadius = 11
-        layer.cornerCurve = .continuous
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    func apply(
-        name: String,
-        id: String,
-        colors: ComposerThemeColors,
-        corner: CornerAction?,
-        upload: UploadDisplay?,
-        onRetry: (() -> Void)?
-    ) {
-        nameLabel.text = name
-        nameLabel.textColor = colors.fg
-        iconView.image = FileIcon.forPath(name).uiImage(pointSize: 9, weight: .medium)
-
-        badgeLabel.text = upload?.badge
-        badgeLabel.textColor = upload?.isProblem == true ? colors.red : colors.comment
-        badgeLabel.isHidden = upload == nil
-        badgeLabel.accessibilityIdentifier = "chat.attachment.upload.\(id)"
-        bar.isHidden = upload?.fraction == nil
-        bar.progress = Float(upload?.fraction ?? 0)
-        bar.progressTintColor = colors.blue
-        bar.trackTintColor = colors.comment.withAlphaComponent(0.2)
-
-        retryButton.tintColor = colors.fg
-        retryButton.accessibilityIdentifier = "chat.attachment.retry.\(id)"
-        // A fixed action identifier: a refresh replaces the action on the same
-        // button instead of stacking a second one.
-        let retryID = UIAction.Identifier("chat.attachment.retry")
-        retryButton.isHidden = onRetry == nil
-        retryButton.removeAction(identifiedBy: retryID, for: .touchUpInside)
-        if let onRetry {
-            retryButton.addAction(UIAction(identifier: retryID) { _ in onRetry() }, for: .touchUpInside)
-        }
-
-        removeButton.tintColor = colors.comment
-        let cornerID = UIAction.Identifier("chat.attachment.corner")
-        removeButton.isHidden = corner == nil
-        removeButton.accessibilityLabel = corner?.accessibilityLabel(for: "file")
-        removeButton.accessibilityIdentifier = corner?.identifier(for: id)
-        removeButton.removeAction(identifiedBy: cornerID, for: .touchUpInside)
-        if let corner {
-            removeButton.addAction(UIAction(identifier: cornerID) { _ in corner.perform() }, for: .touchUpInside)
-        }
-        backgroundColor = upload?.isProblem == true
-            ? colors.red.withAlphaComponent(0.12)
-            : colors.comment.withAlphaComponent(0.1)
-    }
-}
-
-/// The upload state along the bottom of a photo tile: badge and progress.
-final class ComposerAttachmentUploadOverlay: UIView {
-    private let badgeLabel = UILabel()
-    private let bar = UIProgressView(progressViewStyle: .bar)
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        isUserInteractionEnabled = false
-        badgeLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
-        badgeLabel.textAlignment = .center
-        let stack = UIStackView(arrangedSubviews: [badgeLabel, bar])
-        stack.axis = .vertical
-        stack.spacing = 2
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
-            bar.heightAnchor.constraint(equalToConstant: 2),
-        ])
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    func apply(_ display: ComposerAttachmentFilePillView.UploadDisplay, colors: ComposerThemeColors) {
-        backgroundColor = colors.scrim.withAlphaComponent(0.7)
-        badgeLabel.text = display.badge
-        badgeLabel.textColor = display.isProblem ? colors.red : colors.fg
-        bar.isHidden = display.fraction == nil
-        bar.progress = Float(display.fraction ?? 0)
-        bar.progressTintColor = colors.blue
-        bar.trackTintColor = colors.comment.withAlphaComponent(0.3)
     }
 }
 
@@ -1305,8 +871,10 @@ final class ComposerSendProgressView: UIView {
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let checkView = UIImageView()
     private let label = UILabel()
-    /// The batch's upload progress while a send uploads its attachments.
-    private let bar = UIProgressView(progressViewStyle: .bar)
+    /// The batch's share sent while a send uploads its attachments, in the
+    /// spinner's place: each attachment shows its own ring, so the batch needs no
+    /// full-width bar, only its words.
+    private let ring = ProgressRingGlyph(lineWidth: 2)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -1318,17 +886,11 @@ final class ComposerSendProgressView: UIView {
         )
         label.lineBreakMode = .byTruncatingTail
         label.accessibilityIdentifier = "chat.sendProgress"
-        bar.accessibilityIdentifier = "chat.sendProgress.bar"
-        bar.layer.cornerRadius = 1.5
-        bar.clipsToBounds = true
-        bar.isHidden = true
-        let row = UIStackView(arrangedSubviews: [spinner, checkView, label])
-        row.axis = .horizontal
-        row.alignment = .center
-        row.spacing = 6
-        let stack = UIStackView(arrangedSubviews: [row, bar])
-        stack.axis = .vertical
-        stack.spacing = 4
+        ring.isHidden = true
+        let stack = UIStackView(arrangedSubviews: [spinner, checkView, ring, label])
+        stack.axis = .horizontal
+        stack.alignment = .center
+        stack.spacing = 6
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([
@@ -1338,14 +900,15 @@ final class ComposerSendProgressView: UIView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
             checkView.widthAnchor.constraint(equalToConstant: 12),
             checkView.heightAnchor.constraint(equalToConstant: 12),
-            bar.heightAnchor.constraint(equalToConstant: 3),
+            ring.widthAnchor.constraint(equalToConstant: 12),
+            ring.heightAnchor.constraint(equalToConstant: 12),
         ])
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    /// `fraction` shows the upload bar; `isPaused` swaps the spinner for a pause glyph.
+    /// `fraction` swaps the spinner for the batch's ring; `isPaused` for a pause glyph.
     func apply(
         text: String?,
         isSending: Bool,
@@ -1362,18 +925,19 @@ final class ComposerSendProgressView: UIView {
         label.text = text
         label.textColor = colors.comment
         spinner.color = colors.comment
-        bar.setHiddenIfChanged(fraction == nil)
-        bar.progress = Float(fraction ?? 0)
-        bar.progressTintColor = colors.blue
-        bar.trackTintColor = colors.comment.withAlphaComponent(0.2)
-        bar.accessibilityValue = fraction.map { "\(Int($0 * 100))%" }
         let config = UIImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+        ring.setHiddenIfChanged(isPaused || fraction == nil)
         if isPaused {
             spinner.stopAnimating()
             spinner.setHiddenIfChanged(true)
             checkView.setHiddenIfChanged(false)
             checkView.image = UIImage(systemName: "pause.circle", withConfiguration: config)
             checkView.tintColor = colors.comment
+        } else if let fraction {
+            spinner.stopAnimating()
+            spinner.setHiddenIfChanged(true)
+            checkView.setHiddenIfChanged(true)
+            ring.apply(track: colors.comment.withAlphaComponent(0.3), arc: colors.blue, fraction: fraction)
         } else if isSending {
             spinner.startAnimating()
             checkView.setHiddenIfChanged(true)

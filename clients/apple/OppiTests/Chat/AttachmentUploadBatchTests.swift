@@ -38,7 +38,7 @@ struct AttachmentUploadBatchTests {
         #expect(uploads.item("a")?.state == .uploading)
         #expect(uploads.badge(for: "a") == "50%")
         #expect(uploads.fraction == 0.4)
-        #expect(uploads.statusLine == "Uploading 1 of 2 \u{00B7} 400 MB of 1 GB (40%) \u{00B7} one.mp4")
+        #expect(uploads.statusLine == "Uploading 1 of 2 \u{00B7} 400 MB of 1 GB (40%)")
     }
 
     @Test func aFinishedFileCountsInFullAndTheNextOneTakesTheLine() {
@@ -49,7 +49,7 @@ struct AttachmentUploadBatchTests {
         #expect(uploads.badge(for: "a") == "Uploaded")
         #expect(uploads.fraction == 0.9)
         #expect(uploads.current?.id == "b")
-        #expect(uploads.statusLine == "Uploading 2 of 2 \u{00B7} 900 MB of 1 GB (90%) \u{00B7} two.mp4")
+        #expect(uploads.statusLine == "Uploading 2 of 2 \u{00B7} 900 MB of 1 GB (90%)")
     }
 
     @Test func aByteCountLandingAfterTheOutcomeDoesNotUndoIt() {

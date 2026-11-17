@@ -25,6 +25,11 @@ struct ComposerAttachmentStripUploadTests {
         return nil
     }
 
+    private func element(_ identifier: String, in view: UIView) -> UIView? {
+        if view.accessibilityIdentifier == identifier { return view }
+        return view.subviews.lazy.compactMap { element(identifier, in: $0) }.first
+    }
+
     /// Progress redraws the strip every percent; a finger on Cancel must keep its button.
     @Test func progressAloneKeepsTheSameCancelButton() {
         var uploads = AttachmentUploadBatch([(id: "a", name: "a.mp4", totalBytes: 1_000)])
@@ -41,6 +46,8 @@ struct ComposerAttachmentStripUploadTests {
         strip.apply(attachments: [video("a")], colors: .placeholder, allowsMutation: false, uploads: actions(uploads))
 
         let after = button("chat.attachment.cancel.a", in: strip)
+        // The chip shows a ring, not words; its percentage is spoken through the name.
+        #expect(element("chat.attachment.upload.a", in: strip)?.accessibilityValue == "50%")
         #expect(before != nil)
         #expect(after === before)
         after?.sendActions(for: .touchUpInside)
@@ -73,6 +80,7 @@ struct ComposerAttachmentStripUploadTests {
         uploads.apply(AttachmentUploadProgress(attachmentId: "a", name: "a.mp4", sentBytes: 400, totalBytes: 1_000, phase: .failed("the connection dropped")))
         uploads.fail("the connection dropped")
         strip.apply(attachments: [video("a"), video("b")], colors: .placeholder, allowsMutation: true, uploads: actions(uploads))
+        #expect(element("chat.attachment.upload.a", in: strip)?.accessibilityValue == "Failed")
         button("chat.attachment.retry.a", in: strip)?.sendActions(for: .touchUpInside)
         button("chat.attachment.remove.a", in: strip)?.sendActions(for: .touchUpInside)
         #expect(retried == 1)

@@ -974,7 +974,7 @@ final class BlocksDisclosureControl: UIControl {
 /// row or inside a pill, with the node's words beside it the way the bar paints its label. A value
 /// draws its arc; no value draws a dashed arc where the bar shows a spinner.
 final class BlocksProgressRingView: UIView {
-    private let glyph = BlocksProgressRingGlyph()
+    private let glyph = ProgressRingGlyph()
     private let label = ExtensionNativeBlockStyle.label(.caption1)
     private let row = UIStackView()
 
@@ -1039,58 +1039,6 @@ final class BlocksProgressRingView: UIView {
 
     override var intrinsicContentSize: CGSize {
         row.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
-    }
-}
-
-/// The ring itself: a track and an arc, sized by its container.
-private final class BlocksProgressRingGlyph: UIView {
-    private let track = CAShapeLayer()
-    private let arc = CAShapeLayer()
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        for shape in [track, arc] as [CAShapeLayer] {
-            shape.fillColor = UIColor.clear.cgColor
-            shape.lineWidth = 2.5
-            shape.lineCap = .round
-            layer.addSublayer(shape)
-        }
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    func apply(track trackColor: UIColor, arc arcColor: UIColor, fraction: Double?) {
-        track.strokeColor = trackColor.cgColor
-        arc.strokeColor = arcColor.cgColor
-        if let fraction {
-            arc.lineDashPattern = nil
-            arc.strokeEnd = CGFloat(fraction)
-        } else {
-            arc.lineDashPattern = [2, 3]
-            arc.strokeEnd = 1
-        }
-        setNeedsLayout()
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        let side = min(bounds.width, bounds.height)
-        guard side > 0 else { return }
-        let path = UIBezierPath(
-            arcCenter: CGPoint(x: bounds.midX, y: bounds.midY),
-            radius: (side - arc.lineWidth) / 2,
-            startAngle: -.pi / 2,
-            endAngle: .pi * 1.5,
-            clockwise: true
-        )
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        for shape in [track, arc] as [CAShapeLayer] {
-            shape.path = path.cgPath
-            shape.frame = bounds
-        }
-        CATransaction.commit()
     }
 }
 

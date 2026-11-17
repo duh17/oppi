@@ -141,7 +141,7 @@ struct AttachmentUploadBatch: Equatable {
         items = items.filter { ids.contains($0.key) }
     }
 
-    /// The batch line under the attachments while a send uploads; nil when idle.
+    /// The batch line above the composer while a send uploads; nil when idle.
     var statusLine: String? {
         guard isActive else { return nil }
         if isPaused { return "Paused \u{2014} keep Oppi open to finish" }
@@ -154,9 +154,9 @@ struct AttachmentUploadBatch: Equatable {
             let all = order.compactMap { items[$0] }
             let total = all.reduce(Int64(0)) { $0 + $1.totalBytes }
             let sent = Int64((Double(total) * fraction).rounded())
-            // The numbers first: a narrow screen cuts the line's end, the file's name.
-            return "Uploading \(position)\(Self.bytes(sent)) of \(Self.bytes(total)) "
-                + "(\(Int(fraction * 100))%) \u{00B7} \(current.name)"
+            // No file name: the file's own ring says which one is moving, and the
+            // line stays short enough for an iPhone.
+            return "Uploading \(position)\(Self.bytes(sent)) of \(Self.bytes(total)) (\(Int(fraction * 100))%)"
         }
     }
 
