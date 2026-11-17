@@ -355,6 +355,10 @@ extension PaneHostController {
             let root = AppRootEnvironment.near(self)
             controller.interfaceStyle = { root?.themeStore.userInterfaceStyle ?? .unspecified }
             controller.view.backgroundColor = root?.themeStore.backgroundColor ?? .systemBackground
+            // A pane's first screen that finishes (Back on a terminal it
+            // opened) closes the pane, as Close Pane would.
+            let id = leaf.id
+            controller.onCloseRoot = { [weak self] in self?.closePane(id) }
             controller.view.accessibilityIdentifier = "pane.leaf.\(leaf.id.raw)"
             controller.view.focusGroupIdentifier = "pane.\(leaf.id.raw)"
             addChild(controller)

@@ -477,7 +477,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
                 requestedFinish = false
             } else if isOnScreen, !isMovingFromParent, !requestedFinish {
                 requestedFinish = true
-                Router.finish(self)
+                goBack()
             }
         }
 
@@ -1352,8 +1352,18 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         updateBottomRows()
     }
 
+    /// Leaves this terminal. When the screen under it is the folder screen
+    /// that only connected it, that screen leaves with it, so Back never stops
+    /// on its connecting page: it returns to the chat, or closes the pane the
+    /// terminal opened in (`SSHTerminalFolderViewController.leave`).
     private func goBack() {
-        Router.finish(self)
+        if let stack = navigationController?.viewControllers,
+           let index = stack.firstIndex(of: self), index > 0,
+           let opener = stack[index - 1] as? SSHTerminalFolderViewController {
+            opener.leave()
+        } else {
+            Router.finish(self)
+        }
     }
 
     /// VoiceOver's two-finger scrub goes back, as it would with a bar.

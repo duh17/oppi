@@ -1,5 +1,8 @@
 import Foundation
 import Observation
+import os
+
+private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "SSHTerminal")
 
 /// Trust, password, and dial path shared by the host list and the setup form.
 /// The view that starts Connect presents the password sheet and trust UI.
@@ -170,6 +173,7 @@ final class SSHTerminalConnectSession {
             return
         }
         begin(value, savingHostOnly: false)
+        logger.notice("Terminal connecting; reconnect: \(reconnecting, privacy: .public)")
         let attempt = runID
         // What this attempt opens, as asked now: a screen may set these for
         // its next connect while this one still waits on the save below.

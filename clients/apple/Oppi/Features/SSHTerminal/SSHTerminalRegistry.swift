@@ -1,6 +1,10 @@
 import Foundation
 import Observation
+import os
 import UIKit
+
+/// When a terminal opens and ends, and why: no host, user, or folder.
+private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "SSHTerminal")
 
 /// Owns every live SSH terminal for the app, so a terminal outlives the screen
 /// that opened it.
@@ -201,7 +205,15 @@ final class SSHTerminalRegistry {
             profile: profile, folder: folder, folderCommand: folderCommand, rexPane: rexPane,
             channel: channel, tasks: [consumer, watcher]
         )
+        logger.notice("Terminal opened; \(self.terminals.count, privacy: .public) live")
         return true
+    }
+
+    /// Ends the terminal on `channel`, whichever identity holds it: the screen
+    /// that showed it is gone and nothing returns to it.
+    func close(_ channel: SSHTerminalChannel, reason: String) {
+        guard let identity = terminals.first(where: { $0.value.channel === channel })?.key else { return }
+        close(identity, reason: reason)
     }
 
     /// Ends one terminal: a host's plain one (`folder` nil) or one folder's.
@@ -213,6 +225,7 @@ final class SSHTerminalRegistry {
         guard let terminal = terminals.removeValue(forKey: identity) else { return }
         terminal.tasks.forEach { $0.cancel() }
         terminal.channel.close(reason: reason)
+        logger.notice("Terminal closed: \(reason, privacy: .public); \(self.terminals.count, privacy: .public) live")
     }
 
     /// Ends every terminal the registry holds, including one whose channel has
@@ -262,6 +275,7 @@ final class SSHTerminalRegistry {
         guard let identity = terminals.first(where: { $0.value.channel === channel })?.key,
               let terminal = terminals.removeValue(forKey: identity) else { return }
         terminal.tasks.forEach { $0.cancel() }
+        logger.notice("Terminal ended: \(channel.reason); \(self.terminals.count, privacy: .public) live")
     }
 
     // MARK: - Background grace

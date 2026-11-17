@@ -159,8 +159,12 @@ protocol RouterModalContainer: UIViewController {
 /// It follows the app theme's color scheme, so the bar and the sheet chrome
 /// match the hosted content in light, dark, and system themes.
 final class RouterNavigationController: UINavigationController, RouterModalContainer,
-    UINavigationControllerDelegate {
+    UINavigationControllerDelegate, RouterRootClosing {
     var onDismissed: (() -> Void)?
+    /// How the root screen closes when this stack is not presented: a split
+    /// pane's stack closes its pane. Nil for a stack that never shows a root
+    /// on its own (a modal, which `Router.finish` dismisses instead).
+    var onCloseRoot: (() -> Void)?
     var interfaceStyle: (() -> UIUserInterfaceStyle)? {
         didSet { setNeedsUpdateProperties() }
     }
@@ -186,6 +190,14 @@ final class RouterNavigationController: UINavigationController, RouterModalConta
     ) {
         // A page pushed inside a pane's companion hears the leaf's visibility.
         PaneHostController.containing(self)?.leafDidShowScreen()
+    }
+
+    func closeRoot() {
+        guard let onCloseRoot else {
+            assertionFailure("Router.finish on the root of a stack that cannot close it")
+            return
+        }
+        onCloseRoot()
     }
 
     override func updateProperties() {
@@ -376,7 +388,8 @@ enum Router {
     /// pops it (and anything above it) when it was pushed, otherwise dismisses
     /// the modal it is the root of, including a presented navigation
     /// controller's root, where `dismiss()` does nothing. The root of a shell
-    /// stack closes the way its stack defines (`RouterRootClosing`).
+    /// stack or a split pane's stack closes the way its stack defines
+    /// (`RouterRootClosing`): the shell shows its list, a pane closes.
     static func finish(_ screen: UIViewController) {
         if pop(screen) { return }
         let container = screen.navigationController ?? screen

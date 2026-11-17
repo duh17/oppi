@@ -76,6 +76,57 @@ struct TerminalPaneTests {
         await rig.stop()
     }
 
+    /// Back from a folder terminal skips its connecting page. In the pane the
+    /// chat's Terminal opened, it closes that pane and ends the terminal, so
+    /// Terminal again dials a fresh one; pushed over the chat (a compact
+    /// window), it returns to the chat and keeps the terminal to return to.
+    @Test(arguments: [true, false])
+    func backFromAFolderTerminal(inPane: Bool) async throws {
+        let profile = SSHTerminalProfile(host: "mac-studio.invalid", username: "alex").normalized()
+        let target = SSHTerminalFolderTarget(serverHost: profile.host, folder: "/Users/alex/oppi")
+        let channel = try SSHTerminalChannel()
+        channel.opened(QuietConnection())
+        // Live already, so the folder screen shows it without dialing.
+        SSHTerminalRegistry.shared.adopt(channel, profile: profile, folder: target.folder, queue: SSHTerminalEventQueue())
+        let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
+        defer {
+            host.hide()
+            SSHTerminalRegistry.shared.close(channel, reason: "done")
+        }
+        host.scenePanes.preferences = try #require(UserDefaults(suiteName: "TerminalPaneTests-\(UUID().uuidString)"))
+        let chat = try #require(host.screen.navigationController)
+        let folder = SSHTerminalFolderViewController(profile: profile, target: target)
+        if inPane {
+            let entry = PaneStackEntry(serverId: "s", route: .local(PaneLocalScreen.terminal(workspaceId: "w").token))
+            var opened = false
+            host.act {
+                opened = host.panes.openBeside(
+                    PaneOpenContent(entry: entry), kind: .terminal, from: host.scenePanes.routedLeafID, screen: folder
+                )
+            }
+            try #require(opened, "the terminal opened in a pane beside the chat")
+        } else {
+            host.act { chat.pushViewController(folder, animated: false) }
+        }
+        try #require(await waitForMainActorCondition(timeout: .seconds(2)) {
+            (folder.navigationController?.topViewController as? SSHTerminalViewController)?.channel === channel
+        }, "the folder screen showed its terminal")
+        let terminal = try #require(folder.navigationController?.topViewController)
+
+        host.act { _ = terminal.accessibilityPerformEscape() }
+
+        if inPane {
+            #expect(host.scenePanes.splitLeaves.isEmpty, "Back closed the terminal's pane")
+            #expect(!SSHTerminalRegistry.shared.holds(channel), "and ended its terminal")
+            #expect(!channel.connected)
+        } else {
+            #expect(await waitForMainActorCondition(timeout: .seconds(2)) { chat.viewControllers == [host.screen] },
+                    "Back returned to the chat past the connecting page: \(chat.viewControllers)")
+            #expect(SSHTerminalRegistry.shared.holds(channel), "the terminal stays to return to")
+            #expect(channel.connected)
+        }
+    }
+
     /// A terminal one pane draws, opened from another pane's list, focuses the
     /// pane that draws it: one screen per shell. One no pane draws opens in
     /// the list's own pane.

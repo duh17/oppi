@@ -70,14 +70,31 @@ final class SSHTerminalFolderViewController: UIViewController {
         setNeedsUpdateProperties()
     }
 
-    /// Back from the terminal returns here; this screen then leaves too, so Back
-    /// keeps going to the chat or workspace that opened it. Popping from
-    /// `viewDidAppear` keeps the two transitions in order.
+    /// A swipe back from the terminal returns here; this screen then leaves
+    /// too, so Back keeps going to the chat or workspace that opened it.
+    /// Leaving from `viewDidAppear` keeps the two transitions in order.
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         if hasShownTerminal, !session.showsTerminal {
-            Router.finish(self)
+            leave()
         }
+    }
+
+    /// Leaves with the terminal this screen opened; the terminal's Back comes
+    /// here directly, so this connecting page is never shown on the way out.
+    ///
+    /// As a pane's first screen (the chat's Terminal button, the pane menu's
+    /// Terminal), leaving closes the pane, and the terminal ends with it:
+    /// nothing is left there to return to it from. Pushed over a chat or
+    /// presented, the terminal stays in `SSHTerminalRegistry`, and Terminal
+    /// again for this folder returns to it.
+    func leave() {
+        let closesPane = navigationController?.viewControllers.first === self
+            && navigationController?.presentingViewController == nil
+        if closesPane, let channel = session.channel {
+            SSHTerminalRegistry.shared.close(channel, reason: "Closed by you.")
+        }
+        Router.finish(self)
     }
 
     override func viewDidDisappear(_ animated: Bool) {
