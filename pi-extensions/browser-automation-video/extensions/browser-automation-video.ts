@@ -8,7 +8,7 @@ import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
-import { Type } from "typebox";
+import type { Schema } from "@earendil-works/pi-schema";
 
 const execFileAsync = promisify(execFile);
 
@@ -79,126 +79,126 @@ type ExtensionContextWithOptionalAttachments = ExtensionContext & {
   };
 };
 
-const BrowserStepSchema = Type.Object({
-  action: Type.String({
-    description:
-      "One browser step: click, fill, type, keyboardType, press, wait, scroll, hover, focus, eval, snapshot, or screenshot.",
-  }),
-  selector: Type.Optional(
-    Type.String({
+// The JSON Schema pi-schema's builders would make, written out. Pi hands an extension only its
+// own modules and resolves any other package from the extension's path, which through a
+// `~/.pi/agent/extensions` link or copy has no `node_modules`; so pi-schema is a type-only import.
+const BrowserStepSchema: Schema<BrowserStep> = {
+  type: "object",
+  properties: {
+    action: {
+      type: "string",
+      description:
+        "One browser step: click, fill, type, keyboardType, press, wait, scroll, hover, focus, eval, snapshot, or screenshot.",
+    },
+    selector: {
+      type: "string",
       description: "CSS selector or agent-browser @ref for element actions.",
-    }),
-  ),
-  text: Type.Optional(
-    Type.String({
+    },
+    text: {
+      type: "string",
       description: "Text for fill/type/keyboardType or wait text.",
-    }),
-  ),
-  key: Type.Optional(
-    Type.String({ description: "Key for press, e.g. Enter, Tab, Control+a." }),
-  ),
-  direction: Type.Optional(
-    Type.String({ description: "Scroll direction: up, down, left, or right." }),
-  ),
-  pixels: Type.Optional(
-    Type.Integer({
+    },
+    key: {
+      type: "string",
+      description: "Key for press, e.g. Enter, Tab, Control+a.",
+    },
+    direction: {
+      type: "string",
+      description: "Scroll direction: up, down, left, or right.",
+    },
+    pixels: {
+      type: "integer",
       description: "Scroll distance in pixels.",
       minimum: 1,
       maximum: 5000,
-    }),
-  ),
-  ms: Type.Optional(
-    Type.Integer({
+    },
+    ms: {
+      type: "integer",
       description: "Wait duration in milliseconds.",
       minimum: 0,
       maximum: 30000,
-    }),
-  ),
-  script: Type.Optional(Type.String({ description: "JavaScript for eval." })),
-});
+    },
+    script: { type: "string", description: "JavaScript for eval." },
+  },
+  required: ["action"],
+};
 
-const BrowserVideoParamsSchema = Type.Object({
-  url: Type.Optional(
-    Type.String({ description: `Initial URL. Default: ${DEFAULT_URL}.` }),
-  ),
-  steps: Type.Optional(
-    Type.Array(BrowserStepSchema, {
+const BrowserVideoParamsSchema: Schema<BrowserVideoParams> = {
+  type: "object",
+  properties: {
+    url: {
+      type: "string",
+      description: `Initial URL. Default: ${DEFAULT_URL}.`,
+    },
+    steps: {
+      type: "array",
+      items: BrowserStepSchema,
       description:
         "Structured browser automation steps to run while recording. Use commands for raw agent-browser syntax when needed.",
       maxItems: 40,
-    }),
-  ),
-  commands: Type.Optional(
-    Type.Array(Type.String(), {
+    },
+    commands: {
+      type: "array",
+      items: { type: "string" },
       description:
         "Raw agent-browser commands, one per string, without the agent-browser prefix. Example: ['wait 1000', 'click @e2']. Runs after structured steps.",
       maxItems: 40,
-    }),
-  ),
-  outputName: Type.Optional(
-    Type.String({
+    },
+    outputName: {
+      type: "string",
       description:
         "Base file name for the recording. Default is derived from the URL and time.",
-    }),
-  ),
-  outputDir: Type.Optional(
-    Type.String({
+    },
+    outputDir: {
+      type: "string",
       description:
         "Workspace-relative or absolute output directory. When omitted in Oppi, recording uses a temporary directory and only the session attachment is kept. Outside Oppi, set outputDir to preserve the MP4.",
-    }),
-  ),
-  tailWaitMs: Type.Optional(
-    Type.Integer({
+    },
+    tailWaitMs: {
+      type: "integer",
       description: `Extra wait before stopping recording. Default: ${DEFAULT_TAIL_WAIT_MS}.`,
       minimum: 0,
       maximum: 30000,
-    }),
-  ),
-  timeoutMs: Type.Optional(
-    Type.Integer({
+    },
+    timeoutMs: {
+      type: "integer",
       description: `Overall command timeout in milliseconds. Default: ${DEFAULT_TIMEOUT_MS}.`,
       minimum: 5000,
       maximum: 600000,
-    }),
-  ),
-  viewportWidth: Type.Optional(
-    Type.Integer({
+    },
+    viewportWidth: {
+      type: "integer",
       description: "Browser viewport width. Default: agent-browser default.",
       minimum: 320,
       maximum: 3840,
-    }),
-  ),
-  viewportHeight: Type.Optional(
-    Type.Integer({
+    },
+    viewportHeight: {
+      type: "integer",
       description: "Browser viewport height. Default: agent-browser default.",
       minimum: 240,
       maximum: 2160,
-    }),
-  ),
-  headed: Type.Optional(
-    Type.Boolean({
+    },
+    headed: {
+      type: "boolean",
       description: "Show the Chrome window while running. Default: false.",
-    }),
-  ),
-  useSystemChrome: Type.Optional(
-    Type.Boolean({
+    },
+    useSystemChrome: {
+      type: "boolean",
       description:
         "Prefer /Applications/Google Chrome.app when present. Default: true.",
-    }),
-  ),
-  keepWebM: Type.Optional(
-    Type.Boolean({
+    },
+    keepWebM: {
+      type: "boolean",
       description:
         "Keep the intermediate agent-browser WebM file. Default: false.",
-    }),
-  ),
-  renderInOppi: Type.Optional(
-    Type.Boolean({
+    },
+    renderInOppi: {
+      type: "boolean",
       description:
         "Attach the MP4 to this tool result so Oppi renders a video row when the Oppi attachment helper is available. Default: true.",
-    }),
-  ),
-});
+    },
+  },
+};
 
 export default function browserAutomationVideoExtension(
   pi: ExtensionAPI,

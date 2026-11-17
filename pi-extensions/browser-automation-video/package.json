@@ -32,14 +32,14 @@
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.79.6",
+    "@earendil-works/pi-schema": "1.5.2",
     "@types/node": "^22.0.0",
-    "typebox": "1.4.7",
     "typescript": "^7.0.2",
     "vitest": "^4.0.18"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
-    "typebox": "*"
+    "@earendil-works/pi-schema": "*"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-coding-agent": {
