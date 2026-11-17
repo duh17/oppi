@@ -16,6 +16,7 @@ enum TimelineSnapshotApplier {
         themeChanged: Bool = false,
         isBusy: Bool = false,
         forceReconfigureIDs: [String] = [],
+        cellKindChanged: (String) -> Bool,
         willReconfigure: ([String]) -> Void = { _ in }
     ) {
         // Fast path: when no previous items exist (cold start), skip change
@@ -60,7 +61,7 @@ enum TimelineSnapshotApplier {
                 // against nextItemByID before including them.
                 willReconfigure(changedIDs)
                 var snapshot = dataSource.snapshot()
-                snapshot.reconfigureItems(changedIDs)
+                refresh(changedIDs, in: &snapshot, cellKindChanged: cellKindChanged)
                 let applyToken = ChatTimelinePerf.beginCollectionApply(
                     itemCount: nextIDs.count,
                     changedCount: changedIDs.count,
@@ -102,7 +103,7 @@ enum TimelineSnapshotApplier {
 
         if !dedupedChangedIDs.isEmpty {
             willReconfigure(dedupedChangedIDs)
-            snapshot.reconfigureItems(dedupedChangedIDs)
+            refresh(dedupedChangedIDs, in: &snapshot, cellKindChanged: cellKindChanged)
         }
         let applyToken = ChatTimelinePerf.beginCollectionApply(
             itemCount: nextIDs.count,
@@ -111,6 +112,25 @@ enum TimelineSnapshotApplier {
         )
         dataSource?.apply(snapshot, animatingDifferences: false)
         ChatTimelinePerf.endCollectionApply(applyToken)
+    }
+
+    /// Redraws `itemIDs`: reconfigured in their existing cells, except a row
+    /// whose cell kind changed (`cellKindChanged`), which is reloaded. UIKit
+    /// reaches an existing cell, a prefetched one included, only through the
+    /// registration that made it, and throws on any other.
+    static func refresh(
+        _ itemIDs: [String],
+        in snapshot: inout NSDiffableDataSourceSnapshot<Int, String>,
+        cellKindChanged: (String) -> Bool
+    ) {
+        var reload: [String] = []
+        let reconfigure = itemIDs.filter { id in
+            guard cellKindChanged(id) else { return true }
+            reload.append(id)
+            return false
+        }
+        if !reconfigure.isEmpty { snapshot.reconfigureItems(reconfigure) }
+        if !reload.isEmpty { snapshot.reloadItems(reload) }
     }
 
     private static func mergedReconfigureIDs(
@@ -159,6 +179,7 @@ enum TimelineSnapshotApplier {
         dataSource: DataSource?,
         currentIDs: [String],
         sessionId: String? = nil,
+        cellKindChanged: (String) -> Bool,
         willReconfigure: ([String]) -> Void = { _ in }
     ) -> Bool {
         guard let dataSource else { return false }
@@ -168,7 +189,7 @@ enum TimelineSnapshotApplier {
         guard !existing.isEmpty else { return false }
         willReconfigure(existing)
 
-        snapshot.reconfigureItems(existing)
+        refresh(existing, in: &snapshot, cellKindChanged: cellKindChanged)
 
         let applyToken = ChatTimelinePerf.beginCollectionApply(
             itemCount: currentIDs.count,

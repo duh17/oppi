@@ -4,6 +4,15 @@ import UIKit
 enum TimelineCellFactory {
     typealias CellDequeuer = (_ collectionView: UICollectionView, _ indexPath: IndexPath, _ itemID: String) -> UICollectionViewCell
 
+    /// Which registration a row's cell comes from. UIKit reconfigures an
+    /// item's existing cell (a prefetched one too) only through the
+    /// registration that made it, so a row whose kind changes under its ID
+    /// is reloaded, not reconfigured (`ChatTimelineController.cellKindChanged`).
+    enum Kind: Equatable {
+        case assistant, user, thinking, tool, audio, system, compaction, error
+        case missingItem, loadMore, working, quietWork, childTail
+    }
+
     struct Registrations {
         let assistant: CellDequeuer
         let user: CellDequeuer
@@ -18,59 +27,70 @@ enum TimelineCellFactory {
         let working: CellDequeuer
         let quietWork: CellDequeuer
         let childTail: CellDequeuer
+
+        func dequeuer(for kind: Kind) -> CellDequeuer {
+            switch kind {
+            case .assistant: assistant
+            case .user: user
+            case .thinking: thinking
+            case .tool: tool
+            case .audio: audio
+            case .system: system
+            case .compaction: compaction
+            case .error: error
+            case .missingItem: missingItem
+            case .loadMore: loadMore
+            case .working: working
+            case .quietWork: quietWork
+            case .childTail: childTail
+            }
+        }
     }
 
-    static func dequeueCell(
-        collectionView: UICollectionView,
-        indexPath: IndexPath,
+    static func kind(
         itemID: String,
         itemByID: [String: ChatItem],
-        registrations: Registrations,
         isCompactionMessage: (String) -> Bool
-    ) -> UICollectionViewCell {
+    ) -> Kind {
         if itemID == ChatTimelineController.loadMoreID {
-            return registrations.loadMore(collectionView, indexPath, itemID)
+            return .loadMore
         }
 
         if itemID == ChatTimelineController.workingIndicatorID {
-            return registrations.working(collectionView, indexPath, itemID)
+            return .working
         }
 
         if itemID.hasPrefix("quiet-work-line:") {
-            return registrations.quietWork(collectionView, indexPath, itemID)
+            return .quietWork
         }
 
         if itemID.hasPrefix(TimelineDisplayRow.childTailIDPrefix) {
-            return registrations.childTail(collectionView, indexPath, itemID)
+            return .childTail
         }
 
         guard let item = itemByID[itemID] else {
-            return registrations.missingItem(collectionView, indexPath, itemID)
+            return .missingItem
         }
 
         switch item {
         case .assistantMessage:
-            return registrations.assistant(collectionView, indexPath, itemID)
+            return .assistant
         case .userMessage, .agentMessage:
-            return registrations.user(collectionView, indexPath, itemID)
+            return .user
         case .thinking:
-            return registrations.thinking(collectionView, indexPath, itemID)
+            return .thinking
         case .toolCall:
-            return registrations.tool(collectionView, indexPath, itemID)
+            return .tool
         case .audioClip:
-            return registrations.audio(collectionView, indexPath, itemID)
+            return .audio
         case .systemEvent(_, let message):
-            let dequeuer = isCompactionMessage(message)
-                ? registrations.compaction
-                : registrations.system
-            return dequeuer(collectionView, indexPath, itemID)
+            return isCompactionMessage(message) ? .compaction : .system
         case .cacheMiss, .notice:
-            return registrations.system(collectionView, indexPath, itemID)
+            return .system
         case .customEvent(_, _, let presentation):
-            let dequeuer = presentation.terminalOutput != nil ? registrations.tool : registrations.system
-            return dequeuer(collectionView, indexPath, itemID)
+            return presentation.terminalOutput != nil ? .tool : .system
         case .error:
-            return registrations.error(collectionView, indexPath, itemID)
+            return .error
         }
     }
 }

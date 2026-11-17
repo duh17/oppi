@@ -573,6 +573,8 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
     /// suffix window. Viewport fallback ordinals must use this coordinate space.
     private(set) var currentFullTimelineItemIDs: [String] = []
     var currentItemByID: [String: ChatItem] = [:]
+    /// The registration each row's cell was last dequeued with (`cellKindChanged`).
+    var dequeuedCellKindByID: [String: TimelineCellFactory.Kind] = [:]
     var currentWorkLineByID: [String: QuietTimelineWorkLine] = [:]
     /// The live work line drawn as the working row (`ChatTimelineApplyPlan.workingRowLine`).
     var currentWorkingRowLineID: String?
@@ -1282,7 +1284,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
 
             (collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout)?.contentDidChange(for: reconfigureIDs)
             var snapshot = dataSource.snapshot()
-            snapshot.reconfigureItems(reconfigureIDs)
+            TimelineSnapshotApplier.refresh(reconfigureIDs, in: &snapshot, cellKindChanged: cellKindChanged)
             let applyToken = ChatTimelinePerf.beginCollectionApply(
                 itemCount: currentIDs.count,
                 changedCount: reconfigureIDs.count,
@@ -1384,7 +1386,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             if !reconfigureIDs.isEmpty, let dataSource {
                 (collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout)?.contentDidChange(for: reconfigureIDs)
                 var snapshot = dataSource.snapshot()
-                snapshot.reconfigureItems(reconfigureIDs)
+                TimelineSnapshotApplier.refresh(reconfigureIDs, in: &snapshot, cellKindChanged: cellKindChanged)
                 let applyToken = ChatTimelinePerf.beginCollectionApply(
                     itemCount: currentIDs.count,
                     changedCount: reconfigureIDs.count,
@@ -1431,6 +1433,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         if !applyPlan.removedIDs.isEmpty {
             cancelToolOutputLoadTasks(for: applyPlan.removedIDs)
             preparationRunway.remove(itemIDs: applyPlan.removedIDs)
+            for id in applyPlan.removedIDs { dequeuedCellKindByID[id] = nil }
         }
 
         // Capture identity against the current layout / currentIDs before
@@ -1560,6 +1563,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             themeChanged: globalAppearanceChanged,
             isBusy: configuration.isBusy,
             forceReconfigureIDs: forceReconfigureIDs,
+            cellKindChanged: cellKindChanged,
             willReconfigure: { (collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout)?.contentDidChange(for: $0) }
         )
 
@@ -2282,6 +2286,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             dataSource: dataSource,
             currentIDs: currentIDs,
             sessionId: sessionId,
+            cellKindChanged: cellKindChanged,
             willReconfigure: { (collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout)?.contentDidChange(for: $0) }
         ) else {
             return

@@ -676,17 +676,30 @@ extension ChatTimelineController {
         dataSource = UICollectionViewDiffableDataSource<Int, String>(
             collectionView: collectionView
         ) { [weak self] collectionView, indexPath, itemID in
-            TimelineCellFactory.dequeueCell(
-                collectionView: collectionView,
-                indexPath: indexPath,
+            let kind = TimelineCellFactory.kind(
                 itemID: itemID,
                 itemByID: self?.currentItemByID ?? [:],
-                registrations: registrations,
-                isCompactionMessage: { message in
-                    Self.compactionPresentation(from: message) != nil
-                }
+                isCompactionMessage: Self.isCompactionMessage
             )
+            self?.dequeuedCellKindByID[itemID] = kind
+            return registrations.dequeuer(for: kind)(collectionView, indexPath, itemID)
         }
+    }
+
+    private static func isCompactionMessage(_ message: String) -> Bool {
+        compactionPresentation(from: message) != nil
+    }
+
+    /// Whether `itemID`'s row now takes another registration than the one its
+    /// cell was dequeued with. Reconfiguring such an item throws once UIKit
+    /// reaches its existing cell, so the snapshot reloads it instead.
+    func cellKindChanged(_ itemID: String) -> Bool {
+        guard let dequeued = dequeuedCellKindByID[itemID] else { return false }
+        return dequeued != TimelineCellFactory.kind(
+            itemID: itemID,
+            itemByID: currentItemByID,
+            isCompactionMessage: Self.isCompactionMessage
+        )
     }
 
     // MARK: - Cell Configuration Helpers
