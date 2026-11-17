@@ -10,6 +10,7 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -564,6 +565,55 @@ describe("sim-pool CLI", () => {
     expect(result.status).toBe(65);
     expect(fx.simctl()).toBe("");
     expect(existsSync(join(fx.root, "locks", "slot-0.lock"))).toBe(false);
+  });
+
+  describe("a lost build volume is an infrastructure failure", () => {
+    /** A slotless fixture whose `.build` links into `<root>/ram`, a stand-in for the RAM disk. */
+    function ramFixture(label: string, xcodebuild: (ram: string) => string) {
+      const fx = slotlessFixture(label);
+      const ram = join(fx.root, "ram");
+      mkdirSync(ram);
+      writeFileSync(join(fx.root, "bin", "xcodebuild"), `#!/bin/sh\nprintf '%s\\n' "$@" >> "${fx.fake}/xcodebuild.calls"\nprintf -- '--\\n' >> "${fx.fake}/xcodebuild.calls"\n${xcodebuild(ram)}`, { mode: 0o755 });
+      const run = () => spawnSync("bun", [cli, "run", "--", "xcodebuild", "-scheme", "OppiUnitTests", "test"], {
+        cwd: fx.apple, env: { ...fx.env, OPPI_BUILD_ROOT: ram }, encoding: "utf8",
+      });
+      return { ...fx, ram, run };
+    }
+    const lastLine = (text: string) => text.trim().split("\n").at(-1) ?? "";
+
+    test("the volume vanishing mid-build stops the build with one clear line, not a crash or a retry", () => {
+      // The build writes its log, then the RAM disk goes (jetsam) while xcodebuild is still running.
+      const fx = ramFixture("volume-vanishes", (ram) => `echo 'CompileSwift normal arm64 A.swift'\nsleep 0.3\nrm -rf "${ram}"\nexec /bin/sleep 30\n`);
+      const result = fx.run();
+      expect(result.stderr).not.toContain("ENOENT");
+      expect(lastLine(result.stderr)).toMatch(/^error: INFRASTRUCTURE failure: build volume lost: \S+ disappeared mid-build; not a build or test failure of this change\./);
+      expect(result.status).toBe(1);
+      expect(fx.calls()).toHaveLength(1);
+      expect(fx.simctl()).toBe("");
+    });
+
+    test("xcodebuild losing build.db to a dead device is the same failure", () => {
+      const fx = ramFixture("device-not-configured", () =>
+        `echo "error: unable to attach DB: error: accessing build database \\"$PWD/.build/dd/Build/Intermediates.noindex/XCBuildData/build.db\\": disk I/O error: Device not configured"\necho '** BUILD FAILED **'\nexit 65\n`);
+      const result = fx.run();
+      expect(result.status).toBe(65);
+      expect(lastLine(result.stderr)).toMatch(/^error: INFRASTRUCTURE failure: build volume lost: xcodebuild lost its build database in \S+ \(.*Device not configured/);
+    });
+
+    test("a link into a build volume that is gone fails before anything builds, and says how to recover", () => {
+      const fx = ramFixture("volume-missing", () => "exit 0\n");
+      const folder = join(fx.ram, "wt");
+      mkdirSync(fx.apple, { recursive: true });
+      symlinkSync(folder, join(fx.apple, ".build"));
+      rmSync(fx.ram, { recursive: true });
+      const result = fx.run();
+      expect(result.status).toBe(1);
+      expect(lastLine(result.stderr)).toBe(
+        `error: INFRASTRUCTURE failure: build volume missing: ${join(fx.apple, ".build")} links to ${folder}, but the build root ${fx.ram} (OPPI_BUILD_ROOT) is not mounted. ` +
+          "Recreate the RAM disk (oppi-ramdisk.sh), then run again. Recreating the disk empties it under every build still running on it, so let those finish or stop first.",
+      );
+      expect(fx.calls()).toHaveLength(0);
+    });
   });
 
   test("the build waits for a free machine-wide xcode-build slot", async () => {

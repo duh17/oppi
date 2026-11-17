@@ -84,6 +84,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { loadQuarantine, runExecutedTestIds, runFailures, unmatchedSelectors, UNIT_RUN_RECORD, type QuarantineEntry, type RecordedResults } from "../clients/apple/scripts/unit-shards";
 import { forgetGroupOnExit, killGroupOnExit } from "../clients/apple/scripts/sim-pool-supervise";
+import { buildVolumeMissing } from "../clients/apple/scripts/build-root";
 import { resolveDeveloperDir } from "../clients/apple/scripts/xcode-toolchain";
 import {
   budgetVerdict, failedTestsInOutput, failedXCTestCases, flakesAtHead, hiddenFlakesLine, lastArtifact, loadBudgets, logOfSummary, passedXCTestCases,
@@ -702,7 +703,7 @@ type EarlyStart = { after: string } | "now" | "end";
  * `failedLane`: the first hook lane that reported `failed`. The hook passed only when it exited 0 and no
  * lane failed: a stray event with a green exit is still a red gate (fail closed).
  */
-type PrePushRun = { code: number; seconds: number; failedLane: string | null };
+type PrePushRun = { code: number; seconds: number; failedLane: string | null; output: string };
 
 const prePushPassed = (run: PrePushRun) => run.code === 0 && run.failedLane === null;
 
@@ -775,7 +776,7 @@ async function gateAlongsidePrePush(input: {
   const hook = await runStep("pre-push", input.hook, (child) => (hookChild = child));
   clearInterval(poll);
   readEvents();
-  const prePush = { code: hook.code, seconds: elapsed(), failedLane };
+  const prePush = { code: hook.code, seconds: elapsed(), failedLane, output: hook.output };
   const results: LaneResult[] = [];
   if (stopping) {
     // SIGTERM/SIGINT: the caller reports nothing and exits 143.
@@ -851,6 +852,14 @@ async function main(argv: string[]): Promise<number> {
   // plan on the spelled DerivedData path, so a non-canonical spelling recompiles the whole
   // app (~100 s) over the build pre-push just finished. Derive every path from the real one.
   worktree = realpathSync.native(worktree);
+  // A checkout whose `.build` links into a build volume that is gone would fail part way through
+  // every lane; say so once, as the machine's failure, before any lane starts.
+  const missingVolume = buildVolumeMissing(join(worktree, "clients", "apple"));
+  if (missingVolume) {
+    console.error(`[batch-gate] INFRASTRUCTURE failure: ${missingVolume}`);
+    reportRed(worktree, { lane: "build-volume", profile: null, exit: 1, seconds: null, tests: [], output: missingVolume });
+    return 1;
+  }
   // An expired or incomplete quarantine entry fails every gate until someone fixes the test,
   // extends the entry, or deletes it; the gate checks the batch's own copy of the file.
   const quarantinePath = join(worktree, "dev", "testing", "quarantine.json");
@@ -986,6 +995,10 @@ async function main(argv: string[]): Promise<number> {
   const red = results.filter((result) => result.code !== 0 && !result.cancelled);
   const redNames = new Set(red.map((result) => result.lane.name));
   console.log(`[batch-gate] ${hiddenFlakesLine(flakesAtHead(worktree).filter((row) => !redNames.has(row.lane)))}`);
+  // The hook is a red lane of its own: a queue reads its cause (an infrastructure failure is re-run, not blamed).
+  if (prePush && !prePushPassed(prePush)) {
+    reportRed(worktree, { lane: "pre-push", profile: null, exit: prePush.code || 1, seconds: prePush.seconds, tests: failedTestsInOutput(prePush.output), output: prePush.output });
+  }
   for (const result of red) {
     reportRed(worktree, { lane: result.lane.name, profile: result.lane.profile, exit: result.code, seconds: result.seconds, tests: result.failed, output: result.output });
   }

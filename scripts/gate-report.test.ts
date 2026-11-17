@@ -119,6 +119,21 @@ describe("red lanes", () => {
     expect(guessCause("error TS2322: Type 'string' is not assignable to type 'number'.", []).cause).toBe("compile");
   });
 
+  test("a lost build volume is infrastructure, whatever compile errors and failed tests it left behind", () => {
+    const output = [
+      "[pre-push] [sim-pool] build volume lost: /x/clients/apple/.build/logs/build-1.log disappeared mid-build; stopping xcodebuild (pid 9) without retry",
+      "[pre-push] Compiler/linker errors (1):",
+      "[pre-push] /x/Oppi/A.swift:12:3: error: cannot find 'x' in scope",
+      "[pre-push] error: INFRASTRUCTURE failure: build volume lost: /x/clients/apple/.build/logs/build-1.log disappeared mid-build; not a build or test failure of this change.",
+      "[unit-shards] FAILED OppiTests/A/testB",
+    ].join("\n");
+    expect(guessCause(output, failedTestsInOutput(output))).toEqual({
+      cause: "infra",
+      evidence: "[pre-push] [sim-pool] build volume lost: /x/clients/apple/.build/logs/build-1.log disappeared mid-build; stopping xcodebuild (pid 9) without retry",
+    });
+    expect(guessCause("error: INFRASTRUCTURE failure: build volume missing: /x/.build links to /ram/x, but the build root /ram (OPPI_BUILD_ROOT) is not mounted.", []).cause).toBe("infra");
+  });
+
   test("failing tests come from the runners' FAILED lines and Vitest, not from XCTest lines a rerun may have cleared", () => {
     const output = [
       "Test Case '-[OppiUITests.A testFlaky]' failed (3.0 seconds).",

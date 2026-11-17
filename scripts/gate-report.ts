@@ -187,8 +187,13 @@ export function failedTestsInOutput(output: string): string[] {
 
 export type Cause = "selector" | "compile" | "test-failure" | "infra" | "quarantine" | "unknown";
 
-/** First match wins: the tests themselves never ran, so nothing else in the output explains the lane. */
+/**
+ * First match wins: the tests themselves never ran, or their run is void, so nothing else in the output
+ * explains the lane. A lost build volume (sim-pool, build-root.ts) takes every build on it down at once,
+ * with compile errors and failed tests that are its echo, not the change's.
+ */
 const NO_TESTS_RAN: [Cause, RegExp][] = [
+  ["infra", /build volume (?:lost|missing):/],
   ["selector", /no test matches the selector|unknown --test|unknown profile|declares no (?:type|test)|ambiguous --test|No test files? found/],
   ["quarantine", /quarantine (?:expired|entry)/],
 ];

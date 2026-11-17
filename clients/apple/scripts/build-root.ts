@@ -3,23 +3,38 @@
 //
 // OPPI_BUILD_ROOT names a directory (a RAM disk, say). While it exists, `.build` is a symlink to
 // `<root>/<checkout name>-<hash of its path>`, so every checkout gets its own folder and concurrent
-// builds never share one. Unset, or with the directory missing (volume not mounted), `.build` is the
-// ordinary folder it always was. The shared compilation cache lives at `<root>/xcode-cache` then
+// builds never share one. Unset, or with the directory missing (volume not mounted), a checkout
+// without a link builds in the ordinary `.build` folder it always had. A checkout whose link points
+// into the missing volume keeps the link: buildVolumeMissing names it, and builds stop there instead
+// of silently going cold on disk. The shared compilation cache lives at `<root>/xcode-cache` then
 // (sim-pool-build.ts `compilationCache`).
 //
 //   bun build-root.ts [<apple dir>]   link the checkout's .build; prints nothing, never fails
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const OWNER_FILE = ".checkout";
 
+/**
+ * A build root that can take builds: a writable directory. A RAM disk that jetsam detached leaves its
+ * mount point behind as an empty, unwritable directory (`d--x--x--x`), which is not one.
+ */
+function usableRoot(root: string): boolean {
+  try {
+    accessSync(root, constants.W_OK | constants.X_OK);
+    return statSync(root).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /** The build root, when it is set and mounted. */
 export function buildRoot(env: NodeJS.ProcessEnv): string | undefined {
   const root = env.OPPI_BUILD_ROOT?.trim();
-  if (!root || !existsSync(root)) return undefined;
+  if (!root || !usableRoot(root)) return undefined;
   try {
     return realpathSync(root);
   } catch {
@@ -63,6 +78,48 @@ export function isManagedBuildLink(appleDir: string): boolean {
 export function buildRootFor(appleDir: string, env: NodeJS.ProcessEnv): string | undefined {
   const folder = managedFolder(appleDir);
   return buildRoot(env) ?? (folder ? dirname(folder) : undefined);
+}
+
+/**
+ * Why this checkout cannot build now, or undefined: OPPI_BUILD_ROOT is set, `.build` links into it, and
+ * the volume is gone (not mounted, or an unwritable leftover mount point). A build there would fail
+ * part way with ENOENT, or fall back to a cold build on disk without anyone asking for one.
+ */
+export function buildVolumeMissing(appleDir: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const root = env.OPPI_BUILD_ROOT?.trim();
+  const link = join(appleDir, ".build");
+  if (!root || !lstatOrNull(link)?.isSymbolicLink() || existsSync(link) || usableRoot(root)) return undefined;
+  return (
+    `build volume missing: ${link} links to ${readlinkSync(link)}, but the build root ${root} (OPPI_BUILD_ROOT) is not mounted. ` +
+    `Recreate the RAM disk (oppi-ramdisk.sh), then run again. Recreating the disk empties it under every build ` +
+    `still running on it, so let those finish or stop first.`
+  );
+}
+
+/** The folder `.build` resolves to and the device it lives on; undefined when it does not resolve. */
+export type BuildVolume = { folder: string; dev: number };
+
+export function buildVolumeOf(appleDir: string): BuildVolume | undefined {
+  try {
+    const folder = realpathSync(join(appleDir, ".build"));
+    return { folder, dev: statSync(folder).dev };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Why the build volume a running build started on is gone, or undefined: `.build` no longer resolves
+ * (its volume was detached), it resolves to another device (the volume was recreated, empty), or one
+ * of `paths` (the build's log, its DerivedData) vanished. Every build on that volume lost its output
+ * at once; the failure is the machine's, not the change under test.
+ */
+export function buildVolumeLost(appleDir: string, start: BuildVolume, paths: string[]): string | undefined {
+  const now = buildVolumeOf(appleDir);
+  if (!now) return `build volume lost: ${start.folder} disappeared mid-build`;
+  if (now.folder !== start.folder || now.dev !== start.dev) return `build volume lost: ${start.folder} was replaced mid-build (device ${start.dev}, now ${now.dev} at ${now.folder})`;
+  const gone = paths.find((path) => !existsSync(path));
+  return gone ? `build volume lost: ${gone} disappeared mid-build` : undefined;
 }
 
 /**
@@ -121,8 +178,12 @@ export function ensureBuildLink(appleDir: string, env: NodeJS.ProcessEnv = proce
   try {
     const link = join(appleDir, ".build");
     const root = buildRoot(env);
-    // A link into a volume that is gone (or was recreated empty) would fail every build: drop it.
-    if (lstatOrNull(link)?.isSymbolicLink() && !existsSync(link)) unlinkSync(link);
+    // A link into a volume that was recreated empty, or into a root no longer configured, is dropped and
+    // made again. One into a configured volume that is gone stays, so buildVolumeMissing can say so.
+    if (lstatOrNull(link)?.isSymbolicLink() && !existsSync(link)) {
+      if (buildVolumeMissing(appleDir, env)) return undefined;
+      unlinkSync(link);
+    }
     if (!root) return undefined;
     const target = folderFor(root, appleDir);
     const claim = () => {

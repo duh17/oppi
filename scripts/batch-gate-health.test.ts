@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -334,6 +334,14 @@ describe("batch gate: --with-pre-push runs the hook alongside the lanes", () => 
     "event-then-passes": `echo "apple failed" >> "$OPPI_PRE_PUSH_EVENTS"\nexit 0`,
     // Red outside any lane (check-home-paths, the deps sync): no event, only the exit.
     "exits-without-event": `echo "pre-push: absolute home paths in tracked files" >&2\nexit 1`,
+    // sim-pool lost the build volume under a later Apple step: its compile errors are the echo of that.
+    "volume-lost": [
+      `echo "apple failed" >> "$OPPI_PRE_PUSH_EVENTS"`,
+      `echo "[sim-pool] build volume lost: /ram/wt/.build/logs/build-1.log disappeared mid-build; stopping xcodebuild (pid 9) without retry" >&2`,
+      `echo "Compiler/linker errors (1):" >&2`,
+      `echo "error: INFRASTRUCTURE failure: build volume lost: /ram/wt/.build/logs/build-1.log disappeared mid-build" >&2`,
+      "exit 1",
+    ].join("\n"),
   } as const;
 
   /**
@@ -416,8 +424,21 @@ ${ending}
     expect(result.out).toMatch(/\[batch-gate\] pre-push: FAIL \(exit 1\) [0-9]+s/);
     expect(result.out).toMatch(/\[batch-gate\] ui-iphone: CANCELLED [0-9]+s; stopped because the pre-push gate failed/);
     expect(result.out).toContain("[batch-gate] e2e: NOT RUN; the pre-push gate failed first");
-    // A lane cut short is not a red lane of its own.
-    expect(fx.ledger("land-queue/red-lanes.jsonl")).toEqual([]);
+    // The hook is the red lane; a lane cut short is not one of its own.
+    expect(fx.ledger("land-queue/red-lanes.jsonl").map((row) => row.lane)).toEqual(["pre-push"]);
+  });
+
+  test("a hook that lost its build volume is a red lane guessed as infrastructure, for the queue to re-run rather than blame", () => {
+    const fx = overlapCheckout({ ending: "volume-lost", uiSeconds: 60 });
+
+    const result = fx.gate();
+
+    expect(result.code).toBe(3);
+    expect(fx.ledger("land-queue/red-lanes.jsonl")).toMatchObject([{
+      batch: "b-test-1", lane: "pre-push", exit: 1, tests: [], cause_guess: "infra",
+      cause_evidence: "[sim-pool] build volume lost: /ram/wt/.build/logs/build-1.log disappeared mid-build; stopping xcodebuild (pid 9) without retry",
+    }]);
+    expect(result.out).toContain("[batch-gate] red lane pre-push: cause guess infra ([sim-pool] build volume lost:");
   });
 
   test("a lane that reported red fails the gate even when the hook then exits 0", () => {
@@ -536,6 +557,22 @@ ${ending}
     const lines = cache.stdout.toString().trim().split("\n");
     expect(lines.filter((line) => line.startsWith("batch-gate: build-cache "))).toContain("batch-gate: build-cache clients/apple/.build/dd");
     expect(lines.filter((line) => line.startsWith("batch-gate: build-cache-key "))).toHaveLength(1);
+  });
+});
+
+describe("batch gate: a build volume that is gone", () => {
+  test("a checkout linked into a build root that is not mounted fails before any lane, as one infrastructure red lane", () => {
+    const fx = fakeCheckout();
+    const ram = join(fx.checkout, "..", "ram");
+    symlinkSync(join(ram, "checkout-1234"), join(fx.checkout, "clients", "apple", ".build"));
+
+    const result = fx.run(["--test", "OppiTests/FooTests"], { OPPI_BUILD_ROOT: ram });
+
+    expect(result.code).toBe(1);
+    expect(result.err).toContain(`[batch-gate] INFRASTRUCTURE failure: build volume missing: ${join(fx.checkout, "clients", "apple", ".build")} links to`);
+    expect(result.err).toContain("Recreate the RAM disk (oppi-ramdisk.sh)");
+    expect(fx.calls("sim-pool")).toEqual([]);
+    expect(fx.ledger("land-queue/red-lanes.jsonl")).toMatchObject([{ lane: "build-volume", cause_guess: "infra", tests: [] }]);
   });
 });
 

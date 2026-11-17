@@ -41,7 +41,7 @@ import {
   type HeldLock,
   type RunPlan,
 } from "./sim-pool-build";
-import { ensureBuildLink, isManagedBuildLink } from "./build-root";
+import { buildVolumeLost, buildVolumeMissing, buildVolumeOf, ensureBuildLink, isManagedBuildLink } from "./build-root";
 import {
   lockPath,
   beginPublishing,
@@ -851,6 +851,15 @@ function fileSize(path: string): number {
     return statSync(path).size;
   } catch {
     return 0;
+  }
+}
+
+/** A running build's log, or "" once it is gone: the next poll's buildVolumeLost says why. */
+function readLogText(path: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return "";
   }
 }
 
@@ -1697,10 +1706,16 @@ async function runXcodebuildAttempt(input: {
   sampleOutput?: string;
   /** What the attempt's xcresult says, for a test run that ended (not canceled). */
   testResults?: RecordedResults;
+  /** The build volume went away under the run (build-root.ts buildVolumeLost); it was stopped, not retried. */
+  volumeLost?: string;
 }> {
   writeFileSync(input.logFile, "");
   const logFd = openSync(input.logFile, "a");
   const attemptStartedMs = Date.now();
+  // The volume `.build` is on, and what of it this run writes, as they are now; see buildVolumeLost.
+  const volume = buildVolumeOf(input.config.appleDir);
+  const watched = [input.logFile, ...(existsSync(input.derivedData) ? [input.derivedData] : [])];
+  let volumeLost: string | undefined;
   const spawned = await input.session.spawn(
     input.command,
     [
@@ -1752,12 +1767,17 @@ async function runXcodebuildAttempt(input: {
     if (winner === "exit") {
       break;
     }
+    volumeLost = volume && buildVolumeLost(input.config.appleDir, volume, watched);
+    if (volumeLost) {
+      log(`[sim-pool] ${volumeLost}; stopping xcodebuild (pid ${spawned.owned.pid}) without retry`);
+      break;
+    }
     const nowMs = Date.now();
     const now = Math.floor(nowMs / 1000);
     const size = fileSize(input.logFile);
     if (size !== lastLogSize) {
       lastLogSize = size;
-      const next = finishedTests(input.completionArgv ?? input.argv, readFileSync(input.logFile, "utf8"));
+      const next = finishedTests(input.completionArgv ?? input.argv, readLogText(input.logFile));
       if (next?.summary !== completion?.summary) {
         completionSince = next ? nowMs : 0;
       }
@@ -1836,14 +1856,27 @@ async function runXcodebuildAttempt(input: {
     }
   }
   const completed = await input.session.complete(spawned.owned, {
-    stopFirst: hung || input.session.canceled,
+    stopFirst: hung || input.session.canceled || volumeLost !== undefined,
   });
+  const stoppedForVolume = volumeLost !== undefined;
   const stallFields = {
     ...(stalledBeforeProjectOpen ? { stalledBeforeProjectOpen: true } : {}),
     ...(sampleOutput != null ? { sampleOutput } : {}),
   };
   if (hung && !completed.stop.quiescent) {
     return { code: 1, hung: true, stop: completed.stop, ...stallFields };
+  }
+  if (!volumeLost && !input.session.canceled && waitExitStatus(completed.wait) !== 0) {
+    // The volume can go and come back between polls, or the build can see it first: xcodebuild then
+    // fails on its build database (`build.db`: Device not configured, the RAM disk's dead device).
+    const deviceGone = /build\.db.*Device not configured|Device not configured.*build\.db/.exec(readLogText(input.logFile));
+    volumeLost = (volume && buildVolumeLost(input.config.appleDir, volume, watched))
+      ?? (deviceGone ? `build volume lost: xcodebuild lost its build database in ${input.derivedData} (${deviceGone[0].trim().slice(0, 200)})` : undefined);
+    if (volumeLost) log(`[sim-pool] ${volumeLost}`);
+  }
+  if (volumeLost) {
+    // Stopped here, xcodebuild's own status is the SIGTERM (143), which reads as a cancelled run: report a plain failure.
+    return { code: stoppedForVolume ? 1 : waitExitStatus(completed.wait) || 1, hung: false, stop: completed.stop, volumeLost };
   }
   // Cancellation, uncertain cleanup, and real nonzero xcodebuild exits must
   // never become passes. Keep the signal separately when recovering a result.
@@ -1918,6 +1951,8 @@ type BuildPhase = {
   /** Nothing changed since the last successful build in this DerivedData, so xcodebuild did not run. */
   skipped?: boolean;
   xctestrun?: string;
+  /** The build volume went away mid-build (build-root.ts buildVolumeLost). */
+  volumeLost?: string;
 };
 
 function buildPhaseMetadata(build: BuildPhase): Record<string, unknown> {
@@ -2003,6 +2038,7 @@ async function runBuildPhase(input: {
         if (resolved) {
           phase.code = resolved.code;
           phase.uncertain = resolved.uncertain;
+          phase.volumeLost = resolved.volumeLost;
           return phase;
         }
       }
@@ -2038,6 +2074,7 @@ async function runBuildPhase(input: {
         phase.endedAt = nowEpoch();
         phase.code = result.code;
         phase.hung = result.hung;
+        phase.volumeLost = result.volumeLost;
         phase.uncertain = !result.stop.quiescent || session.canceled;
         releaseCheckout = result.stop.quiescent;
       } finally {
@@ -2087,7 +2124,7 @@ async function resolveSharedPackages(
   packages: string,
   scheme: string,
   buildLog: string,
-): Promise<{ code: number; uncertain: boolean } | undefined> {
+): Promise<{ code: number; uncertain: boolean; volumeLost?: string } | undefined> {
   const lockFile = `${packages}.lock`;
   if (!existsSync(packagesResolvedMarker(packages))) {
     const exclusive = await waitForFlock(lockFile, "exclusive", session, () =>
@@ -2115,7 +2152,7 @@ async function resolveSharedPackages(
         });
         if (result.code !== 0 || !result.stop.quiescent || session.canceled) {
           log(`[sim-pool] Swift package resolution failed; see ${logFile}`);
-          return { code: result.code || 1, uncertain: !result.stop.quiescent || session.canceled };
+          return { code: result.code || 1, uncertain: !result.stop.quiescent || session.canceled, volumeLost: result.volumeLost };
         }
         markPackagesResolved(packages);
       }
@@ -2232,6 +2269,11 @@ export async function commandRun(
     usage();
   }
   let args = rawArgs.slice(1);
+  const missingVolume = buildVolumeMissing(config.appleDir);
+  if (missingVolume) {
+    log(`error: INFRASTRUCTURE failure: ${missingVolume}`);
+    return 1;
+  }
   applyRunCheckout(config);
   const normalized = normalizeCommandArgs(config, args);
   args = normalized.args;
@@ -2262,6 +2304,7 @@ export async function commandRun(
   let hostCrash: string | undefined;
   let stalledBeforeProjectOpen = false;
   let sampleOutput: string | undefined;
+  let volumeLost: string | undefined;
   let attemptsUsed = 0;
   let testCompletion: TestCompletion | undefined;
   let testResults: RecordedResults | undefined;
@@ -2307,6 +2350,7 @@ export async function commandRun(
       });
       exitCode = build.code;
       hangDetected = build.hung;
+      volumeLost = build.volumeLost;
       uncertain = uncertain || build.uncertain;
       if (plan.kind === "build" || build.code !== 0 || !build.xctestrun || !runDir) {
         return commandRunExitCode({
@@ -2440,6 +2484,7 @@ export async function commandRun(
       });
       exitCode = result.code;
       hangDetected = hangDetected || result.hung;
+      volumeLost = result.volumeLost;
       testCompletion = result.completion;
       stalledBeforeProjectOpen = Boolean(result.stalledBeforeProjectOpen);
       sampleOutput = result.sampleOutput;
@@ -2458,6 +2503,8 @@ export async function commandRun(
         exitCode = exitCode || 1;
         break;
       }
+      // Its log and artifact folder went with the volume; a retry would build on nothing.
+      if (volumeLost) break;
       const attemptEnd = nowEpoch();
       writeJsonArtifact({
         artifactPath: artifactFile,
@@ -2725,6 +2772,8 @@ export async function commandRun(
         releaseReusable(owned, undefined, interrupted ? INTERRUPTED_NOTE : undefined);
       }
     }
+    // Last, so it is the line a gate's cause guess and a shard runner read (gate-report.ts, unit-shards.ts).
+    if (volumeLost) log(`error: INFRASTRUCTURE failure: ${volumeLost}; not a build or test failure of this change. Run again once the build volume is back.`);
   }
   return commandRunExitCode({
     canceled: session.canceled,

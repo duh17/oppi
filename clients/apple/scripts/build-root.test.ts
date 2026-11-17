@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { buildRoot, buildRootFor, ensureBuildLink, isManagedBuildLink } from "./build-root";
+import { dirname, join } from "node:path";
+import { buildRoot, buildRootFor, buildVolumeLost, buildVolumeMissing, buildVolumeOf, ensureBuildLink, isManagedBuildLink } from "./build-root";
 
 const made: string[] = [];
 function temp(): string {
@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 describe("build root", () => {
-  test("without a mounted root, .build stays an ordinary folder and a dead link is dropped", () => {
+  test("without a root, .build stays an ordinary folder; a link into a configured root that is gone stays and is named", () => {
     const base = temp();
     const apple = checkout(base, "wt-a");
     expect(ensureBuildLink(apple, {})).toBeUndefined();
@@ -29,7 +29,42 @@ describe("build root", () => {
     symlinkSync(join(base, "absent", "gone"), join(apple, ".build"));
     expect(buildRoot(env)).toBeUndefined();
     expect(ensureBuildLink(apple, env)).toBeUndefined();
-    expect(() => lstatSync(join(apple, ".build"))).toThrow();
+    expect(lstatSync(join(apple, ".build")).isSymbolicLink()).toBe(true);
+    expect(buildVolumeMissing(apple, env)).toContain("build volume missing:");
+    expect(buildVolumeMissing(apple, env)).toContain("oppi-ramdisk.sh");
+    // A detached RAM disk leaves its mount point behind, empty and unwritable: still not mounted.
+    mkdirSync(join(base, "absent"), { mode: 0o111 });
+    expect(buildRoot(env)).toBeUndefined();
+    expect(buildVolumeMissing(apple, env)).toContain("is not mounted");
+    chmodSync(join(base, "absent"), 0o755);
+    // Mounted again (empty): the link is made again.
+    expect(buildVolumeMissing(apple, env)).toBeUndefined();
+    expect(ensureBuildLink(apple, env)).toBe(readlinkSync(join(apple, ".build")));
+    expect(existsSync(join(apple, ".build"))).toBe(true);
+    // With no root configured any more, a dead link is dropped and .build is an ordinary folder again.
+    const other = checkout(base, "wt-b");
+    symlinkSync(join(base, "elsewhere", "gone"), join(other, ".build"));
+    expect(buildVolumeMissing(other, {})).toBeUndefined();
+    expect(ensureBuildLink(other, {})).toBeUndefined();
+    expect(() => lstatSync(join(other, ".build"))).toThrow();
+  });
+
+  test("a build volume is lost when .build stops resolving, moves to another device, or a watched path vanishes", () => {
+    const base = temp();
+    const root = join(base, "ram");
+    mkdirSync(root);
+    const apple = checkout(base, "wt-a");
+    const folder = ensureBuildLink(apple, { OPPI_BUILD_ROOT: root })!;
+    const log = join(folder, "logs", "build.log");
+    mkdirSync(dirname(log));
+    writeFileSync(log, "");
+    const start = buildVolumeOf(apple)!;
+    expect(buildVolumeLost(apple, start, [log])).toBeUndefined();
+    expect(buildVolumeLost(apple, { ...start, dev: start.dev + 1 }, [log])).toContain("was replaced mid-build");
+    rmSync(log);
+    expect(buildVolumeLost(apple, start, [log])).toBe(`build volume lost: ${log} disappeared mid-build`);
+    rmSync(root, { recursive: true });
+    expect(buildVolumeLost(apple, start, [log])).toBe(`build volume lost: ${folder} disappeared mid-build`);
   });
 
   test("each checkout links to its own folder and an existing folder moves over", () => {
