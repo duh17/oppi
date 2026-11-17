@@ -12,7 +12,7 @@ import { makeTempDir } from "./harness/temp-dir.js";
 
 const serverRoot = fileURLToPath(new URL("..", import.meta.url));
 const tsc = join(serverRoot, "node_modules", "@typescript", "native", "bin", "tsc");
-const EXAMPLES = ["example-board", "example-bookmarks", "example-release-notes"];
+const EXAMPLES = ["example-board", "example-bookmarks", "example-release-notes", "example-shelf"];
 
 /** A folder outside the repository with the package installed as `oppi`, its types built. */
 function installedPackage(): string {

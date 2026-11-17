@@ -563,6 +563,7 @@ How the parts fit:
 | `button` | `id`, `title`, `action`, `role?`, `icon?`, `selected?`, `disabled?` | `role`: `primary`, `secondary`, `destructive`. |
 | `toggle` | `id`, `title`, `value`, `action`, `disabled?` | A tap sends the new value as `values.value`. |
 | `menu` | `id`, `items`, `title?`, `icon?`, `disabled?` | An item is `{ id?, title, role?, action }`. |
+| `tiles` | `items` | Places drawn as the Pinned screen's tiles. See [Tiles](#tiles). |
 
 `tone` is `neutral`, `accent`, `success`, `warning`, or `danger`. A field that a node kind does not take, such as a `tone` on `markdown` or an `action` on `icon`, makes the surface invalid. A body is at most 5 nodes deep, a layout node holds 1 to 12 children, a surface holds at most 300 nodes, and node text is at most 500 characters.
 
@@ -582,6 +583,34 @@ An `elapsed` node shows the time since `since`, in epoch milliseconds. The clien
 `style` and `tone` work as they do on `text`. The digits keep a fixed width, so the line does not shift as the count changes. VoiceOver reads the current count in words ("1 minute, 5 seconds") when it focuses the count, or the pill or row that holds it. `accessibility.label` names the count, and `accessibility.value` replaces the spoken count.
 
 A client that cannot tick the node gets the count as it was when the server sent the surface. A client that draws blocks but not `elapsed` gets a `text` node with the same words, `style`, and `tone`, and the version 1 projection shows the same words. That text changes only when the surface is published again.
+
+### Tiles
+
+A `tiles` node shows places as the Pinned screen shows pins, in rows of as many as fit: a file's first page or picture, a folder's first items, a game's last frame, a session. A tap opens the place as its link opens: beside the chat on a wide window, or in the chat's stack on an iPhone. A tile loads its preview as soon as it is drawn, without a tap, and like a pin it can name any place on the session's server.
+
+```ts
+tiles({
+  id: "files",
+  items: [
+    { id: "report", link: "oppi://file?session=<session id>&path=out/report.pdf" },
+    { id: "review", link: "oppi://session/<session id>", title: "Review", subtitle: "Subagent" },
+  ],
+});
+```
+
+| Field | Meaning |
+| --- | --- |
+| `items` | 1 to 12 tiles, each `{ id, link, title?, subtitle? }`. |
+| `id` | A stable identifier, unique across the surface, like a node `id`. Each tile counts as a node toward the surface's 300. |
+| `link` | An `oppi://` pane link to a place a pin can name: a session, thread, or session list, a file or folder, a panel, a web page, or a Godot game. |
+| `title` | The name to show. Without it the tile shows the place's own name: a file's name, a session's title, a game's name. |
+| `subtitle` | The line under the name. Without it the tile shows what Oppi reads of the place (a PDF's pages and size, a folder's items, a game's build), or where it lives. |
+
+The server refuses a surface with a tile whose link is not a pane link, breaks the link rules in `protocol/links.json`, or names a place a pin cannot: a Git link, a path that leaves its folder, a host file outside `~/`, or another server (`server=`). A `title` and a `subtitle` take at most 200 characters. A tile has no `action`, `tone`, or other field of a node, and a pill cannot hold one.
+
+If the place is gone (the file was deleted, the session or game removed), its tile is dimmed, says **Not found**, and opens nothing.
+
+The shipped `example-shelf` plugin uses tiles for the files a chat wrote, its subagents, and its game. It has no tool: a hook draws it again after each round of tool calls, and `oppiHost().sessionActivity` reads what the session did. See its [source](https://github.com/duh17/oppi/tree/main/server/plugins/example-shelf).
 
 ## Panel panes
 
@@ -635,8 +664,9 @@ The server advertises these capability levels and clients must support at least 
 | `extension-native-ui:v2:elapsed` | The `elapsed` node, ticked by the client, and pill text at the strip's size |
 | `extension-native-ui:v2:panel` | [Panel panes](#panel-panes): a composable surface's `panel` hints and the `panel` placement |
 | `extension-native-ui:v2:working` | The `working` icon, drawn as Oppi's static working icon |
+| `extension-native-ui:v2:tiles` | The [`tiles`](#tiles) node |
 
-A client names the version 2 capabilities it draws in a `client_capabilities` message on its session stream, and the server sends each client the shape it can draw. A client without `composites` gets the version 1 projection of every composable surface. A client without `blocks` gets the projection of a surface that has a `blocks` section or a pill. A client without `elapsed` gets each `elapsed` node as static text, and a pill's `headline` text as `caption`, because it draws `headline` too large for the strip. A client without `panel` gets each composable surface without its `panel` hints, and a `panel` placement as `strip`, so its pill opens the drawer as before. A client without `working` gets each `working` icon as the `arrow.triangle.2.circlepath` symbol. Version 1 hints go to every client: a client that does not read them ignores them.
+A client names the version 2 capabilities it draws in a `client_capabilities` message on its session stream, and the server sends each client the shape it can draw. A client without `composites` gets the version 1 projection of every composable surface. A client without `blocks` gets the projection of a surface that has a `blocks` section or a pill. A client without `elapsed` gets each `elapsed` node as static text, and a pill's `headline` text as `caption`, because it draws `headline` too large for the strip. A client without `panel` gets each composable surface without its `panel` hints, and a `panel` placement as `strip`, so its pill opens the drawer as before. A client without `working` gets each `working` icon as the `arrow.triangle.2.circlepath` symbol. A client without `tiles` gets each `tiles` node as a `markdown` node with the same `id`: a list of links, one per tile, with its title (or the place's name) and subtitle. The version 1 projection shows each tile as a line of text that opens its link. Version 1 hints go to every client: a client that does not read them ignores them.
 
 Terminal fallback is part of the contract:
 

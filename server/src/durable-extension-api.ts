@@ -88,6 +88,7 @@ export {
   surfaceActionAnswer,
   table,
   text,
+  tiles,
   toggle,
   type ActionBarFields,
   type BadgeNodeFields,
@@ -104,6 +105,7 @@ export {
   type StatusCardFields,
   type TableNodeFields,
   type TextNodeFields,
+  type TilesNodeFields,
   type ToggleNodeFields,
   type Surface,
   type SurfaceActionHandler,
@@ -192,6 +194,24 @@ export interface OppiDurableHost {
     api: DocumentReader & { readonly conversationId: ConversationId },
     context: Context,
   ): Promise<OppiGodotHost | undefined>;
+  /**
+   * What the Session the conversation `api` is for has done so far, read like `sessionName`: the
+   * files it changed and the subagent Sessions it started. It only reads. Undefined for a
+   * conversation without a Session, or until the server binds it.
+   */
+  sessionActivity(
+    api: DocumentReader & { readonly conversationId: ConversationId },
+    context: Context,
+  ): Promise<OppiSessionActivity | undefined>;
+  /**
+   * The surface loop of the Session the conversation `api` is for, read like `sessionName`: what
+   * `surfaces(env)` returns for a tool call, for a hook or task, which has no execution env.
+   * Undefined for a conversation without a live Session, or until the server binds it.
+   */
+  sessionSurfaces(
+    api: DocumentReader & { readonly conversationId: ConversationId },
+    context: Context,
+  ): Promise<SurfacePublisher | undefined>;
   /** Pi's file tools over the host or a sandbox session's Gondolin VM. */
   readonly files: OppiFileToolsHost;
   /**
@@ -217,6 +237,20 @@ export type OppiMcpHost = Pick<
   McpService,
   "list" | "add" | "patch" | "remove" | "login" | "logout"
 > & { readonly auth: Pick<McpService["auth"], "get" | "cancel" | "submit" | "active"> };
+
+/** `oppiHost().sessionActivity`: what one Session has done, as the server recorded it. */
+export interface OppiSessionActivity {
+  /** The Oppi Session id, for its links (`oppi://file?session=<id>&path=…`). */
+  readonly sessionId: string;
+  /**
+   * The files its `edit` and `write` calls named, in the order it first changed each, as paths
+   * relative to its working folder. A file outside that folder is left out. The server keeps the
+   * first 100.
+   */
+  readonly changedFiles: readonly string[];
+  /** The subagent Sessions it started, oldest first. */
+  readonly children: readonly { readonly id: string; readonly name?: string }[];
+}
 
 /** A Session's name, as Oppi lists it. */
 export interface DurableSessionName {

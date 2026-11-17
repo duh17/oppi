@@ -52,6 +52,8 @@ struct ExtensionSurfaceReaderContent {
     var pendingAction: (@MainActor () -> ExtensionSurfacePendingAction?)? = nil
     /// Sends one action from a card in the reader; nil draws the cards without actions.
     var sendAction: ((ExtensionSurfaceActionIntent) -> Void)? = nil
+    /// The server the surface's session lives on, for its tiles.
+    var server: ExtensionSurfaceServer? = nil
 }
 
 /// Timeline/chat reader body. Only the ``ChatReaderNavTarget`` id rides the path.

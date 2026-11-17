@@ -2,29 +2,35 @@ import LinkPresentation
 import PDFKit
 import UIKit
 
-/// What a pin's tile shows beyond its name: a file's first page or picture,
+/// What a place's tile shows beyond its name: a file's first page or picture,
 /// a folder's size and first items, a game's last frame and build, a web
-/// page's title and pictures.
+/// page's title and pictures, or that it is no longer there.
 struct PinPreview: Equatable, Sendable {
     /// A file's thumbnail, a game's last frame, a web page's image.
     var image: UIImage?
     /// A web page's icon.
     var icon: UIImage?
-    /// A web page's title.
+    /// A web page's title, or a game's name as the server reads it.
     var title: String?
     /// "PDF · 2 pages · 277.9 KB", "9 items", "Godot 4.7 · Build 72".
     var detail: String?
     /// A folder's first items, folders first.
     var children: [FileEntry] = []
+    /// The server answered that the file, folder, game, or session is not
+    /// there (a 404), as a pin's `missing` status says.
+    var isMissing = false
+
+    static let missing = Self(isMissing: true)
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.image === rhs.image && lhs.icon === rhs.icon && lhs.title == rhs.title
-            && lhs.detail == rhs.detail && lhs.children == rhs.children
+            && lhs.detail == rhs.detail && lhs.children == rhs.children && lhs.isMissing == rhs.isMissing
     }
 }
 
-/// Reads each pin's preview the first time a screen asks for it, and again
-/// after `refresh()` (each time the screen appears). Observed: a screen that
+/// Reads each place's preview the first time a screen asks for it, and again
+/// after `refresh()` (each time the screen appears). The Pinned screen and an
+/// extension's tiles both read through it. Observed: a screen that
 /// reads `preview(for:)` in `updateProperties()` redraws when one arrives,
 /// and keeps the one it has until the next read answers.
 ///
@@ -50,15 +56,19 @@ final class PinPreviewStore {
         init(_ preview: PinPreview) { self.preview = preview }
     }
 
-    /// The preview read so far for `pin` on `serverId`; starts reading it
-    /// the first time, or the first time since `refresh()`.
-    func preview(for pin: Pin, serverId: String, connection: ServerConnection) -> PinPreview? {
-        let key = "\(serverId)|\(pin.target.pinKey)"
-        if !started.contains(key), !pin.isGone, let api = connection.apiClient {
+    /// The preview read so far for `route` on `serverId`; starts reading it
+    /// the first time, or the first time since `refresh()`. `checksPresence`
+    /// also asks whether a file or session is still there (a pin's list read
+    /// already says, an extension's tile has no one else to ask); a folder's
+    /// or game's read says so either way.
+    func preview(for route: PaneRoute, serverId: String, connection: ServerConnection, checksPresence: Bool) -> PinPreview? {
+        let key = "\(serverId)|\(route.pinKey)"
+        if !started.contains(key), let api = connection.apiClient {
             started.insert(key)
-            let target = pin.target
+            let target = route
             Task { [weak self] in
-                guard let preview = await Self.load(target, serverId: serverId, key: key, api: api) else { return }
+                guard let preview = await Self.load(target, serverId: serverId, key: key, checksPresence: checksPresence, api: api)
+                else { return }
                 if self?.previews[key] != preview { self?.previews[key] = preview }
             }
         }
@@ -70,7 +80,9 @@ final class PinPreviewStore {
         started.removeAll()
     }
 
-    private static func load(_ route: PaneRoute, serverId: String, key: String, api: APIClient) async -> PinPreview? {
+    private static func load(
+        _ route: PaneRoute, serverId: String, key: String, checksPresence: Bool, api: APIClient
+    ) async -> PinPreview? {
         switch route {
         case .file(let origin, let path, _):
             let current: APIClient.CurrentFileOrigin = switch origin {
@@ -78,7 +90,7 @@ final class PinPreviewStore {
             case .workspace(let id, let worktree): .workspace(workspaceId: id, worktreeId: worktree)
             case .session(let id): .session(sessionId: id)
             }
-            return await file(current, path: path, key: key, api: api)
+            return await file(current, path: path, key: key, checksPresence: checksPresence, api: api)
         case .hostFiles(let path):
             return await folder { after in
                 try await api.listHostDirectory(path: FileBrowserHostHomePath.directoryPath(rawPath: path ?? "~"), after: after)
@@ -91,8 +103,30 @@ final class PinPreviewStore {
             return await game(GodotSlot(serverId: serverId, project: project), api: api)
         case .browser(let url):
             return await page(url, key: key)
+        case .session(let id), .thread(let id), .panel(let id, _):
+            return checksPresence ? await session(id, api: api) : nil
         default:
             return nil
+        }
+    }
+
+    /// Whether `error` is the server's answer that the place is not there.
+    nonisolated private static func isNotFound(_ error: Error) -> Bool {
+        switch error as? APIError {
+        case .server(404, _), .codedServer(404, _, _): true
+        default: false
+        }
+    }
+
+    // MARK: Sessions
+
+    /// Nothing to show beyond the name; only whether the session is gone.
+    private static func session(_ id: String, api: APIClient) async -> PinPreview? {
+        do {
+            _ = try await api.getSessionRecord(sessionId: id)
+            return nil
+        } catch {
+            return isNotFound(error) ? .missing : nil
         }
     }
 
@@ -110,10 +144,21 @@ final class PinPreviewStore {
         }
     }
 
-    private static func file(_ origin: APIClient.CurrentFileOrigin, path: String, key: String, api: APIClient) async -> PinPreview? {
-        guard let kind = Thumbnail(path: path),
-              let version = try? await api.currentFileVersion(origin, path: path),
-              version.size <= thumbnailLimit else { return nil }
+    /// A file's thumbnail and its size, read once per version; a file the
+    /// server says is not there is `missing`. Without `checksPresence`, only
+    /// a file with a thumbnail is asked about.
+    private static func file(
+        _ origin: APIClient.CurrentFileOrigin, path: String, key: String, checksPresence: Bool, api: APIClient
+    ) async -> PinPreview? {
+        guard checksPresence || Thumbnail(path: path) != nil else { return nil }
+        let version: APIClient.CurrentFileVersion
+        do {
+            guard let found = try await api.currentFileVersion(origin, path: path) else { return .missing }
+            version = found
+        } catch {
+            return nil
+        }
+        guard let kind = Thumbnail(path: path), version.size <= thumbnailLimit else { return nil }
         let cacheKey = "\(key)|\(version.size)|\(version.modified)" as NSString
         if let cached = cache.object(forKey: cacheKey) { return cached.preview }
         guard let data = try? await api.currentFile(origin, path: path) else { return nil }
@@ -152,7 +197,12 @@ final class PinPreviewStore {
     /// The first page's count (with a + when more follow) and first items;
     /// hidden items are not counted.
     private static func folder(_ list: (String?) async throws -> DirectoryListingResponse) async -> PinPreview? {
-        guard let page = try? await list(nil) else { return nil }
+        let page: DirectoryListingResponse
+        do {
+            page = try await list(nil)
+        } catch {
+            return isNotFound(error) ? .missing : nil
+        }
         let visible = page.entries.filter { !$0.name.hasPrefix(".") }
         let items = switch (visible.count, page.truncated) {
         case (let count, true): String(localized: "\(count)+ items")
@@ -175,11 +225,22 @@ final class PinPreviewStore {
             let scale = min(1, thumbnailPixels / max(image.size.width, image.size.height, 1))
             return image.preparingThumbnail(of: CGSize(width: image.size.width * scale, height: image.size.height * scale)) ?? image
         }.value
-        let project = try? await GodotLinkClient(api: api, playerLink: { _ in nil }).project(slot.project)
+        let project: GodotProject?
+        do {
+            // Nil is the server's 404: the game is gone.
+            guard let found = try await GodotLinkClient(api: api, playerLink: { _ in nil }).project(slot.project) else {
+                return .missing
+            }
+            project = found
+        } catch {
+            project = nil
+        }
         var parts: [String] = []
         if let version = project?.engine.version { parts.append("Godot \(version)") }
         if let release = project?.release { parts.append(String(localized: "Build \(release.seq)")) }
-        return PinPreview(image: await poster, detail: parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} "))
+        return PinPreview(
+            image: await poster, title: project?.name, detail: parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
+        )
     }
 
     // MARK: Web pages

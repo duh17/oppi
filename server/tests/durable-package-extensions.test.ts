@@ -307,6 +307,7 @@ describe("plugins from Pi packages", () => {
       expect.objectContaining({ name: "oppi-example-board", state: "off" }),
       expect.objectContaining({ name: "oppi-example-bookmarks", state: "off" }),
       expect.objectContaining({ name: "oppi-example-release-notes", state: "off" }),
+      expect.objectContaining({ name: "oppi-example-shelf", state: "off" }),
       expect.objectContaining({ name: "oppi-sql-explorer", source: "built-in", state: "off" }),
       expect.objectContaining({ name: "probe", source: "owner", state: "off" }),
     ]);

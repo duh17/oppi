@@ -23,11 +23,14 @@ import type {
   ExtensionUISurfaceSection,
   ExtensionUISurfaceState,
   ExtensionUISurfaceStateKind,
+  ExtensionUISurfaceTile,
   ExtensionUISurfaceTone,
   ExtensionUINativeSurface,
   ExtensionUITextSpan,
 } from "./types.js";
 import { isRecord } from "./json-shape.js";
+import { decodePaneLink } from "./pane-link.js";
+import { validatePinRoute } from "./storage/pins-store.js";
 
 /**
  * Composable extension surfaces, version 2: validation, patch merge, and the v1 projection.
@@ -75,6 +78,8 @@ export const EXTENSION_UI_SURFACE_MAX_TITLE_CHARS = 200;
 export const EXTENSION_UI_SURFACE_MAX_FALLBACK_CHARS = 2_000;
 export const EXTENSION_UI_SURFACE_MAX_ATOMS = 8;
 export const EXTENSION_UI_SURFACE_MAX_SPANS = 320;
+/** A tile's link: a browser link's page may take 2 KiB, and its own query a little more. */
+export const EXTENSION_UI_SURFACE_MAX_TILE_LINK_CHARS = 4_096;
 /** The composites that share one base: header, state, actions, fallback, tone. */
 const CLOSED_COMPOSITES = [
   "statusCard",
@@ -114,6 +119,7 @@ const NODE_TYPES = [
   "button",
   "toggle",
   "menu",
+  "tiles",
 ] as const;
 /** The primitives that are a control of their own: their tap is their required `action`. */
 const CONTROL_NODE_TYPES: ReadonlySet<string> = new Set(["button", "toggle", "menu"]);
@@ -685,6 +691,13 @@ function node(
         ...disabled,
         action: nodeAction(value.action, actions),
       };
+    case "tiles": {
+      const items = list(value.items, EXTENSION_UI_SURFACE_MAX_ROW_CHILDREN, "tiles").map((item) =>
+        tile(item, state),
+      );
+      if (items.length === 0) throw new SurfaceShapeError("a tiles node has no tiles");
+      return { ...base, type, items };
+    }
     case "menu": {
       const items = list(value.items, EXTENSION_UI_SURFACE_MAX_ROW_CHILDREN, "menu items").map(
         (item) => {
@@ -711,6 +724,50 @@ function node(
       };
     }
   }
+}
+
+/**
+ * One tile. It counts as a node, and its id shares the surface's one namespace: the host names the
+ * tile's view by it. Its link is a pane link a pin could name, held to the pin rules (plain paths
+ * inside their root, an http page that is not loopback, a Godot project id), with no `server=`:
+ * a tile opens on the session's own server.
+ */
+function tile(value: unknown, state: SurfaceLimitState): ExtensionUISurfaceTile {
+  if (!isRecord(value)) throw new SurfaceShapeError("a tile is not an object");
+  state.nodes += 1;
+  if (state.nodes > EXTENSION_UI_SURFACE_MAX_NODES)
+    throw new SurfaceShapeError(`the surface exceeds ${EXTENSION_UI_SURFACE_MAX_NODES} nodes`);
+  const id = stableId(value.id);
+  if (state.nodeIds.has(id)) throw new SurfaceShapeError(`duplicate node id "${id}"`);
+  state.nodeIds.add(id);
+  const link = text(value.link, EXTENSION_UI_SURFACE_MAX_TILE_LINK_CHARS, true);
+  const decoded = decodePaneLink(link);
+  if (decoded === undefined)
+    throw new SurfaceShapeError(`tile "${id}" link is not an oppi:// pane link`);
+  if (!decoded.ok)
+    throw new SurfaceShapeError(
+      `tile "${id}" link is invalid: ${decoded.error.code}${decoded.error.detail ? ` (${decoded.error.detail})` : ""}`,
+    );
+  if (decoded.link.server !== null)
+    throw new SurfaceShapeError(`tile "${id}" link names a server; a tile opens on its own`);
+  const route = decoded.link.route;
+  if (route.kind === "git" || route.kind === "commit")
+    throw new SurfaceShapeError(`tile "${id}" link names a route a pin cannot name`);
+  try {
+    validatePinRoute(route);
+  } catch (error) {
+    throw new SurfaceShapeError(`tile "${id}" link: ${(error as Error).message}`);
+  }
+  return {
+    id,
+    link,
+    ...(value.title === undefined
+      ? {}
+      : { title: text(value.title, EXTENSION_UI_SURFACE_MAX_TITLE_CHARS, true) }),
+    ...(value.subtitle === undefined
+      ? {}
+      : { subtitle: text(value.subtitle, EXTENSION_UI_SURFACE_MAX_TITLE_CHARS, true) }),
+  };
 }
 
 /** A control is a tap target on its own: it cannot be tapped through a shared id. */

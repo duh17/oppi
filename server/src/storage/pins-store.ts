@@ -48,7 +48,7 @@ export interface PinsChange {
  * A relative path of plain segments: no `.` or `..`, no empty segment, no controls, at most 1 KiB.
  * A trailing `/` is dropped. This is what keeps a pin inside its root before anything is read.
  */
-function plainRelativePath(path: string): string | null {
+export function plainRelativePath(path: string): string | null {
   const trimmed = path.endsWith("/") ? path.slice(0, -1) : path;
   if (!trimmed) return "";
   if (Buffer.byteLength(trimmed, "utf8") > MAX_PIN_PATH_BYTES) return null;
@@ -78,7 +78,7 @@ function isName(value: unknown): value is string {
 }
 
 /** A web page a pin may name: the rules a layout's `web` and a browser link follow. */
-function isPinnableURL(value: unknown): value is string {
+export function isPinnableURL(value: unknown): value is string {
   if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > MAX_PIN_URL_BYTES) {
     return false;
   }

@@ -87,6 +87,8 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
     case button(ExtensionUISurfaceButtonNode)
     case toggle(ExtensionUISurfaceToggleNode)
     case menu(ExtensionUISurfaceMenuNode)
+    /// Places drawn as the Pinned screen's tiles, each opening its pane link.
+    case tiles(ExtensionUISurfaceTilesNode)
     /// A node kind this build cannot draw: its id, the kind it arrived as, and its own words.
     case unsupported(ExtensionUISurfaceNodeUnsupported)
 
@@ -111,6 +113,7 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
         case .button: return "button"
         case .toggle: return "toggle"
         case .menu: return "menu"
+        case .tiles: return "tiles"
         case .unsupported(let value): return value.type
         }
     }
@@ -134,6 +137,7 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
         case .button(let value): return value.base
         case .toggle(let value): return value.base
         case .menu(let value): return value.base
+        case .tiles(let value): return value.base
         case .unsupported: return nil
         }
     }
@@ -358,6 +362,13 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
                     items: (try? c.decode([ExtensionUISurfaceMenuItem].self, forKey: .items)) ?? []
                 )
             )
+        case "tiles":
+            self = .tiles(
+                ExtensionUISurfaceTilesNode(
+                    base: base,
+                    items: (try? c.decode([ExtensionUISurfaceTile].self, forKey: .items)) ?? []
+                )
+            )
         default:
             // A kind this build does not draw keeps its words, so the host shows a labeled line
             // where the node would have been instead of dropping the section or the frame.
@@ -461,6 +472,9 @@ enum ExtensionUISurfaceNode: Sendable, Equatable, Codable {
             try c.encodeIfPresent(value.icon, forKey: .icon)
             try c.encodeIfPresent(value.disabled, forKey: .disabled)
             try c.encode(value.items, forKey: .items)
+        case .tiles(let value):
+            try encodeNodeBase(value.base, into: &c)
+            try c.encode(value.items, forKey: .items)
         case .unsupported(let value):
             try value.encodePlaceholder(into: &c)
         }
@@ -515,6 +529,20 @@ struct ExtensionUISurfaceTextNode: Sendable, Equatable, Codable {
     let selected: Bool?
     let disabled: Bool?
     let action: ExtensionUISurfaceNodeAction?
+}
+
+/// One tile: a place the host opens by its `oppi://` pane link, with the words it shows instead of
+/// the target's own name and detail.
+struct ExtensionUISurfaceTile: Sendable, Equatable, Codable, Identifiable {
+    let id: String
+    let link: String
+    let title: String?
+    let subtitle: String?
+}
+
+struct ExtensionUISurfaceTilesNode: Sendable, Equatable, Codable {
+    let base: ExtensionUISurfaceNodeBase
+    let items: [ExtensionUISurfaceTile]
 }
 
 struct ExtensionUISurfaceMarkdownNode: Sendable, Equatable, Codable {

@@ -125,12 +125,40 @@ extension Pin {
         return ownName(names)
     }
 
-    /// The target's own name: a file or folder's name (Home, or a
-    /// workspace root's workspace), a session's title, a game's name as the
-    /// server read it, a web page's host.
+    /// The target's own name (`PaneRoute.placeName`), with a game's name as
+    /// the server read it.
     func ownName(_ names: PinNames = .none) -> String {
+        target.placeName(names, gameName: name)
+    }
+
+    /// The second line, the same in every list: why it cannot open, else
+    /// where it lives (`PaneRoute.placeLocation`).
+    func subtitle(_ names: PinNames = .none) -> String? {
+        switch status {
+        case .missing: return PaneRoute.notFound
+        case .workspaceMissing: return String(localized: "Workspace removed")
+        case .unreadable where kind == .folders: return String(localized: "Oppi can\u{2019}t read this folder")
+        case .unreadable: return String(localized: "Oppi can\u{2019}t read this file")
+        case .ok, .unknown: return target.placeLocation(names)
+        }
+    }
+
+    /// The pane entry this pin opens as: its route on its server.
+    func paneEntry(serverId: String) -> PaneStackEntry {
+        PaneStackEntry(serverId: serverId, route: target)
+    }
+}
+
+extension PaneRoute {
+    /// The second line of a place that is no longer there.
+    static var notFound: String { String(localized: "Not found") }
+
+    /// The place's own name: a file or folder's name (Home, or a workspace
+    /// root's workspace), a session's title, a game's name (`gameName`, as
+    /// the server read it), a web page's host.
+    func placeName(_ names: PinNames = .none, gameName: String? = nil) -> String {
         func last(_ path: String) -> String { (path as NSString).lastPathComponent }
-        switch target {
+        switch self {
         case .hostFiles(nil): return String(localized: "Home")
         case .hostFiles(let path?): return last(path)
         case .files(_, nil): return names.workspace ?? String(localized: "Workspace")
@@ -142,28 +170,21 @@ extension Pin {
         case .sessions: return names.workspace ?? String(localized: "Sessions")
         case .panel(_, let id): return id
         case .browser(let url): return url.host() ?? url.absoluteString
-        case .godot: return name ?? String(localized: "Game")
+        case .godot: return gameName ?? String(localized: "Game")
         case .git, .commit, .local, .unsupported: return ""
         }
     }
 
-    /// The second line, the same in every list: why it cannot open, else
-    /// where it lives ("Home › Books", a workspace and its folders, a
-    /// worktree, a page's path). Nil where the title already says where.
-    func subtitle(_ names: PinNames = .none) -> String? {
-        switch status {
-        case .missing: return String(localized: "Not found")
-        case .workspaceMissing: return String(localized: "Workspace removed")
-        case .unreadable where kind == .folders: return String(localized: "Oppi can\u{2019}t read this folder")
-        case .unreadable: return String(localized: "Oppi can\u{2019}t read this file")
-        case .ok, .unknown: break
-        }
+    /// Where the place lives, the same in every list ("Home › Books", a
+    /// workspace and its folders, a worktree, a page's path). Nil where the
+    /// name already says where.
+    func placeLocation(_ names: PinNames = .none) -> String? {
         func folders(_ path: String) -> [String] {
             (path as NSString).deletingLastPathComponent.split(separator: "/").map(String.init)
         }
         func crumbs(_ parts: [String]) -> String { parts.joined(separator: " \u{203A} ") }
         let workspace = names.workspace ?? String(localized: "Workspace")
-        switch target {
+        switch self {
         case .hostFiles(let path?), .file(.host, let path, _):
             return crumbs([String(localized: "Home")] + folders(path).dropFirst())
         case .files(_, let path?):
@@ -181,10 +202,5 @@ extension Pin {
         default:
             return nil
         }
-    }
-
-    /// The pane entry this pin opens as: its route on its server.
-    func paneEntry(serverId: String) -> PaneStackEntry {
-        PaneStackEntry(serverId: serverId, route: target)
     }
 }

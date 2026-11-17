@@ -1,0 +1,7 @@
+{
+  "name": "oppi-example-shelf",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Oppi example plugin (off by default): a shelf panel of tiles that open the files, subagents, and game of the chat.",
+  "type": "module"
+}

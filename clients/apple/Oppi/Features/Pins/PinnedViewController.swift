@@ -43,7 +43,7 @@ final class PinnedViewController: UIViewController {
         /// session list: a plain row among the session cards.
         case sessionPlace(PinsSection.Row, kind: PinKind)
         /// Any other pin: a tile.
-        case tile(PinTileCell.Content, pin: PinsSection.Row)
+        case tile(PinTileView.Content, pin: PinsSection.Row)
     }
 
     private let root: AppRootEnvironment
@@ -221,10 +221,11 @@ final class PinnedViewController: UIViewController {
         for pin: Pin, kind: PinKind, row: PinsSection.Row, connection: ServerConnection?, serverId: String?
     ) -> ItemContent {
         guard kind == .sessions else {
-            let preview = connection.flatMap { connection in
-                serverId.flatMap { previews.preview(for: pin, serverId: $0, connection: connection) }
+            // The list read already says whether the target is there; a gone pin reads nothing.
+            let preview = pin.isGone ? nil : connection.flatMap { connection in
+                serverId.flatMap { previews.preview(for: pin.target, serverId: $0, connection: connection, checksPresence: false) }
             }
-            return .tile(Self.tile(pin, kind: kind, row: row, preview: preview, palette: palette), pin: row)
+            return .tile(PinTileView.Content.make(place: Self.place(pin, row: row), kind: kind, preview: preview, palette: palette), pin: row)
         }
         guard let connection, case .session(let sessionId) = pin.target, !row.isGone,
               let session = Self.session(sessionId, in: connection) else { return .sessionPlace(row, kind: kind) }
@@ -241,37 +242,18 @@ final class PinnedViewController: UIViewController {
         ), pin: row)
     }
 
-    /// A tile's name and line of detail: why it can't open, else what its
-    /// preview read (a PDF's pages and size, a folder's items, a game's
-    /// build), else where it lives. A web page shows its title over its host
-    /// unless the pin was renamed.
-    static func tile(_ pin: Pin, kind: PinKind, row: PinsSection.Row, preview: PinPreview?, palette: ThemePalette) -> PinTileCell.Content {
-        var title = row.title
-        var detail = row.detail
-        if !(row.isGone || row.isOff || pin.status == .unreadable) {
-            switch (kind, pin.target) {
-            case (.web, .browser(let url)):
-                if pin.label == nil, let pageTitle = preview?.title, !pageTitle.isEmpty {
-                    title = pageTitle
-                    detail = url.host() ?? row.detail
-                }
-            case (.folders, _):
-                let parts = [preview?.detail, row.detail].compactMap { $0 }
-                detail = parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
-            case (.files, _), (.games, _):
-                detail = preview?.detail ?? row.detail
-            default:
-                break
-            }
-        }
-        return PinTileCell.Content(
-            artwork: PinArtwork.make(kind: kind, row: row, preview: preview, palette: palette),
-            title: title,
-            detail: detail,
-            children: kind == .folders ? preview?.children ?? [] : [],
-            isDimmed: row.isGone || row.isOff,
-            isLocked: row.isLocked,
-            isEditing: row.isEditing
+    /// A pin as a tile shows it: its row's words and state, and its label
+    /// as a name of its own.
+    static func place(_ pin: Pin, row: PinsSection.Row) -> PinTilePlace {
+        PinTilePlace(
+            route: pin.target,
+            title: row.title,
+            detail: row.detail,
+            keepsTitle: pin.label != nil,
+            isGone: row.isGone,
+            isOff: row.isOff,
+            isUnreadable: pin.status == .unreadable,
+            isLocked: row.isLocked
         )
     }
 
@@ -373,7 +355,7 @@ final class PinnedViewController: UIViewController {
         let usable = width - margin * 2
         let columns = max(2, Int((usable + spacing) / (160 + spacing)))
         let tileWidth = ((usable - spacing * Double(columns - 1)) / Double(columns)).rounded(.down)
-        let height = (tileWidth * PinTileCell.artworkAspect).rounded() + PinTileCell.captionHeight(for: environment.traitCollection)
+        let height = PinTileView.height(forWidth: tileWidth, traits: environment.traitCollection)
         let item = NSCollectionLayoutItem(layoutSize: .init(widthDimension: .absolute(tileWidth), heightDimension: .absolute(height)))
         let row = NSCollectionLayoutGroup.horizontal(
             layoutSize: .init(widthDimension: .fractionalWidth(1), heightDimension: .absolute(height)),
@@ -450,10 +432,12 @@ final class PinnedViewController: UIViewController {
 
     private func configure(_ cell: PinTileCell, id: String) {
         guard case .tile(let content, let row) = items[id], let section = pinsSection else { return }
-        cell.show(content, palette: palette, identifier: section.rowIdentifier(row), removeIdentifier: section.removeIdentifier(row))
+        cell.show(
+            content, isEditing: row.isEditing, palette: palette,
+            identifier: section.rowIdentifier(row), removeIdentifier: section.removeIdentifier(row)
+        )
         cell.remove = { [weak section] in section?.removeWhileEditing(row.id) }
-        cell.accessibilityLabel = [content.title, content.detail, row.isLocked ? String(localized: "Locked") : nil]
-            .compactMap { $0 }.joined(separator: ", ")
+        cell.accessibilityLabel = content.accessibilityLabel
         cell.accessibilityCustomActions = section.accessibilityActions(row)
     }
 

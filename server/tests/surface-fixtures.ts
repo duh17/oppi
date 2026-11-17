@@ -27,6 +27,7 @@ export function buildSurfaceFixtures(): Record<string, unknown> {
     "blocks-status.json": blocksStatusSurface(),
     "blocks-elapsed.json": blocksElapsedSurface(),
     "blocks-working.json": blocksWorkingSurface(),
+    "blocks-tiles.json": blocksTilesSurface(),
     "blocks-action.json": blocksActionMessage(),
     "blocks-patch.json": blocksPatchMessage(),
     "blocks-unknown-node.json": blocksUnknownNodeSurface(),
@@ -725,6 +726,57 @@ function blocksWorkingSurface(): unknown {
           children: [
             { type: "icon", id: "status:job-1", name: "working", tone: "accent" },
             { type: "text", text: "npm test", style: "headline" },
+          ],
+        },
+      },
+    ],
+  });
+}
+
+/**
+ * A shelf of places as tiles: a group of files, and one of a session and a game. Only a client that
+ * declares `v2:tiles` is sent the tiles; every other tree client gets each as a list of links.
+ */
+function blocksTilesSurface(): unknown {
+  return baseSurface({
+    id: "blocks-tiles",
+    title: "Shelf",
+    placement: { kind: "panel", preferred: "aboveComposer" },
+    header: { title: "Shelf", subtitle: "4 places" },
+    fallback: { text: "Shelf: 4 places" },
+    sections: [
+      {
+        composite: "blocks",
+        id: "shelf",
+        state: { kind: "content" },
+        fallback: { text: "Shelf: 4 places" },
+        body: {
+          type: "stack",
+          children: [
+            {
+              type: "tiles",
+              id: "files",
+              items: [
+                {
+                  id: "file:report",
+                  link: "oppi://file?session=test-session-1&path=out/report.pdf",
+                },
+                {
+                  id: "file:notes",
+                  link: "oppi://file?workspace=ws-1&path=docs/notes.md#L3",
+                  title: "Notes",
+                  subtitle: "Changed 2 times",
+                },
+              ],
+            },
+            {
+              type: "tiles",
+              id: "others",
+              items: [
+                { id: "session:child", link: "oppi://session/child-session-1", title: "Review" },
+                { id: "game:tide", link: "oppi://godot?project=tide-3fa9c2b1" },
+              ],
+            },
           ],
         },
       },

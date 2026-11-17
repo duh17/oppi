@@ -1,0 +1,87 @@
+{
+  "version": 2,
+  "id": "blocks-tiles",
+  "title": "Shelf",
+  "placement": {
+    "kind": "panel",
+    "preferred": "aboveComposer"
+  },
+  "lifecycle": "persistent",
+  "header": {
+    "title": "Shelf",
+    "subtitle": "4 places"
+  },
+  "actions": {
+    "retry": {
+      "title": "Retry",
+      "role": "primary",
+      "pending": {
+        "title": "Retrying…",
+        "disabled": [
+          "retry"
+        ]
+      }
+    },
+    "openLog": {
+      "title": "Logs"
+    },
+    "copy": {
+      "title": "Copy",
+      "role": "secondary"
+    }
+  },
+  "fallback": {
+    "text": "Shelf: 4 places"
+  },
+  "revision": 7,
+  "extensionScopeId": "npm:deploy-helper",
+  "extensionDisplayName": "Deploy Helper",
+  "sections": [
+    {
+      "composite": "blocks",
+      "id": "shelf",
+      "state": {
+        "kind": "content"
+      },
+      "fallback": {
+        "text": "Shelf: 4 places"
+      },
+      "body": {
+        "type": "stack",
+        "children": [
+          {
+            "type": "tiles",
+            "id": "files",
+            "items": [
+              {
+                "id": "file:report",
+                "link": "oppi://file?session=test-session-1&path=out/report.pdf"
+              },
+              {
+                "id": "file:notes",
+                "link": "oppi://file?workspace=ws-1&path=docs/notes.md#L3",
+                "title": "Notes",
+                "subtitle": "Changed 2 times"
+              }
+            ]
+          },
+          {
+            "type": "tiles",
+            "id": "others",
+            "items": [
+              {
+                "id": "session:child",
+                "link": "oppi://session/child-session-1",
+                "title": "Review"
+              },
+              {
+                "id": "game:tide",
+                "link": "oppi://godot?project=tide-3fa9c2b1"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

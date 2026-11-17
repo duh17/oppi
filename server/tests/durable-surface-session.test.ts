@@ -230,7 +230,7 @@ describe("durable plugin surfaces on the session stream", () => {
     const observed = observe(f.manager, f.session.id);
 
     // The port `oppiHost().surfaces(env)` returns for this session's conversation.
-    expect(f.manager.surfacePublisherFor(f.session.id)).toBeDefined();
+    expect(f.manager.surfacesFor(f.session.id)?.publisher).toBeDefined();
 
     const published = observed.next((frame) => frame.message.type === "extension_ui_surface");
     const ran = observed.next((frame) => frame.message.type === "tool_end");
@@ -488,7 +488,7 @@ describe("durable plugin surfaces on the session stream", () => {
     await f.manager.stopSession(f.session.id);
     expect((await removed).message).toMatchObject({ surfaceId: "deploy", removed: true });
     expect(f.manager.getSurfaceMessages(f.session.id, "late-phone")).toEqual([]);
-    expect(f.manager.surfacePublisherFor(f.session.id)).toBeUndefined();
+    expect(f.manager.surfacesFor(f.session.id)?.publisher).toBeUndefined();
   });
 });
 
@@ -673,13 +673,13 @@ describe("background jobs on their panel", () => {
       "the job",
     );
     const pid = Number(readFileSync(pidFile, "utf8").trim());
-    const before = f.manager.surfacePublisherFor(f.session.id);
+    const before = f.manager.surfacesFor(f.session.id)?.publisher;
 
     // The Session stops and starts again; a stopped Session leaves its job running.
     await f.manager.stopSession(f.session.id);
     expect(alive(pid)).toBe(true);
     const tap = await phone(f);
-    expect(f.manager.surfacePublisherFor(f.session.id)).not.toBe(before);
+    expect(f.manager.surfacesFor(f.session.id)?.publisher).not.toBe(before);
     const observed = observe(f.manager, f.session.id);
 
     // The new Session's loop gets the panel without any job changing: a client that connects

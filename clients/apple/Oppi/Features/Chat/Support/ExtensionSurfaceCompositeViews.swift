@@ -81,6 +81,8 @@ struct ExtensionSurfaceCompositeContext {
     /// Opens a code block's text (language, text) full screen. Nil where a block has no reader to
     /// open: it then draws no expand control.
     var openText: ((_ language: String?, _ text: String) -> Void)?
+    /// The server the surface's session lives on: where a tile's place is read and opened.
+    var server: ExtensionSurfaceServer?
 
     var palette: ThemePalette { themeID.palette }
 
@@ -167,6 +169,7 @@ final class ExtensionSurfaceCompositesView: UIView {
         let themeID: ThemeID
         let sendsActions: Bool
         let opensText: Bool
+        let serverID: String?
         let sizeCategory: UIContentSizeCategory
     }
 
@@ -183,6 +186,8 @@ final class ExtensionSurfaceCompositesView: UIView {
     private var onAction: ((ExtensionSurfaceActionIntent) -> Void)?
     /// Where a code block's expand control sends its text. Set before the first `apply`.
     var openText: ((_ language: String?, _ text: String) -> Void)?
+    /// The server the surface's session lives on, for its tiles. Set before `apply`.
+    var server: ExtensionSurfaceServer?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -224,7 +229,7 @@ final class ExtensionSurfaceCompositesView: UIView {
         let sizeCategory = traitCollection.preferredContentSizeCategory
         let inputs = DrawnInputs(
             surface: surface, pending: pending, themeID: themeID,
-            sendsActions: sendsActions, opensText: opensText, sizeCategory: sizeCategory
+            sendsActions: sendsActions, opensText: opensText, serverID: server?.id, sizeCategory: sizeCategory
         )
         if drawn == inputs { return }
         drawn = inputs
@@ -234,7 +239,8 @@ final class ExtensionSurfaceCompositesView: UIView {
             surface: surface,
             pending: pending,
             onAction: sendsActions ? { [weak self] in self?.onAction?($0) } : nil,
-            openText: opensText ? { [weak self] in self?.openText?($0, $1) } : nil
+            openText: opensText ? { [weak self] in self?.openText?($0, $1) } : nil,
+            server: server
         )
         var kept: [String: UIView] = [:]
         var nextKinds: [String: String] = [:]

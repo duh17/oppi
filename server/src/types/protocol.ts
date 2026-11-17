@@ -607,6 +607,20 @@ export interface ExtensionUISurfaceElapsedNode extends ExtensionUISurfaceNodeBas
   format?: ExtensionUISurfaceElapsedFormat;
 }
 
+/**
+ * One tile of a `tiles` node: a place the host opens, drawn as the Pinned screen draws a pin. `id`
+ * is unique across the surface. `link` is an `oppi://` pane link to a route a pin can name
+ * (`protocol/links.json`), on the session's own server. Without `title` the tile shows the target's
+ * own name; without `subtitle`, what the host reads of it (a PDF's pages, a game's build) or where
+ * it lives.
+ */
+export interface ExtensionUISurfaceTile {
+  id: string;
+  link: string;
+  title?: string;
+  subtitle?: string;
+}
+
 /** A blocks node: a primitive the host draws with views it already ships. */
 export type ExtensionUISurfaceNode =
   | (ExtensionUISurfaceNodeBase & {
@@ -731,6 +745,10 @@ export type ExtensionUISurfaceNode =
         role?: ExtensionUISurfaceNodeRole;
         action: ExtensionUISurfaceNodeAction;
       }>;
+    })
+  | (ExtensionUISurfaceNodeBase & {
+      type: "tiles";
+      items: ExtensionUISurfaceTile[];
     });
 
 /** What a pill may hold: inline facts, never a control and never its own tap target. */

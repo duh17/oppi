@@ -88,6 +88,13 @@ export const EXTENSION_NATIVE_UI_PANEL_CAPABILITY = "extension-native-ui:v2:pane
  */
 export const EXTENSION_NATIVE_UI_WORKING_CAPABILITY = "extension-native-ui:v2:working";
 /**
+ * v2 tiles: the client draws a `tiles` node as the Pinned screen's tiles, each opening its link.
+ * Any other tree client is sent each tiles node as a Markdown list of links, since it draws a node
+ * kind it does not know as "Unsupported block". Implies `working`: a client that names it without
+ * `working` draws what `working` names.
+ */
+export const EXTENSION_NATIVE_UI_TILES_CAPABILITY = "extension-native-ui:v2:tiles";
+/**
  * Pane layouts: the client draws a `layout_proposal` as a card. Declared in the same
  * `client_capabilities` list; a socket that has not named it is never sent one.
  */
@@ -102,6 +109,7 @@ export const EXTENSION_NATIVE_UI_SERVER_CAPABILITIES = [
   EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY,
   EXTENSION_NATIVE_UI_PANEL_CAPABILITY,
   EXTENSION_NATIVE_UI_WORKING_CAPABILITY,
+  EXTENSION_NATIVE_UI_TILES_CAPABILITY,
 ] as const;
 export const EXTENSION_NATIVE_UI_RENDER_NATIVE_CAPABILITIES = [
   EXTENSION_NATIVE_UI_TEXT_FALLBACK_CAPABILITY,

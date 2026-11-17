@@ -45,6 +45,7 @@ import {
   bindOppiHost,
   wakingTasks,
   type OppiDurableHost,
+  type OppiSessionActivity,
 } from "./durable-extension-api.js";
 import type { DurableControlCli } from "./durable-control-cli.js";
 import { fileToolsHost } from "./durable-file-tools-host.js";
@@ -285,6 +286,7 @@ const OFF_BY_DEFAULT_PLUGINS: ReadonlySet<string> = new Set([
   "oppi-example-board",
   "oppi-example-bookmarks",
   "oppi-example-release-notes",
+  "oppi-example-shelf",
 ]);
 
 /** Selected only by Oppi Control sessions, never by default. */
@@ -308,6 +310,15 @@ export interface DurableSessionBinding {
 
 /** The publisher handed out for each Session loop: one object per loop, so panels can key by it. */
 const loopPublishers = new WeakMap<SurfaceLoop, SurfacePublisher>();
+
+/**
+ * What `oppiHost().sessionActivity` and `sessionSurfaces` read of an Oppi Session: the files it
+ * changed (relative to its working folder) and its subagent Sessions, and its store.
+ */
+export interface DurableSessionRecords {
+  activity(sessionId: string): Promise<OppiSessionActivity | undefined>;
+  storeIdOf(sessionId: string): string | undefined;
+}
 
 /** What `oppiHost().sessionName` reads and writes: the name of an Oppi Session. */
 export interface DurableSessionNaming {
@@ -365,10 +376,35 @@ const durableHost: Omit<OppiDurableHost, "godot" | "mcp" | "skills"> = {
         }
       : undefined;
   },
+  sessionActivity: async (api, context) => {
+    const bound = boundSessionActivity;
+    if (!bound) return undefined;
+    const sessionId = (await api.snapshot(DurableSessionDoc, api.conversationId, context))
+      ?.sessionId;
+    const activity = sessionId ? await bound.records.activity(sessionId) : undefined;
+    // Only the documented fields: nothing a binding adds reaches a plugin.
+    return activity
+      ? {
+          sessionId: activity.sessionId,
+          changedFiles: activity.changedFiles,
+          children: activity.children,
+        }
+      : undefined;
+  },
+  sessionSurfaces: async (api, context) => {
+    const bound = boundSessionActivity;
+    if (!bound) return undefined;
+    const sessionId = (await api.snapshot(DurableSessionDoc, api.conversationId, context))
+      ?.sessionId;
+    const storeId = sessionId ? bound.records.storeIdOf(sessionId) : undefined;
+    return storeId ? bound.runtime.host(storeId)?.surfacesFor(api.conversationId) : undefined;
+  },
   files: fileToolsHost,
 };
 /** The one naming port of the process, like the host that exposes it. */
 let boundSessionNaming: DurableSessionNaming | undefined;
+/** The one activity port of the process and the runtime whose loops it hands out. */
+let boundSessionActivity: { records: DurableSessionRecords; runtime: DurableHarness } | undefined;
 let durableHostBound = false;
 
 function readStoreMeta(directory: string): DurableStoreMeta | undefined {
@@ -1779,6 +1815,10 @@ export class DurableHarness {
    */
   bindSessionNaming(binding: DurableSessionNaming): void {
     boundSessionNaming = binding;
+  }
+  /** Session records for `oppiHost().sessionActivity` and `sessionSurfaces`, process-wide like naming. */
+  bindSessionRecords(records: DurableSessionRecords): void {
+    boundSessionActivity = { records, runtime: this };
   }
   /** Live Voice for `speak` and for each attachment's call-state toggle. */
   bindLiveVoice(binding: LiveVoiceRuntimePort): void {

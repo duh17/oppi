@@ -418,6 +418,10 @@ final class BlocksRenderer {
             let view: BlocksButtonView = cached(key, BlocksButtonView())
             view.apply(menu: menu, node: node, environment: environment)
             return view
+        case .tiles(let tiles):
+            let view: BlocksTilesView = cached(key, BlocksTilesView())
+            view.apply(tiles: tiles, node: node, environment: environment)
+            return view
         case .unsupported(let unsupported):
             let view: BlocksUnsupportedView = cached(key, BlocksUnsupportedView())
             view.apply(unsupported: unsupported, node: node, environment: environment)
@@ -501,6 +505,7 @@ enum ExtensionSurfaceBlockWords {
             case .markdown(let value): parts.append(value.markdown)
             case .code(let value): parts.append(value.text)
             case .unsupported(let value): parts.append(value.text)
+            case .tiles(let value): parts.append(contentsOf: value.items.compactMap(\.title))
             case .icon, .row, .stack, .group, .chart, .divider, .spacer:
                 node.children.forEach(walk)
             }

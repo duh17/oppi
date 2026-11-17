@@ -26,6 +26,7 @@ import {
   EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
   EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY,
   EXTENSION_NATIVE_UI_PANEL_CAPABILITY,
+  EXTENSION_NATIVE_UI_TILES_CAPABILITY,
   EXTENSION_NATIVE_UI_WORKING_CAPABILITY,
 } from "../src/extension-ui-contract.js";
 import type { ExtensionUISurface, ServerMessage, Session, Workspace } from "../src/types.js";
@@ -50,6 +51,7 @@ const PHONE_CAPABILITIES = [
   EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY,
   EXTENSION_NATIVE_UI_PANEL_CAPABILITY,
   EXTENSION_NATIVE_UI_WORKING_CAPABILITY,
+  EXTENSION_NATIVE_UI_TILES_CAPABILITY,
 ];
 
 /** The board panel's rows as `title: open|done`, read from the drawer's tree. */
@@ -60,6 +62,18 @@ function boardRows(surface: ExtensionUISurface | undefined): string[] {
     const [title, mark] = row.children ?? [];
     return `${title?.text}: ${mark?.type === "button" ? "open" : "done"}`;
   });
+}
+
+/** The shelf's tiles as `group: link title?`, in the order the panel draws them. */
+function shelfTiles(surface: ExtensionUISurface | undefined): string[] {
+  type Node = { id?: string; type?: string; children?: Node[]; items?: Tile[] };
+  type Tile = { link: string; title?: string };
+  const groups = (surface?.sections[0] as unknown as { body: Node } | undefined)?.body.children;
+  return (groups ?? []).flatMap((group) =>
+    (group.children?.[0]?.items ?? []).map((tile) =>
+      [`${group.id}:`, tile.link, tile.title].filter(Boolean).join(" "),
+    ),
+  );
 }
 
 const managers: SessionManager[] = [];
@@ -219,9 +233,13 @@ async function fixture() {
     },
     /** The board panel `session`'s surface loop holds now, as a phone that draws it whole sees it. */
     board(session: Session): ExtensionUISurface | undefined {
+      return f.surface(session, "example-board");
+    },
+    /** Surface `id` as `session`'s surface loop holds it now, for a phone that draws it whole. */
+    surface(session: Session, id: string): ExtensionUISurface | undefined {
       manager.declareSurfaceCapabilities(session.id, "phone", PHONE_CAPABILITIES);
       for (const message of manager.getSurfaceMessages(session.id, "phone"))
-        if (message.type === "extension_ui_surface" && message.surface.id === "example-board")
+        if (message.type === "extension_ui_surface" && message.surface.id === id)
           return message.surface;
       return undefined;
     },
@@ -279,8 +297,10 @@ describe("example plugins", () => {
         source: "built-in",
         state: "off",
       }),
+      expect.objectContaining({ name: "oppi-example-shelf", source: "built-in", state: "off" }),
     ]);
     expect(examples.map((row) => row.plugin)).toEqual([
+      expect.objectContaining({ required: false, enabled: false }),
       expect.objectContaining({ required: false, enabled: false }),
       expect.objectContaining({ required: false, enabled: false }),
       expect.objectContaining({ required: false, enabled: false }),
@@ -382,6 +402,40 @@ describe("example plugins", () => {
     expect(f.board(other)).toBeUndefined();
     await f.manager.startSession(other.id, f.workspace);
     await expect.poll(() => boardRows(f.board(other))).toEqual(["Other chat item: open"]);
+  });
+
+  it("shelf: tiles of the chat's files and subagents, redrawn after its tools and on attach", async () => {
+    const f = await fixture();
+    const chat = await f.session("Shelf");
+    await f.call(chat, "write", { path: "notes/plan.md", content: "# Plan" });
+    // Off: the chat changed a file, and no shelf shows.
+    expect(f.surface(chat, "example-shelf")).toBeUndefined();
+
+    await f.manager.setPluginEnabled("example-shelf", true);
+    await f.reattach(chat);
+    // On attach the shelf is drawn from what the chat already did.
+    await expect
+      .poll(() => shelfTiles(f.surface(chat, "example-shelf")))
+      .toEqual([`files: oppi://file?session=${chat.id}&path=notes/plan.md`]);
+
+    const child = f.storage.createSession("Review the plan", "faux/faux-1");
+    child.workspaceId = f.workspace.id;
+    child.launch = { source: "agent", parentSessionId: chat.id };
+    f.storage.saveSession(child);
+    await f.call(chat, "write", { path: join(f.dir, "out", "report.pdf"), content: "%PDF-1.4" });
+    // After the round of tools: the PDF leads the files, the subagent has its own group.
+    await expect
+      .poll(() => shelfTiles(f.surface(chat, "example-shelf")))
+      .toEqual([
+        `files: oppi://file?session=${chat.id}&path=out/report.pdf`,
+        `files: oppi://file?session=${chat.id}&path=notes/plan.md`,
+        `subagents: oppi://session/${child.id} Review the plan`,
+      ]);
+    const shelf = f.surface(chat, "example-shelf")!;
+    expect(shelf.placement.kind).toBe("panel");
+    expect(shelf.pill?.content.children).toEqual([
+      { type: "text", text: "Shelf · 3", style: "headline" },
+    ]);
   });
 
   it("release-notes: returns the top of the workspace's CHANGELOG.md, and an error without one", async () => {

@@ -5,6 +5,7 @@ import {
   EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
   EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY,
   EXTENSION_NATIVE_UI_PANEL_CAPABILITY,
+  EXTENSION_NATIVE_UI_TILES_CAPABILITY,
   EXTENSION_NATIVE_UI_WORKING_CAPABILITY,
 } from "../src/extension-ui-contract.js";
 import { readExtensionUISurface } from "../src/extension-surface.js";
@@ -519,6 +520,49 @@ describe("SessionSurfaces", () => {
     expect(glyphs(handed?.surface)).not.toContain("working");
   });
 
+  it("sends tiles only to a client that draws them, and a list of links to older tree clients", () => {
+    const h = harness();
+    const read = readExtensionUISurface(JSON.parse(JSON.stringify(fixtures["blocks-tiles.json"])));
+    if ("problem" in read) throw new Error(read.problem);
+    const working = [
+      EXTENSION_NATIVE_UI_COMPOSITES_CAPABILITY,
+      EXTENSION_NATIVE_UI_BLOCKS_CAPABILITY,
+      EXTENSION_NATIVE_UI_ELAPSED_CAPABILITY,
+      EXTENSION_NATIVE_UI_PANEL_CAPABILITY,
+      EXTENSION_NATIVE_UI_WORKING_CAPABILITY,
+    ];
+    h.surfaces.declare("new-phone", [...working, EXTENSION_NATIVE_UI_TILES_CAPABILITY]);
+    h.surfaces.declare("older-phone", working);
+    expect(h.surfaces.audience("new-phone")).toBe("tiles");
+    expect(h.surfaces.audience("older-phone")).toBe("working");
+    h.surfaces.publisher.publish(read.surface, undefined);
+
+    const body = (audience: ExtensionUISurfaceAudience) => {
+      const section = h.of("extension_ui_surface", audience)[0]?.surface.sections[0];
+      return section?.composite === "blocks" ? section.body : undefined;
+    };
+    expect(body("tiles")).toEqual((read.surface.sections[0] as { body: unknown }).body);
+    // An older tree client would draw "Unsupported block": it gets each tiles node, under the
+    // same id, as Markdown links it opens as a chat link.
+    expect(body("working")).toMatchObject({
+      children: [
+        {
+          type: "markdown",
+          id: "files",
+          markdown:
+            "- [report.pdf](<oppi://file?session=test-session-1&path=out/report.pdf>)\n" +
+            "- [Notes](<oppi://file?workspace=ws-1&path=docs/notes.md#L3>) · Changed 2 times",
+        },
+        { type: "markdown", id: "others" },
+      ],
+    });
+    // A client without trees gets the v1 widget: one line per tile that opens its link.
+    const widget = h.of("extension_ui_notification", "v1-projection")[0];
+    expect(JSON.stringify(widget)).toContain(
+      '{"type":"text","id":"game:tide","spans":[{"text":"tide-3fa9c2b1","link":"oppi://godot?project=tide-3fa9c2b1"}]}',
+    );
+  });
+
   it("keeps the shape a client already draws", () => {
     const h = harness();
     h.surfaces.publisher.publish(surfaceOf(), undefined);
@@ -578,7 +622,14 @@ describe("SessionSurfaces", () => {
     const before = h.frames.length;
     h.surfaces.stop();
     // Every shape a client could hold is cleared: each v2 audience and the v1 widget slot.
-    for (const audience of ["working", "panel", "elapsed", "blocks", "composites"] as const) {
+    for (const audience of [
+      "tiles",
+      "working",
+      "panel",
+      "elapsed",
+      "blocks",
+      "composites",
+    ] as const) {
       expect(h.of("extension_ui_patch", audience)).toEqual([
         expect.objectContaining({ removed: true }),
       ]);
@@ -590,10 +641,10 @@ describe("SessionSurfaces", () => {
 
     // Nothing is left to fire: the deadline took its timer with it.
     vi.advanceTimersByTime(60_000);
-    expect(h.frames).toHaveLength(before + 6);
+    expect(h.frames).toHaveLength(before + 7);
     expect(h.surfaces.messages("phone")).toEqual([]);
     h.surfaces.publisher.publish(surfaceOf(), undefined);
-    expect(h.frames).toHaveLength(before + 6);
+    expect(h.frames).toHaveLength(before + 7);
     expect(h.surfaces.audience("phone")).toBe("v1-projection");
   });
 

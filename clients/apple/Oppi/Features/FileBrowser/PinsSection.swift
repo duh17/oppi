@@ -180,7 +180,12 @@ class PinsSection {
 
     /// The workspace's and session's names a pin's row shows.
     static func names(for pin: Pin, connection: ServerConnection) -> PinNames {
-        let workspace = pin.target.workspaceId.flatMap { id -> String? in
+        names(for: pin.target, connection: connection)
+    }
+
+    /// The workspace's and session's names a place shows.
+    static func names(for route: PaneRoute, connection: ServerConnection) -> PinNames {
+        let workspace = route.workspaceId.flatMap { id -> String? in
             guard let name = connection.workspaceStore.workspaces.first(where: { $0.id == id })?.name else {
                 // A workspace newer than the catalog: the name shows once it is read again.
                 connection.refreshCatalog(forUnknownWorkspace: id)
@@ -188,14 +193,20 @@ class PinsSection {
             }
             return name
         }
-        let session = pin.target.sessionId.flatMap { connection.sessionStore.session(id: $0)?.displayTitle }
+        let session = route.sessionId.flatMap { connection.sessionStore.session(id: $0)?.displayTitle }
         return PinNames(workspace: workspace, session: session)
     }
 
     /// Whether `pin` is a game this device can't play from `connection`'s
     /// server now, as `AppOpener` decides for a Godot link.
     static func isOff(_ pin: Pin, connection: ServerConnection?) -> Bool {
-        guard pin.kind == .games else { return false }
+        isOff(pin.target, connection: connection)
+    }
+
+    /// Whether `route` is a game this device can't play from `connection`'s
+    /// server now.
+    static func isOff(_ route: PaneRoute, connection: ServerConnection?) -> Bool {
+        guard PinKind(route) == .games else { return false }
         return !GodotPaneAvailability.isOn || connection?.offers(.godotPane) == false
     }
 

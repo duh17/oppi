@@ -254,7 +254,8 @@ final class ExtensionPanelViewController: UIViewController {
                     subtitle: snapshot.subtitle,
                     liveSurface: liveComposable,
                     pendingAction: actions.pendingAction,
-                    sendAction: actions.sendAction
+                    sendAction: actions.sendAction,
+                    server: actions.server
                 ),
                 showsHeader: false,
                 onLeave: {}

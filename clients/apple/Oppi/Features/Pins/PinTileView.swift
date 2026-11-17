@@ -1,5 +1,34 @@
 import UIKit
 
+/// A place as a tile shows it, from any list that shows places as tiles (a
+/// pin on the Pinned screen, an extension surface's `tiles` node): what it
+/// opens, the words its owner knows for it, and why it cannot open.
+struct PinTilePlace: Equatable {
+    var route: PaneRoute
+    var title: String
+    var detail: String?
+    /// A name the owner chose (a pin's label, an extension's title): a web
+    /// page's own title does not replace it.
+    var keepsTitle = false
+    /// A line the owner chose (an extension's subtitle): what the preview
+    /// reads does not replace it.
+    var keepsDetail = false
+    /// Not there any more (`detail` says why): dimmed, its kind's glyph.
+    var isGone = false
+    /// A game while Godot Pane is off here: dimmed.
+    var isOff = false
+    var isUnreadable = false
+    var isLocked = false
+
+    var isDimmed: Bool { isGone || isOff }
+
+    /// A file's own icon; nil for every other place.
+    var fileIcon: FileIcon? {
+        guard case .file(_, let path, _) = route else { return nil }
+        return FileIcon.forPath(path)
+    }
+}
+
 /// The picture at the top of a pin's tile: a file's page or picture, a
 /// game's last frame, a web page's image or icon, else its kind's glyph.
 struct PinArtwork: Equatable {
@@ -27,12 +56,13 @@ struct PinArtwork: Equatable {
     /// Godot's own blue, for its logo.
     static let godotBlue = UIColor(red: 0.278, green: 0.549, blue: 0.749, alpha: 1)
 
-    /// The artwork for a pin of `kind` with what its preview has read so far.
-    /// A pin that is gone or can't open here shows its kind's glyph, dimmed.
+    /// The artwork for a place of `kind` with what its preview has read so
+    /// far. A place that is gone or can't open here shows its kind's glyph,
+    /// dimmed.
     @MainActor
-    static func make(kind: PinKind, row: PinsSection.Row, preview: PinPreview?, palette: ThemePalette) -> Self {
+    static func make(kind: PinKind, place: PinTilePlace, preview: PinPreview?, palette: ThemePalette) -> Self {
         let ui = palette.ui
-        let dimmed = row.isGone || row.isOff
+        let dimmed = place.isDimmed
         let preview = dimmed ? nil : preview
         func glyph(_ image: UIImage?, _ tint: UIColor) -> Self {
             let color = dimmed ? ui.comment : tint
@@ -42,10 +72,14 @@ struct PinArtwork: Equatable {
         switch kind {
         case .files:
             if let image = preview?.image {
-                let isPage = row.icon == nil || (row.title as NSString).pathExtension.lowercased() == "pdf"
+                let isPage = if case .file(_, let path, _) = place.route {
+                    (path as NSString).pathExtension.lowercased() == "pdf"
+                } else {
+                    true
+                }
                 return Self(image: image, fit: isPage ? .page : .fill, tint: ui.fg, backdrop: ui.bgDark)
             }
-            let icon = row.icon ?? FileIcon(symbolName: "doc", tint: .comment)
+            let icon = place.fileIcon ?? FileIcon(symbolName: "doc", tint: .comment)
             return glyph(icon.uiImage(pointSize: 28).withRenderingMode(.alwaysTemplate), icon.color)
         case .folders:
             return glyph(UIImage(systemName: "folder.fill"), ui.blue)
@@ -142,13 +176,15 @@ final class PinArtworkView: UIView {
     }
 }
 
-/// One pin as a tile on the Pinned screen: its artwork over its name and a
-/// line of detail. A folder's tile lists its first items under the folder
-/// glyph. In Edit, a remove button sits on the artwork's corner.
+/// One place as a tile: its artwork over its name and a line of detail. A
+/// folder's tile lists its first items under the folder glyph. The Pinned
+/// screen's cells (`PinTileCell`) and an extension surface's `tiles` node
+/// (`BlocksTilesView`) draw it, so a place reads the same in both.
 ///
-/// The cell is its own accessibility element (`pinned.pin.<key>`); the
-/// remove button is the second one while editing (`pinned.pin.remove.<key>`).
-final class PinTileCell: UICollectionViewCell {
+/// The view draws only: its host owns the tap, the accessibility element,
+/// and the frame (the artwork's height is `artworkAspect` of the width, and
+/// the words under it fit in `captionHeight`).
+final class PinTileView: UIView {
     struct Content: Equatable {
         var artwork: PinArtwork
         var title: String
@@ -156,28 +192,58 @@ final class PinTileCell: UICollectionViewCell {
         var children: [FileEntry]
         var isDimmed: Bool
         var isLocked: Bool
-        var isEditing: Bool
+
+        /// A tile's name and line of detail: why it can't open, else what
+        /// its preview read (a PDF's pages and size, a folder's items, a
+        /// game's build), else where it lives. A web page shows its title
+        /// over its host unless the place has a name of its own.
+        @MainActor
+        static func make(place: PinTilePlace, kind: PinKind, preview: PinPreview?, palette: ThemePalette) -> Self {
+            var title = place.title
+            var detail = place.detail
+            if !(place.isDimmed || place.isUnreadable) {
+                switch (kind, place.route) {
+                case (.web, .browser(let url)):
+                    if !place.keepsTitle, let pageTitle = preview?.title, !pageTitle.isEmpty {
+                        title = pageTitle
+                        if !place.keepsDetail { detail = url.host() ?? place.detail }
+                    }
+                case (.folders, _) where !place.keepsDetail:
+                    let parts = [preview?.detail, place.detail].compactMap { $0 }
+                    detail = parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
+                case (.files, _) where !place.keepsDetail, (.games, _) where !place.keepsDetail:
+                    detail = preview?.detail ?? place.detail
+                default:
+                    break
+                }
+            }
+            return Self(
+                artwork: PinArtwork.make(kind: kind, place: place, preview: preview, palette: palette),
+                title: title,
+                detail: detail,
+                children: kind == .folders ? preview?.children ?? [] : [],
+                isDimmed: place.isDimmed,
+                isLocked: place.isLocked
+            )
+        }
+
+        /// What VoiceOver reads: the name, the line under it, and the lock.
+        var accessibilityLabel: String {
+            [title, detail, isLocked ? String(localized: "Locked") : nil].compactMap { $0 }.joined(separator: ", ")
+        }
     }
 
-    /// Edit's remove button; set by the screen.
-    var remove: (() -> Void)?
-
-    private let artworkView = PinArtworkView()
+    let artworkView = PinArtworkView()
     private let titleLabel = UILabel()
     private let detailLabel = UILabel()
     private let lockView = UIImageView(image: UIImage(systemName: "lock.fill"))
     private let childrenStack = UIStackView()
     private var isDimmed = false
-    private lazy var removeButton: UIButton = {
-        var configuration = UIButton.Configuration.plain()
-        configuration.image = UIImage(systemName: "minus.circle.fill")
-        configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 24, weight: .semibold)
-            .applying(UIImage.SymbolConfiguration(paletteColors: [.white, .systemRed]))
-        configuration.contentInsets = .zero
-        let button = UIButton(configuration: configuration, primaryAction: UIAction { [weak self] _ in self?.remove?() })
-        button.accessibilityLabel = String(localized: "Remove")
-        return button
-    }()
+
+    /// Drawn pressed: the artwork fades as a touch holds it.
+    var isPressed = false {
+        didSet { applyAlpha() }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -195,36 +261,29 @@ final class PinTileCell: UICollectionViewCell {
         let detailRow = UIStackView(arrangedSubviews: [lockView, detailLabel])
         detailRow.spacing = 4
         detailRow.alignment = .center
-        for view in [artworkView, titleLabel, detailRow, removeButton] as [UIView] {
+        for view in [artworkView, titleLabel, detailRow] as [UIView] {
             view.translatesAutoresizingMaskIntoConstraints = false
-            contentView.addSubview(view)
+            addSubview(view)
         }
         // Inside the artwork, which clips the items that don't fit.
         childrenStack.translatesAutoresizingMaskIntoConstraints = false
         artworkView.addSubview(childrenStack)
         NSLayoutConstraint.activate([
-            artworkView.topAnchor.constraint(equalTo: contentView.topAnchor),
-            artworkView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            artworkView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            artworkView.topAnchor.constraint(equalTo: topAnchor),
+            artworkView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            artworkView.trailingAnchor.constraint(equalTo: trailingAnchor),
             artworkView.heightAnchor.constraint(equalTo: artworkView.widthAnchor, multiplier: Self.artworkAspect),
             childrenStack.topAnchor.constraint(equalTo: artworkView.topAnchor, constant: 46),
             childrenStack.leadingAnchor.constraint(equalTo: artworkView.leadingAnchor, constant: 12),
             childrenStack.trailingAnchor.constraint(lessThanOrEqualTo: artworkView.trailingAnchor, constant: -12),
             titleLabel.topAnchor.constraint(equalTo: artworkView.bottomAnchor, constant: 8),
-            titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 2),
-            titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -2),
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+            titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
             detailRow.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 2),
             detailRow.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             detailRow.trailingAnchor.constraint(lessThanOrEqualTo: titleLabel.trailingAnchor),
-            removeButton.centerXAnchor.constraint(equalTo: artworkView.leadingAnchor, constant: 6),
-            removeButton.centerYAnchor.constraint(equalTo: artworkView.topAnchor, constant: 6),
-            removeButton.widthAnchor.constraint(equalToConstant: 44),
-            removeButton.heightAnchor.constraint(equalToConstant: 44),
         ])
-        contentView.clipsToBounds = false
-        clipsToBounds = false
-        isAccessibilityElement = true
-        accessibilityTraits = .button
+        isAccessibilityElement = false
     }
 
     @available(*, unavailable)
@@ -240,7 +299,12 @@ final class PinTileCell: UICollectionViewCell {
         return (8 + title * 2 + 2 + detail + 6).rounded(.up)
     }
 
-    func show(_ content: Content, palette: ThemePalette, identifier: String, removeIdentifier: String) {
+    /// The whole tile's height for its width.
+    static func height(forWidth width: CGFloat, traits: UITraitCollection) -> CGFloat {
+        (width * artworkAspect).rounded() + captionHeight(for: traits)
+    }
+
+    func show(_ content: Content, palette: ThemePalette) {
         let ui = palette.ui
         let isFolder = !content.children.isEmpty && !content.isDimmed
         artworkView.glyphAtCorner = isFolder
@@ -248,7 +312,7 @@ final class PinTileCell: UICollectionViewCell {
         if isFolder { artwork.backdrop = ui.bgHighlight }
         artworkView.show(artwork)
         isDimmed = content.isDimmed
-        artworkView.alpha = content.isDimmed ? 0.6 : 1
+        applyAlpha()
         titleLabel.text = content.title
         titleLabel.textColor = content.isDimmed ? ui.comment : ui.fg
         detailLabel.text = content.detail
@@ -261,15 +325,10 @@ final class PinTileCell: UICollectionViewCell {
             for entry in content.children { childrenStack.addArrangedSubview(Self.childRow(entry, palette: palette)) }
         }
         childrenStack.isHidden = !isFolder
-        removeButton.isHidden = !content.isEditing
-        removeButton.accessibilityIdentifier = removeIdentifier
-        accessibilityIdentifier = identifier
-        accessibilityElements = content.isEditing ? [removeButton] : nil
-        isAccessibilityElement = !content.isEditing
     }
 
-    override var isHighlighted: Bool {
-        didSet { artworkView.alpha = isHighlighted ? 0.7 : (isDimmed ? 0.6 : 1) }
+    private func applyAlpha() {
+        artworkView.alpha = isPressed ? 0.7 : (isDimmed ? 0.6 : 1)
     }
 
     private static func childRow(_ entry: FileEntry, palette: ThemePalette) -> UIView {
@@ -288,6 +347,66 @@ final class PinTileCell: UICollectionViewCell {
         row.spacing = 6
         row.alignment = .center
         return row
+    }
+}
+
+/// One pin as a tile on the Pinned screen (`PinTileView`). In Edit, a
+/// remove button sits on the artwork's corner.
+///
+/// The cell is its own accessibility element (`pinned.pin.<key>`); the
+/// remove button is the second one while editing (`pinned.pin.remove.<key>`).
+final class PinTileCell: UICollectionViewCell {
+    /// Edit's remove button; set by the screen.
+    var remove: (() -> Void)?
+
+    private let tile = PinTileView()
+    private lazy var removeButton: UIButton = {
+        var configuration = UIButton.Configuration.plain()
+        configuration.image = UIImage(systemName: "minus.circle.fill")
+        configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 24, weight: .semibold)
+            .applying(UIImage.SymbolConfiguration(paletteColors: [.white, .systemRed]))
+        configuration.contentInsets = .zero
+        let button = UIButton(configuration: configuration, primaryAction: UIAction { [weak self] _ in self?.remove?() })
+        button.accessibilityLabel = String(localized: "Remove")
+        return button
+    }()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        for view in [tile, removeButton] as [UIView] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            contentView.addSubview(view)
+        }
+        NSLayoutConstraint.activate([
+            tile.topAnchor.constraint(equalTo: contentView.topAnchor),
+            tile.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            tile.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            tile.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            removeButton.centerXAnchor.constraint(equalTo: tile.artworkView.leadingAnchor, constant: 6),
+            removeButton.centerYAnchor.constraint(equalTo: tile.artworkView.topAnchor, constant: 6),
+            removeButton.widthAnchor.constraint(equalToConstant: 44),
+            removeButton.heightAnchor.constraint(equalToConstant: 44),
+        ])
+        contentView.clipsToBounds = false
+        clipsToBounds = false
+        isAccessibilityElement = true
+        accessibilityTraits = .button
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func show(_ content: PinTileView.Content, isEditing: Bool, palette: ThemePalette, identifier: String, removeIdentifier: String) {
+        tile.show(content, palette: palette)
+        removeButton.isHidden = !isEditing
+        removeButton.accessibilityIdentifier = removeIdentifier
+        accessibilityIdentifier = identifier
+        accessibilityElements = isEditing ? [removeButton] : nil
+        isAccessibilityElement = !isEditing
+    }
+
+    override var isHighlighted: Bool {
+        didSet { tile.isPressed = isHighlighted }
     }
 }
 

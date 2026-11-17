@@ -19,6 +19,7 @@
       "./skills-screen",
       "./example-bookmarks",
       "./example-board",
+      "./example-shelf",
       "./example-release-notes"
     ]
   }

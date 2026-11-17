@@ -22,10 +22,12 @@ import {
   extensionUISurfacePillUsesHeadline,
   extensionUISurfaceUsesElapsed,
   extensionUISurfaceUsesPanelHints,
+  extensionUISurfaceUsesTiles,
   extensionUISurfaceUsesWorkingIcon,
   withPillHeadlinesAsCaption,
   withoutPanelHints,
   withStaticElapsed,
+  withTilesAsLinks,
   withWorkingIconStandIn,
 } from "./extension-surface-projection.js";
 import { createLogger } from "./logger.js";
@@ -53,7 +55,9 @@ import type {
  */
 
 /**
- * What a client draws, named by the newest capability it declared. `working` draws everything
+ * What a client draws, named by the newest capability it declared. `tiles` draws everything
+ * `working` does and the `tiles` node; every tree audience below it is sent each tiles node as a
+ * Markdown list of links (`withTilesAsLinks`). `working` draws everything
  * `panel` does and the `working` icon; every audience below it is sent that icon as a symbol it
  * draws (`withWorkingIconStandIn`). `panel` draws every node kind
  * and opens a surface in a pane, so it and `working` alone are sent a surface's `panel` hints and a
@@ -65,10 +69,11 @@ import type {
  * did before surfaces existed.
  */
 export type ExtensionUISurfaceAudience =
-  "working" | "panel" | "elapsed" | "blocks" | "composites" | "v1-projection";
+  "tiles" | "working" | "panel" | "elapsed" | "blocks" | "composites" | "v1-projection";
 
 /** The audiences that draw a tree of primitives. */
 const TREE_AUDIENCES: readonly ExtensionUISurfaceAudience[] = [
+  "tiles",
   "working",
   "panel",
   "elapsed",
@@ -116,6 +121,11 @@ interface StandIn {
  * rung added later is never in an earlier row.
  */
 const STAND_INS: readonly StandIn[] = [
+  {
+    audiences: ["working", "panel", "elapsed", "blocks", "composites", "v1-projection"],
+    uses: extensionUISurfaceUsesTiles,
+    rewrite: withTilesAsLinks,
+  },
   {
     audiences: ["panel", "elapsed", "blocks", "composites", "v1-projection"],
     uses: extensionUISurfaceUsesWorkingIcon,

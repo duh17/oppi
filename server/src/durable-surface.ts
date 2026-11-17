@@ -22,6 +22,7 @@ import type {
   ExtensionUISurfaceSection,
   ExtensionUISurfaceState,
   ExtensionUISurfaceStateKind,
+  ExtensionUISurfaceTile,
   ExtensionUISurfaceTone,
   ExtensionUIActionBarComposite,
   ExtensionUIStatusCardComposite,
@@ -568,6 +569,29 @@ export function menu(fields: MenuNodeFields): ExtensionUISurfaceNode {
       title: item.title,
       ...(item.role ? { role: item.role } : {}),
       action: wireNodeAction(item.action),
+    })),
+  };
+}
+
+export interface TilesNodeFields {
+  id?: string;
+  /** 1 to 12 tiles, each a place the host opens (`ExtensionUISurfaceTile`). */
+  items: ExtensionUISurfaceTile[];
+}
+
+/**
+ * Places as the Pinned screen's tiles: a file's page or picture, a game's last frame, a session.
+ * Each tile's `link` is an `oppi://` pane link, and a tap opens it as that link opens.
+ */
+export function tiles(fields: TilesNodeFields): ExtensionUISurfaceNode {
+  return {
+    type: "tiles",
+    ...(fields.id ? { id: fields.id } : {}),
+    items: fields.items.map((item) => ({
+      id: item.id,
+      link: item.link,
+      ...(item.title ? { title: item.title } : {}),
+      ...(item.subtitle ? { subtitle: item.subtitle } : {}),
     })),
   };
 }

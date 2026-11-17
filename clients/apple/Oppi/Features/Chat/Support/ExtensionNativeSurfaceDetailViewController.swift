@@ -295,6 +295,7 @@ final class ExtensionSurfaceDetailViewController: UIViewController {
         let displayed = content.liveSurface?() ?? lastLiveSurface ?? content.surface
         lastLiveSurface = displayed
         let pending = content.pendingAction?().flatMap { $0.surfaceId == displayed.id ? $0 : nil }
+        cards.server = content.server
         cards.apply(surface: displayed, pending: pending, themeID: themeID, onAction: content.sendAction)
     }
 }

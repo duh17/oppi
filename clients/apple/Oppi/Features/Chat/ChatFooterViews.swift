@@ -44,7 +44,8 @@ extension ChatViewController {
             },
             readerOpensBeside: opensPanelsBeside,
             openPanel: { [weak self] in self?.openExtensionPanel($0) },
-            focusPanel: { [weak self] in self?.focusExtensionPanel() }
+            focusPanel: { [weak self] in self?.focusExtensionPanel() },
+            server: resolvedServerId.map { ExtensionSurfaceServer(id: $0, connection: connection) }
         )
     }
 

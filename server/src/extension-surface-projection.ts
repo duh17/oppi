@@ -2,9 +2,11 @@ import {
   EXTENSION_UI_SURFACE_WORKING_ICON,
   EXTENSION_UI_SURFACE_WORKING_ICON_STAND_IN,
 } from "./extension-surface-icons.js";
+import { decodePaneLink } from "./pane-link.js";
 import type {
   ExtensionUISurface,
   ExtensionUISurfaceElapsedNode,
+  ExtensionUISurfaceTile,
   ExtensionUISurfaceNode,
   ExtensionUISurfacePillNode,
   ExtensionUISurfaceTone,
@@ -108,6 +110,81 @@ export function withWorkingIconStandIn(surface: ExtensionUISurface): ExtensionUI
       ? { ...node, name: EXTENSION_UI_SURFACE_WORKING_ICON_STAND_IN }
       : undefined,
   );
+}
+
+/** Does any tree hold a `tiles` node? A pill never does. */
+export function extensionUISurfaceUsesTiles(surface: ExtensionUISurface): boolean {
+  return surfaceHolds(surface, (node) => node.type === "tiles");
+}
+
+/**
+ * The words a tile shows where it cannot be drawn: its title, else its target's own name (a
+ * file's or folder's name, a page's host, a game's project id), as a tile without a title shows.
+ */
+export function tileTitle(tile: ExtensionUISurfaceTile): string {
+  if (tile.title !== undefined) return tile.title;
+  const decoded = decodePaneLink(tile.link);
+  if (!decoded?.ok) return tile.link;
+  const route = decoded.link.route;
+  const last = (path: string): string => path.split("/").filter(Boolean).pop() ?? path;
+  switch (route.kind) {
+    case "file":
+      return last(route.path);
+    case "files":
+      return route.path === null ? ("origin" in route ? "Home" : "Workspace") : last(route.path);
+    case "session":
+    case "thread":
+      return "Session";
+    case "sessions":
+      return "Sessions";
+    case "panel":
+      return route.id;
+    case "browser":
+      return new URL(route.url).host;
+    case "godot":
+      return route.project;
+    case "git":
+    case "commit":
+      return tile.link;
+  }
+}
+
+/** Markdown's link text, with the characters that would end or break the link escaped. */
+function markdownLinkText(text: string): string {
+  // One line: a line break would end the list item, and the rest would be Markdown of its own.
+  return text
+    .replace(/\s*[\r\n\u2028\u2029]+\s*/g, " ")
+    .replace(/[\\[\]*_`<>]/g, (character) => `\\${character}`);
+}
+
+/**
+ * A link inside Markdown's `<…>`: a `<`, a `>`, or whitespace would end it, so each is
+ * percent-encoded, which a pane link decodes back to the same value.
+ */
+function markdownLinkDestination(link: string): string {
+  return link.replace(/[\s<>]/g, (character) => encodeURIComponent(character));
+}
+
+/**
+ * The surface for a client that draws trees but declared no `v2:tiles`: each tiles node is a
+ * Markdown list of its tiles as links, with the node's id. Such a build opens a Markdown link as a
+ * chat link, and would draw a tiles node as "Unsupported block". Call only when
+ * `extensionUISurfaceUsesTiles`.
+ */
+export function withTilesAsLinks(surface: ExtensionUISurface): ExtensionUISurface {
+  return rewriteNodes(surface, (node) => {
+    if (node.type !== "tiles") return undefined;
+    const lines = node.items.map((tile) => {
+      const subtitle = tile.subtitle === undefined ? "" : ` · ${markdownLinkText(tile.subtitle)}`;
+      return `- [${markdownLinkText(tileTitle(tile))}](<${markdownLinkDestination(tile.link)}>)${subtitle}`;
+    });
+    return {
+      type: "markdown",
+      ...(node.id === undefined ? {} : { id: node.id }),
+      ...(node.accessibility === undefined ? {} : { accessibility: node.accessibility }),
+      markdown: lines.join("\n"),
+    } as ExtensionUISurfaceNode;
+  });
 }
 
 function isPillHeadline(
@@ -394,5 +471,15 @@ export function projectNodeToV1(
           .join(": "),
       );
       return [];
+    case "tiles":
+      // v1 has no tile: each is a line of text that opens its link, as an activity row's does.
+      return node.items.map((tile) => ({
+        type: "text",
+        id: tile.id,
+        spans: [
+          { text: tileTitle(tile), link: tile.link },
+          ...(tile.subtitle === undefined ? [] : [{ text: ` · ${tile.subtitle}`, role: "muted" }]),
+        ],
+      }));
   }
 }

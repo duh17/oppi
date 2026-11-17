@@ -40,6 +40,11 @@ enum ClientCapability {
     /// symbol in its place.
     static let extensionNativeUIWorking = "extension-native-ui:v2:working"
 
+    /// `extension-native-ui:v2:tiles`: this build draws a `tiles` node as the Pinned screen's
+    /// tiles (`BlocksTilesView`). A client that does not name it is sent a Markdown list of links
+    /// in its place.
+    static let extensionNativeUITiles = "extension-native-ui:v2:tiles"
+
     /// `godot-pane:v1`: named in a Godot link's `attach.capabilities` (`GodotLinkPlayerMessage`).
     /// The server serves a player link only when it is there (`protocol/godot.json`).
     static let godotPane = "godot-pane:v1"

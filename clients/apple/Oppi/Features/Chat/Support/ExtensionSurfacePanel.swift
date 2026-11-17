@@ -858,34 +858,6 @@ private final class ExtensionSurfaceStripPill: ExtensionStripPillControl {
 
 // MARK: - Drawer
 
-/// What a drawer opens and reads outside itself.
-@MainActor
-struct ExtensionSurfaceDrawerActions {
-    var linkContext: ExtensionSurfaceLinkContext = .empty
-    var onOpenURL: ((URL) -> Bool)?
-    /// Opens the chat's reader (a native surface or a terminal widget full screen).
-    var openReader: (ChatReaderPayload) -> Void
-    /// The session's current snapshot of a native surface, by protocol id, so
-    /// the reader follows updates the drawer would show.
-    var liveSurface: ((String) -> ExtensionUINativeSurface?)?
-    /// Sends one action on a composable surface. The host mints the request id and
-    /// shows the action's declared pending state until the server settles it.
-    var sendAction: ((ExtensionSurfaceActionIntent) -> Void)?
-    /// The session's current snapshot of a composable surface, by protocol id, so its reader
-    /// follows the replacements the drawer would draw.
-    var liveComposableSurface: ((String) -> ExtensionUISurface?)?
-    /// The composable surface action waiting on the server, read as the reader draws.
-    var pendingAction: (@MainActor @Sendable () -> ExtensionSurfacePendingAction?)?
-    /// The menu of a session an activity row links to (`ExtensionNativeBlockContext.sessionMenu`).
-    var sessionMenu: (@MainActor (_ sessionId: String, _ url: URL, _ rowState: String?) -> UIMenu?)?
-    /// The reader opens in the attached leaf beside the chat rather than over it.
-    var readerOpensBeside = false
-    /// Opens a surface, by id, in its panel pane beside the chat (full screen on a narrow one).
-    var openPanel: ((String) -> Void)?
-    /// Focuses the panel pane beside the chat, for a pill whose surface it already shows.
-    var focusPanel: (() -> Void)?
-}
-
 /// The expanded body of one strip entry, under the strip: a header with the
 /// entry's title and a collapse button, then the entry's content.
 private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
@@ -1127,6 +1099,7 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
             }
             messageQueue?.isHidden = configuration == nil
         case .composable(let composable):
+            compositesViewport?.server = actions.server
             compositesViewport?.apply(
                 surface: composable.surface,
                 pending: pendingAction.flatMap { $0.surfaceId == composable.surface.id ? $0 : nil },
@@ -1203,11 +1176,10 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
             actions.openReader(.extensionSurface(ExtensionSurfaceReaderContent(
                 surface: composable.surface,
                 identifierSuffix: entry.identifierSuffix,
-                title: entry.title,
-                subtitle: entry.subtitle,
+                title: entry.title, subtitle: entry.subtitle,
                 liveSurface: liveSurface,
                 pendingAction: actions.pendingAction,
-                sendAction: actions.sendAction
+                sendAction: actions.sendAction, server: actions.server
             )))
         case .title, .status, .messageQueue:
             break

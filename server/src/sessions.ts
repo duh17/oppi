@@ -70,11 +70,7 @@ import { StartingRegistry } from "./session-starting.js";
 import type { DurableSessionNaming } from "./durable-harness.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
 import type { LayoutFiles } from "./layout-files.js";
-import {
-  SessionSurfaces,
-  type SessionMessageSubscriber,
-  type SurfaceLoop,
-} from "./session-surfaces.js";
+import { SessionSurfaces, type SessionMessageSubscriber } from "./session-surfaces.js";
 import type { ExtensionUISurfaceAudience } from "./extension-surface-runtime.js";
 import type { LiveVoiceSpeech } from "./live-voice-speech.js";
 
@@ -193,7 +189,8 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
           onCreated: (session) => this.emit("session_created", session),
           trace: (sessionId) => this.getServerDurableTrace(sessionId, "context"),
         },
-        surfacePublisherFor: (sessionId) => this.surfacePublisherFor(sessionId),
+        surfacesFor: (sessionId) => this.surfacesFor(sessionId),
+        activeSession: (sessionId) => this.getActiveSession(sessionId),
         sessionNaming: () => this.sessionNaming,
         notifyPort: () => this.notifyPort,
         liveVoiceSpeech: () => this.liveVoiceSpeech,
@@ -1017,11 +1014,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       emit: (message, audience) => this.broadcaster.broadcast(key, message, audience),
     });
     return active.surfaces;
-  }
-
-  /** What `oppiHost().surfaces(env)` publishes into: this Session's loop. */
-  surfacePublisherFor(sessionId: string): SurfaceLoop | undefined {
-    return this.surfacesFor(sessionId)?.publisher;
   }
 
   /** The live surfaces a client that has just subscribed draws, in the shape it draws. */

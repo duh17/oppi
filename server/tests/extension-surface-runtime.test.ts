@@ -524,7 +524,7 @@ describe("lifecycle", () => {
     expect(calls).toBe(0);
     // Every client that draws v2 is told it is gone, above the revision the tap was sent at,
     // and the round trip still ends.
-    for (const audience of ["working", "panel", "elapsed", "blocks", "composites"] as const)
+    for (const audience of ["tiles", "working", "panel", "elapsed", "blocks", "composites"] as const)
       expect(h.patches(audience)).toEqual([
         {
           type: "extension_ui_patch",
@@ -911,6 +911,7 @@ describe("who can draw a blocks surface", () => {
     h.runtime.dismiss("blocks-panel");
     // A composites client held the tree's widget, so that slot is emptied too.
     expect(shapes(before)).toEqual([
+      "tiles removed blocks-panel@2",
       "working removed blocks-panel@2",
       "panel removed blocks-panel@2",
       "elapsed removed blocks-panel@2",
@@ -924,6 +925,7 @@ describe("who can draw a blocks surface", () => {
     h.runtime.dismiss("deploy");
     // A card every v2 client drew leaves no widget behind but the v1 one.
     expect(shapes(before)).toEqual([
+      "tiles removed deploy@2",
       "working removed deploy@2",
       "panel removed deploy@2",
       "elapsed removed deploy@2",
