@@ -33,25 +33,18 @@ import {
 
 // ─── Skip if this host cannot boot a real VM ───
 
-/** This host can boot a real VM: QEMU, and a guest image it can have. Gates every test below. */
-let qemuAvailable = false;
+/** Why this host cannot boot a real VM (QEMU, and a guest image it can have), if it cannot. */
+const vmSkipReason = await realVmSkipReason();
+if (vmSkipReason) console.log(`[gondolin-live] Skipping: ${vmSkipReason}`);
+/** Skips, rather than passes, every test below on such a host. */
+const describeVm = describe.skipIf(vmSkipReason !== undefined);
 
-beforeAll(async () => {
-  const reason = await realVmSkipReason();
-  qemuAvailable = reason === undefined;
-  if (reason) {
-    console.log(`[gondolin-live] Skipping: ${reason}`);
-  }
-}, 30_000);
-
-describe("Gondolin live VM", { timeout: 120_000 }, () => {
+describeVm("Gondolin live VM", { timeout: 120_000 }, () => {
   let hostDir: string;
   let manager: GondolinManager;
   let vm: GondolinVm;
 
   beforeAll(async () => {
-    if (!qemuAvailable) return;
-
     hostDir = mkdtempSync(join(tmpdir(), "gondolin-live-"));
 
     // Seed a test file on the host side
@@ -81,40 +74,30 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
   // ─── Bash operations ───
 
   it("executes a simple command", async () => {
-    if (!qemuAvailable) return;
-
     const result = await vm.exec("echo hello-from-vm");
     expect(result.ok).toBe(true);
     expect(result.stdout.trim()).toBe("hello-from-vm");
   });
 
   it("runs commands in the guest /workspace directory", async () => {
-    if (!qemuAvailable) return;
-
     const result = await vm.exec("pwd", { cwd: GUEST_WORKSPACE });
     expect(result.ok).toBe(true);
     expect(result.stdout.trim()).toBe(GUEST_WORKSPACE);
   });
 
   it("can see host files mounted at /workspace", async () => {
-    if (!qemuAvailable) return;
-
     const result = await vm.exec(`cat ${GUEST_WORKSPACE}/host-file.txt`);
     expect(result.ok).toBe(true);
     expect(result.stdout.trim()).toBe("hello from host");
   });
 
   it("can see nested host files", async () => {
-    if (!qemuAvailable) return;
-
     const result = await vm.exec(`cat ${GUEST_WORKSPACE}/subdir/nested.txt`);
     expect(result.ok).toBe(true);
     expect(result.stdout.trim()).toBe("nested content");
   });
 
   it("cannot access host files outside /workspace", async () => {
-    if (!qemuAvailable) return;
-
     // /etc/hostname exists on host but not relevant — check that host-specific paths fail
     const result = await vm.exec(`cat /Users/test/secret.txt 2>&1 || true`);
     // The path shouldn't exist in the VM
@@ -122,8 +105,6 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
   });
 
   it("returns non-zero exit code for failed commands", async () => {
-    if (!qemuAvailable) return;
-
     const result = await vm.exec("exit 42");
     expect(result.ok).toBe(false);
     expect(result.exitCode).toBe(42);
@@ -132,23 +113,17 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
   // ─── Read operations ───
 
   it("reads files via ReadOperations", async () => {
-    if (!qemuAvailable) return;
-
     const ops = createGondolinReadOps(vm, hostDir);
     const content = await ops.readFile(join(hostDir, "host-file.txt"));
     expect(content.toString()).toBe("hello from host");
   });
 
   it("access succeeds for existing file", async () => {
-    if (!qemuAvailable) return;
-
     const ops = createGondolinReadOps(vm, hostDir);
     await expect(ops.access(join(hostDir, "host-file.txt"))).resolves.toBeUndefined();
   });
 
   it("access throws for missing file", async () => {
-    if (!qemuAvailable) return;
-
     const ops = createGondolinReadOps(vm, hostDir);
     await expect(ops.access(join(hostDir, "nonexistent.txt"))).rejects.toThrow(/ENOENT/);
   });
@@ -156,8 +131,6 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
   // ─── Write operations ───
 
   it("writes files via WriteOperations", async () => {
-    if (!qemuAvailable) return;
-
     const ops = createGondolinWriteOps(vm, hostDir);
     await ops.writeFile(join(hostDir, "vm-created.txt"), "written by VM");
 
@@ -167,8 +140,6 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
   });
 
   it("creates directories via mkdir", async () => {
-    if (!qemuAvailable) return;
-
     const ops = createGondolinWriteOps(vm, hostDir);
     await ops.mkdir(join(hostDir, "new", "deep", "dir"));
 
@@ -179,8 +150,6 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
   // ─── Bash operations via ops interface ───
 
   it("bash ops execute and stream output", async () => {
-    if (!qemuAvailable) return;
-
     const ops = createGondolinBashOps(vm, hostDir);
     const chunks: Buffer[] = [];
     const result = await ops.exec("echo streaming-test", hostDir, {
@@ -195,8 +164,6 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
   // ─── ISOLATION: prove sandbox actually blocks host access ───
 
   it("ls ~ does NOT return host home directory contents", async () => {
-    if (!qemuAvailable) return;
-
     // This is THE critical test. If this fails, the sandbox is broken.
     // Inside the VM, ~ should resolve to /root (VM's root user home),
     // NOT /Users/<whoever> on the host.
@@ -215,8 +182,6 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
   });
 
   it("HOME env is NOT the host user home", async () => {
-    if (!qemuAvailable) return;
-
     const ops = createGondolinBashOps(vm, hostDir);
     const chunks: Buffer[] = [];
     await ops.exec("echo $HOME", hostDir, { onData: (d) => chunks.push(d) });
@@ -228,8 +193,6 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
   });
 
   it("whoami is NOT the host user", async () => {
-    if (!qemuAvailable) return;
-
     const ops = createGondolinBashOps(vm, hostDir);
     const chunks: Buffer[] = [];
     await ops.exec("whoami", hostDir, { onData: (d) => chunks.push(d) });
@@ -241,8 +204,6 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
   });
 
   it("hostname is NOT the host machine", async () => {
-    if (!qemuAvailable) return;
-
     const ops = createGondolinBashOps(vm, hostDir);
     const chunks: Buffer[] = [];
     await ops.exec("hostname", hostDir, { onData: (d) => chunks.push(d) });
@@ -253,8 +214,6 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
   });
 
   it("cannot read /etc/passwd from host", async () => {
-    if (!qemuAvailable) return;
-
     const ops = createGondolinBashOps(vm, hostDir);
     const chunks: Buffer[] = [];
     await ops.exec("cat /etc/passwd", hostDir, { onData: (d) => chunks.push(d) });
@@ -267,8 +226,6 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
   });
 
   it("cannot access host workspace directories", async () => {
-    if (!qemuAvailable) return;
-
     const ops = createGondolinBashOps(vm, hostDir);
     const chunks: Buffer[] = [];
     await ops.exec("ls /Users/testuser/workspace 2>&1 || true", hostDir, {
@@ -281,8 +238,6 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
   });
 
   it("cwd resolves to /workspace inside VM", async () => {
-    if (!qemuAvailable) return;
-
     const ops = createGondolinBashOps(vm, hostDir);
     const chunks: Buffer[] = [];
     await ops.exec("pwd", hostDir, { onData: (d) => chunks.push(d) });
@@ -292,8 +247,6 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
   });
 
   it("env vars from host process are stripped", async () => {
-    if (!qemuAvailable) return;
-
     // Simulate what the real session does: pass host env through ops.exec
     const ops = createGondolinBashOps(vm, hostDir);
     const chunks: Buffer[] = [];
@@ -317,8 +270,6 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
   // ─── VM reuse ───
 
   it("reuses existing VM for same workspace", async () => {
-    if (!qemuAvailable) return;
-
     expect(manager.isRunning("live-test")).toBe(true);
 
     // Getting VM again should return same instance (no new boot)
@@ -335,15 +286,13 @@ describe("Gondolin live VM", { timeout: 120_000 }, () => {
   });
 });
 
-describe("Gondolin live skill overlay", { timeout: 120_000 }, () => {
+describeVm("Gondolin live skill overlay", { timeout: 120_000 }, () => {
   let hostDir: string;
   let skillDir: string;
   let manager: GondolinManager;
   let vm: GondolinVm;
 
   beforeAll(async () => {
-    if (!qemuAvailable) return;
-
     hostDir = mkdtempSync(join(tmpdir(), "gondolin-live-skills-ws-"));
     skillDir = mkdtempSync(join(tmpdir(), "gondolin-live-skills-"));
     mkdirSync(join(hostDir, ".pi"), { recursive: true });
@@ -377,16 +326,12 @@ describe("Gondolin live skill overlay", { timeout: 120_000 }, () => {
   }, 30_000);
 
   it("boots with skills under workspace .pi even though .pi is shadowed", async () => {
-    if (!qemuAvailable) return;
-
     const skill = await vm.exec("cat /workspace/live-skills/.pi/skills/review/SKILL.md");
     expect(skill.ok).toBe(true);
     expect(skill.stdout.trim()).toBe("# live skill");
   });
 
   it("does not expose host workspace .pi settings through the overlay", async () => {
-    if (!qemuAvailable) return;
-
     const settings = await vm.exec("cat /workspace/live-skills/.pi/settings.json 2>&1 || true");
     expect(settings.stdout).not.toContain('"secret":true');
   });

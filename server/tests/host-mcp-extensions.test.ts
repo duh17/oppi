@@ -508,13 +508,11 @@ export default function (pi) {
     }
   });
 
-  it("runs a picked stdio MCP server inside a real Gondolin VM", { timeout: 150_000 }, async () => {
-    // Like gondolin-live.test.ts: needs a host that can boot a real VM, and says why when it cannot.
+  it("runs a picked stdio MCP server in a real Gondolin VM", { timeout: 150_000 }, async (t) => {
+    // Like gondolin-live.test.ts: needs a host that can boot a real VM, and skips (not passes)
+    // with the reason when it cannot.
     const skipReason = await realVmSkipReason();
-    if (skipReason) {
-      console.log(`[host-mcp] Skipping: ${skipReason}`);
-      return;
-    }
+    if (skipReason) t.skip(skipReason);
     const workspace = {
       id: "workspace-1",
       name: "Sandbox MCP Live",

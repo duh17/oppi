@@ -92,8 +92,18 @@ describe("schedule calendar", () => {
   }
 
   describe("cron occurrences", () => {
-    it("agree with the runner's minute-by-minute walk across daylight-saving weeks", () => {
-      const random = seededRandom(7);
+    // Each zone's change week: US spring and fall, Lord Howe's 30-minute shift, and a
+    // zone that never changes. One test per week: the runner's walk evaluates every minute of
+    // four days for each expression (about 46,000 evaluations a week), so one week is one
+    // test's worth of CPU work, and a failure names its zone.
+    it.each([
+      ["America/Los_Angeles", "2026-03-05T00:00:00Z", 7],
+      ["America/Los_Angeles", "2026-10-29T00:00:00Z", 8],
+      ["America/New_York", "2026-10-29T00:00:00Z", 9],
+      ["Australia/Lord_Howe", "2026-04-02T00:00:00Z", 10],
+      ["Asia/Kolkata", "2026-03-05T00:00:00Z", 11],
+    ])("agree with the runner's minute-by-minute walk in %s from %s", (timeZone, weekStart, seed) => {
+      const random = seededRandom(seed);
       const expressions = [
         "30 1 * * *",
         "30 2 * * *",
@@ -104,33 +114,22 @@ describe("schedule calendar", () => {
         "0 6 1,15 * 1",
         "5 0 * * *",
       ];
-      // Each zone's change week: US spring and fall, Lord Howe's 30-minute shift, and a
-      // zone that never changes.
-      const weeks: Array<[string, string]> = [
-        ["America/Los_Angeles", "2026-03-05T00:00:00Z"],
-        ["America/Los_Angeles", "2026-10-29T00:00:00Z"],
-        ["America/New_York", "2026-10-29T00:00:00Z"],
-        ["Australia/Lord_Howe", "2026-04-02T00:00:00Z"],
-        ["Asia/Kolkata", "2026-03-05T00:00:00Z"],
-      ];
-      for (const [timeZone, weekStart] of weeks) {
-        for (const expression of expressions) {
-          const from = Date.parse(weekStart) + Math.floor(random() * 12) * HOUR;
-          const to = from + 4 * DAY;
-          // Sometimes created inside the range, so the repeated-hour rule's `createdAt`
-          // branch is exercised too.
-          const createdAt = from - DAY + Math.floor(random() * 3 * DAY);
-          const schedule = cron(expression, timeZone, createdAt);
-          const expected = minuteWalk(schedule, from, to);
-          const { at, truncated } = cronOccurrences(expression, timeZone, {
-            from,
-            to,
-            createdAt,
-            limit: 10_000,
-          });
-          expect({ timeZone, expression, at }).toEqual({ timeZone, expression, at: expected });
-          expect(truncated).toBe(false);
-        }
+      for (const expression of expressions) {
+        const from = Date.parse(weekStart) + Math.floor(random() * 12) * HOUR;
+        const to = from + 4 * DAY;
+        // Sometimes created inside the range, so the repeated-hour rule's `createdAt`
+        // branch is exercised too.
+        const createdAt = from - DAY + Math.floor(random() * 3 * DAY);
+        const schedule = cron(expression, timeZone, createdAt);
+        const expected = minuteWalk(schedule, from, to);
+        const { at, truncated } = cronOccurrences(expression, timeZone, {
+          from,
+          to,
+          createdAt,
+          limit: 10_000,
+        });
+        expect({ expression, at }).toEqual({ expression, at: expected });
+        expect(truncated).toBe(false);
       }
     });
 

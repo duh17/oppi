@@ -41,18 +41,13 @@ import type { Workspace } from "../src/types.js";
 import { resolveSandboxGuestCwd } from "../src/workspace-folder.js";
 import { realVmSkipReason } from "./helpers/real-vm.js";
 
-/** This host can boot a real VM: QEMU, and a guest image it can have. Gates every test below. */
-let qemuAvailable = false;
+/** Why this host cannot boot a real VM (QEMU, and a guest image it can have), if it cannot. */
+const vmSkipReason = await realVmSkipReason();
+if (vmSkipReason) console.log(`[attack-surface] Skipping: ${vmSkipReason}`);
+/** Skips, rather than passes, every test below on such a host. */
+const describeVm = describe.skipIf(vmSkipReason !== undefined);
 
-beforeAll(async () => {
-  const reason = await realVmSkipReason();
-  qemuAvailable = reason === undefined;
-  if (reason) {
-    console.log(`[attack-surface] Skipping: ${reason}`);
-  }
-}, 30_000);
-
-describe("Gondolin attack surface", { timeout: 120_000 }, () => {
+describeVm("Gondolin attack surface", { timeout: 120_000 }, () => {
   let hostDir: string;
   let fakeAgentDir: string;
   let secretSkillDir: string;
@@ -83,8 +78,6 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
   };
 
   beforeAll(async () => {
-    if (!qemuAvailable) return;
-
     // Create a fake workspace directory
     hostDir = mkdtempSync(join(tmpdir(), "gondolin-attack-"));
     writeFileSync(join(hostDir, "workspace-file.txt"), "workspace content");
@@ -161,8 +154,6 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
   // ─── Skill mounts: shadowed like the workspace; `/skill:` reads through the VM ───
 
   it("SAFE: a Skill mount hides secret-bearing names, like the workspace", async () => {
-    if (!qemuAvailable) return;
-
     const listing = await vm.exec(`ls -A ${SECRET_SKILL_GUEST}`);
     expect(listing.ok).toBe(true);
     expect(listing.stdout).toContain("SKILL.md");
@@ -178,8 +169,6 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
   // ─── Resource discovery: only through the VM ───
 
   it("an owner .pi/skills symlink out of the workspace is mounted and readable", async () => {
-    if (!qemuAvailable) return;
-
     const cat = await vm.exec(`cat ${SECRET_SKILL_GUEST}/SKILL.md`);
     expect(cat.ok).toBe(true);
     expect(cat.stdout).toContain("secret skill body");
@@ -191,8 +180,6 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
   });
 
   it("a second session on the live VM sees its saved Agent's .pi/skills selection", async () => {
-    if (!qemuAvailable) return;
-
     // The first session booted the VM; this one only attaches to it.
     expect(await manager.ensureWorkspaceVm(workspace, hostDir)).toBe(vm);
     const resources = await sessionResources({ skillPaths: [".pi/skills/secret-skill"] });
@@ -206,8 +193,6 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
   });
 
   it("SAFE: guest .agents/skills links out of the workspace or to .env yield no Skill or bytes", async () => {
-    if (!qemuAvailable) return;
-
     const resources = await sessionResources();
     expect(resources.skills.map((skill) => skill.name)).toEqual([
       "local-skill",
@@ -220,8 +205,6 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
   });
 
   it("SAFE: a selected Skill outside the workspace fails agent_skills_unavailable", async () => {
-    if (!qemuAvailable) return;
-
     for (const skillPath of [outsideSkillDir, "../outside-skill", ".agents/skills/x"]) {
       await expect(sessionResources({ skillPaths: [skillPath] }), skillPath).rejects.toMatchObject({
         code: "agent_skills_unavailable",
@@ -230,8 +213,6 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
   });
 
   it("SAFE: a workspace AGENTS.md symlinked to .env reads as missing through the VM", async () => {
-    if (!qemuAvailable) return;
-
     const agents = join(hostDir, "AGENTS.md");
     symlinkSync(".env", agents);
     const refused = await sessionResources();
@@ -249,8 +230,6 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
   });
 
   it("SAFE: an AGENTS.md linked to a 1 GiB sparse workspace file is skipped, quickly", async () => {
-    if (!qemuAvailable) return;
-
     const big = join(hostDir, "big.bin");
     const fd = openSync(big, "w");
     ftruncateSync(fd, 1024 * 1024 * 1024);
@@ -265,8 +244,6 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
   });
 
   it("SAFE: /skill: through the VM refuses a SKILL.md swapped for a host symlink", async () => {
-    if (!qemuAvailable) return;
-
     const skillFile = `${LOCAL_SKILL_GUEST}/SKILL.md`;
     const resources: DurableProjectResources = {
       contextFiles: [],
@@ -299,8 +276,6 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
   // ─── Credential isolation: agentDir is NOT mounted ───
 
   it("SAFE: credential file is NOT accessible (agentDir not mounted)", async () => {
-    if (!qemuAvailable) return;
-
     // Only the workspace and its `.pi/skills` entries are mounted, never the agent dir.
     const result = await vm.exec(`cat ${fakeAgentDir}/auth.json 2>&1 || true`);
 
@@ -311,8 +286,6 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
   // ─── Attack Vector 3: Can the VM see the REAL ~/.pi/agent? ───
 
   it("SAFE: real host ~/.pi/agent is not accessible", async () => {
-    if (!qemuAvailable) return;
-
     const realAgentDir = join(homedir(), ".pi", "agent");
     const result = await vm.exec(`cat ${realAgentDir}/auth.json 2>&1 || true`);
 
@@ -321,8 +294,6 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
   });
 
   it("SAFE: agentDir root is not listable", async () => {
-    if (!qemuAvailable) return;
-
     const result = await vm.exec(`ls ${fakeAgentDir}/ 2>&1 || true`);
 
     expect(result.stdout).not.toContain("auth.json");
@@ -331,8 +302,6 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
   // ─── Attack Vector 5: Env var leakage ───
 
   it("SAFE: host env is not forwarded into the VM", async () => {
-    if (!qemuAvailable) return;
-
     const ops = createGondolinBashOps(vm, hostDir);
     const chunks: Buffer[] = [];
     await ops.exec("env", hostDir, {
@@ -357,8 +326,6 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
   });
 
   it("SAFE: arbitrary host env var names are not forwarded", async () => {
-    if (!qemuAvailable) return;
-
     // Pi's bash tool supplies the host shell environment to BashOperations by
     // default. The Gondolin implementation must ignore it unless a value was
     // deliberately injected at VM creation time.
@@ -380,32 +347,26 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
   // ─── Attack Vector 6: Network egress ───
 
   it("SAFE: network egress is blocked when allowedHosts is empty", async () => {
-    if (!qemuAvailable) return;
-
-    // Use a stable hostname, but assert on the sandbox block itself rather than
-    // a successful upstream response so the test stays deterministic offline.
+    // The oracle is that no upstream answer arrives: curl's status is 000 (no response: the
+    // sandbox refused the lookup, or the time bound ran out first, as on a busy host) or the
+    // sandbox's own 4xx/5xx block. The block's wording is not asserted, because a slow
+    // handshake can use up the time bound before the sandbox ever writes it.
     const result = await vm.exec(
-      `curl -sv --max-time 5 https://example.com/ -o /dev/null 2>&1 || true`,
+      `curl -s -o /dev/null -w '%{http_code}' --max-time 5 https://example.com/ || true`,
     );
 
-    expect(result.stdout).toMatch(/blocked by policy|Could not resolve host|Forbidden/i);
-    expect(result.stdout).not.toContain("HTTP/1.1 200 OK");
-    expect(result.stdout).not.toContain("HTTP/2 200");
+    expect(result.stdout.trim()).toMatch(/^(000|[45]\d\d)$/);
   });
 
   // ─── Workspace isolation ───
 
   it("workspace files are accessible at /workspace", async () => {
-    if (!qemuAvailable) return;
-
     const result = await vm.exec("cat /workspace/workspace-file.txt");
     expect(result.ok).toBe(true);
     expect(result.stdout.trim()).toBe("workspace content");
   });
 
   it("can write to /workspace", async () => {
-    if (!qemuAvailable) return;
-
     const result = await vm.exec('echo "new file" > /workspace/test-write.txt');
     expect(result.ok).toBe(true);
 
@@ -419,7 +380,7 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
  * Classic (SDK) sandbox sessions discover Skills the way durable ones do: through the workspace
  * VM only. The guest owns `.agents/skills`, so a host walk or read of it would follow its links.
  */
-describe("Classic sandbox Skills through the workspace VM", { timeout: 120_000 }, () => {
+describeVm("Classic sandbox Skills through the workspace VM", { timeout: 120_000 }, () => {
   let hostDir: string;
   let agentDir: string;
   let secretSkillDir: string;
@@ -479,7 +440,6 @@ describe("Classic sandbox Skills through the workspace VM", { timeout: 120_000 }
       .sort();
 
   beforeAll(async () => {
-    if (!qemuAvailable) return;
     hostDir = realpathSync(mkdtempSync(join(tmpdir(), "gondolin-classic-skills-")));
     workspace.hostMount = hostDir;
     agentDir = mkdtempSync(join(tmpdir(), "gondolin-classic-agent-"));
@@ -511,7 +471,6 @@ describe("Classic sandbox Skills through the workspace VM", { timeout: 120_000 }
   });
 
   afterAll(async () => {
-    if (!qemuAvailable) return;
     sdkBackendType._gondolinManager = previousManager;
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
@@ -521,8 +480,6 @@ describe("Classic sandbox Skills through the workspace VM", { timeout: 120_000 }
   }, 30_000);
 
   it("lists mounted and workspace Skills and expands /skill: through the VM", async () => {
-    if (!qemuAvailable) return;
-
     const backend = await classicSession();
     expect(skillNames(backend)).toEqual(["linked-skill", "local-skill", "ok-skill"]);
     expect(backend.session.systemPrompt).toContain(
@@ -551,8 +508,6 @@ describe("Classic sandbox Skills through the workspace VM", { timeout: 120_000 }
   });
 
   it("SAFE: /skill: does not put a SKILL.md symlink to a shadowed file into the prompt", async () => {
-    if (!qemuAvailable) return;
-
     const backend = await classicSession();
     expect(skillNames(backend)).toContain("ok-skill");
     const hostFile = join(hostDir, ".agents", "skills", "ok", "SKILL.md");
@@ -598,8 +553,6 @@ describe("Classic sandbox Skills through the workspace VM", { timeout: 120_000 }
   });
 
   it("SAFE: a .agents/skills SKILL.md linked to a shadowed file adds no Skill or description", async () => {
-    if (!qemuAvailable) return;
-
     const link = join(hostDir, ".agents", "skills", "env-skill");
     mkdirSync(link);
     symlinkSync("../../../.env", join(link, "SKILL.md"));
@@ -617,8 +570,6 @@ describe("Classic sandbox Skills through the workspace VM", { timeout: 120_000 }
 
   // Last: on a host walk without a cycle guard, these links never finish.
   it("SAFE: .agents/skills links back to their directory start quickly with only real Skills", async () => {
-    if (!qemuAvailable) return;
-
     const agentsSkills = join(hostDir, ".agents", "skills");
     symlinkSync(".", join(agentsSkills, "loop"));
     symlinkSync(".", join(agentsSkills, "loop2"));

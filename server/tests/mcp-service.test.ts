@@ -35,7 +35,7 @@ afterEach(async () => {
     ),
   );
 });
-function fixture(ttl?: number, cliTimeoutMs?: number) {
+function fixture(ttl?: number, cliTimeoutMs?: number, disposeDeadlineMs?: number) {
   const dir = makeTempDir("oppi-mcp-proof-");
   const agentDir = join(dir, "agent");
   const project = join(dir, "project");
@@ -52,6 +52,7 @@ function fixture(ttl?: number, cliTimeoutMs?: number) {
     listWorkspaces: () => [workspace, { ...workspace, id: "sandbox", runtime: "sandbox" }],
     loginTtlMs: ttl,
     cliTimeoutMs,
+    disposeDeadlineMs,
   });
   services.push(service);
   return { dir, agentDir, project, workspace, service };
@@ -726,7 +727,8 @@ describe("MCP routes through real bundled Pi", () => {
     }
   }, 30_000);
   it("disposes an in-flight list and immediately kills its EOF/TERM-ignoring stdio server", async () => {
-    const { service, agentDir } = fixture();
+    // A deadline the test never reaches: dispose can only resolve by reaping its children.
+    const { service, agentDir } = fixture(undefined, undefined, 10 * 60_000);
     const pidFile = join(agentDir, "list.pid");
     writeFileSync(
       join(agentDir, "mcp.json"),
@@ -754,9 +756,9 @@ describe("MCP routes through real bundled Pi", () => {
       await expect.poll(() => existsSync(pidFile), { timeout: 5000 }).toBe(true);
       pid = Number(readFileSync(pidFile, "utf8"));
       expect(alive()).toBe(true);
-      const start = performance.now();
       await service.dispose();
-      expect(performance.now() - start).toBeLessThan(1500);
+      // Immediately means SIGKILL with no SIGTERM grace first; the server records any SIGTERM.
+      expect(existsSync(`${pidFile}.term`)).toBe(false);
       await expect.poll(alive, { timeout: 2000 }).toBe(false);
       await expect(service.add("global", { name: "late", command: "echo" })).rejects.toMatchObject({
         status: 503,
@@ -766,7 +768,7 @@ describe("MCP routes through real bundled Pi", () => {
       await flight.catch(() => {});
     }
   }, 30_000);
-  it("lists a healthy scope while another scope's probe hangs, within the probe deadline", async () => {
+  it("lists a healthy scope while another scope's probe hangs until its deadline", async () => {
     const { service, agentDir, project } = fixture(undefined, 6000);
     const hanging = await listen(
       createServer(() => {
@@ -778,19 +780,25 @@ describe("MCP routes through real bundled Pi", () => {
     // Project replacement avoids probing the hanging global entry in this scope.
     await service.add("workspace-one", { name: "shared", command: process.execPath, args: [echo] });
     const base = await routes(service);
-    const started = performance.now();
-    const first = api<McpServersResponse>(base, GLOBAL);
-    const second = api<McpServersResponse>(base, GLOBAL);
-    const other = api<McpServersResponse>(base, PROJECT);
-    const [snapshot, coalesced, projectSnapshot] = await Promise.all([first, second, other]);
-    expect(performance.now() - started).toBeLessThan(12_000);
-    expect(snapshot).toEqual(coalesced);
-    expect(snapshot.scope.errors).toEqual(["This scope's live probe timed out after 6 seconds."]);
-    expect(projectSnapshot.scope).toMatchObject({
-      projectTrust: "trusted",
-      errors: [],
-      servers: [{ name: "shared", state: "connected", tools: ["echo"] }],
-    });
+    const run = vi.spyOn(McpCli.prototype, "run");
+    try {
+      const first = api<McpServersResponse>(base, GLOBAL);
+      const second = api<McpServersResponse>(base, GLOBAL);
+      const other = api<McpServersResponse>(base, PROJECT);
+      const [snapshot, coalesced, projectSnapshot] = await Promise.all([first, second, other]);
+      // One probe per scope: the second global list joins the hanging one instead of
+      // waiting out a deadline of its own.
+      expect(run.mock.calls.filter(([args]) => args[0] === "list")).toHaveLength(2);
+      expect(snapshot).toEqual(coalesced);
+      expect(snapshot.scope.errors).toEqual(["This scope's live probe timed out after 6 seconds."]);
+      expect(projectSnapshot.scope).toMatchObject({
+        projectTrust: "trusted",
+        errors: [],
+        servers: [{ name: "shared", state: "connected", tools: ["echo"] }],
+      });
+    } finally {
+      run.mockRestore();
+    }
   }, 30_000);
   it("connects trusted project tools and shows the same-name global as replaced there", async () => {
     const { service, agentDir, project } = fixture();
@@ -1114,10 +1122,17 @@ describe("MCP routes through real bundled Pi", () => {
       stop,
       done: new Promise(() => {}),
     });
-    const start = performance.now();
-    await deadline.dispose();
-    expect(stop).toHaveBeenCalledWith(true);
-    expect(performance.now() - start).toBeGreaterThanOrEqual(150);
-    expect(performance.now() - start).toBeLessThan(1500);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      let disposed = false;
+      void deadline.dispose().then(() => (disposed = true));
+      expect(stop).toHaveBeenCalledWith(true);
+      await vi.advanceTimersByTimeAsync(199);
+      expect(disposed).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(disposed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

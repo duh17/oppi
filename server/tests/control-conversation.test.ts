@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { lstatSync, symlinkSync } from "node:fs";
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { WebSocket } from "ws";
@@ -40,6 +40,7 @@ import type { ClientMessage, ServerMessage, Session } from "../src/types.js";
 import { listenOnLocalApiFixture } from "./harness/local-api-socket.js";
 import { saveControlRow } from "./harness/control-row.js";
 import { makeTempDir } from "./harness/temp-dir.js";
+import { bootDurablePlugins, DURABLE_BOOT_TIMEOUT_MS } from "./harness/durable-boot.js";
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -151,6 +152,9 @@ describe("control conversation lifecycle on the durable harness", () => {
   const managers: SessionManager[] = [];
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 
+  // The first durable runtime in a worker imports every built-in plugin; boot that once here,
+  // on its own budget, instead of inside whichever test runs first.
+  beforeAll(bootDurablePlugins, DURABLE_BOOT_TIMEOUT_MS);
   beforeEach(() => {
     process.env.PI_CODING_AGENT_DIR = makeTempDir("oppi-control-conversation-agent-");
   });

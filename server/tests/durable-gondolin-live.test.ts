@@ -11,17 +11,13 @@ import type { GondolinVm } from "../src/gondolin-ops.js";
 import { makeTempDir } from "./harness/temp-dir.js";
 import { realVmSkipReason } from "./helpers/real-vm.js";
 
-// Match the other live VM suites: absent prerequisites return early, but VM
+// Match the other live VM suites: absent prerequisites skip (and say why), but VM
 // boot and assertion failures after a successful preflight must still fail.
-/** This host can boot a real VM: QEMU, and a guest image it can have. Gates every test below. */
-let qemuAvailable = false;
-beforeAll(async () => {
-  const reason = await realVmSkipReason();
-  qemuAvailable = reason === undefined;
-  if (reason) console.log(`[durable-security] Skipping: ${reason}`);
-}, 30_000);
+const vmSkipReason = await realVmSkipReason();
+if (vmSkipReason) console.log(`[durable-security] Skipping: ${vmSkipReason}`);
+const describeVm = describe.skipIf(vmSkipReason !== undefined);
 
-describe("Durable shared guest security", { timeout: 30_000 }, () => {
+describeVm("Durable shared guest security", { timeout: 30_000 }, () => {
   const root = "/workspace/durable-security";
   let host: string;
   let vm: GondolinVm;
@@ -44,7 +40,6 @@ describe("Durable shared guest security", { timeout: 30_000 }, () => {
       ])
     ).ok;
   beforeAll(async () => {
-    if (!qemuAvailable) return;
     host = makeTempDir("oppi-durable-security-");
     console.log("durable security artifacts:", host);
     manager = new GondolinManager();
@@ -70,7 +65,6 @@ describe("Durable shared guest security", { timeout: 30_000 }, () => {
   it.each(["1", "sibling", "empty", "deleted"])(
     "Stop ignores %s forged pid files and preserves a sibling conversation",
     async (attack) => {
-      if (!qemuAvailable) return;
       let killArgs: string[] | undefined;
       const victim = new GondolinExecutionEnv(
         {
@@ -200,7 +194,6 @@ describe("Durable shared guest security", { timeout: 30_000 }, () => {
   );
 
   it("concurrent edits through a symlink and its target both land", async () => {
-    if (!qemuAvailable) return;
     const env = new GondolinExecutionEnv(vm, "security", root);
     writeFileSync(join(host, "note.txt"), "one\ntwo\n");
     symlinkSync("note.txt", join(host, "link.txt"));
@@ -222,7 +215,6 @@ describe("Durable shared guest security", { timeout: 30_000 }, () => {
   });
 
   it("rejects a resolved guest symlink outside the workspace", async () => {
-    if (!qemuAvailable) return;
     expect((await vm.exec(["ln", "-s", "/etc", `${root}/outside`])).ok).toBe(true);
     const env = new GondolinExecutionEnv(vm, "security", root);
     const result = await env.canonicalPath("outside", context);
@@ -260,7 +252,6 @@ describe("Durable shared guest security", { timeout: 30_000 }, () => {
     };
 
     it("really is one", async () => {
-      if (!qemuAvailable) return;
       const probe = await asGroupLeader.exec([
         "/bin/sh",
         "-c",
@@ -271,7 +262,6 @@ describe("Durable shared guest security", { timeout: 30_000 }, () => {
     });
 
     it("keeps a command's exit code and cwd", async () => {
-      if (!qemuAvailable) return;
       const env = new GondolinExecutionEnv(asGroupLeader, "leader", root);
       const cwd = `${root}/leader-${randomUUID()}`;
       await vm.fs.mkdir(cwd, { recursive: true });
@@ -282,7 +272,6 @@ describe("Durable shared guest security", { timeout: 30_000 }, () => {
     });
 
     it("reports a missing program as a spawn error", async () => {
-      if (!qemuAvailable) return;
       const env = new GondolinExecutionEnv(asGroupLeader, "leader", root);
       const result = await env.exec(["oppi-no-such-program"], {}, context);
       expect(result.ok).toBe(false);
@@ -290,7 +279,6 @@ describe("Durable shared guest security", { timeout: 30_000 }, () => {
     });
 
     it("kills the whole group on abort", async () => {
-      if (!qemuAvailable) return;
       const env = new GondolinExecutionEnv(asGroupLeader, "leader", root);
       const abort = new AbortController();
       const running = env.exec(
@@ -324,7 +312,6 @@ describe("Durable shared guest security", { timeout: 30_000 }, () => {
   })) {
     if (testCase.name.startsWith("watch ")) continue;
     it(`ExecutionEnv conformance: ${testCase.name}`, async () => {
-      if (!qemuAvailable) return;
       await testCase.run();
     });
   }

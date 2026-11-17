@@ -463,11 +463,14 @@ describe("readAudioHeaders on malformed input", () => {
     "reports %s as unknown quickly, within its read budget",
     async (_name, bytes) => {
       const file = source(bytes);
-      const started = performance.now();
+      // The parse's own CPU time, not wall time: a busy host descheduling this thread
+      // must not count against the parser.
+      const started = process.threadCpuUsage();
       expect(
         (await readAudioHeaders(file, AbortSignal.timeout(5_000))).durationSeconds,
       ).toBeUndefined();
-      expect(performance.now() - started).toBeLessThan(500);
+      const spent = process.threadCpuUsage(started);
+      expect((spent.user + spent.system) / 1000).toBeLessThan(500);
       expect(file.bytesRead).toBeLessThanOrEqual(512 * 1024);
     },
   );

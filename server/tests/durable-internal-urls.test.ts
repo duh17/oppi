@@ -1,7 +1,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 import {
   fauxProvider,
@@ -14,9 +14,14 @@ import { Storage } from "../src/storage.js";
 import { SessionManager } from "../src/sessions.js";
 import type { ServerMessage } from "../src/types.js";
 import { makeTempDir } from "./harness/temp-dir.js";
+import { bootDurablePlugins, DURABLE_BOOT_TIMEOUT_MS } from "./harness/durable-boot.js";
 
 // The durable `read` tool over internal URLs, through a real SessionManager, the real plugin host
 // and built-ins, and a scripted model: what the agent sees is the tool result in its transcript.
+
+// The first durable runtime in a worker imports every built-in plugin; boot that once here, on
+// its own budget, instead of inside whichever test runs first.
+beforeAll(bootDurablePlugins, DURABLE_BOOT_TIMEOUT_MS);
 
 const managers: SessionManager[] = [];
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;

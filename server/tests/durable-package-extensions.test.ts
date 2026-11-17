@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 import type { Message } from "@earendil-works/pi-ai";
@@ -39,6 +39,11 @@ import { CLI, cliSpawnEnv } from "./harness/cli-process.js";
 import { listenOnLocalApiFixture } from "./harness/local-api-socket.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
 import { makeTempDir } from "./harness/temp-dir.js";
+import { bootDurablePlugins, DURABLE_BOOT_TIMEOUT_MS } from "./harness/durable-boot.js";
+
+// The first durable runtime in a worker imports every built-in plugin; boot that once here, on
+// its own budget, instead of inside whichever test runs first.
+beforeAll(bootDurablePlugins, DURABLE_BOOT_TIMEOUT_MS);
 
 const managers: SessionManager[] = [];
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -1221,6 +1226,8 @@ describe("plugins on the extension list", () => {
     expect(fixed.plugin?.loadError).toBeUndefined();
   });
 
+  // Seven `oppi extensions` CLI processes, each a cold Node boot: a busy host stretches process
+  // starts well past what the default budget allows for the whole test.
   it("serves `oppi extensions list|disable|enable|reload` from the extension routes", async () => {
     writePlugin("probe");
     // A Pi package linked under a built-in's name: its row carries a warning.
@@ -1249,7 +1256,10 @@ describe("plugins on the extension list", () => {
           [CLI, "extensions", ...args],
           { encoding: "utf-8", env: { ...cliSpawnEnv(), OPPI_DATA_DIR: cliDir } },
           (error, stdout) =>
-            resolve({ code: error ? Number((error as { code?: unknown }).code ?? 1) : 0, stdout }),
+            resolve({
+              code: error ? Number((error as { code?: unknown }).code ?? 1) : 0,
+              stdout,
+            }),
         );
       });
     try {
@@ -1290,5 +1300,5 @@ describe("plugins on the extension list", () => {
     } finally {
       await new Promise<void>((resolve) => api.close(() => resolve()));
     }
-  });
+  }, 60_000);
 });

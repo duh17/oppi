@@ -1,9 +1,14 @@
 import { cpSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { BUILT_IN_PLUGINS_DIR, DurableHarness } from "../src/durable-harness.js";
+import { bootDurablePlugins, DURABLE_BOOT_TIMEOUT_MS } from "./harness/durable-boot.js";
+
+// The first durable runtime in a worker imports every built-in plugin and what they share; boot
+// that once here, on its own budget, instead of inside the first test.
+beforeAll(bootDurablePlugins, DURABLE_BOOT_TIMEOUT_MS);
 
 const runtimes: DurableHarness[] = [];
 const dirs: string[] = [];
@@ -13,6 +18,9 @@ afterEach(async () => {
 });
 
 describe("built-in plugins", () => {
+  // The runtime boots from a fresh copy of the built-ins, so it imports every plugin again from
+  // a new path (the shared boot above cannot warm that): that plugin-host boot, not the reload,
+  // is most of this test, and a busy host stretches it past the default budget.
   it("reloads a built-in in place, and keeps its running code when the reload fails", async () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-durable-builtin-reload-"));
     dirs.push(dir);
@@ -64,7 +72,7 @@ describe("built-in plugins", () => {
     ]);
     expect(await sections()).toContain("reload_probe");
     expect(installed()).toEqual(order);
-  });
+  }, DURABLE_BOOT_TIMEOUT_MS);
 
   it("refuses to open the runtime when a built-in fails its first load", async () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-durable-builtin-broken-"));
