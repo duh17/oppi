@@ -40,21 +40,40 @@ struct FileKindTests {
         }
     }
 
-    @Test func detectMarkdown() {
-        #expect(FileKind.detect(from: "README.md") == .markdown)
-        #expect(FileKind.detect(from: "docs/guide.mdx") == .markdown)
-    }
-
-    @Test func detectHTML() {
-        #expect(FileKind.detect(from: "page.html") == .html)
-        #expect(FileKind.detect(from: "index.htm") == .html)
-        #expect(FileKind.detect(from: "REPORT.HTML") == .html)
-    }
-
-    @Test func detectJSON() {
-        #expect(FileKind.detect(from: "config.json") == .json)
-        #expect(FileKind.detect(from: ".prettierrc") == .json)
-        #expect(FileKind.detect(from: ".eslintrc") == .json)
+    /// The document renderers and text formats the server's media contract
+    /// (`protocol/file-kinds.json`, below) does not list, in any case and
+    /// under any directory.
+    @Test(arguments: [
+        ("README.md", FileKind.markdown),
+        ("docs/guide.mdx", .markdown),
+        ("page.html", .html),
+        ("index.htm", .html),
+        ("REPORT.HTML", .html),
+        ("config.json", .json),
+        (".prettierrc", .json),
+        (".eslintrc", .json),
+        ("document.tex", .latex),
+        ("paper.latex", .latex),
+        ("src/math/equation.tex", .latex),
+        ("notes.org", .orgMode),
+        ("docs/TODO.org", .orgMode),
+        ("diagram.mmd", .mermaid),
+        ("flow.mermaid", .mermaid),
+        ("graph.dot", .graphviz),
+        ("tree.gv", .graphviz),
+        ("export.csv", .csv),
+        ("EXPORT.CSV", .csv),
+        ("metrics/rides.csv", .csv),
+        ("export.tsv", .tsv),
+        ("notes.TSV", .tsv),
+        ("park.geojson", .geojson),
+        ("PARK.GEOJSON", .geojson),
+        ("counties.topojson", .topojson),
+        ("IMG_0001.HEIC", .image),
+        ("models/SCENE.USDZ", .usdz),
+    ])
+    func detectsDocumentKinds(path: String, kind: FileKind) {
+        #expect(FileKind.detect(from: path) == kind)
     }
 
     @Test func jsonBytesSniffFeatureCollectionGeometryCollectionAndTopology() {
@@ -68,19 +87,13 @@ struct FileKindTests {
         #expect(FileKind.detect(from: "package.json", content: #"{"name":"oppi"}"#) == .json)
     }
 
-    @Test func detectImage() {
-        for path in [
-            "logo.png", "photo.jpg", "anim.gif", "icon.webp", "scan.tif", "scan.tiff",
-            "favicon.ico", "icon.svg", "IMG_0001.HEIC", "photo.heic", "photo.heif",
-        ] {
-            #expect(FileKind.detect(from: path) == .image, "\(path)")
-        }
-    }
-
     @Test func plainWhenNothingIdentifiesTheFile() {
         #expect(FileKind.detect(from: nil) == .plain)
         #expect(FileKind.detect(from: "file.xyz") == .plain)
         #expect(FileKind.detect(from: "LICENSE") == .plain)
+        #expect(FileKind.detect(from: "readme.txt") == .plain)
+        #expect(FileKind.detect(from: "scene.glb") == .plain)
+        #expect(FileKind.detect(from: "scene.blend") == .plain)
     }
 
     @Test func extensionlessScriptsAreDetectedFromTheirShebang() {
@@ -100,11 +113,6 @@ struct FileKindTests {
         #expect(FileKind.detect(from: "README.md", content: "#!/bin/bash\necho hi") == .markdown)
     }
 
-    @Test func audioExtensionDetected() {
-        #expect(FileKind.detect(from: "voice.wav") == .audio)
-        #expect(FileKind.detect(from: "voice.mp3") == .audio)
-    }
-
     @Test func displayLabels() {
         #expect(FileKind.markdown.displayLabel == "Markdown")
         #expect(FileKind.html.displayLabel == "HTML")
@@ -116,24 +124,19 @@ struct FileKindTests {
         #expect(FileKind.tsv.displayLabel == "TSV")
         #expect(FileKind.geojson.displayLabel == "GeoJSON")
         #expect(FileKind.topojson.displayLabel == "TopoJSON")
+        #expect(FileKind.latex.displayLabel == "LaTeX")
+        #expect(FileKind.orgMode.displayLabel == "Org")
+        #expect(FileKind.mermaid.displayLabel == "Mermaid")
+        #expect(FileKind.graphviz.displayLabel == "Graphviz")
         #expect(FileKind.video.displayLabel == "Video")
         #expect(FileKind.pdf.displayLabel == "PDF")
+        #expect(FileKind.usdz.displayLabel == "USDZ")
         #expect(FileKind.binary.displayLabel == "Binary")
         #expect(FileKind.code(language: .swift).displayLabel == "Swift")
         #expect(FileKind.code(language: .xml).displayLabel == "XML")
         #expect(FileKind.code(language: .protobuf).displayLabel == "Protobuf")
         #expect(FileKind.code(language: .graphql).displayLabel == "GraphQL")
         #expect(FileKind.code(language: .diff).displayLabel == "Diff")
-    }
-
-    @Test func detectPDF() {
-        #expect(FileKind.detect(from: "doc.pdf") == .pdf)
-    }
-
-    @Test func detectVideo() {
-        #expect(FileKind.detect(from: "clip.mp4") == .video)
-        #expect(FileKind.detect(from: "movie.mov") == .video)
-        #expect(FileKind.detect(from: "video.webm") == .video)
     }
 
     @Test func detectBinary() {
@@ -143,16 +146,6 @@ struct FileKindTests {
         ] {
             #expect(FileKind.detect(from: path) == .binary, "\(path)")
         }
-    }
-
-    @Test func detectUSDZ() {
-        let kind = FileKind.detect(from: "models/scene.usdz")
-        #expect(kind == .usdz)
-        #expect(FileKind.detect(from: "SCENE.USDZ") == .usdz)
-        #expect(kind.displayLabel == "USDZ")
-        #expect(kind.syntaxLanguage == nil)
-        #expect(FileKind.detect(from: "scene.glb") != .usdz)
-        #expect(FileKind.detect(from: "scene.blend") != .usdz)
     }
 
     @Test func syntaxLanguageProjectionCoversFencesAndPaths() {
@@ -172,6 +165,7 @@ struct FileKindTests {
         #expect(FileKind.detect(from: "export.tsv").syntaxLanguage == nil)
         #expect(FileKind.detect(from: "park.geojson").syntaxLanguage == .json)
         #expect(FileKind.detect(from: "arcs.topojson").syntaxLanguage == .json)
+        #expect(FileKind.detect(from: "scene.usdz").syntaxLanguage == nil)
         #expect(FileKind.latex.syntaxLanguage == .latex)
         #expect(FileKind.mermaid.syntaxLanguage == .mermaid)
         #expect(FileKind.html.syntaxLanguage == .html)
@@ -188,36 +182,24 @@ struct FilePreviewCategoryTests {
             #expect(FileKind.detect(from: path).previewCategory == .text, "\(path)")
         }
     }
-
-    @Test func mediaAndBinaryFilesKeepTheirCategories() {
-        #expect(FileKind.detect(from: "photo.png").previewCategory == .image)
-        #expect(FileKind.detect(from: "photo.heic").previewCategory == .image)
-        #expect(FileKind.detect(from: "photo.heif").previewCategory == .image)
-        #expect(FileKind.detect(from: "voice.m4a").previewCategory == .audio)
-        #expect(FileKind.detect(from: "clip.mp4").previewCategory == .video)
-        #expect(FileKind.detect(from: "doc.pdf").previewCategory == .pdf)
-        #expect(FileKind.detect(from: "scene.usdz").previewCategory == .usdz)
-        #expect(FileKind.detect(from: "book.epub").previewCategory == .book)
-        #expect(FileKind.detect(from: "archive.zip").previewCategory == .binary)
-    }
 }
 
 @Suite("File kind table")
 struct FileKindTableTests {
     /// `protocol/file-kinds.json`, the extensions the server must serve as the same kind
     /// (`server/tests/file-kinds-contract.test.ts` holds the other half).
-    @Test func everyExtensionTheServerContractListsOpensAsThatCategory() throws {
+    @Test func everyExtensionTheServerContractListsOpensAsThatKind() throws {
         let fixture = try JSONDecoder().decode(
             [String: [String]].self,
             from: ProtocolFixtures.data("file-kinds.json")
         )
-        let categories: [String: FilePreviewCategory] = [
+        let kinds: [String: FileKind] = [
             "image": .image, "audio": .audio, "video": .video, "pdf": .pdf, "usdz": .usdz, "book": .book,
         ]
-        #expect(Set(fixture.keys) == Set(categories.keys))
-        for (kind, extensions) in fixture {
+        #expect(Set(fixture.keys) == Set(kinds.keys))
+        for (name, extensions) in fixture {
             for ext in extensions {
-                #expect(FileKind.detect(from: "file.\(ext)").previewCategory == categories[kind], "\(ext)")
+                #expect(FileKind.detect(from: "file.\(ext)") == kinds[name], "\(ext)")
             }
         }
     }

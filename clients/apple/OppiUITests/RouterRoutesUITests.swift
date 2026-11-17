@@ -19,9 +19,8 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
         continueAfterFailure = false
     }
 
-    /// Light theme: the sheet and popover chrome follow the theme store.
     func testPushedScreenOpensSheetAndPopoverThenFinishes() {
-        launch(colorScheme: "light")
+        launch(colorScheme: "dark")
         XCTAssertEqual(app.staticTexts["routerRoutes.dismissedModals"].label, "Dismissed 0")
         app.buttons["routerRoutes.quickComments"].tap()
         let quickComments = app.navigationBars["Quick Comments"]
@@ -31,13 +30,13 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
         button(labelBeginningWith: "Explain").tap()
         let editor = app.navigationBars["Edit Quick Comment"]
         XCTAssertTrue(editor.waitUntilExists(timeout: 5), "Editor sheet did not open in a navigation bar")
-        attachScreenshot("sheet-medium-detent-light")
+        attachScreenshot("sheet-medium-detent")
         assertRunning()
 
         app.buttons["quickComments.editor.symbolPicker"].tap()
         let idea = button(labelContaining: "Idea")
         XCTAssertTrue(idea.waitUntilExists(timeout: 5), "Icon popover did not open")
-        attachScreenshot("popover-anchored-light")
+        attachScreenshot("popover-anchored")
         assertRunning()
         idea.tap()
         XCTAssertTrue(idea.waitUntilGone(timeout: 5), "Picking an icon must close the popover")

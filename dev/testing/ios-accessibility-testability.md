@@ -4,7 +4,7 @@ Part of [Testing Guide](README.md). The contract for controls a semantic journey
 
 ## Visual accessibility is not a target
 
-No captures at accessibility text sizes, no VoiceOver passes, and no fixes, waivers, tests, or follow-ups for Apple's accessibility audit (`dynamicType`, `textClipped`, `contrast`) unless the owner reports the bug. Use system text styles (or `UIFont.scaled` with `adjustsFontForContentSizeCategory`) and stop. The automation semantics this guide describes stay required.
+UI tests and captures run in dark mode at the default text size. Large text and light mode stay product features, but no UI test or capture exercises an accessibility text size or light mode; unit tests of Dynamic Type scaling stay. No VoiceOver passes, and no fixes, waivers, tests, or follow-ups for Apple's accessibility audit (`dynamicType`, `textClipped`, `contrast`) unless the owner reports the bug. Use system text styles (or `UIFont.scaled` with `adjustsFontForContentSizeCategory`) and stop. The automation semantics this guide describes stay required.
 
 ## Tool timeline headers
 

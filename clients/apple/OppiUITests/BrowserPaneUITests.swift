@@ -171,7 +171,7 @@ final class BrowserPaneUITests: XCTestCase, PreviewUITestCase {
     /// indicator, which expands it.
     func testAShortLowerPaneOpensAWebPageFromItsAddressField() throws {
         try startPages()
-        let scheme = ProcessInfo.processInfo.environment["OPPI_PANE_SHOTS_SCHEME"] ?? "light"
+        let scheme = ProcessInfo.processInfo.environment["OPPI_PANE_SHOTS_SCHEME"] ?? "dark"
         openChat(orientation: .portrait, colorScheme: scheme)
         let window = app.windows.firstMatch
         app.typeKey("d", modifierFlags: [.command, .shift])

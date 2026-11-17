@@ -49,7 +49,7 @@ final class ReaderHeadingNavigationUITests: XCTestCase, PreviewUITestCase {
     // MARK: Outline
 
     func testTheOutlineListsHeadingsAndJumpsToOne() throws {
-        launch(file: "handbook.org", colorScheme: "light")
+        launch(file: "handbook.org", colorScheme: "dark")
         let button = app.buttons["fileViewer.outline.button"]
         XCTAssertTrue(button.waitUntilExists(timeout: 15), "a file with headings offers its outline")
         button.tap()
@@ -60,22 +60,11 @@ final class ReaderHeadingNavigationUITests: XCTestCase, PreviewUITestCase {
         for ordinal in [1, 5, 9] {
             XCTAssertTrue(app.descendants(matching: .any)["fileViewer.outline.row.\(ordinal)"].waitUntilExists(timeout: 5), "row \(ordinal)")
         }
-        saveScreenshot(name: "outline-light")
+        saveScreenshot(name: "outline-rows")
         app.descendants(matching: .any)["fileViewer.outline.row.9"].tap()
         XCTAssertTrue(list.waitUntilGone(timeout: 10), "choosing a heading closes the outline")
         // A heading near the end of a short document cannot reach the top: the scroll stops at the end.
         XCTAssertTrue(waitUntilScrolledTo(fold(9)), "and scrolls to it")
-    }
-
-    func testTheOutlineAtTheLargestTextSizeStillJumps() throws {
-        launch(file: "handbook.org", colorScheme: "dark", arguments: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"])
-        app.buttons["fileViewer.outline.button"].tap()
-        XCTAssertTrue(app.descendants(matching: .any)["fileViewer.outline"].waitUntilExists(timeout: 10))
-        saveScreenshot(name: "outline-dark-xxxl")
-        let row = app.descendants(matching: .any)["fileViewer.outline.row.6"]
-        for _ in 0..<12 where !row.exists || !row.isHittable { app.descendants(matching: .any)["fileViewer.outline.list"].swipeUp() }
-        row.tap()
-        XCTAssertTrue(waitUntilScrolledTo(fold(6)), "and scrolls to Details")
     }
 
     func testAFileWithoutHeadingsHasNoOutline() throws {
@@ -87,7 +76,7 @@ final class ReaderHeadingNavigationUITests: XCTestCase, PreviewUITestCase {
     // MARK: Find
 
     func testFindOpensTheFoldedSectionHoldingAMatch() throws {
-        launch(file: "handbook.org", colorScheme: "light")
+        launch(file: "handbook.org", colorScheme: "dark")
         tapChevron(2)
         XCTAssertTrue(waitForFold(2, "Collapsed"), "Planning folds")
         XCTAssertTrue(fold(5).waitUntilGone(timeout: 10), "and takes Deep dive with it")
@@ -114,14 +103,6 @@ final class ReaderHeadingNavigationUITests: XCTestCase, PreviewUITestCase {
         saveScreenshot(name: "find-no-matches")
         XCTAssertTrue(onScreen(fold(1)), "the file did not move")
         XCTAssertTrue(fold(2).exists && fold(2).value as? String == "Expanded", "and no section opened")
-    }
-
-    func testFindAtTheLargestTextSize() throws {
-        launch(file: "handbook.org", colorScheme: "dark", arguments: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"])
-        search("Paragraph 1 of section 6")
-        XCTAssertTrue(waitUntilScrolledTo(fold(7)), "the match's section is shown")
-        XCTAssertTrue(waitForMatchClearOfFindBar("Paragraph 1 of section 6"), "the match itself is marked and clear of the find bar")
-        saveScreenshot(name: "find-xxxl")
     }
 
     func testCommandFOpensFindOnIPad() throws {
@@ -244,7 +225,6 @@ final class ReaderHeadingNavigationUITests: XCTestCase, PreviewUITestCase {
     private func launch(
         file: String,
         colorScheme: String? = nil,
-        arguments: [String] = [],
         readyLabel: String? = nil
     ) {
         XCUIDevice.shared.orientation = .portrait
@@ -253,7 +233,6 @@ final class ReaderHeadingNavigationUITests: XCTestCase, PreviewUITestCase {
             screen: "reader-task-edit",
             environment: ["OPPI_READER_TASK_FILE": file, "OPPI_READER_TASK_READONLY": "1"],
             colorScheme: colorScheme,
-            arguments: arguments,
             readyTimeout: 20
         )
         if let readyLabel {

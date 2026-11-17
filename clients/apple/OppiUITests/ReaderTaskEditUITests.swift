@@ -196,23 +196,6 @@ final class ReaderTaskEditUITests: XCTestCase, PreviewUITestCase {
         saveScreenshot(name: "org-fold-4-expanded-again")
     }
 
-    /// A folded heading in light mode, at the default and at the largest text
-    /// size: the bullet, the mark and the heading stay readable and tappable.
-    func testAFoldedHeadingAtTheLargestTextSizeAndInLightMode() throws {
-        let device = UIDevice.current.userInterfaceIdiom == .pad ? "ipad" : "iphone"
-        XCUIDevice.shared.orientation = .portrait
-        let sizes = [("default", "UICTContentSizeCategoryL"), ("xxxl", "UICTContentSizeCategoryAccessibilityXXXL")]
-        for (name, category) in sizes {
-            launch(file: "notebook.org", colorScheme: "light", arguments: ["-UIPreferredContentSizeCategoryName", category])
-            tapHeading(3)
-            XCTAssertTrue(waitForFold(3, "Collapsed"), "\(name): the heading folds")
-            XCTAssertTrue(fold(4).waitUntilGone(timeout: 10), "\(name): its sub-heading goes with it")
-            saveScreenshot(name: "org-fold-\(device)-light-\(name)-folded")
-            tapHeading(3)
-            XCTAssertTrue(waitForFold(3, "Expanded"), "\(name): and unfolds again")
-        }
-    }
-
     /// The bullet before a heading's words carries its fold: a tap on the
     /// bullet folds the section, and a tap on the heading's words unfolds it.
     func testTheBulletFoldsAndUnfoldsItsHeading() throws {
@@ -231,17 +214,15 @@ final class ReaderTaskEditUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(app.buttons["fileViewer.task.checkbox.19"].waitUntilExists(timeout: 10), "the section is back")
     }
 
-    /// Stills of a notes file in dark and light: three levels of bullets and
-    /// colours, states, tags, and one folded subtree.
-    func testOrgHeadingStillsInDarkAndLight() throws {
+    /// A still of a notes file: three levels of bullets and colours, states,
+    /// tags, and one folded subtree.
+    func testOrgHeadingStills() throws {
         let device = UIDevice.current.userInterfaceIdiom == .pad ? "ipad" : "iphone"
         XCUIDevice.shared.orientation = .portrait
-        for scheme in ["dark", "light"] {
-            launch(file: "notebook.org", colorScheme: scheme)
-            tapHeading(2)
-            XCTAssertTrue(waitForFold(2, "Collapsed"), "\(scheme): the done heading folds")
-            saveScreenshot(name: "org-headings-\(device)-\(scheme)")
-        }
+        launch(file: "notebook.org", colorScheme: "dark")
+        tapHeading(2)
+        XCTAssertTrue(waitForFold(2, "Collapsed"), "the done heading folds")
+        saveScreenshot(name: "org-headings-\(device)-dark")
     }
 
     /// A saved edit mounts a new reader; the folds stay as the person left them,
@@ -491,13 +472,12 @@ final class ReaderTaskEditUITests: XCTestCase, PreviewUITestCase {
         file: String,
         readOnly: Bool = false,
         long: Bool = false,
-        colorScheme: String? = nil,
-        arguments: [String] = []
+        colorScheme: String? = nil
     ) {
         var environment = ["OPPI_READER_TASK_FILE": file]
         if readOnly { environment["OPPI_READER_TASK_READONLY"] = "1" }
         if long { environment["OPPI_READER_TASK_LONG"] = "1" }
-        launchPreview(screen: "reader-task-edit", environment: environment, colorScheme: colorScheme, arguments: arguments, readyTimeout: 20)
+        launchPreview(screen: "reader-task-edit", environment: environment, colorScheme: colorScheme, readyTimeout: 20)
         if !readOnly {
             let first = switch file {
             case "tasks.org": app.buttons["fileViewer.task.checkbox.5"]

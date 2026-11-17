@@ -296,24 +296,6 @@ final class ScheduleCalendarUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(mode.buttons["Day"].isSelected)
     }
 
-    /// At an accessibility text size the wide switch drops Week (a grid cannot hold the
-    /// text), and a list card still says everything, stacked.
-    func testAccessibilityTextSizeDropsWeekAndStacksCards() {
-        launch(textSize: "UICTContentSizeCategoryAccessibilityL")
-        openSchedules()
-        let mode = app.segmentedControls["schedules.mode"]
-        XCTAssertFalse(mode.buttons["Week"].exists, "No Week at accessibility sizes")
-        if isPad { XCTAssertTrue(mode.buttons["Month"].exists, "Month stays") }
-        mode.buttons["List"].tap()
-        let nanny = app.buttons["schedules.row.9Bq6VFNy"]
-        XCTAssertTrue(nanny.waitUntilExists(timeout: 10), "Nanny has its card")
-        XCTAssertTrue(nanny.label.contains("last run Done"), "The card still says its latest run: \(nanny.label)")
-        capture("list-ax")
-        mode.buttons[dayTitle].tap()
-        XCTAssertTrue(app.descendants(matching: .any)["schedules.calendar.stepper"].waitUntilExists(timeout: 10), "The Day steps days at this size")
-        capture("day-ax")
-    }
-
     /// The iPad mini turned to landscape keeps the day's summary and runs in view.
     func testCalendarFollowsTheIPadIntoLandscape() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Landscape is the iPad mini's")
@@ -467,14 +449,12 @@ final class ScheduleCalendarUITests: XCTestCase, PreviewUITestCase {
         add(attachment)
     }
 
-    /// `textSize` is a raw content-size category name, as the system reads it. `calendarEvents`
-    /// is the preview's `SCREENSHOT_CALENDAR_EVENTS`: `1` for a week of meetings, `denied` for
-    /// the experiment on without calendar access.
-    private func launch(textSize: String? = nil, calendarEvents: String? = nil) {
+    /// `calendarEvents` is the preview's `SCREENSHOT_CALENDAR_EVENTS`: `1` for a week of
+    /// meetings, `denied` for the experiment on without calendar access.
+    private func launch(calendarEvents: String? = nil) {
         XCUIDevice.shared.orientation = .portrait
-        let scheme = ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] ?? "light"
-        var arguments = ["-dev.chenda.Oppi.theme.mode", "manual", "-dev.chenda.Oppi.theme.id", scheme]
-        if let textSize { arguments += ["-UIPreferredContentSizeCategoryName", textSize] }
+        let scheme = ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] ?? "dark"
+        let arguments = ["-dev.chenda.Oppi.theme.mode", "manual", "-dev.chenda.Oppi.theme.id", scheme]
         launchPreview(
             screen: "schedules-calendar",
             environment: calendarEvents.map { ["SCREENSHOT_CALENDAR_EVENTS": $0] } ?? [:],

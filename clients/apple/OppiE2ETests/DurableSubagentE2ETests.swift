@@ -145,9 +145,8 @@ final class DurableSubagentE2ETests: E2ETestCase {
     /// waiting on a background job of its own), one asking, one failed, and three finished; the
     /// screenshots go to `/tmp/oppi-screenshots/subagent-panel-<device>-*.png`
     /// (`OPPI_LAB_DEVICE` names the device, default `iphone`). It asserts the pill's live counts and
-    /// that each group lists its children, then captures the drawer in dark and light, the whole
-    /// list (full screen, or the trailing column on a wide screen), a row's menu, and on a phone
-    /// the largest text size.
+    /// that each group lists its children, then captures the drawer, a row's menu, and the whole
+    /// list (full screen, or the trailing column on a wide screen).
     func testSubagentPanelLab() throws {
         guard E2ELabServerContext.durableSessions else {
             throw XCTSkip("Needs e2e.sh --native --durable --faux-model")
@@ -218,32 +217,6 @@ final class DurableSubagentE2ETests: E2ETestCase {
         tap(whole, named: "drawer's whole-list button")
         RunLoop.current.run(until: Date().addingTimeInterval(1.5))
         try shot("dark-whole")
-
-        for (variant, arguments) in [
-            ("light", ["-dev.chenda.Oppi.theme.mode", "manual", "-dev.chenda.Oppi.theme.id", "light"]),
-        ] + (device == "ipad" ? [] : [(
-            "dark-largest-text",
-            ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
-        )]) {
-            let base = app.launchArguments
-            app.terminate()
-            app.launchArguments = base + arguments
-            app.launch()
-            openSessionDeepLink(id: parentId)
-            dismissTip()
-            expandNativeSurface(title: "Subagents", timeout: 30)
-            XCTAssertTrue(row("delete-oppimac").waitForExistence(timeout: 15), "No rows after relaunch (\(variant))")
-            try shot("\(variant)-drawer")
-            if variant == "light" {
-                tap(app.buttons["extension.strip.fullScreen.aboveEditor"], named: "drawer's whole-list button")
-                RunLoop.current.run(until: Date().addingTimeInterval(1.5))
-                try shot("light-whole")
-            }
-            app.terminate()
-            app.launchArguments = base
-            app.launch()
-            openSessionDeepLink(id: parentId)
-        }
     }
 
     private func elementValue(_ element: XCUIElement) -> String {

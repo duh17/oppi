@@ -28,43 +28,41 @@ final class ReaderBarUITests: XCTestCase, PreviewUITestCase {
         continueAfterFailure = false
     }
 
-    /// The bar and its … in both themes: one group, the first buttons in
-    /// order, and every row titled with an icon.
+    /// The bar and its …: one group, the first buttons in order, and every
+    /// row titled with an icon.
     func testTheBarIsOneGroupAndEveryMenuRowHasATitleAndAnIcon() {
-        for scheme in ["light", "dark"] {
-            launch(colorScheme: scheme)
-            let shown = assertOneGroup()
-            XCTAssertEqual(
-                shown, Array(Self.barOrder.prefix(shown.count)),
-                "a narrow bar keeps the first buttons of the Reader Bar order and crowds out the rest"
-            )
-            save("bar-\(scheme)")
+        launch()
+        let shown = assertOneGroup()
+        XCTAssertEqual(
+            shown, Array(Self.barOrder.prefix(shown.count)),
+            "a narrow bar keeps the first buttons of the Reader Bar order and crowds out the rest"
+        )
+        save("bar")
 
-            let rows = openMenu()
-            for row in rows {
-                let icons = row.images.allElementsBoundByIndex.filter { $0.identifier != "chevron.forward" }
-                XCTAssertFalse(icons.isEmpty, "the … row \"\(row.label)\" has its icon")
-                let readsItsIcon = icons.contains { $0.label == row.label }
-                XCTAssertTrue(
-                    !row.label.isEmpty && (!readsItsIcon || Self.titlesLikeTheirIcon.contains(row.label)),
-                    "the … row \"\(row.label)\" reads its title, not its icon's name"
-                )
-            }
-            let crowdedOut = Self.barOrder.filter { !shown.contains($0) }
-            if crowdedOut.contains("fileViewer.share") {
-                let share = menuRow("share.menu.share")
-                XCTAssertEqual(share.label, "Share")
-                XCTAssertFalse(share.images["chevron.forward"].exists, "Share runs at once; it is not a submenu")
-                XCTAssertTrue(menuRow("share.menu.shareAs").images["chevron.forward"].exists, "Share As holds the formats")
-            }
-            save("menu-\(scheme)")
+        let rows = openMenu()
+        for row in rows {
+            let icons = row.images.allElementsBoundByIndex.filter { $0.identifier != "chevron.forward" }
+            XCTAssertFalse(icons.isEmpty, "the … row \"\(row.label)\" has its icon")
+            let readsItsIcon = icons.contains { $0.label == row.label }
+            XCTAssertTrue(
+                !row.label.isEmpty && (!readsItsIcon || Self.titlesLikeTheirIcon.contains(row.label)),
+                "the … row \"\(row.label)\" reads its title, not its icon's name"
+            )
         }
+        let crowdedOut = Self.barOrder.filter { !shown.contains($0) }
+        if crowdedOut.contains("fileViewer.share") {
+            let share = menuRow("share.menu.share")
+            XCTAssertEqual(share.label, "Share")
+            XCTAssertFalse(share.images["chevron.forward"].exists, "Share runs at once; it is not a submenu")
+            XCTAssertTrue(menuRow("share.menu.shareAs").images["chevron.forward"].exists, "Share As holds the formats")
+        }
+        save("menu")
     }
 
     /// Source keeps its title and shows whether it is on: selected in the
     /// bar, checked in the … menu.
     func testTheSourceToggleShowsItsState() {
-        launch(colorScheme: "light")
+        launch()
         XCTAssertFalse(sourceToggle().isSelected, "the rendered view opens with Source off")
         XCTAssertEqual(sourceToggle().label, "Source")
         sourceToggle().tap()
@@ -79,7 +77,7 @@ final class ReaderBarUITests: XCTestCase, PreviewUITestCase {
     /// Share presents the share sheet at once, from the bar or from the …
     /// that crowded it out; a popover in regular width points at it.
     func testSharePresentsTheShareSheetWithTheDocument() {
-        launch(colorScheme: "light")
+        launch()
         let barShare = app.buttons["fileViewer.share"].firstMatch
         let anchor: CGRect
         if barShare.exists, barShare.isHittable {
@@ -111,12 +109,12 @@ final class ReaderBarUITests: XCTestCase, PreviewUITestCase {
 
     // MARK: Steps
 
-    private func launch(colorScheme: String) {
+    private func launch() {
         XCUIDevice.shared.orientation = .portrait
         launchPreview(
             screen: "reader-task-edit",
             environment: ["OPPI_READER_TASK_FILE": "notes.md", "OPPI_READER_TASK_CHROME": "pushed"],
-            colorScheme: colorScheme,
+            colorScheme: "dark",
             ready: nil,
             readyTimeout: 20
         )

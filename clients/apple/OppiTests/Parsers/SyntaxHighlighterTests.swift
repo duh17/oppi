@@ -6,14 +6,52 @@ import UIKit
 @Suite("SyntaxLanguage")
 struct SyntaxLanguageTests {
 
-    @Test func detectSwift() {
-        #expect(SyntaxLanguage.detect("swift") == .swift)
+    /// One language: the extensions and fence names that select it, its line
+    /// comment, and whether the scanner treats block comments.
+    struct Row: Sendable, CustomTestStringConvertible {
+        let identifiers: [String]
+        let language: SyntaxLanguage
+        let lineComment: String?
+        let blockComments: Bool
+
+        init(_ identifiers: [String], _ language: SyntaxLanguage, lineComment: String?, blockComments: Bool) {
+            self.identifiers = identifiers
+            self.language = language
+            self.lineComment = lineComment
+            self.blockComments = blockComments
+        }
+
+        var testDescription: String { identifiers[0] }
     }
 
-    @Test func detectTypeScript() {
-        #expect(SyntaxLanguage.detect("ts") == .typescript)
-        #expect(SyntaxLanguage.detect("mts") == .typescript)
-        #expect(SyntaxLanguage.detect("typescript") == .typescript)
+    static let rows: [Row] = [
+        Row(["swift"], .swift, lineComment: "//", blockComments: true),
+        Row(["ts", "mts", "typescript"], .typescript, lineComment: "//", blockComments: true),
+        Row(["js", "mjs"], .javascript, lineComment: "//", blockComments: true),
+        Row(["py", "pyi", "python"], .python, lineComment: "#", blockComments: false),
+        Row(["go", "golang"], .go, lineComment: "//", blockComments: true),
+        Row(["rs", "rust"], .rust, lineComment: "//", blockComments: true),
+        Row(["sh", "bash", "zsh"], .shell, lineComment: "#", blockComments: false),
+        Row(["json", "jsonl"], .json, lineComment: nil, blockComments: false),
+        Row(["cpp", "cc", "hpp"], .cpp, lineComment: "//", blockComments: true),
+        Row(["sql"], .sql, lineComment: "--", blockComments: false),
+        Row(["xml", "xsl", "xslt", "xsd", "plist"], .xml, lineComment: nil, blockComments: true),
+        Row(["proto", "protobuf"], .protobuf, lineComment: "//", blockComments: true),
+        Row(["graphql", "gql"], .graphql, lineComment: "//", blockComments: true),
+        Row(["diff", "patch"], .diff, lineComment: nil, blockComments: false),
+        Row(["tex", "latex"], .latex, lineComment: "%", blockComments: false),
+        Row(["org"], .orgMode, lineComment: "#", blockComments: false),
+        Row(["mmd", "mermaid"], .mermaid, lineComment: "%%", blockComments: false),
+        Row(["dot", "gv"], .dot, lineComment: "//", blockComments: true),
+    ]
+
+    @Test(arguments: rows)
+    func detectsTheLanguageAndItsComments(_ row: Row) {
+        for identifier in row.identifiers {
+            #expect(SyntaxLanguage.detect(identifier) == row.language, "\(identifier)")
+        }
+        #expect(row.language.lineCommentPrefix.map { String($0) } == row.lineComment)
+        #expect(row.language.hasBlockComments == row.blockComments)
     }
 
     @Test func detectTSXIsNotTypeScriptAlias() {
@@ -22,48 +60,10 @@ struct SyntaxLanguageTests {
         #expect(SyntaxLanguage.tsx.displayName == "TSX")
     }
 
-    @Test func detectJavaScript() {
-        #expect(SyntaxLanguage.detect("js") == .javascript)
-        #expect(SyntaxLanguage.detect("mjs") == .javascript)
-    }
-
     @Test func detectJSXIsNotJavaScriptAlias() {
         #expect(SyntaxLanguage.detect("jsx") == .jsx)
         #expect(SyntaxLanguage.detect("jsx") != .javascript)
         #expect(SyntaxLanguage.jsx.displayName == "JSX")
-    }
-
-    @Test func detectPython() {
-        #expect(SyntaxLanguage.detect("py") == .python)
-        #expect(SyntaxLanguage.detect("pyi") == .python)
-        #expect(SyntaxLanguage.detect("python") == .python)
-    }
-
-    @Test func detectGo() {
-        #expect(SyntaxLanguage.detect("go") == .go)
-        #expect(SyntaxLanguage.detect("golang") == .go)
-    }
-
-    @Test func detectRust() {
-        #expect(SyntaxLanguage.detect("rs") == .rust)
-        #expect(SyntaxLanguage.detect("rust") == .rust)
-    }
-
-    @Test func detectShell() {
-        #expect(SyntaxLanguage.detect("sh") == .shell)
-        #expect(SyntaxLanguage.detect("bash") == .shell)
-        #expect(SyntaxLanguage.detect("zsh") == .shell)
-    }
-
-    @Test func detectJSON() {
-        #expect(SyntaxLanguage.detect("json") == .json)
-        #expect(SyntaxLanguage.detect("jsonl") == .json)
-    }
-
-    @Test func detectCpp() {
-        #expect(SyntaxLanguage.detect("cpp") == .cpp)
-        #expect(SyntaxLanguage.detect("cc") == .cpp)
-        #expect(SyntaxLanguage.detect("hpp") == .cpp)
     }
 
     @Test func caseInsensitive() {
@@ -77,28 +77,6 @@ struct SyntaxLanguageTests {
         #expect(SyntaxLanguage.detect("") == .unknown)
     }
 
-    @Test func displayNames() {
-        #expect(SyntaxLanguage.swift.displayName == "Swift")
-        #expect(SyntaxLanguage.typescript.displayName == "TypeScript")
-        #expect(SyntaxLanguage.unknown.displayName == "Text")
-        #expect(SyntaxLanguage.cpp.displayName == "C++")
-    }
-
-    @Test func lineCommentPrefixes() {
-        #expect(SyntaxLanguage.swift.lineCommentPrefix == ["/", "/"])
-        #expect(SyntaxLanguage.python.lineCommentPrefix == ["#"])
-        #expect(SyntaxLanguage.sql.lineCommentPrefix == ["-", "-"])
-        #expect(SyntaxLanguage.json.lineCommentPrefix == nil)
-    }
-
-    @Test func blockCommentSupport() {
-        #expect(SyntaxLanguage.swift.hasBlockComments)
-        #expect(SyntaxLanguage.typescript.hasBlockComments)
-        #expect(!SyntaxLanguage.python.hasBlockComments)
-        #expect(!SyntaxLanguage.shell.hasBlockComments)
-        #expect(!SyntaxLanguage.json.hasBlockComments)
-    }
-
     @Test func keywordSetsNonEmpty() {
         #expect(!SyntaxLanguage.swift.keywords.isEmpty)
         #expect(!SyntaxLanguage.kotlin.keywords.isEmpty)
@@ -106,52 +84,6 @@ struct SyntaxLanguageTests {
         #expect(SyntaxLanguage.go.keywords.isEmpty)
         #expect(SyntaxLanguage.json.keywords.isEmpty)
         #expect(SyntaxLanguage.unknown.keywords.isEmpty)
-    }
-
-    // MARK: - New language detection (XML, Protobuf, GraphQL, Diff)
-
-    @Test func detectXML() {
-        #expect(SyntaxLanguage.detect("xml") == .xml)
-        #expect(SyntaxLanguage.detect("xsl") == .xml)
-        #expect(SyntaxLanguage.detect("xslt") == .xml)
-        #expect(SyntaxLanguage.detect("xsd") == .xml)
-        #expect(SyntaxLanguage.detect("plist") == .xml)
-    }
-
-    @Test func detectProtobuf() {
-        #expect(SyntaxLanguage.detect("proto") == .protobuf)
-        #expect(SyntaxLanguage.detect("protobuf") == .protobuf)
-    }
-
-    @Test func detectGraphQL() {
-        #expect(SyntaxLanguage.detect("graphql") == .graphql)
-        #expect(SyntaxLanguage.detect("gql") == .graphql)
-    }
-
-    @Test func detectDiff() {
-        #expect(SyntaxLanguage.detect("diff") == .diff)
-        #expect(SyntaxLanguage.detect("patch") == .diff)
-    }
-
-    @Test func newDisplayNames() {
-        #expect(SyntaxLanguage.xml.displayName == "XML")
-        #expect(SyntaxLanguage.protobuf.displayName == "Protobuf")
-        #expect(SyntaxLanguage.graphql.displayName == "GraphQL")
-        #expect(SyntaxLanguage.diff.displayName == "Diff")
-    }
-
-    @Test func newCommentPrefixes() {
-        #expect(SyntaxLanguage.protobuf.lineCommentPrefix == ["/", "/"])
-        #expect(SyntaxLanguage.graphql.lineCommentPrefix == ["/", "/"])
-        #expect(SyntaxLanguage.xml.lineCommentPrefix == nil)
-        #expect(SyntaxLanguage.diff.lineCommentPrefix == nil)
-    }
-
-    @Test func newBlockComments() {
-        #expect(SyntaxLanguage.protobuf.hasBlockComments == true)
-        #expect(SyntaxLanguage.graphql.hasBlockComments == true)
-        #expect(SyntaxLanguage.xml.hasBlockComments == true)
-        #expect(SyntaxLanguage.diff.hasBlockComments == false)
     }
 
     @Test func newKeywordSets() {
