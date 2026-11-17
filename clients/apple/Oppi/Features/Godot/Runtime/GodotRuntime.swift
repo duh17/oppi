@@ -109,7 +109,10 @@ final class GodotRuntime: GodotEngineRuntime {
         var bytes: UnsafeMutablePointer<UInt8>?
         let count = oppigodot_capture_png(&bytes)
         guard let bytes, count > 0 else { return nil }
-        return Data(bytesNoCopy: bytes, count: count, deallocator: .custom { pointer, _ in oppigodot_free(pointer) })
+        // The PNG outlives this call and may be released on any thread (it is
+        // written to disk off the main actor): `oppigodot_free` is `free`, so
+        // the deallocator must not inherit this type's main-actor isolation.
+        return Data(bytesNoCopy: bytes, count: count, deallocator: .custom { @Sendable pointer, _ in oppigodot_free(pointer) })
     }
 
     func currentScene() -> String? {

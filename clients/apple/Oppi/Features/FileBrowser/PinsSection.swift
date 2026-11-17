@@ -168,6 +168,11 @@ class PinsSection {
         "\(identifierPrefix).pin.\(row.key)"
     }
 
+    /// A tile's Edit remove button.
+    func removeIdentifier(_ row: Row) -> String {
+        "\(identifierPrefix).pin.remove.\(row.key)"
+    }
+
     func accessibilityLabel(_ row: Row) -> String {
         [row.title, row.detail, row.isLocked ? String(localized: "Locked") : nil]
             .compactMap { $0 }.joined(separator: ", ")
@@ -439,7 +444,8 @@ class PinsSection {
         editingGroups = groups
     }
 
-    private func removeWhileEditing(_ id: String) {
+    /// Edit's remove: the pin leaves the list now and the server on Done.
+    func removeWhileEditing(_ id: String) {
         editingGroups = editingGroups.map { $0.filter { $0 != id } }
         editingRemoved.insert(id)
         hooks.changed()

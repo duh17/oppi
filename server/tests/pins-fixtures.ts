@@ -12,13 +12,12 @@ import { PROTOCOL_DIR } from "./protocol-fixtures.js";
 export const PINS_HTTP_SNAPSHOT_FILE = resolvePath.join(PROTOCOL_DIR, "pins-http.json");
 
 export const PINS_HTTP_FIXTURE_DESCRIPTION =
-  "Pins: saved pane routes, one list per server. A pin's target is a route in the shape protocol/links.json decodes oppi:// links to, without a server, every field of its kind present (null where the link leaves it out). GET /pins answers every pin with what is at its target now where the server checks it (ok, missing, unreadable, workspaceMissing, or unknown when the check took longer than 500 ms): a session, thread, or panel is missing once its session is deleted; a folder or file in the home folder or a workspace's main checkout is probed on disk; a git, commit, or sessions route reads workspaceMissing once its workspace is gone; a game is ok, with its game's name, while the server knows it. Web pages, worktree files, and session-copy files read ok unchecked. POST /pins adds a target (a duplicate answers the saved pin's id); PUT /pins sets the order and labels and removes left-out pins, and a stale baseRevision answers 409 revision_conflict with the current list. Each change sends the pins_changed app event. Built by server/tests/pins-fixtures.ts; server/tests/pins-fixtures.test.ts fails when the committed bytes differ, and Apple PinsContractTests decodes these bodies.";
+  "Pins: saved pane routes, one list per server. A pin's target is a route in the shape protocol/links.json decodes oppi:// links to, without a server, every field of its kind present (null where the link leaves it out). GET /pins answers every pin with what is at its target now where the server checks it (ok, missing, unreadable, workspaceMissing, or unknown when the check took longer than 500 ms): a session, thread, or panel is missing once its session is deleted; a folder or file in the home folder or a workspace's main checkout is probed on disk; a sessions route reads workspaceMissing once its workspace is gone; a game is ok, with its game's name, while the server knows it. Web pages, worktree files, and session-copy files read ok unchecked. POST /pins adds a target (a duplicate answers the saved pin's id; a git or commit route is refused); PUT /pins sets the order and labels and removes left-out pins, and a stale baseRevision answers 409 revision_conflict with the current list. Each change sends the pins_changed app event. Built by server/tests/pins-fixtures.ts; server/tests/pins-fixtures.test.ts fails when the committed bytes differ, and Apple PinsContractTests decodes these bodies.";
 
 const notebook: PinRoute = { kind: "files", origin: "host", path: "~/notebook" };
 const reports: PinRoute = { kind: "files", workspace: "ws-1", path: "reports" };
 const releaseSession: PinRoute = { kind: "session", id: "2f6c1a9e-session" };
 const swordLab: PinRoute = { kind: "godot", project: "sword-lab-3fa9c2b1" };
-const status: PinRoute = { kind: "git", workspace: "ws-1", worktree: null };
 const docs: PinRoute = { kind: "browser", url: "https://docs.godotengine.org/en/stable/" };
 
 export function buildPinsList(): PinsResponse {
@@ -84,13 +83,6 @@ export function buildPinsList(): PinsResponse {
         createdAt: 1794384540000,
         status: "missing",
       },
-      { id: "pin_GitStatus011", target: status, createdAt: 1794384600000, status: "ok" },
-      {
-        id: "pin_Commit000012",
-        target: { kind: "commit", workspace: "ws-1", sha: "9f86d08" },
-        createdAt: 1794384660000,
-        status: "ok",
-      },
       { id: "pin_GodotDocs013", target: docs, createdAt: 1794384720000, status: "ok" },
       {
         id: "pin_Subagents014",
@@ -145,7 +137,6 @@ export function serializePinsHttpFixture(): string {
           { target: reports, label: "Reports" },
           { target: releaseSession },
           { target: swordLab },
-          { target: status },
           { target: docs },
         ],
         add: buildPinAddResponse(),

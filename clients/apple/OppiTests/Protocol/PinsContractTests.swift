@@ -27,7 +27,7 @@ struct PinsContractTests {
         let pins = fixture.list.pins
         #expect(pins.map(\.status) == [
             .ok, .ok, .missing, .unreadable, .workspaceMissing, .unknown, .ok, .missing, .ok, .missing,
-            .ok, .ok, .ok, .ok, .ok, .ok, .ok,
+            .ok, .ok, .ok, .ok, .ok,
         ])
         #expect(pins.map(\.target) == [
             .hostFiles(path: "~/notebook"),
@@ -40,8 +40,6 @@ struct PinsContractTests {
             .session("deleted-session"),
             .godot(project: "sword-lab-3fa9c2b1"),
             .godot(project: "tide-7c01d2e4"),
-            .git(workspace: "ws-1", worktree: nil),
-            .commit(workspace: "ws-1", sha: "9f86d08"),
             .browser(try #require(URL(string: "https://docs.godotengine.org/en/stable/"))),
             .panel(session: "2f6c1a9e-session", id: "subagents"),
             .thread("7d1e-root"),

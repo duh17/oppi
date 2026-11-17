@@ -1,17 +1,18 @@
 import Foundation
 import XCTest
 
-/// A pinned Git against the real server: a linked worktree with commits and
-/// uncommitted changes, pinned through the API and opened from Pinned. Its
-/// pane loads the worktree's status on its own, a changed file and a commit's
-/// file each push onto the pane's stack with Back, opening the workspace beside
-/// it (another checkout) leaves its status alone, and after a relaunch the pin
-/// loads again with no chat or other screen asking for it. Run
+/// A linked Git against the real server: a linked worktree with commits and
+/// uncommitted changes, opened from its `oppi://git` link. Its pane loads the
+/// worktree's status on its own, a changed file and a commit's file each push
+/// onto the pane's stack with Back, opening the workspace beside it (another
+/// checkout) leaves its status alone, and after a relaunch the link loads it
+/// again with no chat or other screen asking for it. Run
 /// through `clients/apple/scripts/e2e.sh --native` (iPad:
 /// `OPPI_SIM_DEVICE_PROFILE=ipad`).
 @MainActor
-final class GitPanePinE2ETests: E2ETestCase {
+final class GitPaneLinkE2ETests: E2ETestCase {
     nonisolated(unsafe) private var workspaceName = ""
+    nonisolated(unsafe) private var gitLink: URL?
 
     override var e2eLaunchesSessionsInboxOnly: Bool { true }
     override var e2eAutoCreatesSessionOnLaunch: Bool { false }
@@ -27,7 +28,7 @@ final class GitPanePinE2ETests: E2ETestCase {
     override func seedE2EFixtures() throws {
         let suffix = UUID().uuidString.prefix(8).lowercased()
         let fixture = try createLabGitWorktreeFixture(
-            directoryName: "git-pane-pin-\(suffix)", branchName: "feature/git-pane", withChanges: true
+            directoryName: "git-pane-link-\(suffix)", branchName: "feature/git-pane", withChanges: true
         )
         workspaceName = "Git Pane Lab \(suffix)"
         let workspaceId = try createLabWorkspace(named: workspaceName, hostMount: fixture.hostMount)
@@ -39,23 +40,15 @@ final class GitPanePinE2ETests: E2ETestCase {
             worktrees.first { ($0["isMain"] as? Bool) == false }?["id"] as? String,
             "The linked worktree was not discovered"
         )
-        _ = try e2eLabAPIJSON(method: "POST", path: "/pins", body: [
-            "target": ["kind": "git", "workspace": workspaceId, "worktree": linked],
-        ])
+        var link = URLComponents(string: "oppi://git")
+        link?.queryItems = [URLQueryItem(name: "workspace", value: workspaceId), URLQueryItem(name: "worktree", value: linked)]
+        gitLink = try XCTUnwrap(link?.url)
     }
 
-    override func tearDownWithError() throws {
-        // Pins outlive a case on the shared server; leave none behind.
-        if let revision = try? e2eLabAPIJSON(method: "GET", path: "/pins")["revision"] as? Int {
-            _ = try? e2eLabAPIJSON(method: "PUT", path: "/pins", body: ["baseRevision": revision, "pins": [Any]()])
-        }
-        try super.tearDownWithError()
-    }
-
-    func testPinnedGitPaneRowsPushWithBack() throws {
-        let (pane, changed) = try openPinnedGit()
+    func testLinkedGitPaneRowsPushWithBack() throws {
+        let (pane, changed) = try openLinkedGit()
         beat()
-        try saveLabScreenshot(name: "git-pane-pin-opened")
+        try saveLabScreenshot(name: "git-pane-link-opened")
 
         // A changed file pushes its review with Back.
         tap(changed, named: "changed App.swift")
@@ -63,7 +56,7 @@ final class GitPanePinE2ETests: E2ETestCase {
         XCTAssertTrue(review.waitForExistence(timeout: 10), "The file's review opened")
         XCTAssertTrue(review.buttons["BackButton"].exists, "The review has the stack's Back")
         beat()
-        try saveLabScreenshot(name: "git-pane-pin-diff")
+        try saveLabScreenshot(name: "git-pane-link-diff")
         tap(review.buttons["BackButton"], named: "review Back")
         XCTAssertTrue(changed.waitForExistence(timeout: 5), "Back returns to the Git list")
 
@@ -80,36 +73,32 @@ final class GitPanePinE2ETests: E2ETestCase {
         XCTAssertTrue(diff.waitForExistence(timeout: 10), "The commit's file diff opened")
         XCTAssertTrue(diff.buttons["BackButton"].exists, "The commit's diff has the stack's Back")
         beat()
-        try saveLabScreenshot(name: "git-pane-pin-commit-diff")
+        try saveLabScreenshot(name: "git-pane-link-commit-diff")
         tap(diff.buttons["BackButton"], named: "diff Back")
         XCTAssertTrue(commit.waitForExistence(timeout: 5), "Back returns to the commit")
         tap(commit.buttons["BackButton"], named: "commit Back")
         XCTAssertTrue(changed.waitForExistence(timeout: 5), "Back again returns to the Git list")
     }
 
-    func testPinnedGitPaneKeepsItsStatusAndLoadsAfterRelaunch() throws {
-        let (_, changed) = try openPinnedGit()
+    func testLinkedGitPaneKeepsItsStatusAndLoadsAfterRelaunch() throws {
+        let (_, changed) = try openLinkedGit()
 
         // Another screen loading another checkout of the same workspace (its
         // Workspace Detail reads the main checkout) leaves the pane's alone.
-        // Pinned is pushed on All Sessions, whose bar has the drawer button.
-        tap(app.navigationBars["Pinned"].buttons.firstMatch, named: "Pinned Back")
-        XCTAssertTrue(app.collectionViews["workspace.sessionList"].waitForExistence(timeout: 10), "Back to All Sessions")
         openSidebar()
         tap(app.descendants(matching: .any)["workspace.open.\(workspaceName)"].firstMatch, named: "the workspace in the sidebar", timeout: 10)
         XCTAssertTrue(app.collectionViews["workspace.sessionList"].waitForExistence(timeout: 15), "The workspace opened")
         beat(4)
         XCTAssertTrue(changed.exists, "The Git pane kept its worktree's status after another checkout loaded: \(stateValue)")
-        try saveLabScreenshot(name: "git-pane-pin-beside-workspace")
+        try saveLabScreenshot(name: "git-pane-link-beside-workspace")
 
-        // Cold: a relaunch, then the pin, with nothing else asking for its status.
+        // Cold: a relaunch, then the link, with nothing else asking for its status.
         app.terminate()
         app.launch()
         XCTAssertTrue(app.collectionViews["workspace.sessionList"].waitForExistence(timeout: 20), "The relaunch showed All Sessions")
-        openPinned()
-        tap(app.cells.matching(NSPredicate(format: "identifier BEGINSWITH 'pinned.pin.'")).firstMatch, named: "pinned Git", timeout: 10)
+        app.open(try XCTUnwrap(gitLink))
         let cold = app.descendants(matching: .any)["git.pane"]
-        XCTAssertTrue(cold.waitForExistence(timeout: 10), "The pinned Git opened after the relaunch")
+        XCTAssertTrue(cold.waitForExistence(timeout: 10), "The linked Git opened after the relaunch")
         let started = Date()
         XCTAssertTrue(changedRow(in: cold).waitForExistence(timeout: 15),
                       "The Git pane loaded on its own after a relaunch: \(stateValue)")
@@ -118,20 +107,17 @@ final class GitPanePinE2ETests: E2ETestCase {
         note.lifetime = .keepAlways
         add(note)
         beat()
-        try saveLabScreenshot(name: "git-pane-pin-after-relaunch")
+        try saveLabScreenshot(name: "git-pane-link-after-relaunch")
     }
 
     // MARK: Helpers
 
-    /// Opens the pin from Pinned and waits for the worktree's changes.
-    private func openPinnedGit() throws -> (pane: XCUIElement, changed: XCUIElement) {
+    /// Opens the worktree's Git from its link and waits for its changes.
+    private func openLinkedGit() throws -> (pane: XCUIElement, changed: XCUIElement) {
         XCTAssertTrue(app.collectionViews["workspace.sessionList"].waitForExistence(timeout: 20), "All Sessions did not appear")
-        openPinned()
-        let pin = app.cells.matching(NSPredicate(format: "identifier BEGINSWITH 'pinned.pin.'")).firstMatch
-        XCTAssertTrue(pin.waitForExistence(timeout: 10), "Pinned lists the Git pin")
-        tap(pin, named: "pinned Git")
+        app.open(try XCTUnwrap(gitLink))
         let pane = app.descendants(matching: .any)["git.pane"]
-        XCTAssertTrue(pane.waitForExistence(timeout: 10), "The pinned Git opened")
+        XCTAssertTrue(pane.waitForExistence(timeout: 10), "The linked Git opened")
         let changed = changedRow(in: pane)
         XCTAssertTrue(changed.waitForExistence(timeout: 10), "The Git pane loaded the worktree's changes: \(stateValue)")
         return (pane, changed)
@@ -145,12 +131,6 @@ final class GitPanePinE2ETests: E2ETestCase {
     private var stateValue: String {
         let state = app.descendants(matching: .any)["git.panel.status"]
         return state.exists ? "state \(state.value as? String ?? "?")" : "no state view"
-    }
-
-    private func openPinned() {
-        openSidebar()
-        tap(app.buttons["workspace.pinned.open"], named: "Pinned", timeout: 10)
-        XCTAssertTrue(app.collectionViews["pinned.list"].waitForExistence(timeout: 10), "the Pinned screen")
     }
 
     private func openSidebar() {

@@ -17,7 +17,8 @@ const MAX_PIN_PATH_BYTES = 1024;
 const MAX_PIN_NAME_BYTES = 256;
 const MAX_PIN_URL_BYTES = 2048;
 const PIN_ID = /^pin_[A-Za-z0-9_-]{12}$/;
-const COMMIT_SHA = /^[0-9a-f]{4,64}$/;
+/** Route kinds a link opens that a pin no longer names; a stored one is dropped on read. */
+const UNPINNED_KINDS = new Set(["git", "commit"]);
 
 /**
  * `pins.json`. Version 2 stores pane routes; version 1 (folders, files, and sessions as
@@ -181,25 +182,6 @@ export function validatePinRoute(value: unknown): PinRoute {
       }
       return { kind: "files", workspace: v.workspace as string, path: path || null };
     }
-    case "git":
-      if (!has("workspace", "worktree") || !isName(v.workspace) || !nullable(v.worktree)) {
-        bad("git pin names a workspace and a worktree or null");
-      }
-      return {
-        kind: "git",
-        workspace: v.workspace as string,
-        worktree: v.worktree as string | null,
-      };
-    case "commit":
-      if (!has("workspace", "sha") || !isName(v.workspace) || typeof v.sha !== "string") {
-        bad("commit pin names a workspace and a commit");
-      }
-      if (!COMMIT_SHA.test((v.sha as string).toLowerCase())) bad("commit pin names a hex commit");
-      return {
-        kind: "commit",
-        workspace: v.workspace as string,
-        sha: (v.sha as string).toLowerCase(),
-      };
     case "panel":
       if (!has("session", "id") || !isName(v.session) || !isName(v.id)) {
         bad("panel pin names a session and a panel id");
@@ -404,13 +386,23 @@ export class PinsStore {
       ) {
         throw Error();
       }
-      const pins = value.pins.map((pin: unknown) =>
-        value.version === 1
-          ? migratedV1Pin(pin)
-          : isRecord(pin)
-            ? storedPin(pin, pin.target)
-            : undefined,
-      );
+      // A Git or commit pin an earlier server saved is left out; the next change drops it on disk.
+      const pins = value.pins
+        .filter(
+          (pin: unknown) =>
+            !(
+              isRecord(pin) &&
+              isRecord(pin.target) &&
+              UNPINNED_KINDS.has(pin.target.kind as string)
+            ),
+        )
+        .map((pin: unknown) =>
+          value.version === 1
+            ? migratedV1Pin(pin)
+            : isRecord(pin)
+              ? storedPin(pin, pin.target)
+              : undefined,
+        );
       if (!pins.every((pin): pin is Pin => pin !== undefined)) throw Error();
       if (new Set(pins.map((pin) => pinRouteKey(pin.target))).size !== pins.length) throw Error();
       return { version: 2, revision: value.revision, pins };

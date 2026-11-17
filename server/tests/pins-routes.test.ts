@@ -190,7 +190,8 @@ describe("pins routes", () => {
       { kind: "session", id: "sess\nrelease" },
       { kind: "session", id: "x".repeat(257) },
       { kind: "session", id: "sess-release", path: "~/notebook" },
-      { kind: "commit", workspace: "ws-1", sha: "not-a-sha" },
+      { kind: "git", workspace: "ws-1", worktree: null },
+      { kind: "commit", workspace: "ws-1", sha: "9f86d08" },
       { kind: "browser", url: "ftp://example.com/" },
       { kind: "browser", url: "http://localhost:5173/" },
       { kind: "browser", url: "https://user:secret@example.com/" },
@@ -220,7 +221,7 @@ describe("pins routes", () => {
     await call("POST", { target: homeFolder("~/notebook") });
     await call("POST", { target: workspaceFolder("ws-1", "reports") });
     await call("POST", { target: workspaceFolder("ws-1", null) });
-    await call("POST", { target: { kind: "git", workspace: "ws-1", worktree: null } });
+    await call("POST", { target: { kind: "sessions", workspace: "ws-1" } });
 
     rmSync(join(server.home, "notebook"), { recursive: true });
     // A file where the pinned folder was is not the pinned folder.
@@ -302,12 +303,11 @@ describe("session and game pins", () => {
     expect(unknown.json.error).toBe("Game not found");
   });
 
-  it("keeps a web page, a commit, and a worktree's file as they are", async () => {
+  it("keeps a web page and a worktree's file as they are", async () => {
     const server = makeServer();
     const call = server.start();
     for (const target of [
       { kind: "browser", url: "https://docs.godotengine.org/en/stable/" },
-      { kind: "commit", workspace: "ws-1", sha: "9F86D08" },
       {
         kind: "file",
         origin: "workspace",
@@ -320,12 +320,45 @@ describe("session and game pins", () => {
       expect((await call("POST", { target })).status, JSON.stringify(target)).toBe(200);
     }
     const list = await call<PinsResponse>("GET");
-    expect(list.json.pins.map((pin) => pin.status)).toEqual(["ok", "ok", "ok"]);
-    expect(list.json.pins[1]?.target).toEqual({
-      kind: "commit",
-      workspace: "ws-1",
-      sha: "9f86d08",
+    expect(list.json.pins.map((pin) => pin.status)).toEqual(["ok", "ok"]);
+  });
+});
+
+describe("Git and commit pins an earlier server saved", () => {
+  it("leaves them out of the list and drops them on disk with the next change", async () => {
+    const server = makeServer();
+    server.writeRecord({
+      version: 2,
+      revision: 5,
+      pins: [
+        {
+          id: "pin_Git000000001",
+          target: { kind: "git", workspace: "ws-1", worktree: null },
+          createdAt: 1,
+        },
+        { id: "pin_Notebook0002", target: homeFolder("~/notebook"), createdAt: 2 },
+        {
+          id: "pin_Commit000003",
+          target: { kind: "commit", workspace: "ws-1", sha: "9f86d08" },
+          createdAt: 3,
+        },
+      ],
     });
+    const call = server.start();
+    const list = await call<PinsResponse>("GET");
+    expect(list.status).toBe(200);
+    expect(list.json.revision).toBe(5);
+    expect(list.json.pins.map((pin) => pin.id)).toEqual(["pin_Notebook0002"]);
+
+    const saved = await call<PinsResponse>("PUT", {
+      baseRevision: 5,
+      pins: [{ id: "pin_Notebook0002", label: "Notes" }],
+    });
+    expect(saved.json.revision).toBe(6);
+    const file = join(server.dataDir, "settings", "pins.json");
+    expect(
+      JSON.parse(readFileSync(file, "utf8")).pins.map((pin: { id: string }) => pin.id),
+    ).toEqual(["pin_Notebook0002"]);
   });
 });
 

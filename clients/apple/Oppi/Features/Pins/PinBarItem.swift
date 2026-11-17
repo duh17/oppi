@@ -1,8 +1,7 @@
 import UIKit
 
 /// A screen's own Pin or Unpin bar button for the route it shows, where no
-/// pane menu offers one (an iPhone screen, a sheet): the Godot pane, the Git
-/// panel. Hidden on a server that keeps no pins and for a route a pin can't
+/// pane menu offers one (an iPhone screen, a sheet): the Godot pane. Hidden on a server that keeps no pins and for a route a pin can't
 /// name. `update` reads the pins under observation, so a screen that calls
 /// it from `updateProperties()` follows a change made anywhere.
 @MainActor

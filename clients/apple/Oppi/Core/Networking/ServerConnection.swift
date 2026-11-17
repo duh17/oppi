@@ -2194,6 +2194,7 @@ final class ServerConnection {
         pushRelay: URL? = nil,
         extensionNativeUICapabilities: [String]? = nil,
         pins: Bool = false,
+        godot: Bool = false,
         features: [String: Bool]? = nil,
         pluginSidebar: [PluginScreenSidebarEntry]? = nil
     ) {
@@ -2219,6 +2220,7 @@ final class ServerConnection {
         serverCapabilities?.pins = pins ? ServerInfo.CapabilityVersion(version: 3) : nil
         serverCapabilities?.features = features
         serverCapabilities?.pluginSidebar = pluginSidebar
+        serverCapabilities?.godot = version(godot)
         dictationStreamUnsupportedByEndpoint = false
         missingRequiredSplitStreamCapabilities = capabilities.missingRequiredSplitStreamCapabilities
         streamCapabilitiesLoaded = true

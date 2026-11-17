@@ -1,10 +1,10 @@
 import UIKit
 
 /// The Git panel: the workspace context bar (`WorkspaceContextBarView`),
-/// under a Git title with Close, and Pin for the checkout's Git route.
+/// under a Git title with Close.
 /// A chat's opens as a sheet in compact width and in the attached leaf in
 /// regular width, like Outline and Context; a workspace's opens as a sheet
-/// from its top bar; a pinned or linked Git is a pane (`PaneGitScreens`).
+/// from its top bar; a linked Git is a pane (`PaneGitScreens`).
 ///
 /// It reads its host's Git status (and a chat's session) live in
 /// `updateProperties()`, and asks `GitStatusStore` for its checkout each time
@@ -26,8 +26,6 @@ final class GitPanelViewController: UIViewController {
     /// (`git.panel.status`; its value names the state).
     private let stateView = UIContentUnavailableView(loadState: .loading(nil))
     private var themeID: ThemeID?
-    /// Pin or Unpin this checkout's Git (`git.panel.pin`, `git.panel.unpin`).
-    private let pinItem = PinBarItem(identifiers: ("git.panel.pin", "git.panel.unpin"))
 
     init(
         context: @escaping () -> WorkspaceContextBarView.Context?,
@@ -64,7 +62,6 @@ final class GitPanelViewController: UIViewController {
         })
         close.accessibilityIdentifier = "git.panel.close"
         navigationItem.leftBarButtonItem = close
-        navigationItem.rightBarButtonItem = pinItem.item
 
         bar.presenter = self
         bar.translatesAutoresizingMaskIntoConstraints = false
@@ -123,10 +120,6 @@ final class GitPanelViewController: UIViewController {
         }
         guard let context = readContext() else { return }
         bar.context = context
-        pinItem.update(
-            route: context.workspaceId.map { .git(workspace: $0, worktree: context.worktreeId) },
-            serverId: context.serverId, root: AppRootEnvironment.near(self), view: view
-        )
         let state = loadState(context)
         stateView.isHidden = state == nil
         stateView.accessibilityValue = state?.kind

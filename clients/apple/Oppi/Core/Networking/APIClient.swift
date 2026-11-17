@@ -2245,6 +2245,25 @@ actor APIClient: ClientLogUploading {
         return (data, HostFileResolvedPathHeaders.resolvedPath(from: response))
     }
 
+    /// A file's size and modification time, read without its bytes (a
+    /// `HEAD` of the current-file read); nil when the file is not there.
+    func currentFileVersion(_ origin: CurrentFileOrigin, path: String) async throws -> CurrentFileVersion? {
+        do {
+            let (_, response) = try await request("HEAD", url: makeCurrentFileURL(origin, path: path))
+            try checkStatus(response, data: Data())
+            guard let http = response as? HTTPURLResponse,
+                  let size = http.value(forHTTPHeaderField: "Content-Length").flatMap(Int.init) else { return nil }
+            return CurrentFileVersion(size: size, modified: http.value(forHTTPHeaderField: "Last-Modified") ?? "")
+        } catch let APIError.server(status, _) where status == 404 {
+            return nil
+        }
+    }
+
+    /// A file's bytes through the current-file read of `origin`.
+    func currentFile(_ origin: CurrentFileOrigin, path: String) async throws -> Data {
+        try await get(url: makeCurrentFileURL(origin, path: path))
+    }
+
     func makeHostFileMediaSource(
         path: String,
         controlSessionId: String? = nil,
@@ -2944,6 +2963,13 @@ actor APIClient: ClientLogUploading {
             queryItems: queryItems,
             trailingSlash: trailingSlash
         )
+    }
+
+    /// What `currentFileVersion` reads: `size` in bytes, `modified` as the
+    /// server's `Last-Modified`. Two reads of an unchanged file are equal.
+    struct CurrentFileVersion: Sendable, Hashable {
+        let size: Int
+        let modified: String
     }
 
     /// Namespace a current-file path resolves in. It selects resolution only;

@@ -7,19 +7,18 @@ import UIKit
 
 /// What kind of place a pin opens: the Pinned screen's groups, in order.
 enum PinKind: Int, Hashable, Sendable, CaseIterable {
-    case sessions, games, git, web, panels, folders, files
+    case sessions, games, web, panels, folders, files
 
-    /// Nil for a route with no link, which a pin never names.
+    /// Nil for a route a pin never names (`PaneRoute.isPinnable`).
     init?(_ route: PaneRoute) {
         switch route {
         case .session, .thread, .sessions: self = .sessions
         case .godot: self = .games
-        case .git, .commit: self = .git
         case .browser: self = .web
         case .panel: self = .panels
         case .files, .hostFiles: self = .folders
         case .file: self = .files
-        case .local, .unsupported: return nil
+        case .git, .commit, .local, .unsupported: return nil
         }
     }
 
@@ -27,7 +26,6 @@ enum PinKind: Int, Hashable, Sendable, CaseIterable {
         switch self {
         case .sessions: String(localized: "Sessions")
         case .games: String(localized: "Games")
-        case .git: String(localized: "Git")
         case .web: String(localized: "Web Pages")
         case .panels: String(localized: "Panels")
         case .folders: String(localized: "Folders")
@@ -40,7 +38,6 @@ enum PinKind: Int, Hashable, Sendable, CaseIterable {
         switch self {
         case .sessions: "bubble.left.and.text.bubble.right"
         case .games: "gamecontroller.fill"
-        case .git: "arrow.triangle.branch"
         case .web: "globe"
         case .panels: "rectangle.righthalf.inset.filled"
         case .folders: "folder.fill"
@@ -51,9 +48,10 @@ enum PinKind: Int, Hashable, Sendable, CaseIterable {
 
 extension PaneRoute {
     /// Whether a pin may name this route: it has a link (a web page only
-    /// under the link rules).
+    /// under the link rules) and is not a workspace's Git or a commit,
+    /// which open from links only.
     var isPinnable: Bool {
-        PaneLinkCodec.encode(PaneLink(server: nil, route: self)) != nil
+        PinKind(self) != nil && PaneLinkCodec.encode(PaneLink(server: nil, route: self)) != nil
     }
 
     /// A folder or file in the home folder or a workspace's main checkout:
@@ -129,7 +127,7 @@ extension Pin {
 
     /// The target's own name: a file or folder's name (Home, or a
     /// workspace root's workspace), a session's title, a game's name as the
-    /// server read it, a web page's host, a commit's short sha.
+    /// server read it, a web page's host.
     func ownName(_ names: PinNames = .none) -> String {
         func last(_ path: String) -> String { (path as NSString).lastPathComponent }
         switch target {
@@ -142,12 +140,10 @@ extension Pin {
         case .thread: return names.session ?? String(localized: "Thread")
         case .sessions(nil): return String(localized: "All Sessions")
         case .sessions: return names.workspace ?? String(localized: "Sessions")
-        case .git: return names.workspace ?? String(localized: "Git")
-        case .commit(_, let sha): return String(sha.prefix(7))
         case .panel(_, let id): return id
         case .browser(let url): return url.host() ?? url.absoluteString
         case .godot: return name ?? String(localized: "Game")
-        case .local, .unsupported: return ""
+        case .git, .commit, .local, .unsupported: return ""
         }
     }
 
@@ -173,13 +169,10 @@ extension Pin {
         case .files(_, let path?):
             return crumbs([workspace] + folders(path))
         case .file(.workspace(_, let worktree), let path, _):
-            return crumbs([worktree.map { "\(workspace) (\($0))" } ?? workspace] + folders(path))
+            // A worktree's id is opaque: the line names the workspace and says it is a worktree.
+            return crumbs([workspace] + (worktree == nil ? [] : [String(localized: "Worktree")]) + folders(path))
         case .file(.session, let path, _):
             return crumbs([names.session ?? String(localized: "Session")] + folders(path))
-        case .git(_, let worktree?):
-            return worktree
-        case .commit:
-            return workspace
         case .panel:
             return names.session
         case .browser(let url):

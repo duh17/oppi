@@ -100,6 +100,8 @@ final class GodotEngineHost {
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var startedAt: CFTimeInterval?
     @ObservationIgnored private var frameTimes = GodotFrameTimes()
+    /// When each project's poster was last kept (`keepPoster`).
+    @ObservationIgnored private var posterKeptAt: [GodotSlot: CFTimeInterval] = [:]
     @ObservationIgnored private var engineSize: (CGSize, CGFloat)?
     /// The engine took a new size while paused and has not drawn at it.
     @ObservationIgnored private var frameIsStale = false
@@ -387,6 +389,7 @@ final class GodotEngineHost {
         let paused = !pauseReasons.isEmpty
         link?.isPaused = paused
         if paused {
+            keepPoster(runtime)
             surface.input.cancelAll()
             frameTimes = GodotFrameTimes()
             runtime.pause()
@@ -437,6 +440,7 @@ final class GodotEngineHost {
     /// Ends the running engine: its frames, held input, mounted packs and
     /// view go with it. The surface stays in its pane for the next game.
     private func stopEngine(_ runtime: any GodotEngineRuntime) {
+        keepPoster(runtime)
         link?.invalidate()
         link = nil
         surface.input.cancelAll()
@@ -445,6 +449,26 @@ final class GodotEngineHost {
         frameIsStale = false
         frameTimes = GodotFrameTimes()
         GodotPackCache.unpinAll()
+    }
+
+    /// Keeps the running game's frame as its poster (`GodotFolders.poster`),
+    /// the picture a pinned game shows, as the game pauses or ends: at most
+    /// once a minute, the engine's own capture, written off the main thread.
+    /// Only a frame on screen in the active app is kept: none from a pane
+    /// out of the window or the background, where the GPU may not be used.
+    private func keepPoster(_ runtime: any GodotEngineRuntime) {
+        guard case .running(let slot) = engine, surface.window != nil,
+              UIApplication.shared.applicationState == .active,
+              runtime.perf().framesDrawn > 0 else { return }
+        let now = CACurrentMediaTime()
+        if let kept = posterKeptAt[slot], now - kept < 60 { return }
+        guard let png = runtime.capturePNG() else { return }
+        posterKeptAt[slot] = now
+        let url = GodotFolders.poster(for: slot)
+        Task.detached(priority: .utility) {
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? png.write(to: url, options: .atomic)
+        }
     }
 
     /// The display link retains its target; the host must not be. The link
@@ -572,6 +596,11 @@ enum GodotFolders {
     /// there, so no game shares it with another.
     static func engineCache(for slot: GodotSlot) -> URL {
         AppLibrary.caches().appending(path: "Godot/engine/\(key(for: slot))", directoryHint: .isDirectory)
+    }
+
+    /// The last frame this device showed of one project (`keepPoster`).
+    static func poster(for slot: GodotSlot) -> URL {
+        AppLibrary.caches().appending(path: "Godot/posters/\(key(for: slot)).png", directoryHint: .notDirectory)
     }
 
     /// A folder name for a server's project: its ids may hold any character.

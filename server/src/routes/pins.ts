@@ -90,8 +90,8 @@ async function probe(located: Located, folder: boolean): Promise<PinStatus> {
  * server can: a session (or a thread's or panel's session) exists; a folder or file in the home
  * folder or a workspace's main checkout opens the way the File Browser would open it; a workspace
  * exists; the Godot service knows a game (whatever the Godot Pane switch says). A web page, a
- * worktree's file, a session copy's file, and a commit are kept as they are. Changes send
- * `pins_changed`.
+ * worktree's file, and a session copy's file are kept as they are. Git and commit routes are
+ * refused. Changes send `pins_changed`.
  */
 export function createPinRoutes(
   ctx: RouteContext,
@@ -148,9 +148,6 @@ export function createPinRoutes(
             : { workspace: route.workspace, path: route.path ?? "" };
         return { status: await probe(locate(at), true) };
       }
-      case "git":
-      case "commit":
-        return { status: workspaceStatus(route.workspace) };
       case "browser":
         return { status: "ok" };
       case "godot": {

@@ -1,6 +1,6 @@
 import UIKit
 
-/// The screens of a `git` and a `commit` route (an `oppi://git` link, a pin):
+/// The screens of a `git` and a `commit` route (an `oppi://git` link):
 /// a workspace's Git panel (its branch, changes, and commit graph, as
 /// Workspace Detail's Git button shows it) and one commit's detail. A pane
 /// shows them as its root; a compact window pushes them. The Git panel's rows

@@ -12,6 +12,7 @@
  * - `browser` URLs are http or https, at most 2 KiB, with no user-info, and not loopback.
  * - `godot` names a Godot project id (`GodotProject.id`), stable for the same project folder of
  *   the same checkout.
+ * - Git and commit routes are links only; a pin never names them.
  */
 export type PinRoute =
   | { kind: "sessions"; workspace: string | null }
@@ -29,8 +30,6 @@ export type PinRoute =
   | { kind: "file"; origin: "session"; session: string; path: string; line: number | null }
   | { kind: "files"; workspace: string; path: string | null }
   | { kind: "files"; origin: "host"; path: string | null }
-  | { kind: "git"; workspace: string; worktree: string | null }
-  | { kind: "commit"; workspace: string; sha: string }
   | { kind: "panel"; session: string; id: string }
   | { kind: "browser"; url: string }
   | { kind: "godot"; project: string };
@@ -49,7 +48,7 @@ export interface Pin {
  * `missing` when a session, file, folder, or game is gone (or a file became a folder);
  * `unreadable` when the server may not read it; `workspaceMissing` when its workspace is gone;
  * `unknown` when the check took too long (a sleeping disk). A target the server does not check
- * (a web page, a worktree's file, a commit) reads `ok`.
+ * (a web page, a worktree's file) reads `ok`.
  */
 export type PinStatus = "ok" | "missing" | "unreadable" | "workspaceMissing" | "unknown";
 

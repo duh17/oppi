@@ -26,7 +26,10 @@ struct PinnedScreenTests {
         #"{"id":"\#(id)","target":\#(target),"createdAt":1,"status":"\#(status)"\#(extra)}"#
     }
 
-    /// Saved in a mixed order; the screen groups them.
+    /// A worktree's opaque id: a pin's line must never show it.
+    private nonisolated static let worktreeId = "wt_feature-aQRrdvpH"
+
+    /// Saved in a mixed order; the screen puts the sessions first.
     private nonisolated static let pins: String = {
         let pins = [
             place("pin_Notebook0001", "~/notebook", "directory", "ok"),
@@ -37,10 +40,32 @@ struct PinnedScreenTests {
             session("pin_Review000006", "sess-review", "ok"),
             route("pin_SwordLab0007", #"{"kind":"godot","project":"sword-lab-3fa9c2b1"}"#, "ok", extra: #","name":"Sword Lab""#),
             route("pin_OldGame00008", #"{"kind":"godot","project":"tide-7c01d2e4"}"#, "missing"),
-            route("pin_GitOppi00009", #"{"kind":"git","workspace":"ws-oppi","worktree":null}"#, "ok"),
-            route("pin_GodotDocs010", #"{"kind":"browser","url":"https://docs.godotengine.org/en/stable/"}"#, "ok"),
+            // An address that never answers: the page's own title never replaces its host here.
+            route("pin_GodotDocs010", #"{"kind":"browser","url":"https://docs.example.invalid/en/stable/"}"#, "ok"),
+            place("pin_Report000011", "~/Books/report.pdf", "file", "ok"),
+            route("pin_AppTs0000012", #"{"kind":"file","origin":"workspace","workspace":"ws-oppi","worktree":"\#(worktreeId)","path":"src/app.ts","line":null}"#, "ok"),
         ]
-        return #"{"revision":10,"pins":[\#(pins.joined(separator: ","))]}"#
+        return #"{"revision":12,"pins":[\#(pins.joined(separator: ","))]}"#
+    }()
+
+    /// `~/notebook`: two folders, a file, and a hidden folder.
+    private nonisolated static let notebook = #"""
+    {"path":"notebook/","truncated":false,"entries":[
+    {"name":"inbox","type":"directory","size":0,"modifiedAt":1},
+    {"name":".git","type":"directory","size":0,"modifiedAt":1},
+    {"name":"index.org","type":"file","size":120,"modifiedAt":1},
+    {"name":"archive","type":"directory","size":0,"modifiedAt":1}]}
+    """#
+
+    /// `~/Books/report.pdf`: two portrait pages.
+    private nonisolated static let report: Data = {
+        let page = CGRect(x: 0, y: 0, width: 612, height: 792)
+        return UIGraphicsPDFRenderer(bounds: page).pdfData { context in
+            for text in ["Quarterly report", "Appendix"] {
+                context.beginPage()
+                (text as NSString).draw(at: CGPoint(x: 72, y: 72), withAttributes: [.font: UIFont.systemFont(ofSize: 24)])
+            }
+        }
     }()
 
     /// The shell over a server whose pins answer; everything else is a 404.
@@ -49,6 +74,7 @@ struct PinnedScreenTests {
         size: CGSize,
         regular: Bool,
         pinsAvailable: Bool = true,
+        godot: Bool = false,
         requests: OSAllocatedUnfairLock<[String]> = OSAllocatedUnfairLock(initialState: [])
     ) async throws -> ShellWindow {
         let scope = TestURLProtocol.routeScope { request in try Self.answer(request, requests: requests) }
@@ -56,7 +82,7 @@ struct PinnedScreenTests {
         let serverId = "sha256:pinned-\(UUID().uuidString)"
         let root = try await makeTestAppRoot(readyServerId: serverId, apiClient: client)
         let connection = try #require(root.coordinator.connection(for: serverId))
-        connection.setSplitStreamCapabilitiesForTesting(pins: pinsAvailable)
+        connection.setSplitStreamCapabilitiesForTesting(pins: pinsAvailable, godot: godot)
         connection.sessionStore.upsert(makeTestSession(id: "sess-release", name: "Write the release notes", status: .busy))
         connection.sessionStore.upsert(makeTestSession(id: "sess-review", name: "Review the pins change", status: .ready))
         if pinsAvailable { await connection.pins.refresh(api: client) }
@@ -73,6 +99,24 @@ struct PinnedScreenTests {
         if url.path == "/pins", request.httpMethod != "GET" {
             let body = String(decoding: Self.body(request), as: UTF8.self)
             requests.withLock { $0.append("\(request.httpMethod ?? "") \(body)") }
+        }
+        let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        if url.path == "/files/current", query.contains(where: { $0.name == "path" && $0.value == "~/Books/report.pdf" }) {
+            requests.withLock { $0.append("\(request.httpMethod ?? "") report.pdf") }
+            let response = try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: [
+                "Content-Type": "application/pdf", "Content-Length": "\(Self.report.count)",
+                "Last-Modified": "Mon, 16 Nov 2026 18:00:00 GMT",
+            ]))
+            return (request.httpMethod == "HEAD" ? Data() : Self.report, response)
+        }
+        if url.path == "/godot/sword-lab-3fa9c2b1" {
+            let body = #"{"id":"sword-lab-3fa9c2b1","name":"Sword Lab","engine":{"name":"godot","version":"4.7"},"release":{"v":1,"seq":72,"createdAt":1794893569822,"origin":"discovery","engine":{"name":"godot","version":"4.7"},"packs":[],"reload":"scene"},"players":[],"releases":[],"logNext":0}"#
+            let response = try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"]))
+            return (Data(body.utf8), response)
+        }
+        if url.path == "/host/contents/notebook" {
+            let response = try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"]))
+            return (Data(Self.notebook.utf8), response)
         }
         var body: String? = url.path == "/pins" ? Self.pins : nil
         if request.httpMethod == "POST" {
@@ -130,51 +174,119 @@ struct PinnedScreenTests {
 
     // MARK: The screen
 
-    /// One group per kind, each in its saved order. A session this device
-    /// has draws as its session row (its live status included); a deleted
-    /// one reads Not found. A game shows the name the server read, and says
-    /// it is off where the server offers no Godot Pane; a web page reads as
-    /// its host and path.
-    @Test func theScreenGroupsPinsByKind() async throws {
+    /// Sessions first, as cards, then every other pin as a tile, each in its
+    /// saved order. A session this device has draws as its session row (its
+    /// live status included); a deleted one reads Not found. A game shows the
+    /// name the server read, and says it is off where the server offers no
+    /// Godot Pane; a web page whose title can't be read shows its host and path.
+    @Test func theScreenShowsSessionCardsThenTiles() async throws {
         let shell = try await Self.makeShell(size: CGSize(width: 1133, height: 900), regular: true)
         defer { shell.end() }
         shell.root.navigation.openWorkspaceUtility(.pinned)
-        #expect(await shell.settles { shell.items(in: .files) == ["pin_Book00000003"] })
+        #expect(await shell.settles { shell.items(in: .places).count == 8 })
 
         let screen = try #require(shell.pinned)
         let list = try #require(shell.list(in: screen))
-        #expect(list.numberOfSections == 6)
+        #expect(list.numberOfSections == 2)
         #expect(shell.items(in: .sessions) == ["pin_Release00002", "pin_OldChat00005", "pin_Review000006"])
-        #expect(shell.items(in: .games) == ["pin_SwordLab0007", "pin_OldGame00008"])
-        #expect(shell.items(in: .git) == ["pin_GitOppi00009"])
-        #expect(shell.items(in: .web) == ["pin_GodotDocs010"])
-        #expect(shell.items(in: .folders) == ["pin_Notebook0001", "pin_OldPlan00004"])
+        #expect(shell.items(in: .places) == [
+            "pin_Notebook0001", "pin_Book00000003", "pin_OldPlan00004", "pin_SwordLab0007",
+            "pin_OldGame00008", "pin_GodotDocs010", "pin_Report000011", "pin_AppTs0000012",
+        ])
+        #expect(shell.cell("pin_Notebook0001") is PinTileCell)
         // This server offers no Godot Pane (no `godot` capability), so no game plays here.
         let swordLab = try #require(shell.cell("pin_SwordLab0007"))
         #expect(swordLab.accessibilityLabel == "Sword Lab, Godot Pane is off")
         #expect(swordLab.accessibilityIdentifier == "pinned.pin.game:sword-lab-3fa9c2b1")
         #expect(try #require(shell.cell("pin_OldGame00008")).accessibilityLabel == "Game, Not found")
-        #expect(try #require(shell.cell("pin_GodotDocs010")).accessibilityLabel == "docs.godotengine.org, /en/stable/")
+        #expect(try #require(shell.cell("pin_GodotDocs010")).accessibilityLabel == "docs.example.invalid, /en/stable/")
 
-        let release = try #require(shell.cell("pin_Release00002"))
+        let release = try #require(shell.cell("pin_Release00002") as? UICollectionViewListCell)
         #expect(release.contentConfiguration is SessionListEntryConfiguration, "a live session is its session row")
         #expect(shell.descendants(of: release).contains { $0.accessibilityIdentifier == "session.nav.sess-release" })
-        let deleted = try #require(shell.cell("pin_OldChat00005"))
+        let deleted = try #require(shell.cell("pin_OldChat00005") as? UICollectionViewListCell)
         #expect(!(deleted.contentConfiguration is SessionListEntryConfiguration))
         #expect(deleted.accessibilityLabel == "Session, Not found")
         let missingFolder = try #require(shell.cell("pin_OldPlan00004"))
         #expect(missingFolder.accessibilityLabel == "old-plan, Not found")
         let book = try #require(shell.cell("pin_Book00000003"))
         #expect(book.accessibilityLabel == "The Left Hand of Darkness.epub, Home \u{203A} Books")
+        // A worktree's file says it is in a worktree, never the worktree's id.
+        let worktreeFile = try #require(shell.cell("pin_AppTs0000012")).accessibilityLabel ?? ""
+        #expect(worktreeFile == "app.ts, Workspace \u{203A} Worktree \u{203A} src")
+        #expect(!worktreeFile.contains(Self.worktreeId))
         _ = await shell.scope.settle()
     }
 
-    /// In Edit, a pin moves only within its group.
-    @Test func editMovesAPinOnlyWithinItsGroup() async throws {
-        let shell = try await Self.makeShell(size: CGSize(width: 1133, height: 900), regular: true)
+    /// A tile shows what it opens: a PDF's first page with its page count
+    /// and size, a folder's item count (hidden items aside) and first items.
+    /// Coming back reads the PDF's version again but not its bytes when it
+    /// has not changed.
+    @Test func tilesPreviewAPDFAndAFolderAndKeepAnUnchangedThumbnail() async throws {
+        let requests = OSAllocatedUnfairLock(initialState: [String]())
+        let shell = try await Self.makeShell(size: CGSize(width: 744, height: 1133), regular: true, requests: requests)
         defer { shell.end() }
         shell.root.navigation.openWorkspaceUtility(.pinned)
-        #expect(await shell.settles { shell.items(in: .files) == ["pin_Book00000003"] })
+        let size = SessionFormatting.byteCount(Self.report.count)
+        #expect(await shell.settles {
+            shell.cell("pin_Report000011")?.accessibilityLabel == "report.pdf, PDF \u{00B7} 2 pages \u{00B7} \(size)"
+        })
+        let page = shell.descendants(of: try #require(shell.cell("pin_Report000011")))
+            .compactMap { ($0 as? UIImageView)?.image }.first { $0.size.height > $0.size.width }
+        #expect(page != nil, "the tile shows the PDF's portrait first page")
+        #expect(await shell.settles { shell.cell("pin_Notebook0001")?.accessibilityLabel == "notebook, 3 items \u{00B7} Home" })
+        let names = shell.descendants(of: try #require(shell.cell("pin_Notebook0001"))).compactMap { ($0 as? UILabel)?.text }
+        #expect(names.filter { ["archive", "inbox", "index.org", ".git"].contains($0) } == ["archive", "inbox", "index.org"],
+                "folders first, hidden ones left out: \(names)")
+        #expect(requests.withLock { $0 } == ["HEAD report.pdf", "GET report.pdf"])
+
+        // Away and back: the version is read again, the unchanged bytes are not.
+        let screen = try #require(shell.pinned)
+        screen.beginAppearanceTransition(false, animated: false)
+        screen.endAppearanceTransition()
+        screen.beginAppearanceTransition(true, animated: false)
+        screen.endAppearanceTransition()
+        #expect(await shell.settles { requests.withLock { $0.count } == 3 })
+        #expect(requests.withLock { $0 } == ["HEAD report.pdf", "GET report.pdf", "HEAD report.pdf"])
+        _ = await shell.scope.settle()
+    }
+
+    /// A game this device played shows the frame its Godot pane kept and the
+    /// build the server has.
+    @Test func aGameTileShowsTheFrameThePaneKeptAndItsBuild() async throws {
+        let experiment = AppPreferenceStore.Experiments.godotPaneKey
+        let before = UserDefaults.standard.object(forKey: experiment)
+        UserDefaults.standard.set(true, forKey: experiment)
+        defer { UserDefaults.standard.set(before, forKey: experiment) }
+        let shell = try await Self.makeShell(size: CGSize(width: 402, height: 874), regular: false, godot: true)
+        defer { shell.end() }
+        let poster = GodotFolders.poster(for: GodotSlot(serverId: shell.serverId, project: "sword-lab-3fa9c2b1"))
+        try FileManager.default.createDirectory(at: poster.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let frame = UIGraphicsImageRenderer(size: CGSize(width: 64, height: 48)).pngData { context in
+            UIColor.systemOrange.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 64, height: 48))
+        }
+        try frame.write(to: poster)
+        defer { try? FileManager.default.removeItem(at: poster) }
+
+        shell.root.navigation.openWorkspaceUtility(.pinned)
+        #expect(await shell.settles {
+            shell.cell("pin_SwordLab0007")?.accessibilityLabel == "Sword Lab, Godot 4.7 \u{00B7} Build 72"
+        })
+        let shown = shell.descendants(of: try #require(shell.cell("pin_SwordLab0007")))
+            .compactMap { ($0 as? UIImageView)?.image }.first { $0.size.width > $0.size.height }
+        #expect(shown != nil, "the tile shows the kept frame")
+        _ = await shell.scope.settle()
+    }
+
+    /// In Edit, a pin moves only within its section, and a tile's remove
+    /// button takes it off the screen; Done saves the rest in their order.
+    @Test func editMovesAPinWithinItsSectionAndRemovesATile() async throws {
+        let requests = OSAllocatedUnfairLock(initialState: [String]())
+        let shell = try await Self.makeShell(size: CGSize(width: 1133, height: 900), regular: true, requests: requests)
+        defer { shell.end() }
+        shell.root.navigation.openWorkspaceUtility(.pinned)
+        #expect(await shell.settles { shell.items(in: .places).count == 8 })
         let screen = try #require(shell.pinned)
         let list = try #require(shell.list(in: screen))
         let edit = try #require(screen.navigationItem.rightBarButtonItems?.first { $0.accessibilityIdentifier == "pinned.edit" })
@@ -190,9 +302,24 @@ struct PinnedScreenTests {
         let within = delegate.collectionView?(list, targetIndexPathForMoveOfItemFromOriginalIndexPath: session,
                                               atCurrentIndexPath: session, toProposedIndexPath: IndexPath(item: 2, section: 0))
         #expect(within == IndexPath(item: 2, section: 0))
+        let tile = IndexPath(item: 3, section: 1)
+        let intoSessions = delegate.collectionView?(list, targetIndexPathForMoveOfItemFromOriginalIndexPath: tile,
+                                                    atCurrentIndexPath: tile, toProposedIndexPath: IndexPath(item: 1, section: 0))
+        #expect(intoSessions == IndexPath(item: 0, section: 1), "a tile dropped among the sessions stays first among the tiles")
+
+        let oldPlan = try #require(shell.cell("pin_OldPlan00004"))
+        let remove = try #require(shell.descendants(of: oldPlan)
+            .compactMap { $0 as? UIButton }.first { $0.accessibilityIdentifier == "pinned.pin.remove.~/Desktop/old-plan" })
+        #expect(!remove.isHidden, "Edit shows the tile's remove button")
+        remove.sendActions(for: .touchUpInside)
+        #expect(await shell.settles { !shell.items(in: .places).contains("pin_OldPlan00004") })
 
         edit.primaryAction?.performWithSender(nil, target: nil)
         #expect(await shell.settles { !list.isEditing })
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { requests.withLock { $0.contains { $0.hasPrefix("PUT ") } } })
+        let put = try #require(requests.withLock { $0.first { $0.hasPrefix("PUT ") } })
+        #expect(!put.contains("pin_OldPlan00004") && put.contains("pin_Notebook0001") && put.contains("pin_Review000006"),
+                "only the removed pin goes: \(put)")
         _ = await shell.scope.settle()
     }
 
@@ -238,10 +365,10 @@ struct PinnedScreenTests {
         _ = await shell.scope.settle()
     }
 
-    /// Every pin opens as its link does: a game, a Git view, and a web page
-    /// reach the opener as their pane links (the opener puts them beside the
-    /// chat or pushes them).
-    @Test func gameGitAndWebPinsOpenAsTheirLinks() async throws {
+    /// Every pin opens as its link does: a game and a web page reach the
+    /// opener as their pane links (the opener puts them beside the chat or
+    /// pushes them).
+    @Test func gameAndWebPinsOpenAsTheirLinks() async throws {
         let shell = try await Self.makeShell(size: CGSize(width: 402, height: 874), regular: false)
         defer { shell.end() }
         var opened: [AppOpenRequest] = []
@@ -252,11 +379,10 @@ struct PinnedScreenTests {
         shell.root.navigation.openWorkspaceUtility(.pinned)
         #expect(await shell.settles { shell.cell("pin_GodotDocs010") != nil })
 
-        for id in ["pin_SwordLab0007", "pin_GitOppi00009", "pin_GodotDocs010"] { try shell.tap(id) }
-        let docs = try #require(URL(string: "https://docs.godotengine.org/en/stable/"))
+        for id in ["pin_SwordLab0007", "pin_GodotDocs010"] { try shell.tap(id) }
+        let docs = try #require(URL(string: "https://docs.example.invalid/en/stable/"))
         #expect(opened == [
             .pane(PaneLink(server: shell.serverId, route: .godot(project: "sword-lab-3fa9c2b1")), sourceServerID: shell.serverId),
-            .pane(PaneLink(server: shell.serverId, route: .git(workspace: "ws-oppi", worktree: nil)), sourceServerID: shell.serverId),
             .pane(PaneLink(server: shell.serverId, route: .browser(docs)), sourceServerID: shell.serverId),
         ])
         _ = await shell.scope.settle()
@@ -425,20 +551,21 @@ private struct ShellWindow {
         descendants(of: screen.view).compactMap { $0 as? UICollectionView }.first { $0.accessibilityIdentifier == "pinned.list" }
     }
 
-    /// The pin ids the Pinned screen lists in `group`.
-    func items(in group: PinnedViewController.Group) -> [String] {
+    /// The pin ids the Pinned screen lists in `section`.
+    func items(in section: PinnedViewController.Section) -> [String] {
         guard let screen = pinned, let list = list(in: screen),
-              let source = list.dataSource as? UICollectionViewDiffableDataSource<PinnedViewController.Group, String>,
-              source.snapshot().sectionIdentifiers.contains(group) else { return [] }
-        return source.snapshot().itemIdentifiers(inSection: group)
+              let source = list.dataSource as? UICollectionViewDiffableDataSource<PinnedViewController.Section, String>,
+              source.snapshot().sectionIdentifiers.contains(section) else { return [] }
+        return source.snapshot().itemIdentifiers(inSection: section)
     }
 
-    /// The Pinned screen's cell for pin `id`, on screen.
-    func cell(_ id: String) -> UICollectionViewListCell? {
+    /// The Pinned screen's cell for pin `id` (a session card or a tile), on screen.
+    func cell(_ id: String) -> UICollectionViewCell? {
         guard let screen = pinned, let list = list(in: screen),
-              let source = list.dataSource as? UICollectionViewDiffableDataSource<PinnedViewController.Group, String>,
+              let source = list.dataSource as? UICollectionViewDiffableDataSource<PinnedViewController.Section, String>,
               let indexPath = source.indexPath(for: id) else { return nil }
-        return list.cellForItem(at: indexPath) as? UICollectionViewListCell
+        list.layoutIfNeeded()
+        return list.cellForItem(at: indexPath)
     }
 
     /// A tap on a pin row, as the list delivers it.

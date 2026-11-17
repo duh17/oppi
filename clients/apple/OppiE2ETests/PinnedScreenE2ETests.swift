@@ -4,8 +4,8 @@ import XCTest
 /// Session pins and the Pinned screen against the real server. A working
 /// session is pinned from its row's swipe, a finished one from its chat's …
 /// menu; a failed session, two folders, and two files are pinned through the
-/// API. **Pinned** in the sidebar (the iPhone's drawer) lists them as
-/// Sessions, Folders, and Files, each session with its live status, and a
+/// API. **Pinned** in the sidebar (the iPhone's drawer) lists the sessions
+/// as cards with their live status and the folders and files as tiles, and a
 /// pinned session opens its chat. Run through `clients/apple/scripts/e2e.sh
 /// --native` (iPad: `OPPI_SIM_DEVICE_PROFILE=ipad`).
 @MainActor
@@ -126,13 +126,11 @@ final class PinnedScreenE2ETests: E2ETestCase {
         tap(app.buttons["workspace.pinned.open"], named: "Pinned", timeout: 10)
         let pinned = app.collectionViews["pinned.list"]
         XCTAssertTrue(pinned.waitForExistence(timeout: 10), "the Pinned screen")
-        for group in ["sessions", "folders", "files"] {
-            XCTAssertTrue(pinned.descendants(matching: .any)["pinned.header.\(group)"].waitForExistence(timeout: 10), "the \(group) group")
-        }
         for id in [working, done, failed] {
             XCTAssertTrue(pinned.buttons["session.nav.\(id)"].waitForExistence(timeout: 10), "pinned session \(id) shows as its session row")
         }
-        XCTAssertTrue(pinned.cells["pinned.pin.\(try docsKey("release-notes/0.56.md"))"].exists, "the pinned file")
+        XCTAssertTrue(pinned.cells["pinned.pin.\(try docsKey("release-notes/0.56.md"))"].exists, "the pinned file's tile")
+        XCTAssertTrue(pinned.cells["pinned.pin.\(try docsKey("release-notes"))"].exists, "the pinned folder's tile")
         beat(2)
         try saveLabScreenshot(name: "pinned-screen")
 

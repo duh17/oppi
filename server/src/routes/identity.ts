@@ -539,9 +539,9 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         // creating `.oppi/layouts/<name>.json` through the file editor.
         paneLayouts: { version: 1 },
         // Saved pane routes: `GET|POST|PUT /pins` and the `pins_changed` app event.
-        // v3: a pin's target is a pane route in the `protocol/links.json` route shape (any
-        // linkable pane: sessions, files, git, commits, panels, web pages, games), and a list read
-        // gives a game pin its game's `name`. v2 targets (`origin` with a `kind`) are gone.
+        // v3: a pin's target is a pane route in the `protocol/links.json` route shape (a linkable
+        // pane other than Git and commits: sessions, files, panels, web pages, games), and a list
+        // read gives a game pin its game's `name`. v2 targets (`origin` with a `kind`) are gone.
         pins: { version: 3 },
         // Godot pane (`types/godot.ts`): `/godot` routes and `WS /godot/{id}/link` for players that
         // declare `godot-pane:v1`.
