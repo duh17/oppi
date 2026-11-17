@@ -11,7 +11,9 @@ import Testing
 /// answers them. Build sessions with `install(in:)`, never by assigning `protocolClasses`.
 /// A test keeps its handler for its lifetime through `routeScope(_:)`, which is what ends
 /// it: a request that outlives its test then finds no handler, instead of being answered
-/// by a stale one.
+/// by a stale one. Ending the scope (or clearing `handler`) ends the test's requests too:
+/// one that reaches the double afterwards is cancelled, not failed, because no test is
+/// left to own the failure.
 class TestURLProtocol: URLProtocol, @unchecked Sendable {
     typealias Handler = (URLRequest) throws -> (Data, HTTPURLResponse)
 
@@ -29,11 +31,21 @@ class TestURLProtocol: URLProtocol, @unchecked Sendable {
     private static let scoped = OSAllocatedUnfairLock(uncheckedState: Set<String>())
     /// When each test's last request arrived, for `RouteScope.settle(quiet:)`.
     private static let lastRequest = OSAllocatedUnfairLock(uncheckedState: [String: ContinuousClock.Instant]())
+    /// Tests that took their handler away again: they are over, and so are their requests.
+    private static let ended = OSAllocatedUnfairLock(uncheckedState: Set<String>())
 
-    /// The handler of the running test (and of tasks it starts).
+    /// The handler of the running test (and of tasks it starts). Setting it to nil ends the
+    /// test's requests, as `RouteScope.end()` does.
     static var handler: Handler? {
         get { handlers.withLockUnchecked { $0[currentOwner] } }
-        set { handlers.withLockUnchecked { $0[currentOwner] = newValue } }
+        set { setHandler(newValue, for: currentOwner) }
+    }
+
+    private static func setHandler(_ handler: Handler?, for owner: String) {
+        handlers.withLockUnchecked { $0[owner] = handler }
+        ended.withLockUnchecked { ended in
+            if handler == nil { ended.insert(owner) } else { ended.remove(owner) }
+        }
     }
 
     /// Answers this test's requests with `handler` until `end()`: the scope is what clears
@@ -60,7 +72,7 @@ class TestURLProtocol: URLProtocol, @unchecked Sendable {
         /// Ends the scope: from here no handler answers this test's requests, and a route
         /// the handler left unanswered fails the test with the routes named.
         func end() {
-            TestURLProtocol.handlers.withLockUnchecked { $0[owner] = nil }
+            TestURLProtocol.setHandler(nil, for: owner)
             TestURLProtocol.scoped.withLockUnchecked { $0.remove(owner) }
             TestURLProtocol.lastRequest.withLockUnchecked { $0[owner] = nil }
             let routes = TestURLProtocol.unplanned.withLockUnchecked { $0.removeValue(forKey: owner) ?? [] }
@@ -113,6 +125,16 @@ class TestURLProtocol: URLProtocol, @unchecked Sendable {
             return
         }
         guard let handler = Self.handlers.withLockUnchecked({ $0[owner] }) else {
+            // The test is over, and with it everything it built: a request it left behind (one
+            // its page already cancelled, or a read its dropped connection still ran) is
+            // cancelled here, as tearing that world down would. Under load URLSession starts
+            // such a request after its test, where an issue belongs to no test at all and
+            // fails the whole run. The log line keeps it findable.
+            if Self.ended.withLockUnchecked({ $0.contains(owner) }) {
+                print("TestURLProtocol: cancelled \(request.url?.absoluteString ?? "request") after \(owner) ended")
+                client?.urlProtocol(self, didFailWithError: URLError(.cancelled))
+                return
+            }
             fail("\(request.url?.absoluteString ?? "request") reached TestURLProtocol with no handler set by \(owner)")
             return
         }
