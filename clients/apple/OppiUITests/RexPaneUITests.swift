@@ -88,6 +88,66 @@ final class RexPaneUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
     }
 
+    /// A Rex terminal that fills the panes beside the shown sidebar fits its
+    /// grid beside the sidebar, not under it, and takes the sidebar's room
+    /// back when the sidebar hides.
+    func testAZoomedRexTerminalFitsBesideTheSidebar() throws {
+        guard UIDevice.current.userInterfaceIdiom == .pad else {
+            throw XCTSkip("The sidebar sits beside the panes on the iPad mini in landscape")
+        }
+        XCUIDevice.shared.orientation = .landscapeLeft
+        launchPreview(
+            screen: "pane-restore",
+            environment: ["PANE_RESTORE_REX": "1"],
+            colorScheme: "dark",
+            arguments: OppiTestLaunch.experimentArguments([.rex: true]),
+            ready: nil
+        )
+        let row = app.descendants(matching: .any)[sessionRow]
+        XCTAssertTrue(row.waitUntilExists(timeout: 10), "The fixture session is listed")
+        row.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["chat.input"].waitUntilExists(timeout: 10), "The chat opened")
+        app.typeKey("d", modifierFlags: .command)
+        let rex = app.buttons["pane.launcher.rex"]
+        XCTAssertTrue(rex.waitUntilExists(timeout: 5), "⌘D opened the launcher, which offers Rex")
+        rex.tap()
+        let session = app.buttons[rexRow]
+        XCTAssertTrue(session.waitUntilExists(timeout: 15), "The Rex pane lists the host's sessions")
+        session.tap()
+        let grid = app.descendants(matching: .any)["sshTerminal.grid"]
+        XCTAssertTrue(grid.waitUntilExists(timeout: 15), "The session's terminal opened")
+        hold(for: 1.5)
+        capture("split-beside-chat")
+
+        let grip = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane.grip.' AND label ENDSWITH '2 of 2'")).firstMatch
+        XCTAssertTrue(grip.waitUntilExists(timeout: 5), "The terminal's pane has a grip")
+        let sidebar = app.descendants(matching: .any)["workspace.sidebar.scroll"]
+        if !(sidebar.exists && sidebar.isHittable) { app.buttons["workspace.split.sidebarToggle"].tap() }
+        XCTAssertTrue(waitFor(sidebar.exists && sidebar.isHittable), "The sidebar shows")
+        grip.tap()
+        app.buttons["pane.menu.zoom"].tap()
+        XCTAssertTrue(waitFor(grid.frame.width > 600), "Zoom filled the panes with the terminal: \(grid.frame)")
+        hold(for: 1.5)
+        capture("zoomed-sidebar-shown")
+        XCTAssertGreaterThanOrEqual(grid.frame.minX, sidebar.frame.maxX - 1,
+                                    "The grid is under the sidebar: \(grid.frame), sidebar \(sidebar.frame)")
+        let besideSidebar = grid.frame.width
+
+        app.typeKey("s", modifierFlags: [.control, .command])
+        XCTAssertTrue(waitFor(!sidebar.exists || !sidebar.isHittable), "⌃⌘S hid the sidebar")
+        XCTAssertTrue(waitFor(grid.frame.width > besideSidebar + 200),
+                      "The grid takes the sidebar's room: \(besideSidebar) → \(grid.frame.width)")
+        hold(for: 1.5)
+        capture("zoomed-sidebar-hidden")
+
+        app.typeKey("s", modifierFlags: [.control, .command])
+        XCTAssertTrue(waitFor(sidebar.exists && sidebar.isHittable), "⌃⌘S showed the sidebar again")
+        XCTAssertTrue(waitFor(abs(grid.frame.width - besideSidebar) < 1), "The grid fits beside the sidebar again: \(grid.frame)")
+        hold(for: 1.5)
+        capture("zoomed-sidebar-shown-again")
+        XCTAssertGreaterThanOrEqual(grid.frame.minX, sidebar.frame.maxX - 1, "The grid is beside the sidebar again")
+    }
+
     /// In landscape `app.screenshot()` draws the iPad sideways; the screen's
     /// capture is upright.
     private func capture(_ name: String) {

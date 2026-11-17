@@ -91,6 +91,9 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     private let attachPicker = SSHTerminalAttachPicker()
     private let gridClip = UIView()
     private var gridBottom: NSLayoutConstraint?
+    /// The grid's sides, inset by `gridSideInsets()`.
+    private var gridClipLeft: NSLayoutConstraint?
+    private var gridClipRight: NSLayoutConstraint?
     /// Rows the grid leaves free for the bottom bar, from the one rule in
     /// `SSHTerminalFloatingControls`: never with a keyboard up, so reconnecting
     /// never resizes the remote shell.
@@ -298,6 +301,25 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         // A rotation, a resized iPad window, or a notch moving sides changes
         // how many middle buttons fit.
         if SSHTerminalBarFit(view) != barFit { setNeedsUpdateProperties() }
+        // The sidebar showing or hiding changes the safe area; a moved or
+        // resized pane changes which edges are the screen's. The grid's new
+        // width reaches the shell as a resize.
+        let insets = gridSideInsets()
+        if gridClipLeft?.constant != insets.left { gridClipLeft?.constant = insets.left }
+        if gridClipRight?.constant != -insets.right { gridClipRight?.constant = -insets.right }
+    }
+
+    /// What app chrome covers at each side: the safe area beyond the
+    /// screen's own, such as the split view's sidebar, which floats over a
+    /// pane's leading edge and reaches it only as safe area. Under the
+    /// screen's own inset (a landscape notch) the grid still runs edge to edge.
+    private func gridSideInsets() -> (left: CGFloat, right: CGFloat) {
+        guard let window = view.window else { return (0, 0) }
+        let frame = view.convert(view.bounds, to: window)
+        let screenLeft = max(0, window.safeAreaInsets.left - frame.minX)
+        let screenRight = max(0, window.safeAreaInsets.right - (window.bounds.maxX - frame.maxX))
+        let safe = view.safeAreaInsets
+        return (safe.left > screenLeft ? safe.left : 0, safe.right > screenRight ? safe.right : 0)
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -643,9 +665,15 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         endsAtEdge.isActive = true
         let barHeight = bottomBar.heightAnchor.constraint(equalToConstant: SSHTerminalBottomBar.shownHeight)
         bottomBarHeight = barHeight
+        // Physical sides: the safe area that moves them is left and right.
+        let clipLeft = gridClip.leftAnchor.constraint(equalTo: view.leftAnchor)
+        let clipRight = gridClip.rightAnchor.constraint(equalTo: view.rightAnchor)
+        gridClipLeft = clipLeft
+        gridClipRight = clipRight
         NSLayoutConstraint.activate([
-            // Clear of a landscape notch: the grid runs edge to edge, the
-            // controls stay inside the safe area.
+            // Clear of a landscape notch: the grid runs edge to edge (beside
+            // the sidebar, `gridSideInsets()`), the controls stay inside the
+            // safe area.
             backPill.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: controlsInset),
             backPill.topAnchor.constraint(equalTo: bottomBar.topAnchor, constant: SSHTerminalBottomBar.topInset),
             rexPill.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -controlsInset),
@@ -658,8 +686,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             bottomBar.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
             barHeight,
             gridClip.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            gridClip.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            gridClip.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            clipLeft,
+            clipRight,
             gridClip.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         installGrid(makeGrid())
