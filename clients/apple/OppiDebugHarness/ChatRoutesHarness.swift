@@ -1018,6 +1018,19 @@ private final class ChatRoutesURLProtocol: URLProtocol {
                 ],
                 "truncated": false,
             ])
+        case ("GET", "/host/contents/notebook"):
+            // The home folder's notebook, as a pinned folder opens it.
+            let entries: [[String: Any]] = [
+                ["name": "journal", "path": "notebook/journal/", "type": "directory", "size": 0, "modifiedAt": 1_800_000_000_000],
+                ["name": "notes", "path": "notebook/notes/", "type": "directory", "size": 0, "modifiedAt": 1_800_000_000_000],
+                ["name": "projects", "path": "notebook/projects/", "type": "directory", "size": 0, "modifiedAt": 1_800_000_000_000],
+                ["name": "garden.org", "path": "notebook/garden.org", "type": "file", "size": 9_800, "modifiedAt": 1_900_000_000_000],
+                ["name": "index.org", "path": "notebook/index.org", "type": "file", "size": 6_000, "modifiedAt": 1_900_000_000_000],
+            ]
+            body = Self.json(["path": "notebook/", "entries": entries, "truncated": false])
+        case ("GET", "/files/current") where (url.query ?? "").contains(".org"):
+            contentType = "text/plain"
+            body = Data(FileBrowserColumnFixture.gardenOrg.utf8)
         case ("GET", "/skills/route-skill"):
             body = Self.json([
                 "skill": ["name": "route-skill", "description": "Routes through the panel", "path": "/tmp/oppi-chat-routes/.pi/skills/route-skill"],

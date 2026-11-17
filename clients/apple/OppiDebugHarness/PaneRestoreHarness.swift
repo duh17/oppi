@@ -18,6 +18,9 @@ import UIKit
 /// compact window (the iPhone) shows it one pane at a time with the chip.
 /// `PANE_RESTORE_SEED=godot` saves the sessions with Tide Runner's Godot pane
 /// beside them, which a relaunch restores waiting for Play.
+/// `PANE_RESTORE_SEED=files-below` saves the sessions over the home folder's
+/// `notebook` (Org files) in a pane below them, the window a pinned folder
+/// opened from a portrait iPad leaves.
 /// `PANE_RESTORE_REX=1` saves one SSH host whose Rex is a fake one in process
 /// (`SSHTerminalRexListPreviewController.makeList`), so the launcher's Rex pane
 /// lists its sessions and opens one in the pane.
@@ -78,6 +81,7 @@ final class PaneRestorePreviewController: PreviewRootController {
         case "missing": PaneTreeStore().save(Self.missingTree(), scene: scene)
         case "splits": PaneTreeStore().save(Self.splitsTree(), scene: scene)
         case "godot": PaneTreeStore().save(Self.godotTree(), scene: scene)
+        case "files-below": PaneTreeStore().save(Self.filesBelowTree(), scene: scene)
         default: break
         }
         panes.connect(scene: scene)
@@ -139,6 +143,21 @@ final class PaneRestorePreviewController: PreviewRootController {
                 leaf("leaf-3", .git(workspace: workspace, worktree: nil)),
             ], weights: [0.4, 0.3, 0.3]),
             focus: routed
+        ))
+    }
+
+    private static func filesBelowTree() -> PaneLayoutArchive? {
+        let workspace = ChatRoutesFixture.workspace.id
+        let routed = ScenePanes().routedLeafID
+        guard let files = PaneID("leaf-notebook") else { return nil }
+        return PaneLayoutArchive(restorable: PaneLayout(
+            root: .split(axis: .column, children: [
+                .leaf(PaneLeaf(id: routed, name: nil, stack: [PaneStackEntry(serverId: serverId, route: .sessions(workspace: workspace))],
+                               attachedTo: nil, origin: .split)),
+                .leaf(PaneLeaf(id: files, name: nil, stack: [PaneStackEntry(serverId: serverId, route: .hostFiles(path: "~/notebook"))],
+                               attachedTo: nil, origin: .split)),
+            ], weights: [0.45, 0.55]),
+            focus: files
         ))
     }
 

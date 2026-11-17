@@ -55,9 +55,10 @@ final class FileBrowserViewportRestore {
 /// them, or full over the list when the two do not fit side by side (the
 /// iPad mini in portrait). Each pane has its own bar: the list's carries the
 /// folder, its Back (up a folder) and View Options; the reader's the file's
-/// title, actions and Close. Where the reader cannot sit beside the list (a
-/// pane that is not the window's routed one, or a selection kept into compact
-/// width) it is a sheet. In the chat panel (`compactOnly`) folders open in
+/// title, actions and Close. In a split pane (not the window's routed one) a
+/// file opens on that pane's own stack at any width, as in compact width.
+/// Where the reader still cannot sit beside the list (a selection kept into
+/// compact width) it is a sheet. In the chat panel (`compactOnly`) folders open in
 /// place and files push the reader onto the panel's stack.
 ///
 /// The screen reads the lock service, the server's `FileIndexStore`, and
@@ -905,6 +906,12 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         Router.push(page, from: self)
     }
 
+    /// Whether this browser is in a split pane, not the window's routed one.
+    private var isInSplitPane: Bool {
+        guard let host = PaneHostController.containing(self), let cell = host.cell(holding: self) else { return false }
+        return host.splitLeaves[cell] != nil
+    }
+
     /// Whether the window's routes made this browser: its stack is then the
     /// shell's, and `SceneNavigation` owns its pages.
     private var isShellRouted: Bool {
@@ -1028,8 +1035,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
                 fileName: selection.name,
                 navigationContext: context
             )
-            guard let host = PaneHostController.containing(self), let cell = host.cell(holding: self),
-                  host.splitLeaves[cell] != nil else {
+            guard isInSplitPane, let host = PaneHostController.containing(self), let cell = host.cell(holding: self) else {
                 navigation.openWorkspaceLinkedFile(target)
                 return
             }
@@ -1917,7 +1923,10 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
                 openDirectory(path: path)
             }
         case .file(let selection, let context):
-            if showsColumn {
+            // A split pane's browser opens files on its own pane at any width
+            // (`openCompactFile`): the reader sits beside the list only in the
+            // primary, and a sheet over every pane could not be zoomed.
+            if showsColumn, !isInSplitPane {
                 state.selectedContext = context
                 selectFile(selection)
             } else {

@@ -390,6 +390,67 @@ final class PaneSplitUITests: XCTestCase, PreviewUITestCase {
         attachScreenCapture("file-pane-after-tap")
     }
 
+    /// A home folder in a pane below the sessions, the window a pinned folder
+    /// opened beside them leaves: full width in portrait and in landscape, so
+    /// regular width. A tapped file opens on that pane's own stack and fills
+    /// it, not as a sheet over both panes. The grip's Zoom fills the window
+    /// with it, Restore puts it back, and the pane's Back returns to the folder.
+    func testAFileTappedInAWidePaneBelowOpensInThatPaneInPortrait() throws {
+        try fileTappedInAWidePaneBelowOpensInThatPane(.portrait, name: "portrait")
+    }
+
+    func testAFileTappedInAWidePaneBelowOpensInThatPaneInLandscape() throws {
+        try fileTappedInAWidePaneBelowOpensInThatPane(.landscapeLeft, name: "landscape")
+    }
+
+    private func fileTappedInAWidePaneBelowOpensInThatPane(_ orientation: UIDeviceOrientation, name: String) throws {
+        guard UIDevice.current.userInterfaceIdiom == .pad else {
+            throw XCTSkip("A pane below another is regular width only on the iPad mini")
+        }
+        XCUIDevice.shared.orientation = orientation
+        addTeardownBlock { @MainActor in XCUIDevice.shared.orientation = .portrait }
+        launchPreview(screen: "pane-restore", environment: ["PANE_RESTORE_SEED": "files-below"], colorScheme: "dark", ready: nil)
+        let window = app.windows.firstMatch
+        let pane = app.descendants(matching: .any)["pane.leaf.leaf-notebook"]
+        let row = pane.descendants(matching: .any)["fileBrowser.row.~/notebook/garden.org"]
+        XCTAssertTrue(row.waitUntilExists(timeout: 10), "The pane below lists the notebook")
+        let grips = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane.grip.'"))
+        let filesGrip = app.buttons["pane.grip.leaf-notebook"]
+        XCTAssertTrue(filesGrip.waitUntilExists(timeout: 5), "The notebook pane has its grip")
+        let paneFrame = pane.frame
+        XCTAssertGreaterThan(paneFrame.minY, window.frame.height * 0.3, "The notebook pane sits below the sessions")
+        hold()
+        attachScreenCapture("\(name)-pane-below-before-tap")
+
+        row.tap()
+        let body = app.descendants(matching: .any)["full-screen.org-mode.body"].firstMatch
+        XCTAssertTrue(body.waitUntilExists(timeout: 10), "The Org file opened")
+        XCTAssertTrue(waitFor(abs(body.frame.width - paneFrame.width) < 4 && body.frame.minY > paneFrame.minY),
+                      "The file fills the pane below, not a sheet over both: file \(body.frame), pane \(paneFrame)")
+        XCTAssertFalse(app.buttons["fileBrowser.reader.close"].exists, "No sheet's Close: the file is a page of the pane")
+        XCTAssertEqual(grips.count, 2, "The file opened in its own pane, not a new one")
+        hold()
+        attachScreenCapture("\(name)-pane-below-file-open")
+
+        filesGrip.tap()
+        let menuZoom = app.buttons["pane.menu.zoom"]
+        XCTAssertTrue(menuZoom.waitUntilExists(timeout: 5), "The grip opens the pane menu")
+        menuZoom.tap()
+        XCTAssertTrue(waitFor(body.frame.minY < paneFrame.minY - 100 && body.frame.height > paneFrame.height + 100),
+                      "Zoom fills the window with the file (\(body.frame))")
+        hold()
+        attachScreenCapture("\(name)-pane-below-file-zoomed")
+
+        let zoomed = grips.matching(NSPredicate(format: "value == 'Zoomed'")).firstMatch
+        XCTAssertTrue(zoomed.waitUntilExists(timeout: 5), "The zoomed pane keeps its grip")
+        zoomed.tap()
+        XCTAssertTrue(menuZoom.waitUntilExists(timeout: 5), "The zoomed grip opens the pane menu")
+        menuZoom.tap()
+        XCTAssertTrue(waitFor(body.frame.minY > paneFrame.minY), "Restore puts the file back in its pane")
+        pane.navigationBars.buttons["BackButton"].firstMatch.tap()
+        XCTAssertTrue(waitFor(row.isHittable && !body.exists), "Back returns the pane to the folder")
+    }
+
     /// iPad mini portrait: the sidebar is a drawer that covers the panes, so
     /// ⌘D with it open closes it and splits the focused pane in sight.
     func testSplitWithTheDrawerOpenClosesItAndSplitsInSight() throws {
