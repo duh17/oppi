@@ -62,7 +62,8 @@ struct PaneRestorationTests: PaneFixtureBuilding {
         let before = try await makeRoot(sessions: [session("s-1")])
         before.navigation.restorePrimaryStack(chatInWorkspace("s-1"))
         let panes = before.navigation.panes
-        panes.companionDidOpen(PaneStackEntry(serverId: serverId, route: .git(workspace: "ws-1", worktree: nil)))
+        let git = PaneStackEntry(serverId: serverId, route: .git(workspace: "ws-1", worktree: nil))
+        panes.companionDidOpen(git, pairing: Self.gitPairing)
         panes.setCompanionShare(0.4)
         panes.focusCompanion(true)
         panes.setCompanionZoomed(true)
@@ -74,6 +75,8 @@ struct PaneRestorationTests: PaneFixtureBuilding {
 
         #expect(after.navigation.workspaceStackRouteElements == chatInWorkspace("s-1"))
         #expect(after.navigation.panes.takePendingPanel(for: "s-1") == .git(workspace: "ws-1", worktree: nil))
+        // The chat opens its Git panel again, at the share it had.
+        after.navigation.panes.companionDidOpen(git, pairing: Self.gitPairing)
         #expect(abs((after.navigation.panes.companionShare ?? 0) - 0.4) < 1e-9)
         let restored = after.navigation.panes.takeRestoredCompanionState()
         #expect(restored.focused)
@@ -87,7 +90,8 @@ struct PaneRestorationTests: PaneFixtureBuilding {
         let before = try await makeRoot(sessions: [session("s-1")])
         before.navigation.restorePrimaryStack(chatInWorkspace("s-1"))
         let saved = before.navigation.panes
-        saved.companionDidOpen(PaneStackEntry(serverId: serverId, route: .git(workspace: "ws-1", worktree: nil)))
+        // An extension panel, the pairing the test host's panel shows.
+        saved.companionDidOpen(PaneStackEntry(serverId: serverId, route: .panel(session: "s-1", id: "jobs")), pairing: PaneTestHost.pairing)
         saved.setCompanionShare(0.45)
         saved.focusCompanion(true)
         save(saved, before.navigation, scene: "scene-host", store: store)
@@ -223,7 +227,7 @@ struct PaneRestorationTests: PaneFixtureBuilding {
                 focus: chat.id, recency: [chat.id, side.id]
             ),
             chatScroll: [chat.id: scroll],
-            companionFraction: 0.4
+            companionShares: [PaneTestHost.pairing: 0.4]
         ), scene: "scene-offline")
 
         let root = try await makeRoot(sessions: [])
@@ -337,7 +341,7 @@ struct PaneRestorationTests: PaneFixtureBuilding {
         root.navigation.restorePrimaryStack(chatInWorkspace("s-incognito"))
         // Its extension panel goes with it.
         root.navigation.panes.companionDidOpen(
-            PaneStackEntry(serverId: serverId, route: .panel(session: "s-incognito", id: "jobs"))
+            PaneStackEntry(serverId: serverId, route: .panel(session: "s-incognito", id: "jobs")), pairing: PaneTestHost.pairing
         )
         root.navigation.panes.flush()
         let saved = try #require(store.load(scene: "scene-c"))

@@ -14,6 +14,44 @@ enum PaneContentRole: Equatable {
     case listBesideReader
     /// Widths an extension surface asked for (`ExtensionPanelSnapshot.widths`).
     case custom(PaneCompanionWidths)
+
+    /// The role's part of a pairing's key: its kind, never its widths.
+    fileprivate var key: String {
+        switch self {
+        case .reader: "reader"
+        case .list: "list"
+        case .listBesideReader: "listBesideReader"
+        case .custom: "panel"
+        }
+    }
+}
+
+/// The screen an attached leaf opens beside.
+enum PaneNeighbour: String {
+    case chat, fileBrowser, commit, review
+}
+
+/// A composition of a screen and the panel beside it (a chat and a reader, the
+/// File Browser and its file): the divider's width is remembered per pairing,
+/// so a list's width never becomes a reader's (`ScenePanes.companionShare`).
+struct PanePairing: Equatable {
+    let neighbour: PaneNeighbour
+    let role: PaneContentRole
+
+    init(_ role: PaneContentRole, beside neighbour: PaneNeighbour) {
+        self.neighbour = neighbour
+        self.role = role
+    }
+
+    /// What a remembered share is saved under; stable across launches.
+    var key: String { "\(neighbour.rawValue).\(role.key)" }
+
+    /// The key of a chat panel a relaunch restores by its link
+    /// (`ChatViewController.paneEntry`): an extension panel, else Files or Git.
+    static func restoredChatPanelKey(_ route: PaneRoute) -> String {
+        if case .panel = route { return Self(.custom(PaneCompanionWidths(minimum: 0, ideal: 0)), beside: .chat).key }
+        return Self(.list, beside: .chat).key
+    }
 }
 
 /// The one owner of how wide a pane opens: a reader beside a list or a chat

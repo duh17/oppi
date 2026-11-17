@@ -20,7 +20,8 @@ struct PaneCompanionWidths: Equatable {
 ///
 /// The companion lays out compact (`AttachedLeafController` sets the trait),
 /// as an inspector does. Its width is a share of the host's width, remembered
-/// across companions, hosts and launches by the window's `ScenePanes`, which
+/// per pairing (`PanePairing`: a chat and a reader, the File Browser and its
+/// file) across hosts and launches by the window's `ScenePanes`, which
 /// also hears which companion is shown and which leaf is focused. Past the
 /// side-by-side maximum it slides over the primary, which keeps its width and
 /// is covered, up to the full window but a grab edge. A companion whose
@@ -50,6 +51,9 @@ final class PaneHostController: UIViewController {
         let controller: UIViewController
         weak var owner: AttachedLeafController?
         var widths: PaneCompanionWidths
+        /// Its pairing's key (`PanePairing`): the share it rests at is
+        /// remembered per pairing.
+        var pairing: String
         /// The companion's link, for restoration; nil when it has none.
         var route: PaneStackEntry?
     }
@@ -308,6 +312,7 @@ final class PaneHostController: UIViewController {
         divider.onExpandRequested = { [weak self] in self?.settle(.full, initialVelocityPointsPerSecond: 0) }
         divider.onRestoreRequested = { [weak self] in self?.restoreFromFull() }
         divider.onCloseRequested = { [weak self] in self?.companion?.owner?.dividerRequestedClose() }
+        divider.onResetRequested = { [weak self] in self?.resetCompanionWidth() }
         installDropInteraction()
         // Tab and Full Keyboard Access move between panes as groups.
         primary.view.focusGroupIdentifier = "pane.\(panes.routedLeafID.raw)"
@@ -458,6 +463,7 @@ final class PaneHostController: UIViewController {
     func mountCompanion(
         _ controller: UIViewController,
         widths: PaneCompanionWidths,
+        pairing: String,
         route: PaneStackEntry? = nil,
         owner: AttachedLeafController,
         opening: Bool
@@ -470,8 +476,8 @@ final class PaneHostController: UIViewController {
             parked[index].release.invalidate()
             parked.remove(at: index)
         }
-        companion = Companion(controller: controller, owner: owner, widths: widths, route: route)
-        panes.companionDidOpen(route, drawnShare: drawnShare)
+        companion = Companion(controller: controller, owner: owner, widths: widths, pairing: pairing, route: route)
+        panes.companionDidOpen(route, pairing: pairing) { [weak self] in self?.drawnShare }
         let restored = panes.takeRestoredCompanionState()
         panes.setCompanionZoomed(opening ? restored.zoomed : zoomedWhenParked)
         applyFitRule()
@@ -524,13 +530,14 @@ final class PaneHostController: UIViewController {
     }
 
     /// Replaces the shown companion in place: the full state stays, and so
-    /// does the width for the same kind of panel, so the pane does not close
-    /// and reopen for a second reflow. Another kind (a list replaced by a
-    /// reader) moves to the width it rests at.
+    /// does the width within a pairing, so the pane does not close and
+    /// reopen for a second reflow. Another pairing (a list replaced by a
+    /// reader) moves to the width that pairing rests at.
     func replaceCompanion(
         _ old: UIViewController,
         with new: UIViewController,
         widths: PaneCompanionWidths,
+        pairing: String,
         route: PaneStackEntry? = nil
     ) {
         guard let current = companion, current.controller === old else {
@@ -538,15 +545,15 @@ final class PaneHostController: UIViewController {
             return
         }
         removeChild(old)
-        companion = Companion(controller: new, owner: current.owner, widths: widths, route: route)
-        panes.companionDidOpen(route, drawnShare: drawnShare)
+        companion = Companion(controller: new, owner: current.owner, widths: widths, pairing: pairing, route: route)
+        panes.companionDidOpen(route, pairing: pairing) { [weak self] in self?.drawnShare }
         applyFitRule()
         addChild(new)
         view.insertSubview(new.view, belowSubview: divider)
         new.didMove(toParent: self)
         view.setNeedsLayout()
         view.layoutIfNeeded()
-        if current.widths != widths, !showsFull, settleAnimator == nil, dragStartWidth == nil {
+        if current.pairing != pairing, !showsFull, settleAnimator == nil, dragStartWidth == nil {
             animateWidth(to: restingWidth, initialVelocity: 0)
         }
         updateVisibility()
@@ -1006,6 +1013,18 @@ final class PaneHostController: UIViewController {
     private func step(by delta: CGFloat) {
         guard !isClosing, let policy else { return }
         settle(.width(policy.clampedToOrdinaryRange(width + delta)), initialVelocityPointsPerSecond: 0)
+    }
+
+    /// A double-tap on the divider: the companion goes back to its pairing's
+    /// default width, beside its leaf, and the pairing forgets the share the
+    /// person settled on, so the next open starts there too.
+    private func resetCompanionWidth() {
+        guard companion != nil, let policy, policy.fitsBeside, !isClosing else { return }
+        endMotion()
+        panes.setCompanionZoomed(false)
+        panes.forgetCompanionShare(defaultShare: policy.window > 0 ? Double(policy.ideal / policy.window) : nil)
+        animateWidth(to: policy.ideal, initialVelocity: 0)
+        updateVisibility()
     }
 
     private func restoreFromFull() {

@@ -504,7 +504,7 @@ struct PaneTreeHostTests {
         host.act { host.screen.leaf.setFillsWindow(true) }
         #expect(host.companionWidth == 1133 - PaneWidthPolicy.fullWindowGrabEdge)
         #expect(host.screen.leaf.fillsWindow == true)
-        #expect(host.divider.accessibilityCustomActions?.map(\.name) == ["Show Both Panes"])
+        #expect(host.divider.accessibilityCustomActions?.map(\.name) == ["Show Both Panes", "Reset Width"])
         host.act { host.screen.leaf.setFillsWindow(false) }
         #expect(host.companionWidth == beside)
 

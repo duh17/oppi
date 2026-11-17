@@ -207,7 +207,7 @@ struct PaneHostControllerTests {
         let second = PaneLeafScreen()
         stack.pushViewController(second, animated: false)
         host.window.layoutIfNeeded()
-        host.act { second.showPanel(root: host.root, minWidth: 320, idealWidth: 400, maxWidth: 640, makeScreen: make) }
+        host.act { second.showPanel(root: host.root, minWidth: 320, idealWidth: 400, maxWidth: 640, beside: .chat, makeScreen: make) }
         stack.pushViewController(UIViewController(), animated: false)
         host.window.layoutIfNeeded()
         #expect(builds == 2)

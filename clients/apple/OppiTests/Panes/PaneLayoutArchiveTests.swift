@@ -36,7 +36,7 @@ struct PaneLayoutArchiveTests: PaneFixtureBuilding {
             collapsed: [:]
         )
         let scroll = PaneChatScroll(sessionId: "s-1", itemId: "msg-77", relativeY: 42)
-        let archive = try #require(PaneLayoutArchive(restorable: layout, chatScroll: [id("main"): scroll], companionFraction: 0.35))
+        let archive = try #require(PaneLayoutArchive(restorable: layout, chatScroll: [id("main"): scroll], companionShares: ["chat.list": 0.35, "fileBrowser.reader": 0.6]))
 
         let decoded = try #require(PaneLayoutArchive.decode(try archive.encoded()))
         #expect(decoded == archive)
@@ -49,7 +49,7 @@ struct PaneLayoutArchiveTests: PaneFixtureBuilding {
         }
         #expect(abs(weights[1] - 0.35) < 1e-9)
         #expect(decoded.chatScroll[id("main")] == scroll)
-        #expect(decoded.companionFraction == 0.35)
+        #expect(decoded.companionShares == ["chat.list": 0.35, "fileBrowser.reader": 0.6])
     }
 
     @Test func screensWithoutLinksAreNotSavedAndALeafLeftEmptyClosesWithItsAttachedLeaves() throws {

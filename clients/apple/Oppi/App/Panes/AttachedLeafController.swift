@@ -19,14 +19,15 @@ import UIKit
 final class AttachedLeafController: UIViewController {
     struct Panel {
         let id: AnyHashable
-        /// What the panel shows, which decides its widths (`PaneReadingWidth`).
-        let role: PaneContentRole
+        /// The screen and what the panel shows beside it, which decide its
+        /// widths (`PaneReadingWidth`) and the share its divider remembers.
+        let pairing: PanePairing
         /// The panel's link, when it has one, so the window can restore it.
         var route: PaneStackEntry? = nil
         /// Builds the panel's UIKit screen when the leaf installs it.
         let makeScreen: () -> UIViewController
 
-        @MainActor var widths: PaneCompanionWidths { PaneReadingWidth.widths(for: role) }
+        @MainActor var widths: PaneCompanionWidths { PaneReadingWidth.widths(for: pairing.role) }
     }
 
     /// The divider was dragged or flung past the close threshold, same as
@@ -42,7 +43,22 @@ final class AttachedLeafController: UIViewController {
     private var requested: Panel?
     /// The panel the leaf shows, mounted, parked, or dropped by a memory
     /// warning (then `container` is nil until the screen returns).
-    private var installed: (id: AnyHashable, widths: PaneCompanionWidths, route: PaneStackEntry?)?
+    private var installed: Installed?
+
+    /// What the leaf keeps of the panel it shows, for the host.
+    private struct Installed {
+        let id: AnyHashable
+        var widths: PaneCompanionWidths
+        let pairing: String
+        let route: PaneStackEntry?
+
+        @MainActor init(_ panel: Panel) {
+            id = panel.id
+            widths = panel.widths
+            pairing = panel.pairing.key
+            route = panel.route
+        }
+    }
     private var container: RouterNavigationController?
     /// The host the leaf is mounted or parked in.
     private weak var host: PaneHostController?
@@ -125,8 +141,9 @@ final class AttachedLeafController: UIViewController {
         }
         if installed != nil, !isRemoving {
             // A different panel while the leaf is open: swap the screen in
-            // place. The width and full state are untouched, so the leaf
-            // does not close and reopen for a second reflow.
+            // place, so the leaf does not close and reopen for a second
+            // reflow. The full state stays; the width stays within a pairing
+            // (`PaneHostController.replaceCompanion`).
             swapPanel(panel)
             return
         }
@@ -187,7 +204,7 @@ final class AttachedLeafController: UIViewController {
 
     private func installRequestedPanel() {
         guard let panel = requested, root != nil, installed == nil else { return }
-        installed = (panel.id, panel.widths, panel.route)
+        installed = Installed(panel)
         container = makeContainer(panel)
         setNeedsUpdateProperties()
         attach(opening: true)
@@ -202,7 +219,9 @@ final class AttachedLeafController: UIViewController {
         guard let container else { return }
         self.host = host
         isMounted = true
-        host.mountCompanion(container, widths: installed.widths, route: installed.route, owner: self, opening: opening)
+        host.mountCompanion(
+            container, widths: installed.widths, pairing: installed.pairing, route: installed.route, owner: self, opening: opening
+        )
     }
 
     private func swapPanel(_ panel: Panel) {
@@ -210,10 +229,10 @@ final class AttachedLeafController: UIViewController {
             guard let self else { return }
             let old = self.container
             let new = self.makeContainer(panel)
-            self.installed = (panel.id, panel.widths, panel.route)
+            self.installed = Installed(panel)
             self.container = new
             if let old, self.isMounted, let host = self.host {
-                host.replaceCompanion(old, with: new, widths: panel.widths, route: panel.route)
+                host.replaceCompanion(old, with: new, widths: panel.widths, pairing: panel.pairing.key, route: panel.route)
             } else if let old {
                 self.host?.releaseParked(old)
             }

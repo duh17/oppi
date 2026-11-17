@@ -8,6 +8,9 @@ let paneFixtureServer = "sha256:9f86d081884c7d65"
 protocol PaneFixtureBuilding {}
 
 extension PaneFixtureBuilding {
+    /// The pairing of a chat's Git or Files panel, as the chat opens it.
+    @MainActor static var gitPairing: String { PanePairing(.list, beside: .chat).key }
+
     func id(_ raw: String) -> PaneID {
         guard let id = PaneID(raw) else { preconditionFailure("bad test pane id \(raw)") }
         return id

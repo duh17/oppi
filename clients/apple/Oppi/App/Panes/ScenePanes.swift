@@ -47,9 +47,12 @@ final class ScenePanes {
     }
     /// The routed leaf: the shell's stack.
     private(set) var routedLeafID: PaneID
-    /// The share of the width the next companion opens at: the last one a
-    /// companion settled at, in this window or (restored) before relaunch.
-    @ObservationIgnored private var rememberedShare: Double?
+    /// The share of the width a companion rests at, by pairing
+    /// (`PanePairing.key`): the last one the person settled on beside that
+    /// screen, in this window or (restored) before relaunch.
+    @ObservationIgnored private var rememberedShares: [String: Double] = [:]
+    /// The shown companion's pairing.
+    @ObservationIgnored private var companionPairing: String?
     @ObservationIgnored private var nextLeafNumber = 1
     /// Split leaves a relaunch brought back that have not mounted yet. A
     /// browser among them opens paused, its page loading only on a tap
@@ -159,11 +162,11 @@ final class ScenePanes {
         tree.leaves.first { $0.attachedTo == routedLeafID }?.id
     }
 
-    /// The share of the width a companion rests at: the last one settled,
-    /// nil until one ever was (a companion then opens at its own ideal
-    /// width). The tree's weight follows it, or the drawn share before it is
-    /// known.
-    var companionShare: Double? { rememberedShare }
+    /// The share of the width the shown companion rests at: the last one
+    /// settled for its pairing, nil until one ever was (it then opens at its
+    /// own ideal width). The tree's weight follows it, or the drawn share
+    /// before it is known.
+    var companionShare: Double? { companionPairing.flatMap { rememberedShares[$0] } }
 
     var isCompanionZoomed: Bool { companionID != nil && tree.zoomed == companionID }
     /// The companion's zoom is the fit rule's, not the person's: it ends
@@ -193,24 +196,34 @@ final class ScenePanes {
     }
 
     /// A companion opened beside the routed leaf, or the open one shows
-    /// another panel (`route` is its link, nil when it has none). Its weight
-    /// is the remembered share, else `drawnShare`.
-    func companionDidOpen(_ route: PaneStackEntry?, drawnShare: Double? = nil) {
+    /// another panel (`route` is its link, nil when it has none) of
+    /// `pairing`. Its weight is the pairing's remembered share, else
+    /// `drawnShare` (read once the pairing is set, so it is the new panel's).
+    /// Another pairing in an open companion takes its own share.
+    func companionDidOpen(_ route: PaneStackEntry?, pairing: String, drawnShare: () -> Double? = { nil }) {
+        let pairingChanged = companionPairing != pairing
+        companionPairing = pairing
         let stack = [route ?? PaneStackEntry(serverId: "", route: .local(PaneLocalToken(raw: "panel")))]
+        func share() -> Double? { companionShare ?? drawnShare().map { min(max($0, 0.05), 0.95) } }
         if let companionID {
-            guard tree.leaf(companionID)?.stack != stack else { return }
-            tree.root = tree.root.mapLeaves { leaf in
-                guard leaf.id == companionID else { return leaf }
-                var leaf = leaf
-                leaf.stack = stack
-                return leaf
+            var next = tree
+            if next.leaf(companionID)?.stack != stack {
+                next.root = next.root.mapLeaves { leaf in
+                    guard leaf.id == companionID else { return leaf }
+                    var leaf = leaf
+                    leaf.stack = stack
+                    return leaf
+                }
             }
+            if pairingChanged, let share = share(), let shared = Self.settingShare(share, of: companionID, in: next) {
+                next = shared
+            }
+            if next != tree { tree = next }
             return
         }
         let leaf = PaneLeaf(id: freshLeafID(), name: nil, stack: stack, attachedTo: routedLeafID, origin: .attached)
         guard var opened = try? tree.split(routedLeafID, axis: .row, inserting: leaf) else { return }
-        if let share = rememberedShare ?? drawnShare.map({ min(max($0, 0.05), 0.95) }),
-           let next = Self.settingShare(share, of: leaf.id, in: opened) {
+        if let share = share(), let next = Self.settingShare(share, of: leaf.id, in: opened) {
             opened = next
         }
         tree = opened
@@ -226,8 +239,17 @@ final class ScenePanes {
     /// The companion settled at `share` of the width beside its leaf.
     func setCompanionShare(_ share: Double) {
         let share = min(max(share, 0.05), 0.95)
-        rememberedShare = share
+        if let companionPairing { rememberedShares[companionPairing] = share }
         guard let companionID, let next = Self.settingShare(share, of: companionID, in: tree) else { return }
+        if next != tree { tree = next }
+    }
+
+    /// The person reset the companion's width: its pairing forgets the share
+    /// it settled on, and the companion's weight goes to `defaultShare`.
+    func forgetCompanionShare(defaultShare: Double?) {
+        if let companionPairing { rememberedShares[companionPairing] = nil }
+        guard let defaultShare, let companionID,
+              let next = Self.settingShare(min(max(defaultShare, 0.05), 0.95), of: companionID, in: tree) else { return }
         if next != tree { tree = next }
     }
 
@@ -727,7 +749,8 @@ final class ScenePanes {
             origin: .attached
         )
         guard var withPanel = try? layout.split(routed, axis: .row, inserting: side) else { return layout }
-        if let share = rememberedShare, let next = Self.settingShare(share, of: side.id, in: withPanel) {
+        if let share = rememberedShares[PanePairing.restoredChatPanelKey(waiting)],
+           let next = Self.settingShare(share, of: side.id, in: withPanel) {
             withPanel = next
         }
         if handoff.panelFocused, let focused = try? withPanel.focusing(side.id) { withPanel = focused }
@@ -777,7 +800,7 @@ final class ScenePanes {
 
     private func apply(_ archive: PaneLayoutArchive, navigation: SceneNavigation, coordinator: ConnectionCoordinator) {
         markRestoringUntilSurvived()
-        rememberedShare = archive.companionFraction
+        rememberedShares = archive.companionShares
         let layout = archive.layout
         // The routed leaf keeps the id a window's first leaf gets; split
         // leaves get later ones. An older tree names it only by being first.
@@ -823,9 +846,10 @@ final class ScenePanes {
         handoff.scroll = archive.chatScroll[primary.id].flatMap { $0.sessionId == sessionId ? $0 : nil }
         guard let companion = layout.leaves.first(where: { $0.attachedTo == primary.id }),
               let route = companion.stack.last?.route else { return }
+        // The open panel's weight is the share it rests at.
         if let path = layout.root.path(of: companion.id), let index = path.last, index > 0,
            case .split(_, _, let weights)? = layout.root.node(at: Array(path.dropLast())) {
-            rememberedShare = weights[index] / (weights[index - 1] + weights[index])
+            rememberedShares[PanePairing.restoredChatPanelKey(route)] = weights[index] / (weights[index - 1] + weights[index])
         }
         handoff.panel = (sessionId, route)
         handoff.panelFocused = layout.focus == companion.id
@@ -878,8 +902,7 @@ final class ScenePanes {
     /// The tree as saved, or nil (`.none`) before restore wired the window:
     /// Incognito chats, and the files opened from their session copies,
     /// leave nothing behind; the routed chat's reading position comes from
-    /// the live chat; and the share the next companion opens at is kept only
-    /// while no companion holds it as its weight.
+    /// the live chat; and each pairing's remembered share is kept.
     private func currentArchive() -> PaneLayoutArchive?? {
         guard let navigation, let rootServerId = coordinator.flatMap(navigation.activeServerId(in:)) else { return .none }
         var layout = layout(navigation: navigation, rootServerId: rootServerId)
@@ -909,11 +932,10 @@ final class ScenePanes {
             scroll[routedLeafID] = reports.first { $0.sessionId == sessionId }
                 ?? handoff.scroll.flatMap { $0.sessionId == sessionId ? $0 : nil }
         }
-        let hasCompanion = layout.leaves.contains { $0.attachedTo == routedLeafID }
         return .some(PaneLayoutArchive(
             restorable: layout,
             chatScroll: scroll,
-            companionFraction: hasCompanion ? nil : rememberedShare
+            companionShares: rememberedShares
         ))
     }
 }

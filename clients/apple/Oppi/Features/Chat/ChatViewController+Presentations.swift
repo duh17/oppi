@@ -182,7 +182,7 @@ extension ChatViewController {
             panel.map { panel in
                 AttachedLeafController.Panel(
                     id: AnyHashable(panel),
-                    role: panelRole(panel),
+                    pairing: PanePairing(panelRole(panel), beside: .chat),
                     route: paneEntry(for: panel),
                     makeScreen: attachedLeafScreen(panel)
                 )

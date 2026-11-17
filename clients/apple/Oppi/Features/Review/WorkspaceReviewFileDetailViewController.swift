@@ -732,7 +732,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         fileListLeaf.show(
             AttachedLeafController.Panel(
                 id: AnyHashable(FileListPanel().id),
-                role: .listBesideReader,
+                pairing: PanePairing(.listBesideReader, beside: .review),
                 makeScreen: { [weak self] in
                     let list = ReviewFileListViewController(
                         files: files,

@@ -1971,7 +1971,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         readerLeaf.show(
             beside ? AttachedLeafController.Panel(
                 id: AnyHashable(server),
-                role: .reader,
+                pairing: PanePairing(.reader, beside: .fileBrowser),
                 route: paneEntry(forRowPath: selection.path),
                 makeScreen: makeReader
             ) : nil,

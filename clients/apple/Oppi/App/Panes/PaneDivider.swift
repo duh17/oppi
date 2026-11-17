@@ -230,6 +230,8 @@ final class PaneDividerView: UIView {
     var onExpandRequested: (() -> Void)?
     var onRestoreRequested: (() -> Void)?
     var onCloseRequested: (() -> Void)?
+    /// A double-tap: back to the pairing's default width.
+    var onResetRequested: (() -> Void)?
 
     /// What the companion's width can do from here, for the accessibility
     /// action offered, the hint and the spoken value.
@@ -264,7 +266,7 @@ final class PaneDividerView: UIView {
         }
         accessibilityHint = hint
         let mode = mode
-        accessibilityCustomActions = [UIAccessibilityCustomAction(name: action) { [weak self] _ in
+        let primary = UIAccessibilityCustomAction(name: action) { [weak self] _ in
             guard let self else { return false }
             switch mode {
             case .beside: self.onExpandRequested?()
@@ -272,7 +274,12 @@ final class PaneDividerView: UIView {
             case .noRoomBeside: self.onCloseRequested?()
             }
             return true
-        }]
+        }
+        let reset = UIAccessibilityCustomAction(name: String(localized: "Reset Width")) { [weak self] _ in
+            self?.onResetRequested?()
+            return true
+        }
+        accessibilityCustomActions = mode == .noRoomBeside ? [primary] : [primary, reset]
     }
 
     /// The companion's drawn width, set on every layout; spoken only when
@@ -309,12 +316,20 @@ final class PaneDividerView: UIView {
         // Full by choice, the divider is the strip at the leading edge that
         // is left of the leaf beside: a tap gives that leaf its room back.
         addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(handleTap)))
+        // A double-tap gives the companion its pairing's default width back.
+        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap))
+        doubleTap.numberOfTapsRequired = 2
+        addGestureRecognizer(doubleTap)
         addInteraction(UIPointerInteraction(delegate: self))
         applyMode()
     }
 
     @objc private func handleTap() {
         if mode == .full { onRestoreRequested?() }
+    }
+
+    @objc private func handleDoubleTap() {
+        if mode != .noRoomBeside { onResetRequested?() }
     }
 
     @available(*, unavailable)

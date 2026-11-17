@@ -24,21 +24,22 @@ struct PaneLayoutArchive: Hashable, Sendable {
     let layout: PaneLayout
     /// Reading positions by chat leaf.
     let chatScroll: [PaneID: PaneChatScroll]
-    /// The share of the window an attached companion last took, kept whether
-    /// or not one is open, so the next one opens at it.
-    let companionFraction: Double?
+    /// The share of the window an attached companion last settled at, by its
+    /// pairing's key (a chat and a reader, the File Browser and its file),
+    /// kept whether or not one is open, so the next of that pairing opens at it.
+    let companionShares: [String: Double]
 
     /// `layout` without what cannot be restored; nil when nothing is left.
     init?(
         restorable layout: PaneLayout,
         chatScroll: [PaneID: PaneChatScroll] = [:],
-        companionFraction: Double? = nil
+        companionShares: [String: Double] = [:]
     ) {
         guard let restorable = Self.restorable(layout) else { return nil }
         self.layout = restorable
         let ids = Set(restorable.leaves.map(\.id))
         self.chatScroll = chatScroll.filter { ids.contains($0.key) }
-        self.companionFraction = companionFraction.flatMap { $0 > 0 && $0 < 1 ? $0 : nil }
+        self.companionShares = companionShares.filter { $0.value > 0 && $0.value < 1 }
     }
 
     func encoded() throws -> Data {
@@ -51,7 +52,7 @@ struct PaneLayoutArchive: Hashable, Sendable {
         guard let stored = try? JSONDecoder().decode(Stored.self, from: data),
               stored.v == schemaVersion,
               let layout = stored.layout() else { return nil }
-        return Self(restorable: layout, chatScroll: stored.chatScrollByLeaf, companionFraction: stored.companionFraction)
+        return Self(restorable: layout, chatScroll: stored.chatScrollByLeaf, companionShares: stored.companionShares ?? [:])
     }
 
     /// Drops entries with no link, then each leaf with nothing left, closing
@@ -91,7 +92,7 @@ private extension PaneLayoutArchive {
         let zoomed: String?
         let collapsed: [String: Double]
         let chatScroll: [String: PaneChatScroll]
-        let companionFraction: Double?
+        let companionShares: [String: Double]?
 
         init(_ archive: PaneLayoutArchive) {
             v = PaneLayoutArchive.schemaVersion
@@ -101,7 +102,7 @@ private extension PaneLayoutArchive {
             zoomed = archive.layout.zoomed?.raw
             collapsed = Dictionary(uniqueKeysWithValues: archive.layout.collapsed.map { ($0.key.raw, $0.value) })
             chatScroll = Dictionary(uniqueKeysWithValues: archive.chatScroll.map { ($0.key.raw, $0.value) })
-            companionFraction = archive.companionFraction
+            companionShares = archive.companionShares
         }
 
         var chatScrollByLeaf: [PaneID: PaneChatScroll] {

@@ -7,6 +7,9 @@ import UIKit
 /// calls.
 @MainActor
 struct PaneTestHost {
+    /// The pairing key of the panel `showPanel` opens: a panel beside a chat.
+    static let pairing = PanePairing(.custom(PaneCompanionWidths(minimum: 0, ideal: 0)), beside: .chat).key
+
     let screen: PaneLeafScreen
     let panes: PaneHostController
     /// The window's pane state; a host of its own starts with no remembered width.
@@ -45,12 +48,14 @@ struct PaneTestHost {
         minWidth: CGFloat = 320,
         idealWidth: CGFloat = 400,
         maxWidth: CGFloat? = 640,
+        beside neighbour: PaneNeighbour = .chat,
         settles: Bool = true,
         makeScreen: @escaping () -> UIViewController = { UIViewController() }
     ) {
         let show = {
             screen.showPanel(
-                root: root, minWidth: minWidth, idealWidth: idealWidth, maxWidth: maxWidth, makeScreen: makeScreen
+                root: root, minWidth: minWidth, idealWidth: idealWidth, maxWidth: maxWidth, beside: neighbour,
+                makeScreen: makeScreen
             )
         }
         if settles { act(show) } else { show() }
@@ -190,12 +195,15 @@ final class PaneLeafScreen: UIViewController, PaneKeyboardFollowing, PaneVisibil
         minWidth: CGFloat,
         idealWidth: CGFloat,
         maxWidth: CGFloat?,
+        beside neighbour: PaneNeighbour,
         makeScreen: @escaping () -> UIViewController
     ) {
         leaf.show(
             AttachedLeafController.Panel(
-                id: "panel",
-                role: .custom(PaneCompanionWidths(minimum: minWidth, ideal: idealWidth, maximum: maxWidth)),
+                id: "panel-\(neighbour.rawValue)",
+                pairing: PanePairing(
+                    .custom(PaneCompanionWidths(minimum: minWidth, ideal: idealWidth, maximum: maxWidth)), beside: neighbour
+                ),
                 makeScreen: makeScreen
             ),
             root: root

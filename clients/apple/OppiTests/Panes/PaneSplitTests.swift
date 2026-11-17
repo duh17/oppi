@@ -70,7 +70,7 @@ struct PaneSplitTests: PaneFixtureBuilding {
         let root = try await chatWindow()
         defer { withExtendedLifetime(root) {} }
         let panes = root.navigation.panes
-        panes.companionDidOpen(entry(.git(workspace: "ws-1", worktree: nil)))
+        panes.companionDidOpen(entry(.git(workspace: "ws-1", worktree: nil)), pairing: Self.gitPairing)
         panes.setCompanionShare(0.4)
         let companion = try #require(panes.companionID)
 
@@ -92,7 +92,7 @@ struct PaneSplitTests: PaneFixtureBuilding {
         let root = try await chatWindow()
         defer { withExtendedLifetime(root) {} }
         let panes = root.navigation.panes
-        panes.companionDidOpen(entry(.git(workspace: "ws-1", worktree: nil)))
+        panes.companionDidOpen(entry(.git(workspace: "ws-1", worktree: nil)), pairing: Self.gitPairing)
         let first = try #require(panes.split(panes.routedLeafID, axis: .row))
         _ = try #require(panes.split(first, axis: .column))
         panes.close(panes.routedLeafID)
@@ -135,7 +135,7 @@ struct PaneSplitTests: PaneFixtureBuilding {
         let before = try await chatWindow()
         defer { withExtendedLifetime(before) {} }
         let saved = before.navigation.panes
-        saved.companionDidOpen(entry(.git(workspace: "ws-1", worktree: nil)))
+        saved.companionDidOpen(entry(.git(workspace: "ws-1", worktree: nil)), pairing: Self.gitPairing)
         let files = try #require(saved.split(saved.routedLeafID, axis: .row))
         saved.show(entry(.files(workspace: "ws-1", path: nil)), in: files)
         saved.focus(files)
@@ -148,7 +148,7 @@ struct PaneSplitTests: PaneFixtureBuilding {
         panes.connect(scene: "a", store: store)
         panes.restore(navigation: root.navigation, coordinator: root.coordinator)
         #expect(panes.pendingPanel(for: "s-1") == .git(workspace: "ws-1", worktree: nil), "the chat's panel still opens beside it")
-        panes.companionDidOpen(entry(.git(workspace: "ws-1", worktree: nil)))
+        panes.companionDidOpen(entry(.git(workspace: "ws-1", worktree: nil)), pairing: Self.gitPairing)
         let companion = try #require(panes.companionID)
         #expect(panes.splitLeaves.isEmpty, "no split leaf mounts")
         #expect(shape(panes.cellLayout.root) == "leaf-1")

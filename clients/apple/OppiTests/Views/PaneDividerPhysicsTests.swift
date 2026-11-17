@@ -230,8 +230,8 @@ struct PaneDividerMathTests {
 /// companion's own range, the leaf beside never narrows past its minimum and
 /// stops reflowing once the companion slides over it, past the threshold the
 /// companion takes the window but its grab edge, and a settled width is
-/// remembered proportionally for the next companion, anywhere in the app,
-/// that opens with nothing of its own yet remembered.
+/// remembered proportionally for the next companion of the same pairing, and
+/// a double-tap forgets it.
 @MainActor
 @Suite("Pane divider physics", .serialized)
 struct PaneDividerPhysicsTests {
@@ -445,12 +445,71 @@ struct PaneDividerPhysicsTests {
         #expect(firstHost.companionWidth == 400)
         firstHost.hide()
 
-        // A second, unrelated companion, in a differently sized window,
-        // opens at the same fraction of its own width rather than the
-        // first one's absolute points.
+        // A second companion of the same pairing, in a differently sized
+        // window, opens at the same fraction of its own width rather than
+        // the first one's absolute points.
         let secondHost = PaneTestHost(width: 800, scenePanes: firstHost.scenePanes)
         defer { secondHost.hide() }
         secondHost.showPanel(minWidth: 200, idealWidth: 260, maxWidth: 700)
         #expect(secondHost.companionWidth == 320, "0.4 of the second window's 800pt width")
+    }
+
+    /// Each pairing keeps its own width: a width settled beside a chat never
+    /// opens the File Browser's reader, and each comes back at its own.
+    @Test func eachPairingRemembersItsOwnWidth() async throws {
+        let host = PaneTestHost(width: 1000)
+        defer { host.hide() }
+        host.showPanel(minWidth: 200, idealWidth: 300, maxWidth: 900, beside: .chat)
+        host.drag(by: -100)
+        #expect(host.companionWidth == 400)
+        try await close(host)
+
+        host.showPanel(minWidth: 200, idealWidth: 300, maxWidth: 900, beside: .fileBrowser)
+        #expect(host.companionWidth == 300, "another pairing opens at its own default")
+        host.drag(by: 50)
+        #expect(host.companionWidth == 250)
+        try await close(host)
+
+        host.showPanel(minWidth: 200, idealWidth: 300, maxWidth: 900, beside: .chat)
+        #expect(host.companionWidth == 400, "the chat's panel comes back at the width settled for it")
+        try await close(host)
+        host.showPanel(minWidth: 200, idealWidth: 300, maxWidth: 900, beside: .fileBrowser)
+        #expect(host.companionWidth == 250)
+    }
+
+    /// A double-tap on the divider returns the companion to its default
+    /// width, and the pairing forgets the width it had, so it opens there
+    /// next time too; from the full window it comes back beside its leaf.
+    @Test func aDoubleTapResetsThePairingToItsDefaultWidth() async throws {
+        let host = PaneTestHost(width: 1000)
+        defer { host.hide() }
+        host.showPanel(minWidth: 200, idealWidth: 300, maxWidth: 900)
+        host.drag(by: -150)
+        #expect(host.companionWidth == 450)
+
+        host.act { host.divider.onResetRequested?() }
+        host.settle()
+        #expect(host.companionWidth == 300)
+        try await close(host)
+        host.showPanel(minWidth: 200, idealWidth: 300, maxWidth: 900)
+        #expect(host.companionWidth == 300, "the reset width is the one it opens at")
+
+        host.act { host.divider.onExpandRequested?() }
+        host.settle()
+        #expect(host.divider.mode == .full)
+        host.act { host.divider.onResetRequested?() }
+        host.settle()
+        #expect(host.divider.mode == .beside)
+        #expect(host.companionWidth == 300)
+    }
+
+    /// Closes the shown panel and waits until the host has taken it off.
+    private func close(_ host: PaneTestHost) async throws {
+        host.screen.hidePanel()
+        try #require(
+            await waitForMainActorCondition(timeout: .seconds(3)) { host.companion == nil },
+            "the panel closed"
+        )
+        host.window.layoutIfNeeded()
     }
 }
