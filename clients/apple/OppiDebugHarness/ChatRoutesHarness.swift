@@ -785,6 +785,17 @@ enum ChatRoutesFixture {
                 text: "The preview is up: [Open the preview](\(link)).\n\nThe same page:\n\(bare)"
             ))
         }
+        // `CHAT_ROUTES_NOTEBOOK_LINK=1`: a reply linking the garden notebook
+        // (an Org file several screens long), where a file a chat links to
+        // opens and how wide it reads (`ReadingWidthUITests`).
+        if environment["CHAT_ROUTES_NOTEBOOK_LINK"] == "1" {
+            events.append(traceEvent(
+                id: "chat-routes-notebook-link", type: .assistant,
+                text: "I moved the spring planting into the season plan: peas along the trellis, lettuce once the nights "
+                    + "stay above 5 °C, and the bed table now shows this year beside last. It's in "
+                    + "[[garden.org]]."
+            ))
+        }
         if environment["CHAT_ROUTES_LIVE_WORK"] == "1" {
             events += liveWorkEvents
         }
@@ -1039,15 +1050,16 @@ private final class ChatRoutesURLProtocol: URLProtocol {
         case ("GET", "\(workspace)/contents"):
             // Alpha.txt sorts before Route.md by name and after it by date,
             // so a re-sort visibly flips them. Sources/ holds Git's change.
-            body = Self.json([
-                "path": "",
-                "entries": [
-                    ["name": "Sources", "path": "Sources/", "type": "directory", "size": 0, "modifiedAt": 1_800_000_000_000],
-                    ["name": "Alpha.txt", "path": "Alpha.txt", "type": "file", "size": 10, "modifiedAt": 1_700_000_000_000],
-                    ["name": "Route.md", "path": "Route.md", "type": "file", "size": 40, "modifiedAt": 1_900_000_000_000],
-                ],
-                "truncated": false,
-            ])
+            var entries: [[String: Any]] = [
+                ["name": "Sources", "path": "Sources/", "type": "directory", "size": 0, "modifiedAt": 1_800_000_000_000],
+                ["name": "Alpha.txt", "path": "Alpha.txt", "type": "file", "size": 10, "modifiedAt": 1_700_000_000_000],
+                ["name": "Route.md", "path": "Route.md", "type": "file", "size": 40, "modifiedAt": 1_900_000_000_000],
+            ]
+            if ProcessInfo.processInfo.environment["CHAT_ROUTES_NOTEBOOK_LINK"] == "1" {
+                // The reply's [[garden.org]] resolves against this folder.
+                entries.append(["name": "garden.org", "path": "garden.org", "type": "file", "size": 9_800, "modifiedAt": 1_900_000_000_000])
+            }
+            body = Self.json(["path": "", "entries": entries, "truncated": false])
         case ("GET", "\(workspace)/contents/Sources"):
             body = Self.json([
                 "path": "Sources/",

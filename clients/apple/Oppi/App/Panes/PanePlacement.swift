@@ -61,6 +61,8 @@ enum PaneContentKind: Equatable, Sendable, CaseIterable {
 /// - The first new pane splits the source pane. From the chat with other
 ///   panes open, it splits the most recently used of those instead, so the
 ///   chat keeps its share and is not squeezed to its minimum by each open.
+/// - A file that opens to the right takes its reading width of the pane it
+///   splits (`PaneReadingWidth`); every other new pane takes half.
 /// - On a compact window, with Split Panes off, or with the window at its
 ///   most panes and none to reuse, it opens in the main pane.
 enum PanePlacement: Equatable {
@@ -197,7 +199,10 @@ extension PaneHostController {
             }
             focus(cell: id)
         case .split(let target, let edge):
-            guard let made = panes.split(target, edge: edge, showing: content.entry) else { return false }
+            // A file beside a pane reads at its reading width; anything else,
+            // or a pane below, halves the cell.
+            let share = kind == .file && edge == .right ? readerShare(beside: target) : nil
+            guard let made = panes.split(target, edge: edge, showing: content.entry, share: share) else { return false }
             openingScreens[made] = screen()
             syncSplitLeaves()
             openingScreens[made] = nil
@@ -205,6 +210,13 @@ extension PaneHostController {
         }
         announceLayoutChange()
         return true
+    }
+
+    /// The share of `target`'s cell a reader split off its trailing edge takes
+    /// (`PaneReadingWidth.splitShare`).
+    private func readerShare(beside target: PaneID) -> Double? {
+        guard let width = cellFrame(target)?.width, let leaf = panes.cellLayout.leaf(target) else { return nil }
+        return PaneReadingWidth.splitShare(of: width, neighbourMinimum: minimumSize(of: leaf).width)
     }
 
     /// What `leaf` shows as the placement weighs it, naming the screens a

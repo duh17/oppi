@@ -1,10 +1,15 @@
 import Foundation
 import Observation
 
-/// A chat that can say where its reader is, for restoration.
+/// A chat the window's panes work with: where its reader is, for
+/// restoration, and the files its text links to, which open beside it.
 @MainActor
-protocol PaneChatScrollReporting: AnyObject {
+protocol PaneChat: AnyObject {
     var paneChatScroll: PaneChatScroll? { get }
+    /// Opens `target`, linked from session `sessionId`'s text on server
+    /// `serverId`, as this chat's reader beside it, as a file pill opens.
+    /// False when this is not that chat, or its panels do not open beside it.
+    func openLinkedFileBeside(_ target: WorkspaceLinkedFileNavTarget, sessionId: String, serverId: String) -> Bool
 }
 
 /// The window's pane tree (`PaneLayout`): its leaves, their weights, focus,
@@ -175,10 +180,11 @@ final class ScenePanes {
         return pair > 0 ? weights[index] / pair : nil
     }
 
-    /// `layout` with the companion's weight at `share` of the cell it shares
-    /// with the leaf before it, the pair keeping its total.
-    private static func settingCompanionShare(_ share: Double, of companion: PaneID, in layout: PaneLayout) -> PaneLayout? {
-        guard let path = layout.root.path(of: companion), let index = path.last, index > 0,
+    /// `layout` with `leaf`'s weight at `share` of the cell it shares with the
+    /// leaf before it (a companion, or a reader split off a pane), the pair
+    /// keeping its total.
+    private static func settingShare(_ share: Double, of leaf: PaneID, in layout: PaneLayout) -> PaneLayout? {
+        guard let path = layout.root.path(of: leaf), let index = path.last, index > 0,
               case .split(_, _, var weights)? = layout.root.node(at: Array(path.dropLast())) else { return nil }
         let pair = weights[index - 1] + weights[index]
         weights[index - 1] = pair * (1 - share)
@@ -204,7 +210,7 @@ final class ScenePanes {
         let leaf = PaneLeaf(id: freshLeafID(), name: nil, stack: stack, attachedTo: routedLeafID, origin: .attached)
         guard var opened = try? tree.split(routedLeafID, axis: .row, inserting: leaf) else { return }
         if let share = rememberedShare ?? drawnShare.map({ min(max($0, 0.05), 0.95) }),
-           let next = Self.settingCompanionShare(share, of: leaf.id, in: opened) {
+           let next = Self.settingShare(share, of: leaf.id, in: opened) {
             opened = next
         }
         tree = opened
@@ -221,7 +227,7 @@ final class ScenePanes {
     func setCompanionShare(_ share: Double) {
         let share = min(max(share, 0.05), 0.95)
         rememberedShare = share
-        guard let companionID, let next = Self.settingCompanionShare(share, of: companionID, in: tree) else { return }
+        guard let companionID, let next = Self.settingShare(share, of: companionID, in: tree) else { return }
         if next != tree { tree = next }
     }
 
@@ -293,7 +299,7 @@ final class ScenePanes {
         if let companionID, let companion = tree.leaf(companionID), next.leaf(routedLeafID) != nil,
            var withCompanion = try? next.split(routedLeafID, axis: .row, inserting: companion) {
             if let share = companionPairShare,
-               let shared = Self.settingCompanionShare(share, of: companionID, in: withCompanion) {
+               let shared = Self.settingShare(share, of: companionID, in: withCompanion) {
                 withCompanion = shared
             }
             withCompanion.recency = next.recency.flatMap { $0 == routedLeafID ? [$0, companionID] : [$0] }
@@ -323,12 +329,18 @@ final class ScenePanes {
     }
 
     /// Opens `entry` in a new leaf at `edge` of `id` (a drop on a pane's
-    /// edge). Returns the new leaf's id; focus stays where it was.
+    /// edge). `share` is the new leaf's part of the cell it splits off a
+    /// trailing edge (a reader at its reading width); nil halves it. Returns
+    /// the new leaf's id; focus stays where it was.
     @discardableResult
-    func split(_ id: PaneID, edge: PaneEdge, showing entry: PaneStackEntry) -> PaneID? {
+    func split(_ id: PaneID, edge: PaneEdge, showing entry: PaneStackEntry, share: Double? = nil) -> PaneID? {
         guard tree.leaves.count < PaneLayout.maximumLeaves else { return nil }
         let leaf = PaneLeaf(id: freshLeafID(), name: nil, stack: [entry], attachedTo: nil, origin: .split)
-        return changeCells { try $0.split(id, edge: edge, inserting: leaf) } ? leaf.id : nil
+        return changeCells { cells in
+            let split = try cells.split(id, edge: edge, inserting: leaf)
+            guard let share, edge.isTrailing else { return split }
+            return Self.settingShare(min(max(share, 0.05), 0.95), of: leaf.id, in: split) ?? split
+        } ? leaf.id : nil
     }
 
     /// The screens items opened as whose entries have no link (a file opened
@@ -631,8 +643,16 @@ final class ScenePanes {
         )
     }
 
-    func register(chat: PaneChatScrollReporting) {
+    func register(chat: PaneChat) {
         chats.add(chat)
+    }
+
+    /// A file linked from a chat's text opens beside that chat, when it is on
+    /// screen with room for its panels. False leaves the open to the caller.
+    func openLinkedFileBesideChat(_ target: WorkspaceLinkedFileNavTarget, sessionId: String, serverId: String) -> Bool {
+        chats.allObjects.contains {
+            ($0 as? PaneChat)?.openLinkedFileBeside(target, sessionId: sessionId, serverId: serverId) == true
+        }
     }
 
     /// A panel link: the session's chat opens `route` beside itself when it
@@ -707,7 +727,7 @@ final class ScenePanes {
             origin: .attached
         )
         guard var withPanel = try? layout.split(routed, axis: .row, inserting: side) else { return layout }
-        if let share = rememberedShare, let next = Self.settingCompanionShare(share, of: side.id, in: withPanel) {
+        if let share = rememberedShare, let next = Self.settingShare(share, of: side.id, in: withPanel) {
             withPanel = next
         }
         if handoff.panelFocused, let focused = try? withPanel.focusing(side.id) { withPanel = focused }
@@ -883,7 +903,7 @@ final class ScenePanes {
         }
         var scroll: [PaneID: PaneChatScroll] = [:]
         if case .session(let sessionId)? = layout.leaf(routedLeafID)?.stack.last?.route {
-            let reports = chats.allObjects.compactMap { ($0 as? PaneChatScrollReporting)?.paneChatScroll }
+            let reports = chats.allObjects.compactMap { ($0 as? PaneChat)?.paneChatScroll }
             // A restored position the chat has not taken yet is still the
             // reader's place.
             scroll[routedLeafID] = reports.first { $0.sessionId == sessionId }

@@ -909,6 +909,8 @@ enum ChatPanel: Hashable {
     case files, outline, git, context, share
     case reader(ChatReaderNavTarget)
     case timeline(ChatTimelinePanelTarget)
+    /// A file this chat's text links to.
+    case linkedFile(WorkspaceLinkedFileNavTarget)
     /// An extension surface's panel pane, by surface id (`PaneRoute.panel`).
     case panel(String)
 }

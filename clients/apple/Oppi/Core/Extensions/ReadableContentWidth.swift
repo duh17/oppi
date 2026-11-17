@@ -6,7 +6,7 @@ import UIKit
 /// views stay full-bleed; only the content column is capped.
 ///
 /// Reader prose keeps `ReaderReadingColumn`: it is pure prose at the reader's
-/// own text scale (40 em), and it widens tables and code past the column.
+/// own text scale (34 em), and it widens tables and code past the column.
 enum ReadableContentWidth {
     static let column: CGFloat = 760
 

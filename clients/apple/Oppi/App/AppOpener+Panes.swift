@@ -115,6 +115,18 @@ extension AppOpener {
     /// `PaneHostController.openBeside` puts it. False when it opens
     /// in the main pane as before: a compact window, Split Panes off, no room
     /// for a pane, a sheet in front, or Open Here (`opensInMainPane`).
+    /// A file a chat's text links to opens beside that chat as its reader, as
+    /// a file pill does, when the chat shows with room for its panels; else
+    /// beside the focused pane (`openBesideFocusedPane`). False when it
+    /// belongs in the main pane.
+    func openLinkedFileBeside(_ target: WorkspaceLinkedFileNavTarget, reference: ResourceReference) -> Bool {
+        if !opensInMainPane, let sessionId = reference.sourceSessionID, let serverId = reference.sourceServerID,
+           navigation.panes.openLinkedFileBesideChat(target, sessionId: sessionId, serverId: serverId) {
+            return true
+        }
+        return openBesideFocusedPane(PaneOpenContent(file: target), kind: .file)
+    }
+
     func openBesideFocusedPane(_ content: PaneOpenContent, kind: PaneContentKind) -> Bool {
         guard !opensInMainPane, let window = navigation.window,
               let host = PaneHostController.focused(in: window) else { return false }

@@ -662,6 +662,9 @@ struct PaneTreeHostTests {
         #expect(host.scenePanes.cellLayout.focus == pane, "the file's pane has focus")
         let frame = try #require(leafView(host, pane)).frame
         #expect(axis == .row ? frame.minX > 0 : frame.minY > 0)
+        if axis == .row {
+            #expect(abs(frame.width - PaneReadingWidth.reader) <= 2, "beside the chat, the file reads at its reading width: \(frame)")
+        }
 
         host.act {
             host.panes.focus(cell: routed)

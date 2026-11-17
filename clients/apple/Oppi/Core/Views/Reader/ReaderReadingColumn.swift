@@ -7,22 +7,32 @@ import UIKit
 /// the column reads at its full width.
 ///
 /// Reader prose keeps this column rather than `ReadableContentWidth`: it is
-/// pure prose at the reader's own text scale (40 em), and it widens tables and code.
+/// pure prose at the reader's own text scale (34 em), and it widens tables and code.
 ///
 /// The reader's scroll view stays full-bleed: touches in the margins scroll the
 /// document, the indicator sits at the window edge, and content passes under the
 /// bars edge to edge. Only each block is inset (`inset(for:in:)`).
 struct ReaderReadingColumn: Equatable {
-    /// 40 em of the reader's prose font: about 75 characters, and the width of
-    /// `readableContentGuide` (672 pt) at the default 17 pt body. It follows the
-    /// reader's own text size, which `readableContentGuide` would ignore.
-    static let proseEms: CGFloat = 40
+    /// 34 em of the reader's prose font: about 75 characters of the system
+    /// font (578 pt at the default 17 pt body; measured 75–78 characters a
+    /// line). `readableContentGuide`'s 672 pt holds about 90, too long a line
+    /// for a document. It follows the reader's own text size, which
+    /// `readableContentGuide` would ignore.
+    static let proseEms: CGFloat = 34
+    /// What a pane needs around the column on each side: the reader body's own
+    /// 12 pt inset and 16 pt of air, so a pane at `paneWidth` shows the whole
+    /// column without its text touching the pane's edges.
+    static let paneMargin: CGFloat = 28
 
     let proseWidth: CGFloat
 
     init(proseFontSize: CGFloat) {
         proseWidth = ceil(proseFontSize * Self.proseEms)
     }
+
+    /// The width a pane reads this column at in full: the reading width a
+    /// reader opens at beside a list or a chat (`PaneReadingWidth`).
+    var paneWidth: CGFloat { proseWidth + 2 * Self.paneMargin }
 
     /// The leading and trailing inset of `segment` in `available` width.
     @MainActor

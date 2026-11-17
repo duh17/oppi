@@ -19,19 +19,14 @@ import UIKit
 final class AttachedLeafController: UIViewController {
     struct Panel {
         let id: AnyHashable
-        let minWidth: CGFloat
-        let idealWidth: CGFloat
-        /// The soft ceiling of ordinary dragging; nil picks a width generous
-        /// enough for most content without being the whole window.
-        var maxWidth: CGFloat? = nil
+        /// What the panel shows, which decides its widths (`PaneReadingWidth`).
+        let role: PaneContentRole
         /// The panel's link, when it has one, so the window can restore it.
         var route: PaneStackEntry? = nil
         /// Builds the panel's UIKit screen when the leaf installs it.
         let makeScreen: () -> UIViewController
 
-        var widths: PaneCompanionWidths {
-            PaneCompanionWidths(minimum: minWidth, ideal: idealWidth, maximum: maxWidth)
-        }
+        @MainActor var widths: PaneCompanionWidths { PaneReadingWidth.widths(for: role) }
     }
 
     /// The divider was dragged or flung past the close threshold, same as

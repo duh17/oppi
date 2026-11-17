@@ -194,7 +194,8 @@ final class PaneLeafScreen: UIViewController, PaneKeyboardFollowing, PaneVisibil
     ) {
         leaf.show(
             AttachedLeafController.Panel(
-                id: "panel", minWidth: minWidth, idealWidth: idealWidth, maxWidth: maxWidth,
+                id: "panel",
+                role: .custom(PaneCompanionWidths(minimum: minWidth, ideal: idealWidth, maximum: maxWidth)),
                 makeScreen: makeScreen
             ),
             root: root

@@ -67,13 +67,13 @@ final class PaneLinkMenuUITests: XCTestCase, PreviewUITestCase {
     }
 
     /// The owner's ask: a tapped file, folder and web link each open beside
-    /// the chat, in landscape to its right, with the chat still in reach.
+    /// the chat, with the chat still in reach once the file closes.
     func testTappedLinksOpenBesideTheChatInLandscape() throws {
         try tapLinksOpenBesideTheChat(.landscapeLeft)
     }
 
-    /// In portrait the window's room is below the chat, so a tapped link's
-    /// pane opens there.
+    /// In portrait the window's room is below the chat, so a folder or web
+    /// link's pane opens there; a file covers the chat until it closes.
     func testTappedLinksOpenBelowTheChatInPortrait() throws {
         try tapLinksOpenBesideTheChat(.portrait)
     }
@@ -131,31 +131,21 @@ final class PaneLinkMenuUITests: XCTestCase, PreviewUITestCase {
         let pages = try startPages()
         try openChat(orientation: orientation, environment: ["CHAT_ROUTES_WEB_LINK": pages.url("one").absoluteString])
         let composer = app.descendants(matching: .any)["chat.input"]
-        let isPortrait = orientation == .portrait
-        func assertBeside(_ pane: XCUIElement, _ what: String) {
-            if isPortrait {
-                XCTAssertGreaterThanOrEqual(pane.frame.minY, composer.frame.maxY - 1, "\(what) opened below the chat")
-            } else {
-                XCTAssertGreaterThanOrEqual(pane.frame.minX, composer.frame.maxX - 1, "\(what) opened right of the chat")
-            }
-        }
         hold()
         attachScreenCapture("tap-\(orientation.isPortrait ? "portrait" : "landscape")-0-chat")
 
+        // A file opens as a file pill does: in the chat's column, at its
+        // reading width, or over the chat where the two do not fit.
         tapLink("Route.md")
-        let filePane = grips.matching(NSPredicate(format: "label CONTAINS 'Route.md'")).firstMatch
-        XCTAssertTrue(filePane.waitUntilExists(timeout: 10), "The file link opened Route.md in a pane")
-        XCTAssertEqual(grips.count, 2)
-        assertBeside(filePane, "Route.md")
-        XCTAssertTrue(composer.isHittable, "The chat stays")
+        let readerClose = app.buttons["fullScreen.code.close"]
+        XCTAssertTrue(readerClose.waitUntilExists(timeout: 10), "The file link opened Route.md beside the chat")
+        XCTAssertTrue(app.descendants(matching: .any)["pane.divider.0"].exists, "in the chat's column")
+        XCTAssertFalse(grips.matching(NSPredicate(format: "label CONTAINS 'Route.md'")).firstMatch.exists,
+                       "not in a pane of its own")
         hold()
         attachScreenCapture("tap-\(orientation.isPortrait ? "portrait" : "landscape")-1-file")
-
-        tapLink("Alpha.txt")
-        let alphaPane = grips.matching(NSPredicate(format: "label CONTAINS 'Alpha.txt'")).firstMatch
-        XCTAssertTrue(alphaPane.waitUntilExists(timeout: 10), "A second file link opened Alpha.txt")
-        XCTAssertFalse(filePane.exists, "in place of Route.md")
-        XCTAssertEqual(grips.count, 2, "in the file's pane, not a new one")
+        readerClose.tap()
+        XCTAssertTrue(readerClose.waitUntilGone(timeout: 5), "Close gives the chat the window back")
 
         tapLink("Sources")
         let folderRow = app.descendants(matching: .any)["fileBrowser.row.Sources/App.swift"]

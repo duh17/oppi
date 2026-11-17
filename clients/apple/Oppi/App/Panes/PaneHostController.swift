@@ -349,12 +349,19 @@ final class PaneHostController: UIViewController {
         announceLayoutChange()
     }
 
+    /// The sidebar showing or hiding changes the leading safe area, and with
+    /// it the width the companion has beside the primary (`companionWindow`).
+    override func viewSafeAreaInsetsDidChange() {
+        super.viewSafeAreaInsetsDidChange()
+        view.setNeedsLayout()
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         resolveCells()
-        // The primary's cell is the width it and its companion share: the
-        // window, or what the split leaves leave of it.
-        let cellWidth = routedCell.width
+        // The width the primary and its companion share: the window, or what
+        // the split leaves and the sidebar leave of it.
+        let cellWidth = routedCell.width > 0 ? companionWindow : 0
         if cellWidth > 0, lastBoundsWidth != cellWidth {
             // Only a change: the first layout, as a companion opens, must
             // leave the open's spring to carry the width from zero.
@@ -516,8 +523,10 @@ final class PaneHostController: UIViewController {
         view.setNeedsLayout()
     }
 
-    /// Replaces the shown companion in place: the width and full state stay,
-    /// so the pane does not close and reopen for a second reflow.
+    /// Replaces the shown companion in place: the full state stays, and so
+    /// does the width for the same kind of panel, so the pane does not close
+    /// and reopen for a second reflow. Another kind (a list replaced by a
+    /// reader) moves to the width it rests at.
     func replaceCompanion(
         _ old: UIViewController,
         with new: UIViewController,
@@ -537,6 +546,9 @@ final class PaneHostController: UIViewController {
         new.didMove(toParent: self)
         view.setNeedsLayout()
         view.layoutIfNeeded()
+        if current.widths != widths, !showsFull, settleAnimator == nil, dragStartWidth == nil {
+            animateWidth(to: restingWidth, initialVelocity: 0)
+        }
         updateVisibility()
     }
 
@@ -649,8 +661,19 @@ final class PaneHostController: UIViewController {
             minWidth: widths.minimum,
             idealWidth: widths.ideal,
             maxWidth: widths.maximum,
-            window: routedCell.width > 0 ? routedCell.width : view.bounds.width
+            window: companionWindow
         )
+    }
+
+    /// The width the primary and its companion share on screen: the primary's
+    /// cell, less what the split view's sidebar covers of it. The sidebar
+    /// floats over the host's leading edge and reaches it as the leading safe
+    /// area (`presentation(of:)`), so beside it the two fit, or the companion
+    /// covers the primary, by the width the person can see.
+    private var companionWindow: CGFloat {
+        let cell = routedCell.width > 0 ? routedCell : view.bounds
+        let covered = max(0, view.safeAreaInsets.left - cell.minX)
+        return max(0, cell.width - covered)
     }
 
     private var restingWidth: CGFloat {

@@ -285,8 +285,7 @@ final class CommitDetailViewController: UIViewController {
             inColumn ? file.map { file in
                 AttachedLeafController.Panel(
                     id: AnyHashable(file.id),
-                    minWidth: 320,
-                    idealWidth: 440,
+                    role: .reader,
                     makeScreen: diffController(file)
                 )
             } : nil,

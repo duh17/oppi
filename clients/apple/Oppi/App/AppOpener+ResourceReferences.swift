@@ -144,7 +144,7 @@ extension AppOpener {
             return .unreachable
         }
         await dismissCoveringDocumentOverlayThenNavigateIfCurrent(generation: generation) { [weak self] in
-            guard let self, !openBesideFocusedPane(PaneOpenContent(file: target), kind: .file) else { return }
+            guard let self, !openLinkedFileBeside(target, reference: reference) else { return }
             NotificationCenter.default.post(
                 name: .workspaceLinkedFileWillOpen,
                 object: target.sourceSessionId,
@@ -502,7 +502,7 @@ extension AppOpener {
             await dismissCoveringDocumentOverlayThenNavigateIfCurrent(generation: generation) { [weak self] in
                 guard let self else { return }
                 let target = Self.linkedFileTarget(file, reference: reference)
-                guard !openBesideFocusedPane(PaneOpenContent(file: target), kind: .file) else { return }
+                guard !openLinkedFileBeside(target, reference: reference) else { return }
                 postWorkspaceLinkedFileWillOpen(reference: reference)
                 navigation.openReferencedWorkspaceLinkedFile(
                     target,
@@ -537,7 +537,7 @@ extension AppOpener {
             await dismissCoveringDocumentOverlayThenNavigateIfCurrent(generation: generation) { [weak self] in
                 guard let self else { return }
                 let target = Self.linkedFileTarget(file, reference: reference)
-                guard !openBesideFocusedPane(PaneOpenContent(file: target), kind: .file) else { return }
+                guard !openLinkedFileBeside(target, reference: reference) else { return }
                 postWorkspaceLinkedFileWillOpen(reference: reference)
                 // Host files stay on the current stack. Do not select another
                 // workspace or pretend the file lives in this checkout.

@@ -732,8 +732,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         fileListLeaf.show(
             AttachedLeafController.Panel(
                 id: AnyHashable(FileListPanel().id),
-                minWidth: 240,
-                idealWidth: 300,
+                role: .listBesideReader,
                 makeScreen: { [weak self] in
                     let list = ReviewFileListViewController(
                         files: files,

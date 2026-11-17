@@ -136,7 +136,7 @@ extension PaneHostController {
 
     /// A cell's minimum by what it shows: the routed leaf is a chat; a
     /// screen with no link is a list, but for a page waiting for its address.
-    private func minimumSize(of leaf: PaneLeaf) -> CGSize {
+    func minimumSize(of leaf: PaneLeaf) -> CGSize {
         if leaf.id == panes.routedLeafID { return PaneMinimumSize.chat }
         let route = leaf.stack.last?.route ?? .sessions(workspace: nil)
         if case .local(let token) = route, case .browser? = PaneLocalScreen(token) { return PaneMinimumSize.browser }

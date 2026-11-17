@@ -167,6 +167,9 @@ extension ChatViewController {
                 model.panel = nil
                 ChatTimelineDestinationPresenter(connection: connection)
                     .open(target.request(sourceView: view, presenter: self))
+            case .linkedFile(let target)?:
+                model.panel = nil
+                openLinkedFileOverChat(target)
             case .panel(let surfaceId)?:
                 model.panel = nil
                 Router.push(makeExtensionPanel(surfaceId, closes: false), from: self)
@@ -177,12 +180,9 @@ extension ChatViewController {
         let panel = panelBeside
         attachedLeaf.show(
             panel.map { panel in
-                let width = panelWidth(panel)
-                return AttachedLeafController.Panel(
+                AttachedLeafController.Panel(
                     id: AnyHashable(panel),
-                    minWidth: width.minimum,
-                    idealWidth: width.ideal,
-                    maxWidth: width.maximum,
+                    role: panelRole(panel),
                     route: paneEntry(for: panel),
                     makeScreen: attachedLeafScreen(panel)
                 )
@@ -205,7 +205,7 @@ extension ChatViewController {
             return PaneStackEntry(serverId: serverId, route: .files(workspace: workspaceId, path: nil))
         case .git:
             return PaneStackEntry(serverId: serverId, route: .git(workspace: workspaceId, worktree: session?.worktreeId))
-        case .outline, .context, .share, .reader, .timeline, .panel:
+        case .outline, .context, .share, .reader, .timeline, .linkedFile, .panel:
             return nil
         }
     }
@@ -309,6 +309,7 @@ extension ChatViewController {
         case .share: shareRedactionController()
         case .reader(let target): readerPanelController(target)
         case .timeline(let target): timelinePanelController(target)
+        case .linkedFile(let target): linkedFilePanelController(target)
         case .panel(let surfaceId):
             panelController("The extension panel presents only while its chat is alive") {
                 $0.makeExtensionPanel(surfaceId, closes: true)
@@ -316,20 +317,45 @@ extension ChatViewController {
         }
     }
 
-    /// A document, image, or the share redaction review reads comfortably
-    /// wider than Files, Git, Outline, and Context, which are mostly lists.
-    /// Every panel is at least an iPhone wide (`PaneMinimumSize.attached`).
-    private func panelWidth(_ panel: ChatPanel) -> (minimum: CGFloat, ideal: CGFloat, maximum: CGFloat) {
-        let minimum = PaneMinimumSize.attached.width
-        return switch panel {
-        case .files, .outline, .git, .context: (minimum, 400, 640)
-        case .reader, .share, .timeline: (minimum, 520, 820)
-        case .panel(let surfaceId):
-            {
-                let widths = ExtensionPanelSnapshot.widths(for: panelHints(surfaceId))
-                return (widths.minimum, widths.ideal, widths.maximum ?? 820)
-            }()
+    /// A document, image, or the share redaction review reads at its reading
+    /// width; Files, Git, Outline, and Context are lists (`PaneReadingWidth`).
+    private func panelRole(_ panel: ChatPanel) -> PaneContentRole {
+        switch panel {
+        case .files, .outline, .git, .context: .list
+        case .reader, .share, .timeline, .linkedFile: .reader
+        case .panel(let surfaceId): .custom(ExtensionPanelSnapshot.widths(for: panelHints(surfaceId)))
         }
+    }
+
+    /// A file this chat's text links to, as the panel's root, the way a file
+    /// pill's viewer is: Back closes the panel.
+    private func linkedFilePanelController(_ target: WorkspaceLinkedFileNavTarget) -> () -> UIViewController {
+        { [weak self] in
+            guard let self else {
+                preconditionFailure("The linked file panel presents only while its chat is alive")
+            }
+            let connection = connection
+            var configuration = WorkspaceLinkedFileViewController.viewerConfiguration(
+                for: target,
+                workspaceRuntime: connection.workspaceStore.workspaces
+                    .first { $0.id == target.workspaceId }?.runtime,
+                addToChatDestination: canvasDestination
+            )
+            configuration.isPaneRoot = true
+            let viewer = FileViewerViewController(configuration: configuration, services: .init(connection: connection))
+            viewer.onLineAnchorNotice = { [weak connection] notice in connection?.extensionToast = notice }
+            viewer.onBackNavigation = { [weak self] in self?.closePanel(.linkedFile(target)) }
+            return viewer
+        }
+    }
+
+    /// A linked file over the chat, as narrow width opens it.
+    private func openLinkedFileOverChat(_ target: WorkspaceLinkedFileNavTarget) {
+        guard let serverId = connection.currentServerId else { return }
+        appNavigation.openReferencedWorkspaceLinkedFile(
+            target,
+            sourceSession: WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId, routeScope: focusedRouteScope)
+        )
     }
 
     /// A file or commit pill's destination as the column's root, built by
@@ -500,7 +526,16 @@ extension ChatViewController {
     }
 }
 
-extension ChatViewController: PaneChatScrollReporting {
+extension ChatViewController: PaneChat {
+    /// A file this chat's text links to opens beside the chat as its reader,
+    /// as a file pill does, where panels open beside it.
+    func openLinkedFileBeside(_ target: WorkspaceLinkedFileNavTarget, sessionId: String, serverId: String) -> Bool {
+        guard sessionId == self.sessionId, serverId == connection.currentServerId,
+              viewIfLoaded?.window != nil, opensPanelsBeside else { return false }
+        showPanel(.linkedFile(target))
+        return true
+    }
+
     /// Where the reader is, for the window's saved tree: the live tail, or
     /// the item at the top with its offset.
     var paneChatScroll: PaneChatScroll? {

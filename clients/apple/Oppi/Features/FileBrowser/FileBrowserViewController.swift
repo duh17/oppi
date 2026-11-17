@@ -1971,9 +1971,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         readerLeaf.show(
             beside ? AttachedLeafController.Panel(
                 id: AnyHashable(server),
-                minWidth: PaneMinimumSize.attached.width,
-                idealWidth: 520,
-                maxWidth: 820,
+                role: .reader,
                 route: paneEntry(forRowPath: selection.path),
                 makeScreen: makeReader
             ) : nil,
