@@ -23,6 +23,12 @@ import UIKit
 /// opened from a portrait iPad leaves.
 /// `PANE_RESTORE_SEED=chat-over-pdf` saves the chat over a PDF from the home
 /// folder in a pane below it, the window a divider is dragged to the top of.
+/// `PANE_RESTORE_SEED=git-below` saves the sessions over the workspace's Git
+/// in a pane below them, the window a pinned Git opened from a portrait iPad
+/// leaves.
+/// `PANE_RESTORE_SEED=sessions-below` saves the home folder's `notebook` in a
+/// pane above the sessions, so a chat opened there and its Git panel sit in
+/// the lower pane.
 /// `PANE_RESTORE_REX=1` saves one SSH host whose Rex is a fake one in process
 /// (`SSHTerminalRexListPreviewController.makeList`), so the launcher's Rex pane
 /// lists its sessions and opens one in the pane.
@@ -85,6 +91,8 @@ final class PaneRestorePreviewController: PreviewRootController {
         case "godot": PaneTreeStore().save(Self.godotTree(), scene: scene)
         case "files-below": PaneTreeStore().save(Self.filesBelowTree(), scene: scene)
         case "chat-over-pdf": PaneTreeStore().save(Self.chatOverPDFTree(), scene: scene)
+        case "git-below": PaneTreeStore().save(Self.gitBelowTree(), scene: scene)
+        case "sessions-below": PaneTreeStore().save(Self.sessionsBelowTree(), scene: scene)
         default: break
         }
         panes.connect(scene: scene)
@@ -180,6 +188,36 @@ final class PaneRestorePreviewController: PreviewRootController {
                                attachedTo: nil, origin: .split)),
             ], weights: [0.5, 0.5]),
             focus: pdf
+        ))
+    }
+
+    private static func sessionsBelowTree() -> PaneLayoutArchive? {
+        let workspace = ChatRoutesFixture.workspace.id
+        let routed = ScenePanes().routedLeafID
+        guard let files = PaneID("leaf-notebook") else { return nil }
+        return PaneLayoutArchive(restorable: PaneLayout(
+            root: .split(axis: .column, children: [
+                .leaf(PaneLeaf(id: files, name: nil, stack: [PaneStackEntry(serverId: serverId, route: .hostFiles(path: "~/notebook"))],
+                               attachedTo: nil, origin: .split)),
+                .leaf(PaneLeaf(id: routed, name: nil, stack: [PaneStackEntry(serverId: serverId, route: .sessions(workspace: workspace))],
+                               attachedTo: nil, origin: .split)),
+            ], weights: [0.3, 0.7]),
+            focus: routed
+        ))
+    }
+
+    private static func gitBelowTree() -> PaneLayoutArchive? {
+        let workspace = ChatRoutesFixture.workspace.id
+        let routed = ScenePanes().routedLeafID
+        guard let git = PaneID("leaf-git") else { return nil }
+        return PaneLayoutArchive(restorable: PaneLayout(
+            root: .split(axis: .column, children: [
+                .leaf(PaneLeaf(id: routed, name: nil, stack: [PaneStackEntry(serverId: serverId, route: .sessions(workspace: workspace))],
+                               attachedTo: nil, origin: .split)),
+                .leaf(PaneLeaf(id: git, name: nil, stack: [PaneStackEntry(serverId: serverId, route: .git(workspace: workspace, worktree: nil))],
+                               attachedTo: nil, origin: .split)),
+            ], weights: [0.3, 0.7]),
+            focus: git
         ))
     }
 

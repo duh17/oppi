@@ -271,6 +271,9 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
         self.pushChat = pushChat
         super.init(nibName: nil, bundle: nil)
         navigationItem.largeTitleDisplayMode = .never
+        // Pushed (a Git column or pane), Files sits beside the stack's Back
+        // instead of replacing it, which left no way back to the Git list.
+        navigationItem.leftItemsSupplementBackButton = true
     }
 
     @available(*, unavailable)

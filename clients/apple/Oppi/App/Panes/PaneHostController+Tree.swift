@@ -416,7 +416,7 @@ extension PaneHostController {
         let collapsed = panes.collapsedCells
         for id in order where showsGrips && !collapsed.contains(id) {
             guard var frame = presentation.frames[id] else { continue }
-            if id == panes.routedLeafID, !primary.view.isHidden { frame = primary.view.frame }
+            if id == panes.routedLeafID, let leaf = leafController(ofCell: id), !leaf.view.isHidden { frame = leaf.view.frame }
             shown.insert(id)
             let grip = grips[id] ?? makeGrip(id)
             grip.show(PaneGripView.Shown(
@@ -440,8 +440,13 @@ extension PaneHostController {
         for (id, grip) in grips where !shown.contains(id) { grip.isHidden = true }
     }
 
+    /// The leaf whose bar the cell's grip sits under: the routed cell's
+    /// companion while it covers the primary (full, or no room beside), so
+    /// the grip clears the companion's first row rather than the hidden
+    /// primary's; else the cell's own leaf.
     private func leafController(ofCell id: PaneID) -> UIViewController? {
-        id == panes.routedLeafID ? primary : splitLeaves[id]?.controller
+        guard id == panes.routedLeafID else { return splitLeaves[id]?.controller }
+        return companionCoveringPrimary ?? primary
     }
 
     /// The strip under each pane's bar that its grip or chip sits in: the
@@ -452,7 +457,20 @@ extension PaneHostController {
     /// search that hides as the list scrolls); a slot that moves lays the
     /// panes out again.
     private func reserveGripStrip(inCell id: PaneID, height: CGFloat) {
-        guard let navigation = leafController(ofCell: id) as? UINavigationController else { return }
+        if id == panes.routedLeafID {
+            // The primary keeps its strip under a covering companion; a
+            // companion beside it has no grip of its own and gives the strip back.
+            reserveGripStrip(in: primary, height: height)
+            if let companion = companionController {
+                reserveGripStrip(in: companion, height: companion === companionCoveringPrimary ? height : 0)
+            }
+            return
+        }
+        reserveGripStrip(in: leafController(ofCell: id), height: height)
+    }
+
+    private func reserveGripStrip(in leaf: UIViewController?, height: CGFloat) {
+        guard let navigation = leaf as? UINavigationController else { return }
         for screen in navigation.viewControllers {
             if screen.additionalSafeAreaInsets.top != height { screen.additionalSafeAreaInsets.top = height }
             guard height > 0, screen.isViewLoaded, PaneStripSlot.slot(in: screen) == nil else { continue }
@@ -471,7 +489,8 @@ extension PaneHostController {
         if frame.minY > view.bounds.minY { floor += PaneSplitDividerView.grabberThickness }
         guard let leaf = leafController(ofCell: id), leaf.view.window != nil else { return floor }
         leaf.view.layoutIfNeeded()
-        guard let screen = frontScreen(ofCell: id), let slot = PaneStripSlot.slot(in: screen) else { return floor }
+        let screen = (leaf as? UINavigationController)?.topViewController ?? leaf
+        guard let slot = PaneStripSlot.slot(in: screen) else { return floor }
         return max(floor, slot.convert(slot.bounds, to: view).minY)
     }
 

@@ -249,9 +249,11 @@ extension E2ETestCase {
     }
 
     /// Creates a git repository fixture with a real linked worktree on the E2E server.
+    /// `withChanges` gives the worktree two commits and uncommitted edits.
     func createLabGitWorktreeFixture(
         directoryName: String,
-        branchName: String
+        branchName: String,
+        withChanges: Bool = false
     ) throws -> E2ELabGitWorktreeFixture {
         let response = try e2eLabAPIJSON(
             method: "POST",
@@ -259,6 +261,7 @@ extension E2ETestCase {
             body: [
                 "directoryName": directoryName,
                 "branchName": branchName,
+                "withChanges": withChanges,
             ]
         )
         return E2ELabGitWorktreeFixture(

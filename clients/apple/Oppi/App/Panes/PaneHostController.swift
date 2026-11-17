@@ -672,6 +672,12 @@ final class PaneHostController: UIViewController {
         isFull || policy?.fitsBeside == false
     }
 
+    /// The companion's navigation, while one is open.
+    var companionController: UIViewController? { companion?.controller }
+
+    /// The companion, while it covers the primary (`showsFull`).
+    var companionCoveringPrimary: UIViewController? { showsFull ? companion?.controller : nil }
+
     /// The fit rule (build plan §1.3): a companion that does not fit beside
     /// its leaf at both minimums shows full, as the tree's zoom of it, and
     /// its divider offers only Close. When the window fits both again (a

@@ -14,78 +14,94 @@ struct GitStatusStoreEnvironment: Sendable {
     static let none = GitStatusStoreEnvironment()
 }
 
-/// Receives git status updates pushed over WebSocket after file-mutating tool calls.
+/// Each checkout's Git status, for every screen that shows one: a chat's Git
+/// button and panel, Workspace Detail, a Git pane. A checkout is tracked from
+/// its first `loadInitial` and keeps its own status, so two screens showing
+/// different checkouts (a chat beside a pinned Git pane) never take the status
+/// from each other.
 ///
-/// The server fires `git_status` events after edit/write/bash tool calls.
-/// This store simply holds the latest status per workspace. Also supports
-/// on-demand refresh via the REST endpoint (e.g. on initial load).
+/// The server pushes `git_status` after file-mutating tool calls and
+/// invalidates after workspace mutations; `loadInitial` fetches over REST, and
+/// `refreshTracked` fetches every tracked checkout again when the connection's
+/// event stream (re)connects.
 @MainActor @Observable
 final class GitStatusStore {
+    private struct Checkout: Hashable {
+        let workspaceId: String
+        /// The main checkout is always `WorkspaceWorktree.mainId`, never nil.
+        let worktreeId: String
+
+        init(_ workspaceId: String, _ worktreeId: String?) {
+            self.workspaceId = workspaceId
+            self.worktreeId = worktreeId ?? WorkspaceWorktree.mainId
+        }
+    }
+
+    private struct Entry {
+        var gitStatus: GitStatus?
+        var isLoading = false
+        /// Why the last fetch failed, until a status arrives.
+        var error: String?
+        var gitStatusEnabled = true
+    }
+
     private let environment: GitStatusStoreEnvironment
-
-    // MARK: - Public state
-
-    /// Latest git status for the active workspace. Nil until first push/fetch.
-    private(set) var gitStatus: GitStatus?
-
-    /// True while the initial fetch is in-flight.
-    private(set) var isLoading = false
-
-    /// The workspace/worktree this store is tracking.
-    private(set) var workspaceId: String?
-    private(set) var worktreeId: String?
-
-    private var invalidationRefreshTask: Task<Void, Never>?
+    private var entries: [Checkout: Entry] = [:]
+    @ObservationIgnored private var fetchTasks: [Checkout: Task<Void, Never>] = [:]
 
     init(environment: GitStatusStoreEnvironment = .none) {
         self.environment = environment
     }
 
-    /// The status, only while it is the one for `workspaceId` and `worktreeId`
-    /// (nil and the main worktree's id are the main checkout). The store holds
-    /// whichever checkout loaded last, so a chat reads its own through this and
-    /// never shows another chat's branch or counts.
+    // MARK: - Reading
+
+    /// That checkout's status (nil and the main worktree's id are the main
+    /// checkout), or nil before one arrived.
     func status(workspaceId: String, worktreeId: String?) -> GitStatus? {
-        tracks(workspaceId: workspaceId, worktreeId: worktreeId) ? gitStatus : nil
+        entries[Checkout(workspaceId, worktreeId)]?.gitStatus
     }
 
-    /// Whether the store is tracking that checkout, loaded yet or not. Until it
-    /// is, a chat's status is on its way rather than missing.
+    /// Whether the store is tracking that checkout, loaded yet or not.
     func tracks(workspaceId: String, worktreeId: String?) -> Bool {
-        self.workspaceId == workspaceId
-            && (self.worktreeId ?? WorkspaceWorktree.mainId) == (worktreeId ?? WorkspaceWorktree.mainId)
+        entries[Checkout(workspaceId, worktreeId)] != nil
     }
 
-    /// Whether that checkout's status is still on its way: nothing loaded for
-    /// it yet. Another checkout's status in the store counts as on its way (the
-    /// host loads this one when it appears), as does an in-flight fetch of this
-    /// one's first status. False once loaded, or once a fetch ended without one.
+    /// Whether that checkout's status is still on its way: not yet asked for
+    /// (its host loads it when it appears), or its first fetch in flight.
+    /// False once loaded, or once a fetch ended without one.
     func isAwaitingStatus(workspaceId: String, worktreeId: String?) -> Bool {
-        !tracks(workspaceId: workspaceId, worktreeId: worktreeId) || (gitStatus == nil && isLoading)
+        guard let entry = entries[Checkout(workspaceId, worktreeId)] else { return true }
+        return entry.gitStatus == nil && entry.isLoading
     }
 
-    // MARK: - Handle push from WebSocket
+    /// Why that checkout has no status: its last fetch failed. Nil while it
+    /// has a status or one is on its way.
+    func loadError(workspaceId: String, worktreeId: String?) -> String? {
+        guard let entry = entries[Checkout(workspaceId, worktreeId)], entry.gitStatus == nil, !entry.isLoading else { return nil }
+        return entry.error
+    }
 
-    /// Called when a `git_status` ServerMessage arrives.
+    // MARK: - Push from WebSocket
+
+    /// Called when a `git_status` ServerMessage arrives; a checkout no screen
+    /// tracks is ignored.
     func handleGitStatusPush(workspaceId: String, worktreeId: String? = nil, status: GitStatus) {
-        guard workspaceId == self.workspaceId,
-              (worktreeId ?? WorkspaceWorktree.mainId) == (self.worktreeId ?? WorkspaceWorktree.mainId) else { return }
-        invalidationRefreshTask?.cancel()
-        invalidationRefreshTask = nil
-        if gitStatus != status {
-            gitStatus = status
-        }
-        isLoading = false
+        let key = Checkout(workspaceId, worktreeId)
+        guard var entry = entries[key] else { return }
+        fetchTasks.removeValue(forKey: key)?.cancel()
+        if entry.gitStatus != status { entry.gitStatus = status }
+        entry.isLoading = false
+        entry.error = nil
+        entries[key] = entry
     }
 
     // MARK: - Invalidation
 
-    /// Refresh visible git status after a workspace-level file mutation invalidates it.
+    /// Refreshes a tracked checkout after a workspace-level file mutation.
     ///
-    /// The context bar uses stale-while-refreshing behavior: keep the current
-    /// bar visible while a debounced REST refresh checks whether file state
-    /// actually changed. This avoids clearing the bar for every low-level
-    /// invalidation event from an active session.
+    /// Stale-while-refreshing: the shown status stays while a debounced REST
+    /// refresh checks whether file state actually changed, so an active
+    /// session's stream of invalidations never blanks the bar.
     func invalidate(
         workspaceId: String,
         worktreeId: String? = nil,
@@ -93,94 +109,81 @@ final class GitStatusStore {
         gitStatusEnabled: Bool = true,
         debounce: Duration = .seconds(2)
     ) {
-        guard workspaceId == self.workspaceId,
-              (worktreeId ?? WorkspaceWorktree.mainId) == (self.worktreeId ?? WorkspaceWorktree.mainId) else { return }
-
-        invalidationRefreshTask?.cancel()
-        invalidationRefreshTask = nil
-
+        let key = Checkout(workspaceId, worktreeId)
+        guard entries[key] != nil else { return }
         guard gitStatusEnabled else {
-            gitStatus = nil
-            isLoading = false
+            fetchTasks.removeValue(forKey: key)?.cancel()
+            entries[key] = Entry(gitStatusEnabled: false)
             return
         }
+        guard let apiClient else { return }
+        fetch(key, apiClient: apiClient, debounce: debounce)
+    }
 
+    // MARK: - Loading
+
+    /// Tracks the checkout and fetches its status. A checkout already showing
+    /// a status keeps it while the fetch runs (no flash).
+    func loadInitial(
+        workspaceId: String,
+        worktreeId: String? = nil,
+        apiClient: (any WorkspaceGitStatusFetching)?,
+        gitStatusEnabled: Bool = true
+    ) {
+        let key = Checkout(workspaceId, worktreeId)
+        guard gitStatusEnabled else {
+            fetchTasks.removeValue(forKey: key)?.cancel()
+            entries[key] = Entry(gitStatusEnabled: false)
+            return
+        }
+        var entry = entries[key] ?? Entry()
+        entry.gitStatusEnabled = true
         guard let apiClient else {
+            // No connection yet (a cold launch restoring a Git pane): tracked
+            // and on its way; the event stream's connect fetches it.
+            entry.isLoading = true
+            entries[key] = entry
             return
         }
+        entries[key] = entry
+        fetch(key, apiClient: apiClient, debounce: nil)
+    }
 
-        isLoading = gitStatus == nil
-        invalidationRefreshTask = Task { [weak self] in
+    /// Fetches every tracked checkout again: the event stream (re)connected,
+    /// so pushes may have been missed, or a checkout was waiting for a client.
+    func refreshTracked(apiClient: any WorkspaceGitStatusFetching) {
+        for (key, entry) in entries where entry.gitStatusEnabled {
+            fetch(key, apiClient: apiClient, debounce: nil)
+        }
+    }
+
+    private func fetch(_ key: Checkout, apiClient: any WorkspaceGitStatusFetching, debounce: Duration?) {
+        fetchTasks.removeValue(forKey: key)?.cancel()
+        entries[key]?.isLoading = true
+        entries[key]?.error = nil
+        fetchTasks[key] = Task { [weak self] in
             do {
-                try await Task.sleep(for: debounce)
-                let status = try await apiClient.getGitStatus(workspaceId: workspaceId, worktreeId: worktreeId)
-                guard let self,
-                      self.workspaceId == workspaceId,
-                      (self.worktreeId ?? WorkspaceWorktree.mainId) == (worktreeId ?? WorkspaceWorktree.mainId) else { return }
-                if self.gitStatus != status {
-                    self.gitStatus = status
-                }
-                self.isLoading = false
-                self.invalidationRefreshTask = nil
+                if let debounce { try await Task.sleep(for: debounce) }
+                let status = try await apiClient.getGitStatus(workspaceId: key.workspaceId, worktreeId: key.worktreeId)
+                try Task.checkCancellation()
+                self?.finish(key, status: status, error: nil)
             } catch is CancellationError {
-                // A newer invalidation or explicit load will replace this refresh.
+                // A newer fetch or push for this checkout replaced this one.
             } catch {
-                guard let self,
-                      self.workspaceId == workspaceId,
-                      (self.worktreeId ?? WorkspaceWorktree.mainId) == (worktreeId ?? WorkspaceWorktree.mainId) else { return }
-                self.environment.logWarning("Debounced git status refresh failed: \(error.localizedDescription)")
-                self.isLoading = false
-                self.invalidationRefreshTask = nil
+                // A cancelled URL load throws its own error, not CancellationError.
+                guard !Task.isCancelled else { return }
+                self?.environment.logWarning("Git status fetch failed: \(error.localizedDescription)")
+                self?.finish(key, status: nil, error: error.localizedDescription)
             }
         }
     }
 
-    // MARK: - Initial load
-
-    /// Fetch initial git status when entering a chat view.
-    /// Subsequent updates arrive via WebSocket push.
-    func loadInitial(
-        workspaceId: String,
-        worktreeId: String? = nil,
-        apiClient: any WorkspaceGitStatusFetching,
-        gitStatusEnabled: Bool = true
-    ) {
-        invalidationRefreshTask?.cancel()
-        invalidationRefreshTask = nil
-
-        let normalizedWorktreeId = worktreeId ?? WorkspaceWorktree.mainId
-        let workspaceChanged = self.workspaceId != workspaceId || (self.worktreeId ?? WorkspaceWorktree.mainId) != normalizedWorktreeId
-        self.workspaceId = workspaceId
-        self.worktreeId = normalizedWorktreeId
-
-        guard gitStatusEnabled else {
-            gitStatus = nil
-            isLoading = false
-            return
-        }
-
-        // Clear stale status from a different workspace before fetching
-        if workspaceChanged {
-            gitStatus = nil
-        }
-
-        isLoading = gitStatus == nil
-
-        Task { [weak self] in
-            do {
-                let status = try await apiClient.getGitStatus(workspaceId: workspaceId, worktreeId: normalizedWorktreeId)
-                guard let self,
-                      self.workspaceId == workspaceId,
-                      (self.worktreeId ?? WorkspaceWorktree.mainId) == normalizedWorktreeId else { return }
-                if self.gitStatus != status {
-                    self.gitStatus = status
-                }
-            } catch is CancellationError {
-                // Expected
-            } catch {
-                self?.environment.logWarning("Initial git status fetch failed: \(error.localizedDescription)")
-            }
-            self?.isLoading = false
-        }
+    private func finish(_ key: Checkout, status: GitStatus?, error: String?) {
+        fetchTasks[key] = nil
+        guard var entry = entries[key], entry.gitStatusEnabled else { return }
+        if let status, entry.gitStatus != status { entry.gitStatus = status }
+        entry.isLoading = false
+        entry.error = status == nil ? error : nil
+        entries[key] = entry
     }
 }

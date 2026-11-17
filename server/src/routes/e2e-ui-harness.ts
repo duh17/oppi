@@ -249,6 +249,30 @@ async function handleGitWorktreeFixture(
     runFixtureGit(repoPath, ["branch", branchName]);
     await mkdir(managedWorktreesRoot, { recursive: true, mode: 0o700 });
     runFixtureGit(repoPath, ["worktree", "add", worktreePath, branchName]);
+    if (booleanField(body.withChanges) === true) {
+      // Commits on the worktree's branch, then uncommitted edits and a new
+      // file, so a Git screen lists changes and a commit graph.
+      await mkdir(join(worktreePath, "Sources"), { recursive: true, mode: 0o700 });
+      await writeFile(
+        join(worktreePath, "Sources", "App.swift"),
+        'let app = "Routes"\nprint(app)\n',
+        { mode: 0o600 },
+      );
+      runFixtureGit(worktreePath, ["add", "Sources/App.swift"]);
+      runFixtureGit(worktreePath, ["commit", "-m", "Add the app entry point"]);
+      await writeFile(
+        join(worktreePath, "README.md"),
+        "main checkout\n\nRoutes for the review.\n",
+        { mode: 0o600 },
+      );
+      runFixtureGit(worktreePath, ["commit", "-am", "Describe the routes"]);
+      await writeFile(
+        join(worktreePath, "Sources", "App.swift"),
+        'let app = "Routes"\nlet pane = "Git"\nprint(app, pane)\n',
+        { mode: 0o600 },
+      );
+      await writeFile(join(worktreePath, "NOTES.md"), "# Notes\n\nA new file.\n", { mode: 0o600 });
+    }
   } catch {
     helpers.error(res, 500, "Failed to create git worktree fixture");
     return;

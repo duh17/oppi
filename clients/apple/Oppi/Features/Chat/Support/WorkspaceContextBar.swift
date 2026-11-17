@@ -178,9 +178,9 @@ enum ContextBarQuickActionRouting {
 /// pin its bottom to the panel's below the required height of an empty bar
 /// (0). A file opens its review and a commit its detail, each from
 /// `presenter`: a sheet while the panel itself is a sheet, or, while the
-/// panel is hosted in the chat's attached leaf (`Options.hostedInPanel`),
-/// pushed inside that same column's navigation instead, with a back button
-/// to the panel (`presentReview`). The destination belongs to the presenter,
+/// panel is on a stack of its own (the chat's attached leaf, a Git pane;
+/// `Options.hostedInPanel`), pushed onto that stack instead, with a back
+/// button to the panel (`presentReview`). The destination belongs to the presenter,
 /// not to this bar, so a transient loss of Git content (the bar empties)
 /// leaves an open review alone.
 ///
@@ -215,12 +215,13 @@ final class WorkspaceContextBarView: UIView {
         /// A commit or review pushed in the column (`hostedInPanel`) hands
         /// its own started chats here too.
         var pushChat: ((ChatViewController) -> Void)?
-        /// `presenter` is itself the attached leaf's panel root (regular
-        /// width): a commit, a review, or a touched file's session copy
-        /// pushes inside that column's own navigation, with a back button to
-        /// the panel, instead of presenting as a sheet. False (the default)
-        /// keeps the sheet: a workspace's own Git panel and a compact-width
-        /// chat panel are never hosted in a column.
+        /// `presenter` is itself on a stack of its own: the attached leaf's
+        /// panel root (regular width), a Git pane's root, or a pushed Git
+        /// page. A commit, a review, or a touched file's session copy pushes
+        /// onto that stack, with a back button to the panel, instead of
+        /// presenting as a sheet. False (the default) keeps the sheet for a
+        /// panel that is itself a sheet (a workspace's Git, a compact-width
+        /// chat panel).
         var hostedInPanel = false
     }
 
@@ -474,9 +475,11 @@ final class WorkspaceContextBarView: UIView {
 
     /// Regular width (iPad, the iPhone Duo inner display) gets the larger git
     /// bar type. This is chrome, not reading text, so a fold steps it one
-    /// text style with the rest of the regular layout.
+    /// text style with the rest of the regular layout. It asks the window:
+    /// the chat's Git column reads compact (its attached leaf forces it) but
+    /// sits on the iPad's screen.
     private var usesRegularTypography: Bool {
-        AdaptiveWidth.isWide(traitCollection)
+        AdaptiveWidth.windowIsWide(self)
     }
 
     private func font(
@@ -487,6 +490,19 @@ final class WorkspaceContextBarView: UIView {
     ) -> UIFont {
         let style = usesRegularTypography ? regular : compact
         return mono ? UIFont.scaledMonospaced(style, weight) : UIFont.scaled(style, weight)
+    }
+
+    /// The list's rows (changed files, commits, the head commit): in regular
+    /// width footnote, the size of the diff and code text they open
+    /// (`AppFont.monoMedium`, 13 pt at the standard Code Text Size), so the
+    /// list does not read smaller than its review on the iPad.
+    private func rowFont(_ weight: UIFont.Weight = .regular, mono: Bool = false) -> UIFont {
+        font(.caption2, .footnote, weight, mono: mono)
+    }
+
+    /// A row's chevron, beside `rowFont`.
+    private var rowChevronFont: UIFont {
+        font(fixed: 8, .semibold, regular: .caption1, .semibold)
     }
 
     /// A fixed-size compact font (`Font.app*`) that steps to a text style in
@@ -916,10 +932,10 @@ final class WorkspaceContextBarView: UIView {
                 worktrees: graph.worktrees,
                 currentWorktreeId: self.context.worktreeId,
                 style: CommitGraphView.Style(
-                    sha: font(.caption2, .caption1, mono: true),
-                    message: font(.caption2, .caption1),
+                    sha: rowFont(mono: true),
+                    message: rowFont(),
                     chip: font(.caption2, .caption1, .medium),
-                    chevron: font(fixed: 8, .semibold, regular: .caption2, .semibold),
+                    chevron: rowChevronFont,
                     palette: palette
                 )
             )
@@ -1190,9 +1206,9 @@ final class WorkspaceContextBarView: UIView {
             afterCounts: afterCounts,
             showsChevron: !isSelecting && canTap,
             fonts: .init(
-                path: font(.caption2, .caption1, mono: true),
-                count: font(.caption2, .caption1, .bold, mono: true),
-                chevron: font(fixed: 8, .semibold, regular: .caption2, .semibold)
+                path: rowFont(mono: true),
+                count: rowFont(.bold, mono: true),
+                chevron: rowChevronFont
             ),
             verticalInset: usesRegularTypography ? 5 : 4,
             palette: palette
@@ -1226,12 +1242,12 @@ final class WorkspaceContextBarView: UIView {
     private func headCommitRow(_ gitStatus: GitStatus, palette: ThemePalette) -> UIView {
         var items: [UIView] = []
         if let sha = gitStatus.headSha {
-            let label = Self.label(sha, font: font(.caption2, .caption1, mono: true), color: palette.ui.comment)
+            let label = Self.label(sha, font: rowFont(mono: true), color: palette.ui.comment)
             label.setContentCompressionResistancePriority(.required, for: .horizontal)
             items.append(label)
         }
         if let message = gitStatus.lastCommitMessage {
-            let label = Self.label(message, font: font(.caption2, .caption1), color: palette.ui.fgDim)
+            let label = Self.label(message, font: rowFont(), color: palette.ui.fgDim)
             label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             items.append(label)
         }

@@ -4,19 +4,27 @@ import UIKit
 /// under a Git title with Close, and Pin for the checkout's Git route.
 /// A chat's opens as a sheet in compact width and in the attached leaf in
 /// regular width, like Outline and Context; a workspace's opens as a sheet
-/// from its top bar.
+/// from its top bar; a pinned or linked Git is a pane (`PaneGitScreens`).
 ///
 /// It reads its host's Git status (and a chat's session) live in
-/// `updateProperties()`. The bar opens its file reviews and commit details
-/// from this screen (`Options.hostedInPanel`): pushed inside the trailing
-/// column's own navigation, with a back button to this panel, while the
-/// panel itself is hosted there; a sheet over the panel otherwise (a
-/// compact-width chat panel, or a workspace's own Git sheet).
+/// `updateProperties()`, and asks `GitStatusStore` for its checkout each time
+/// it appears, so it never depends on its host having loaded it: a Git pane
+/// restored at launch has no host that would. Without a status it shows a
+/// `LoadState`: connecting, loading, a failure with Retry, or why there is
+/// none. The bar opens its file reviews and commit details
+/// from this screen (`Options.hostedInPanel`): pushed onto this panel's own
+/// stack, with a back button to it, while the panel is the trailing column's
+/// root, a Git pane's root, or a pushed page (`PaneGitScreens`); a sheet over
+/// the panel otherwise (a compact-width chat panel, or a workspace's own Git
+/// sheet).
 final class GitPanelViewController: UIViewController {
     private let readContext: () -> WorkspaceContextBarView.Context?
     private let bar: WorkspaceContextBarView
+    private let connection: ServerConnection
     private let onClose: () -> Void
-    private let statusLabel = UILabel()
+    /// Shown instead of the bar while there is no Git status to draw
+    /// (`git.panel.status`; its value names the state).
+    private let stateView = UIContentUnavailableView(loadState: .loading(nil))
     private var themeID: ThemeID?
     /// Pin or Unpin this checkout's Git (`git.panel.pin`, `git.panel.unpin`).
     private let pinItem = PinBarItem(identifiers: ("git.panel.pin", "git.panel.unpin"))
@@ -37,6 +45,7 @@ final class GitPanelViewController: UIViewController {
             apiClient: apiClient,
             navigation: navigation
         )
+        self.connection = connection
         self.onClose = onClose
         super.init(nibName: nil, bundle: nil)
     }
@@ -61,14 +70,9 @@ final class GitPanelViewController: UIViewController {
         bar.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(bar)
 
-        // Shown instead of the bar while there is no Git status to draw.
-        statusLabel.font = UIFont.scaled(.subheadline)
-        statusLabel.adjustsFontForContentSizeCategory = true
-        statusLabel.textAlignment = .center
-        statusLabel.numberOfLines = 0
-        statusLabel.accessibilityIdentifier = "git.panel.status"
-        statusLabel.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(statusLabel)
+        stateView.accessibilityIdentifier = "git.panel.status"
+        stateView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stateView)
 
         let guide = view.safeAreaLayoutGuide
         NSLayoutConstraint.activate([
@@ -83,10 +87,30 @@ final class GitPanelViewController: UIViewController {
                 fill.priority = .defaultHigh
                 return fill
             }(),
-            statusLabel.centerYAnchor.constraint(equalTo: guide.centerYAnchor),
-            statusLabel.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 24),
-            statusLabel.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -24),
+            stateView.topAnchor.constraint(equalTo: guide.topAnchor),
+            stateView.bottomAnchor.constraint(equalTo: guide.bottomAnchor),
+            stateView.leadingAnchor.constraint(equalTo: guide.leadingAnchor),
+            stateView.trailingAnchor.constraint(equalTo: guide.trailingAnchor),
         ])
+    }
+
+    override func viewIsAppearing(_ animated: Bool) {
+        super.viewIsAppearing(animated)
+        loadStatus()
+    }
+
+    /// Asks the store for this panel's checkout: on appear, and from Retry.
+    /// With no client yet the store holds it as on its way, and the event
+    /// stream's connect fetches it (`GitStatusStore.refreshTracked`).
+    private func loadStatus() {
+        guard let context = readContext(), let workspaceId = context.workspaceId else { return }
+        let workspace = connection.workspaceStore.workspaces.first { $0.id == workspaceId }
+        connection.gitStatusStore.loadInitial(
+            workspaceId: workspaceId,
+            worktreeId: context.worktreeId,
+            apiClient: connection.apiClient,
+            gitStatusEnabled: workspace?.gitStatusEnabled ?? true
+        )
     }
 
     override func updateProperties() {
@@ -96,7 +120,6 @@ final class GitPanelViewController: UIViewController {
             themeID = current
             overrideUserInterfaceStyle = current.preferredColorScheme == .light ? .light : .dark
             view.backgroundColor = current.palette.ui.bg
-            statusLabel.textColor = current.palette.ui.comment
         }
         guard let context = readContext() else { return }
         bar.context = context
@@ -104,15 +127,44 @@ final class GitPanelViewController: UIViewController {
             route: context.workspaceId.map { .git(workspace: $0, worktree: context.worktreeId) },
             serverId: context.serverId, root: AppRootEnvironment.near(self), view: view
         )
-        statusLabel.text = Self.statusText(context)
-        statusLabel.isHidden = statusLabel.text == nil
+        let state = loadState(context)
+        stateView.isHidden = state == nil
+        stateView.accessibilityValue = state?.kind
+        if let state {
+            stateView.configuration = UIContentUnavailableConfiguration.loadState(state.loadState, palette: current.palette)
+        }
     }
 
-    /// Why there is no Git status to show, or nil when the bar draws it.
-    private static func statusText(_ context: WorkspaceContextBarView.Context) -> String? {
-        guard let gitStatus = context.gitStatus else {
-            return context.isLoading ? String(localized: "Loading Git status…") : String(localized: "No Git status")
+    /// What shows instead of the bar, or nil when the bar draws the status.
+    private struct ShownState {
+        let kind: String
+        let loadState: LoadState
+    }
+
+    private func loadState(_ context: WorkspaceContextBarView.Context) -> ShownState? {
+        if let gitStatus = context.gitStatus {
+            guard !gitStatus.isGitRepo else { return nil }
+            return ShownState(kind: "empty", loadState: .empty(
+                title: String(localized: "Not a Git Repository"), systemImage: "arrow.triangle.branch"
+            ))
         }
-        return gitStatus.isGitRepo ? nil : String(localized: "Not a Git repository")
+        let error = context.workspaceId.flatMap {
+            connection.gitStatusStore.loadError(workspaceId: $0, worktreeId: context.worktreeId)
+        }
+        if let error {
+            return ShownState(kind: "failed", loadState: .failed(
+                title: String(localized: "Couldn\u{2019}t Load Git Status"),
+                message: error,
+                retry: RetryAction { [weak self] in self?.loadStatus() }
+            ))
+        }
+        if context.isLoading {
+            return connection.apiClient == nil
+                ? ShownState(kind: "connecting", loadState: .connecting)
+                : ShownState(kind: "loading", loadState: .loading(String(localized: "Loading Git status…")))
+        }
+        return ShownState(kind: "empty", loadState: .empty(
+            title: String(localized: "No Git Status"), systemImage: "arrow.triangle.branch"
+        ))
     }
 }

@@ -3,7 +3,8 @@ import UIKit
 /// The screens of a `git` and a `commit` route (an `oppi://git` link, a pin):
 /// a workspace's Git panel (its branch, changes, and commit graph, as
 /// Workspace Detail's Git button shows it) and one commit's detail. A pane
-/// shows them as its root; a compact window pushes them.
+/// shows them as its root; a compact window pushes them. The Git panel's rows
+/// push onto that same stack.
 @MainActor
 enum PaneGitScreens {
     /// The screen for `entry`, or nil for another route or a server this
@@ -45,16 +46,8 @@ enum PaneGitScreens {
         root: AppRootEnvironment,
         close: @escaping () -> Void
     ) -> GitPanelViewController {
+        // The panel loads this checkout each time it appears.
         let store = connection.gitStatusStore
-        if let api = connection.apiClient {
-            let workspace = connection.workspaceStore.workspaces.first { $0.id == workspaceId }
-            store.loadInitial(
-                workspaceId: workspaceId,
-                worktreeId: worktreeId,
-                apiClient: api,
-                gitStatusEnabled: workspace?.gitStatusEnabled ?? true
-            )
-        }
         let panel = GitPanelViewController(
             context: {
                 WorkspaceContextBarView.Context(
@@ -65,7 +58,10 @@ enum PaneGitScreens {
                     serverId: serverId
                 )
             },
-            options: .init(),
+            // A pane's root or a pushed page: a file's review, a commit, and a
+            // touched file's copy push onto the same stack, with its Back to
+            // this list, never a sheet over every pane.
+            options: .init(hostedInPanel: true),
             connection: connection,
             apiClient: connection.apiClient,
             navigation: root.navigation,

@@ -517,6 +517,129 @@ final class PaneSplitUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(waitFor(row.isHittable && !body.exists), "Back returns the pane to the folder")
     }
 
+    /// A workspace's Git in a pane below the sessions (a pinned Git opened
+    /// from a portrait iPad): full width, so regular width. A changed file's
+    /// review, a commit, and a commit's file diff each push onto that pane's
+    /// own stack and fill it, and each Back returns one step, to the Git list
+    /// last. Nothing opens as a sheet or a column beside.
+    func testGitPaneRowsPushOnThatPaneAndBackReturnsInPortrait() throws {
+        try gitPaneRowsPushOnThatPane(.portrait, name: "portrait")
+    }
+
+    func testGitPaneRowsPushOnThatPaneAndBackReturnsInLandscape() throws {
+        try gitPaneRowsPushOnThatPane(.landscapeLeft, name: "landscape")
+    }
+
+    private func gitPaneRowsPushOnThatPane(_ orientation: UIDeviceOrientation, name: String) throws {
+        guard UIDevice.current.userInterfaceIdiom == .pad else {
+            throw XCTSkip("A pane below another is regular width only on the iPad mini")
+        }
+        XCUIDevice.shared.orientation = orientation
+        addTeardownBlock { @MainActor in XCUIDevice.shared.orientation = .portrait }
+        launchPreview(screen: "pane-restore", environment: ["PANE_RESTORE_SEED": "git-below"], colorScheme: "dark", ready: nil)
+        let pane = app.descendants(matching: .any)["pane.leaf.leaf-git"]
+        let gitBar = pane.navigationBars["Git"]
+        XCTAssertTrue(gitBar.waitUntilExists(timeout: 10), "The pane below shows the workspace's Git")
+        let fileRow = pane.buttons.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "App.swift", "+2")).firstMatch
+        XCTAssertTrue(fileRow.waitUntilExists(timeout: 10), "The Git pane lists the changed file")
+        let grips = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane.grip.'"))
+        // The Git list's bar: a page pushed onto the pane's stack has its bar there.
+        let paneFrame = gitBar.frame
+        hold()
+        attachScreenCapture("\(name)-git-pane")
+
+        // A changed file: its review fills the pane, with the stack's Back.
+        fileRow.tap()
+        let review = pane.navigationBars["App.swift"]
+        XCTAssertTrue(review.waitUntilExists(timeout: 10), "The file's review opened in the Git pane")
+        assertFillsPane(review, paneFrame, "review")
+        XCTAssertEqual(grips.count, 2, "The review opened in its own pane, not a new one")
+        hold()
+        attachScreenCapture("\(name)-git-pane-diff")
+        review.buttons["BackButton"].tap()
+        XCTAssertTrue(waitFor(gitBar.exists && !review.exists && fileRow.isHittable), "Back returns the pane to the Git list")
+        attachScreenCapture("\(name)-git-pane-diff-back")
+
+        // A commit, then one of its files: two pushes, two Backs.
+        let commitRow = pane.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Route commit")).firstMatch
+        XCTAssertTrue(commitRow.waitUntilExists(timeout: 5), "The Git pane lists the commit")
+        commitRow.tap()
+        let commit = pane.navigationBars["Commit"]
+        XCTAssertTrue(commit.waitUntilExists(timeout: 10), "The commit opened in the Git pane")
+        assertFillsPane(commit, paneFrame, "commit")
+        hold()
+        attachScreenCapture("\(name)-git-pane-commit")
+        let commitFile = pane.buttons["commit-detail.file"].firstMatch
+        XCTAssertTrue(commitFile.waitUntilExists(timeout: 10), "The commit lists its file")
+        commitFile.tap()
+        let diff = pane.navigationBars["App.swift"]
+        XCTAssertTrue(diff.waitUntilExists(timeout: 10), "The commit's file diff opened in the Git pane")
+        assertFillsPane(diff, paneFrame, "commit diff")
+        XCTAssertFalse(app.buttons["commit-detail.diff.close"].exists, "A pushed diff has Back, not its own Close")
+        hold()
+        attachScreenCapture("\(name)-git-pane-commit-diff")
+        diff.buttons["BackButton"].tap()
+        XCTAssertTrue(waitFor(commit.exists && !diff.exists), "Back returns to the commit")
+        commit.buttons["BackButton"].tap()
+        XCTAssertTrue(waitFor(gitBar.exists && !commit.exists && fileRow.isHittable), "Back again returns to the Git list")
+        attachScreenCapture("\(name)-git-pane-commit-back")
+    }
+
+    /// A chat in the lower pane with its Git panel covering it (no room
+    /// beside on the iPad mini in portrait): the pane's grip sits under the
+    /// panel's bar, clear of its branch row, and of a review's header after a
+    /// file pushes. The review keeps the stack's Back beside its Files button
+    /// and returns to the Git list.
+    func testAChatsGitPanelBelowKeepsBackAndClearsTheGrip() throws {
+        guard UIDevice.current.userInterfaceIdiom == .pad else {
+            throw XCTSkip("A pane below another is regular width only on the iPad mini")
+        }
+        XCUIDevice.shared.orientation = .portrait
+        launchPreview(screen: "pane-restore", environment: ["PANE_RESTORE_SEED": "sessions-below"], colorScheme: "dark", ready: nil)
+        let row = app.descendants(matching: .any)[sessionRow]
+        XCTAssertTrue(row.waitUntilExists(timeout: 10), "The fixture session is listed in the lower pane")
+        row.tap()
+        let git = app.buttons["chat.toolbar.git"]
+        XCTAssertTrue(git.waitUntilExists(timeout: 10), "The chat opened")
+        git.tap()
+        let gitBar = app.navigationBars["Git"]
+        XCTAssertTrue(gitBar.waitUntilExists(timeout: 10), "The chat's Git panel opened")
+        let scope = app.segmentedControls["workspace-context-bar.scope"]
+        XCTAssertTrue(scope.waitUntilExists(timeout: 5), "The panel offers This session / All changes")
+        scope.buttons["All changes (2)"].tap()
+        let grip = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane.grip.' AND label ENDSWITH '2 of 2'")).firstMatch
+        XCTAssertTrue(grip.waitUntilExists(timeout: 5), "The lower pane has its grip")
+        let branch = app.staticTexts["main"].firstMatch
+        XCTAssertTrue(branch.waitUntilExists(timeout: 5), "The panel shows its branch")
+        hold()
+        attachScreenCapture("chat-git-below")
+        XCTAssertGreaterThanOrEqual(grip.frame.minY, gitBar.frame.maxY - 1, "The grip sits under the panel's bar: grip \(grip.frame), bar \(gitBar.frame)")
+        XCTAssertFalse(grip.frame.intersects(branch.frame), "The grip covers the branch: grip \(grip.frame), branch \(branch.frame)")
+
+        let fileRow = app.buttons.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "App.swift", "+2")).firstMatch
+        fileRow.tap()
+        let review = app.navigationBars["App.swift"]
+        XCTAssertTrue(review.waitUntilExists(timeout: 10), "The file's review opened")
+        XCTAssertTrue(review.buttons["review-file.list.show"].waitUntilExists(timeout: 5), "Two changed files offer the file list")
+        XCTAssertTrue(review.buttons["BackButton"].exists, "The file list button sits beside Back, not in its place")
+        hold()
+        attachScreenCapture("chat-git-below-review")
+        let header = app.staticTexts.matching(NSPredicate(format: "label == %@", "App.swift")).allElementsBoundByIndex
+            .first { $0.frame.minY >= review.frame.maxY }
+        let headerFrame = try XCTUnwrap(header?.frame, "The review shows its file header under the bar")
+        XCTAssertFalse(grip.frame.intersects(headerFrame), "The grip covers the review's header: grip \(grip.frame), header \(headerFrame)")
+        review.buttons["BackButton"].tap()
+        XCTAssertTrue(waitFor(gitBar.exists && !review.exists), "Back returns to the Git list")
+    }
+
+    /// `bar` is the top of the pane's stack: where the Git list's bar was.
+    private func assertFillsPane(_ bar: XCUIElement, _ listBar: CGRect, _ what: String,
+                                 file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(waitFor(abs(bar.frame.width - listBar.width) < 4 && abs(bar.frame.minY - listBar.minY) < 4),
+                      "The \(what) fills the Git pane: bar \(bar.frame), Git list's bar \(listBar)", file: file, line: line)
+        XCTAssertTrue(bar.buttons["BackButton"].exists, "The \(what) has the stack's Back", file: file, line: line)
+    }
+
     /// iPad mini portrait: the sidebar is a drawer that covers the panes, so
     /// ⌘D with it open closes it and splits the focused pane in sight.
     func testSplitWithTheDrawerOpenClosesItAndSplitsInSight() throws {

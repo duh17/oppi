@@ -2111,6 +2111,9 @@ final class ServerConnection {
 
         appEventStreamConnectedAt = Date()
         appEventListRepair.streamConnected()
+        // Pushes sent while the stream was down are lost, and a Git screen
+        // restored before the client existed is still waiting.
+        if let apiClient { gitStatusStore.refreshTracked(apiClient: apiClient) }
     }
 
     private func makeAppEventStreamURL(selection: EndpointSelection) -> URL? {
