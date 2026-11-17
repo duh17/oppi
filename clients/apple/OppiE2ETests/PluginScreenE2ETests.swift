@@ -23,6 +23,18 @@ final class PluginScreenE2ETests: E2ETestCase {
         entry = try XCTUnwrap(sidebar?.first { $0["feature"] as? String == feature }?["id"] as? String, "No \(feature) entry")
     }
 
+    /// The Add sheet filled with `name` and an HTTP URL, then Add.
+    private func submitServer(_ name: String, on page: String) {
+        tap(app.buttons["screen.\(entry).\(page).bar.add"], named: "Add bar button", timeout: 30)
+        let field = app.textFields[id("add", "configuration", "name")]
+        tap(field, named: "server name field", timeout: 30)
+        field.typeText(name)
+        let url = app.textFields[id("add", "http", "url")]
+        tap(url, named: "URL field")
+        url.typeText("http://127.0.0.1:9/mcp")
+        tap(app.buttons["screen.\(entry).add.submit"], named: "Add")
+    }
+
     /// The Add sheet: Add stays off until the name and URL are in, Cancel and swipe-down close
     /// it, and Add saves and closes it.
     private func addServer(_ name: String, on page: String) {
@@ -70,6 +82,19 @@ final class PluginScreenE2ETests: E2ETestCase {
         // The list probes again by itself and shows the new server.
         let row = app.buttons[id("list", "servers", "server.\(name)")]
         XCTAssertTrue(row.waitForExistence(timeout: 45), "The added server is not listed")
+
+        // A failed action: the server refuses the same name again, and the sheet stays open with
+        // the server's words in a row VoiceOver reads.
+        submitServer(name, on: "list")
+        let failure = app.cells["screen.\(entry).add.failure"]
+        XCTAssertTrue(
+            scrollToElement(failure, in: app.collectionViews["screen.\(entry).add.list"], timeout: 30),
+            "The refused Add shows no failure row"
+        )
+        XCTAssertTrue(failure.label.contains("already exists"), "The failure row does not say why: '\(failure.label)'")
+        tap(app.buttons["Cancel"], named: "Cancel")
+        XCTAssertTrue(app.navigationBars["Add MCP Server"].waitForNonExistence(timeout: 10), "Cancel did not close the Add sheet")
+
         tap(row, named: "the added server")
         XCTAssertTrue(app.navigationBars[name].waitForExistence(timeout: 15), "The server's page did not open")
 

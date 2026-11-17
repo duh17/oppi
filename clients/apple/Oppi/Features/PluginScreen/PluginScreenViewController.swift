@@ -612,11 +612,15 @@ final class PluginScreenViewController: ListScreenController<String, String> {
         }
     }
 
-    /// `item` and `button`: one button each, the row's one accessibility element.
+    /// `item` and `button`: one button each, the row's one accessibility element. A note and a
+    /// failed action's words: one read-only element.
     override func configureCard(_ cell: SidebarListCell, item: String) {
         let palette = palette
         guard let (row, section) = locate(item) else {
+            // A failed action's row, which `dequeue` draws as a card too: its words are
+            // `configure`'s.
             ListScreen.staticRow(cell)
+            configure(cell, item: item)
             return
         }
         let id = identifier(row.id, in: section)
