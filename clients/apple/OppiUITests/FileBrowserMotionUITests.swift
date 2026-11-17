@@ -27,7 +27,7 @@ final class FileBrowserMotionUITests: XCTestCase, PreviewUITestCase {
         assertMarker("FILE_MOTION_BETA")
         tapPrevious()
         assertMarker("FILE_MOTION_ALPHA")
-        XCTAssertFalse(app.buttons["fileViewer.previous"].exists)
+        assertNoPrevious()
     }
 
     func testOrdinaryNextThenPreviousWithoutReduceMotion() {
@@ -54,7 +54,7 @@ final class FileBrowserMotionUITests: XCTestCase, PreviewUITestCase {
         assertMarker("FILE_MOTION_BETA")
         tapPrevious()
         assertMarker("FILE_MOTION_ALPHA")
-        XCTAssertFalse(app.buttons["fileViewer.previous"].exists)
+        assertNoPrevious()
     }
 
     func testReviewNextThenPreviousWithoutReduceMotion() {
@@ -92,15 +92,46 @@ final class FileBrowserMotionUITests: XCTestCase, PreviewUITestCase {
     }
 
     private func tapNext() {
-        let button = app.buttons["fileViewer.next"]
-        XCTAssertTrue(button.waitUntilExists(timeout: 4), "Next file control missing")
-        button.tap()
+        let control = adjacentControl("fileViewer.next", label: "Next file")
+        XCTAssertTrue(control.exists, "Next file control missing from the bar and its …")
+        control.tap()
     }
 
     private func tapPrevious() {
-        let button = app.buttons["fileViewer.previous"]
-        XCTAssertTrue(button.waitUntilExists(timeout: 4), "Previous file control missing")
-        button.tap()
+        let control = adjacentControl("fileViewer.previous", label: "Previous file")
+        XCTAssertTrue(control.exists, "Previous file control missing from the bar and its …")
+        control.tap()
+    }
+
+    /// The previous or next file where the Reader Bar puts it: its button, or
+    /// its row in the … when a narrow bar (the iPhone's tree pane) crowds it out.
+    private func adjacentControl(_ identifier: String, label: String) -> XCUIElement {
+        let button = app.buttons[identifier].firstMatch
+        if button.waitUntilExists(timeout: 4), button.isHittable { return button }
+        return openMenu().buttons.matching(Self.row(identifier, label: label)).firstMatch
+    }
+
+    /// The first file offers no Previous, on the bar or in its ….
+    private func assertNoPrevious() {
+        XCTAssertFalse(app.buttons["fileViewer.previous"].exists, "The first file has no Previous button")
+        let menu = openMenu()
+        XCTAssertFalse(
+            menu.buttons.matching(Self.row("fileViewer.previous", label: "Previous file")).firstMatch.exists,
+            "The first file has no Previous row in the …"
+        )
+    }
+
+    /// Opens the bar's … and returns its menu.
+    private func openMenu() -> XCUIElement {
+        app.barOverflowButton.tap()
+        XCTAssertTrue(app.buttons["fileViewer.menu.customize"].waitUntilExists(timeout: 5), "the … opens with Customize Bar…")
+        return app.collectionViews.containing(.button, identifier: "fileViewer.menu.customize").firstMatch
+    }
+
+    /// A crowded-out row is UIKit's, from the button's title: it may not keep
+    /// the button's identifier.
+    private static func row(_ identifier: String, label: String) -> NSPredicate {
+        NSPredicate(format: "identifier == %@ OR label ==[c] %@", identifier, label)
     }
 
     private func assertMarker(_ marker: String) {
