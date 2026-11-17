@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Oppi <noreply@oppi.invalid>
 Date: Sun, 15 Nov 2026 12:00:00 -0800
-Subject: [PATCH 6/7] Window: ask for the mouse only where there is one
+Subject: [PATCH 6/8] Window: ask for the mouse only where there is one
 
 The root window simulated a mouse-enter by asking the display server for the mouse position on every start. A display server without a mouse (iOS) answers that with an error, so every game logged "Mouse is not supported by this display server." at launch.
 ---

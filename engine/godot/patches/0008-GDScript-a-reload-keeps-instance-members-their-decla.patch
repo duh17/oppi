@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oppi <noreply@oppi.invalid>
+Date: Tue, 17 Nov 2026 08:52:02 -0800
+Subject: [PATCH 8/8] GDScript: a reload keeps instance members their declared
+ type
+
+A reload that keeps live instances (the debugger's hot reload, a host's
+script reload) left a member the new script adds as Nil, and kept the
+old value of a member whose type changed. Typed bytecode trusts a
+member to hold its type: a for loop over a new Array member read a Nil
+as an array and crashed. Such a member now starts at its type's
+default, as in a new instance before its initializer runs.
+
+The same bug upstream: godotengine/godot#119057, #124352.
+---
+ modules/gdscript/gdscript.cpp        | 11 ++++++++++-
+ modules/gdscript/gdscript_function.h |  4 +++-
+ 2 files changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/modules/gdscript/gdscript.cpp b/modules/gdscript/gdscript.cpp
+index f9f9567..a5a6458 100644
+--- a/modules/gdscript/gdscript.cpp
++++ b/modules/gdscript/gdscript.cpp
+@@ -2043,10 +2043,19 @@ void GDScriptInstance::reload_members() {
+ 
+ 	//pass the values to the new indices
+ 	for (KeyValue<StringName, GDScript::MemberInfo> &E : script->member_indices) {
++		const GDScriptDataType &type = E.value.data_type;
+ 		if (member_indices_cache.has(E.key)) {
+ 			Variant value = members[member_indices_cache[E.key]];
+-			new_members.write[E.value.index] = value;
++			if (!type.has_type() || type.is_type(value)) {
++				new_members.write[E.value.index] = value;
++				continue;
++			}
+ 		}
++		// A member the reload added, or one whose value its new type does not
++		// take: typed bytecode trusts a member to hold its type, and reads a Nil
++		// Array or a String left in an int as one, so it starts at its type's
++		// default, as in a new instance before its initializer runs.
++		new_members.write[E.value.index] = GDScriptFunction::_get_default_variant_for_data_type(type);
+ 	}
+ 
+ 	members.resize(new_members.size()); //resize
+diff --git a/modules/gdscript/gdscript_function.h b/modules/gdscript/gdscript_function.h
+index 8171a0f..20c4544 100644
+--- a/modules/gdscript/gdscript_function.h
++++ b/modules/gdscript/gdscript_function.h
+@@ -453,9 +453,11 @@ private:
+ 
+ 	String _get_call_error(const String &p_where, const Variant **p_argptrs, int p_argcount, const Variant &p_ret, const Callable::CallError &p_err) const;
+ 	String _get_callable_call_error(const String &p_where, const Callable &p_callable, const Variant **p_argptrs, int p_argcount, const Variant &p_ret, const Callable::CallError &p_err) const;
+-	Variant _get_default_variant_for_data_type(const GDScriptDataType &p_data_type);
+ 
+ public:
++	// What a member or return value of this type holds before anything assigns it.
++	static Variant _get_default_variant_for_data_type(const GDScriptDataType &p_data_type);
++
+ 	static constexpr int MAX_CALL_DEPTH = 2048; // Limit to try to avoid crash because of a stack overflow.
+ 
+ 	struct CallState {

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Oppi <noreply@oppi.invalid>
 Date: Tue, 17 Nov 2026 08:49:05 -0800
-Subject: [PATCH 7/7] Jolt: a job system ends with no completed jobs left
+Subject: [PATCH 7/8] Jolt: a job system ends with no completed jobs left
 
 The list of completed jobs is a static, so it outlives the job system
 whose free list holds its jobs. A job a worker releases after the last

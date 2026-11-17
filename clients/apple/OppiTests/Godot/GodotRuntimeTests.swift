@@ -87,6 +87,43 @@ struct GodotRuntimeTests {
         #expect(dropped == 40, "Every round ran the physics scene")
     }
 
+    /// A new build swaps in while the old scene still runs: its scripts reload
+    /// in place, then the old scene leaves under the new code. The new build
+    /// (`godot-sample-new-member.pck`, the sample plus a typed `trail` array
+    /// its `_exit_tree` loops over) adds a member the old instance never
+    /// initialized; it must read as an empty array, not crash the app.
+    @Test func aSwapToABuildThatAddsATypedMemberLeavesTheOldScene() throws {
+        guard let runtime = GodotRuntimes.make() else { return }
+        defer { runtime.stop() }
+        let folder = FileManager.default.temporaryDirectory.appending(path: "godot-member-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        func copy(_ name: String) throws -> URL {
+            let url = folder.appending(path: "\(name).pck")
+            try FileManager.default.copyItem(at: try #require(TestFixtures.bundle.url(forResource: name, withExtension: "pck")), to: url)
+            return url
+        }
+        let old = try copy("godot-sample")
+        let new = try copy("godot-sample-new-member")
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 375, height: 600))
+        let view = UIView(frame: window.bounds)
+        window.addSubview(view)
+        runtime.attach(to: view.layer)
+        runtime.resize(to: view.bounds.size, scale: 2)
+        var lines: [String] = []
+        runtime.onLog = { lines.append($0.message) }
+        defer { runtime.onLog = nil }
+        #expect(runtime.start(GodotStartConfig(
+            packs: [old], userFolder: folder.appending(path: "user"), cacheFolder: folder.appending(path: "cache"),
+            readableFolders: [], arguments: []
+        )))
+        #expect(runtime.iterate())
+
+        #expect(runtime.swap(to: new, scene: nil))
+        #expect(runtime.iterate(), "The new scene runs")
+        #expect(lines.contains("sample left with trail of 0"))
+    }
+
     @Test func theGameDrawsOverItsPaneThroughAHoldARestartAMoveAndARotation() async throws {
         guard let runtime = GodotRuntimes.make() else { return }
         defer { runtime.stop() }

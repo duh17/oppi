@@ -1,0 +1,1 @@
+- **Client:** A new build of a running Godot game that adds a typed variable to a script no longer crashes the app as the game reloads. The new variable starts at its type's default value, such as an empty array.
