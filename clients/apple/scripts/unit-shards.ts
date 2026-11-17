@@ -575,9 +575,10 @@ async function main(argv: string[]): Promise<number> {
 
 /**
  * Rerun a failed shard's failing tests once on the same products. A test that passes on the
- * rerun is a flake: it does not block, and the rerun ledger counts the gates it flaked in. Crashes,
- * unreadable results, or more than RERUN_LIMIT failures stay red. `failing` and `flaky` are full
- * `OppiTests/...` ids.
+ * rerun is a flake, and the rerun ledger counts the gates (heads) it flaked in. Its first flake does
+ * not block; a flake in a second gate does: the lane stays red until the test is fixed or has a
+ * quarantine entry (dev/testing/quarantine.json, which the blocking run skips). Crashes, unreadable
+ * results, or more than RERUN_LIMIT failures stay red. `failing` and `flaky` are full `OppiTests/...` ids.
  */
 async function rerunFailures(result: ShardResult, xctestrun: string, outDir: string): Promise<{ ok: boolean; failing: string[]; flaky: string[] }> {
   const failures = runFailures(result.summary);
@@ -606,10 +607,15 @@ async function rerunFailures(result: ShardResult, xctestrun: string, outDir: str
       failing.push(full);
       continue;
     }
+    if (gates >= 2) {
+      failing.push(full);
+      console.log(`[unit-shards] FLAKY AGAIN ${full}: failed, then passed on rerun, and has flaked in ${gates} gates; a repeat flake fails the lane until the test is fixed or quarantined in dev/testing/quarantine.json with an owner, an expiry, and a backlog key`);
+      continue;
+    }
     flaky.push(full);
-    console.log(`[unit-shards] FLAKY ${full}: failed, then passed on rerun (flaked in ${gates} gate${gates === 1 ? "" : "s"})${gates >= 2 ? "; quarantine it in dev/testing/quarantine.json with an owner, an expiry, and a backlog key" : ""}`);
+    console.log(`[unit-shards] FLAKY ${full}: failed, then passed on rerun (flaked in 1 gate; a second gate it flakes in fails the lane)`);
   }
-  return { ok, failing, flaky };
+  return { ok: ok && failing.length === 0, failing, flaky };
 }
 
 if (import.meta.main) {

@@ -73,6 +73,9 @@ run_self_test() {
   # OPPI_PRE_PUSH_DELEGATED too: the fixtures push into their own repositories, and a copy they
   # install there must hand that push over, not read the breaker that got this hook here.
   unset OPPI_PRE_PUSH_EVENTS APPLE_SLOT_SIGNAL OPPI_HEAVY_HELD OPPI_PRE_PUSH_DELEGATED
+  # The harness lane runs after the push's own plan: its APPLE_RELEASE must not decide whether the
+  # fixtures' apple_lane starts a Release compile. Each fixture that wants none sets 0 itself.
+  APPLE_RELEASE=1
   if [[ "${1:-}" != "--lanes-only" ]]; then
     bash -n "$REPO_ROOT/.githooks/pre-push" "$REPO_ROOT/clients/apple/scripts/check-coverage.sh" "$SIM_POOL" "$HEAVY"
     bun test "$REPO_ROOT/scripts/pre-push-plan.test.ts" "$REPO_ROOT/scripts/heavy.test.ts" \
@@ -124,16 +127,31 @@ run_self_test() {
   # whose last step succeeds must fail the lane, and the unit tests must not start after it.
   local lane_fixture lane_src lane_status
   lane_fixture="$(mktemp -d -t oppi-pre-push-lane.XXXXXX)"
-  lane_src="$(awk '/^(lane_event|run_cached|with_apple_slot|wait_for_apple_slot|apple_lane)\(\) \{/,/^\}/' "$REPO_ROOT/.githooks/pre-push")"
+  lane_src="$(awk '/^(lane_event|run_cached|with_apple_slot|wait_for_apple_slot|lane_tree|stop_lane_tree|wait_lanes|apple_lane)\(\) \{/,/^\}/' "$REPO_ROOT/.githooks/pre-push")"
   # Name every helper the fixtures rely on: a pattern that stops covering one of them leaves the
   # eval'd runner calling an undefined function, which reads as a broken lane, not a broken extract.
   case "$lane_src" in
-    *'lane_event() {'*'run_cached() {'*'with_apple_slot() {'*'wait_for_apple_slot() {'*'apple_lane() {'*) ;;
+    *'lane_event() {'*'run_cached() {'*'with_apple_slot() {'*'wait_for_apple_slot() {'*'lane_tree() {'*'stop_lane_tree() {'*'wait_lanes() {'*'apple_lane() {'*) ;;
     *)
       echo "pre-push self-test: could not extract every lane-runner function the fixtures eval" >&2
       exit 1
       ;;
   esac
+  # The fixtures order their fake lanes by marker files, never by sleeping: a fake that must still
+  # run when another fails blocks on a FIFO no one writes (block_forever, which only a signal ends),
+  # and a fake that must act after another started waits for that one's marker (until_exists, which
+  # fails the fixture after 60 s rather than hang it). block_forever opens its FIFO read-write, so
+  # the open never blocks, and gives up after 10 minutes, so a failed fixture leaks nothing for long.
+  # They live outside the fixture folder, which each fixture empties.
+  local sync_dir
+  sync_dir="$(mktemp -d -t oppi-pre-push-sync.XXXXXX)"
+  mkfifo "$sync_dir/block"
+  printf '%s\n' \
+    "block_forever() { read -r -t 600 _ <> $(printf '%q' "$sync_dir/block") || true; }" \
+    'until_exists() { local i; for ((i = 0; i < 1200; i++)); do [[ -e "$1" ]] && return 0; sleep 0.05; done; echo "fixture: $1 never appeared" >&2; return 1; }' \
+    > "$sync_dir/sync.sh"
+  # shellcheck disable=SC1091
+  source "$sync_dir/sync.sh"
   # The fixture subshell must not sit in an || / && list: that would disable the very
   # set -e behavior under test. Capture its status with the set +e pattern used above.
   set +e
@@ -155,8 +173,8 @@ run_self_test() {
     exit 1
   }
   rm -f "$lane_fixture"/*
-  # Unit tests fail while the Release compile is still running: the lane fails only after
-  # Release ends.
+  # Unit tests fail while the Release compile still runs: the lane fails at once and stops the
+  # Release compile and everything it started, rather than waiting for a verdict nobody needs.
   set +e
   (
     set -euo pipefail
@@ -164,31 +182,33 @@ run_self_test() {
     ensure_lane_clean() { return 0; }
     cache_path() { echo "$lane_fixture/$1.pass"; }
     run_apple_gate() { true; }
-    run_ios_unit_gate() { false; echo unit-continued >> "$lane_fixture/trace"; }
-    run_ios_release_gate() { sleep 1; echo release-ran >> "$lane_fixture/trace"; }
+    run_ios_unit_gate() { until_exists "$lane_fixture/release-child"; false; echo unit-continued >> "$lane_fixture/trace"; }
+    run_ios_release_gate() { block_forever & echo "$!" > "$lane_fixture/release-child.tmp"; mv "$lane_fixture/release-child.tmp" "$lane_fixture/release-child"; wait "$!"; echo release-ran >> "$lane_fixture/trace"; }
     run_catalyst_gate() { true; }
     apple_lane & wait "$!"
   ) >/dev/null 2>&1
   lane_status=$?
   set -e
-  [[ "$lane_status" -ne 0 && "$(cat "$lane_fixture/trace")" == "release-ran" && ! -e "$lane_fixture/ios-unit.pass" ]] || {
-    echo "pre-push self-test: failing unit tests must fail apple_lane after the Release compile ends" >&2
+  [[ "$lane_status" -ne 0 && ! -e "$lane_fixture/trace" && ! -e "$lane_fixture/ios-unit.pass" && -s "$lane_fixture/release-child" ]] \
+    && ! kill -0 "$(cat "$lane_fixture/release-child")" 2>/dev/null || {
+    echo "pre-push self-test: failing unit tests must fail apple_lane at once and stop the Release compile's whole tree" >&2
     exit 1
   }
   rm -f "$lane_fixture"/*
   # The same failure in the shape the hook really runs it: top-level set -euo pipefail and EXIT
-  # trap, `apple_lane & PIDS+=("$!")`, waited on later. The lane must return the unit
-  # status only after the Release compile ended, with nothing like "unbound variable" on stderr.
+  # trap, `apple_lane & PIDS+=("$!")`, waited on later. The lane must return the unit status with
+  # the Release compile stopped, with nothing like "unbound variable" on stderr.
   printf '%s\n' "$lane_src" > "$lane_fixture/lane-src.sh"
   cat > "$lane_fixture/hook-shape.sh" <<'HOOK_SHAPE'
 set -euo pipefail
 trap ':' EXIT
 source "$LANE_FIXTURE/lane-src.sh"
+source "$SYNC_SH"
 ensure_lane_clean() { return 0; }
 cache_path() { echo "$LANE_FIXTURE/$1.pass"; }
 run_apple_gate() { true; }
-run_ios_unit_gate() { return 7; }
-run_ios_release_gate() { sleep 1; echo release-ran >> "$LANE_FIXTURE/trace"; }
+run_ios_unit_gate() { until_exists "$LANE_FIXTURE/release-up"; return 7; }
+run_ios_release_gate() { : > "$LANE_FIXTURE/release-up"; block_forever; echo release-ran >> "$LANE_FIXTURE/trace"; }
 run_catalyst_gate() { true; }
 PIDS=()
 apple_lane & PIDS+=("$!")
@@ -197,17 +217,17 @@ wait "${PIDS[0]}" || st=$?
 echo "$st" > "$LANE_FIXTURE/lane-status"
 cat "$LANE_FIXTURE/trace" > "$LANE_FIXTURE/trace-at-return" 2>/dev/null || true
 HOOK_SHAPE
-  LANE_FIXTURE="$lane_fixture" bash "$lane_fixture/hook-shape.sh" >/dev/null 2>"$lane_fixture/stderr" || true
+  LANE_FIXTURE="$lane_fixture" SYNC_SH="$sync_dir/sync.sh" bash "$lane_fixture/hook-shape.sh" >/dev/null 2>"$lane_fixture/stderr" || true
   [[ "$(cat "$lane_fixture/lane-status" 2>/dev/null)" == "7" \
-    && "$(cat "$lane_fixture/trace-at-return" 2>/dev/null)" == "release-ran" ]] \
+    && ! -s "$lane_fixture/trace-at-return" ]] \
     && ! grep -q 'unbound variable' "$lane_fixture/stderr" || {
-    echo "pre-push self-test: with the hook's call shape, a failing unit lane must return its status after the Release compile ended, without shell errors" >&2
+    echo "pre-push self-test: with the hook's call shape, a failing unit lane must return its status with the Release compile stopped, without shell errors" >&2
     cat "$lane_fixture/stderr" >&2 || true
     exit 1
   }
   rm -f "$lane_fixture"/*
-  # The Release device-SDK compile fails while the unit tests pass: the lane fails after both
-  # ended, and only the lane that passed records a marker.
+  # The Release device-SDK compile fails while the unit tests run: the lane fails with its status,
+  # the unit tests are stopped, and no lane that did not pass records a marker.
   set +e
   (
     set -euo pipefail
@@ -215,15 +235,15 @@ HOOK_SHAPE
     ensure_lane_clean() { return 0; }
     cache_path() { echo "$lane_fixture/$1.pass"; }
     run_apple_gate() { true; }
-    run_ios_unit_gate() { sleep 1; echo unit-ran >> "$lane_fixture/trace"; }
-    run_ios_release_gate() { return 9; }
+    run_ios_unit_gate() { : > "$lane_fixture/unit-up"; block_forever; echo unit-ran >> "$lane_fixture/trace"; }
+    run_ios_release_gate() { until_exists "$lane_fixture/unit-up"; return 9; }
     run_catalyst_gate() { true; }
     apple_lane & wait "$!"
   ) >/dev/null 2>&1
   lane_status=$?
   set -e
-  [[ "$lane_status" -eq 9 && "$(cat "$lane_fixture/trace")" == "unit-ran" && ! -e "$lane_fixture/ios-release.pass" && -e "$lane_fixture/ios-unit.pass" ]] || {
-    echo "pre-push self-test: a failing Release compile must fail apple_lane with its status after the other lanes ended" >&2
+  [[ "$lane_status" -eq 9 && ! -e "$lane_fixture/trace" && ! -e "$lane_fixture/ios-release.pass" && ! -e "$lane_fixture/ios-unit.pass" ]] || {
+    echo "pre-push self-test: a failing Release compile must fail apple_lane with its status and stop the unit tests" >&2
     exit 1
   }
   rm -f "$lane_fixture"/*
@@ -246,8 +266,8 @@ HOOK_SHAPE
     exit 1
   }
   rm -f "$lane_fixture"/*
-  # The Catalyst compile fails while the other lanes pass: the lane fails with its status after
-  # the unit tests ended, and only the lanes that passed record a marker.
+  # The Catalyst compile fails while the unit tests run: the lane fails with its status, the unit
+  # tests are stopped, and only the lanes that passed record a marker.
   set +e
   (
     set -euo pipefail
@@ -255,15 +275,37 @@ HOOK_SHAPE
     ensure_lane_clean() { return 0; }
     cache_path() { echo "$lane_fixture/$1.pass"; }
     run_apple_gate() { true; }
-    run_ios_unit_gate() { sleep 1; echo unit-ran >> "$lane_fixture/trace"; }
+    run_ios_unit_gate() { : > "$lane_fixture/unit-up"; block_forever; echo unit-ran >> "$lane_fixture/trace"; }
     run_ios_release_gate() { true; }
-    run_catalyst_gate() { return 6; }
+    run_catalyst_gate() { until_exists "$lane_fixture/unit-up"; until_exists "$lane_fixture/ios-release.pass"; return 6; }
     apple_lane & wait "$!"
   ) >/dev/null 2>&1
   lane_status=$?
   set -e
-  [[ "$lane_status" -eq 6 && "$(cat "$lane_fixture/trace")" == "unit-ran" && ! -e "$lane_fixture/catalyst.pass" && -e "$lane_fixture/ios-unit.pass" && -e "$lane_fixture/ios-release.pass" ]] || {
-    echo "pre-push self-test: a failing Catalyst compile must fail apple_lane with its status after the other lanes ended" >&2
+  [[ "$lane_status" -eq 6 && ! -e "$lane_fixture/trace" && ! -e "$lane_fixture/catalyst.pass" && ! -e "$lane_fixture/ios-unit.pass" && -e "$lane_fixture/ios-release.pass" ]] || {
+    echo "pre-push self-test: a failing Catalyst compile must fail apple_lane with its status and stop the unit tests" >&2
+    exit 1
+  }
+  rm -f "$lane_fixture"/*
+  # No change compiles differently in Release (APPLE_RELEASE=0): the lane runs the build, the unit
+  # tests and Catalyst, and never the Release compile.
+  set +e
+  (
+    set -euo pipefail
+    export APPLE_RELEASE=0
+    eval "$lane_src"
+    ensure_lane_clean() { return 0; }
+    cache_path() { echo "$lane_fixture/$1.pass"; }
+    run_apple_gate() { true; }
+    run_ios_unit_gate() { echo unit-ran >> "$lane_fixture/trace"; }
+    run_ios_release_gate() { echo release-ran >> "$lane_fixture/trace"; }
+    run_catalyst_gate() { true; }
+    apple_lane & wait "$!"
+  ) >/dev/null 2>&1
+  lane_status=$?
+  set -e
+  [[ "$lane_status" -eq 0 && "$(cat "$lane_fixture/trace")" == "unit-ran" && -e "$lane_fixture/catalyst.pass" && ! -e "$lane_fixture/ios-release.pass" ]] || {
+    echo "pre-push self-test: with APPLE_RELEASE=0 the Apple lane must pass without the Release compile" >&2
     exit 1
   }
   rm -f "$lane_fixture"/*
@@ -276,7 +318,7 @@ HOOK_SHAPE
     eval "$lane_src"
     ensure_lane_clean() { return 0; }
     cache_path() { echo "$lane_fixture/$1.pass"; }
-    run_apple_gate() { with_apple_slot bash -c 'sleep 1; [[ -e "$0/release-started" ]]' "$lane_fixture"; }
+    run_apple_gate() { with_apple_slot bash -c 'source "$1"; until_exists "$0/release-started"' "$lane_fixture" "$sync_dir/sync.sh"; }
     run_ios_unit_gate() { true; }
     run_ios_release_gate() { touch "$lane_fixture/release-started"; }
     run_catalyst_gate() { true; }
@@ -333,31 +375,77 @@ HOOK_SHAPE
     exit 1
   }
   rm -rf "${lane_fixture:?}"/*
-  # A red iOS build still waits for the early Release compile, does not start the unit tests,
-  # and fails with its own status even when Release fails too.
+  # A red iOS build stops the early Release compile, does not start the unit tests or Catalyst,
+  # and fails with its own status.
   set +e
   (
     set -euo pipefail
     eval "$lane_src"
     ensure_lane_clean() { return 0; }
     cache_path() { echo "$lane_fixture/$1.pass"; }
-    run_apple_gate() { return 5; }
+    export OPPI_HEAVY_DIR="$lane_fixture/heavy"
+    mkdir -p "$OPPI_HEAVY_DIR"
+    run_apple_gate() { with_apple_slot bash -c 'source "$1"; until_exists "$0/release-up"; exit 5' "$lane_fixture" "$sync_dir/sync.sh"; }
     run_ios_unit_gate() { echo unit-ran >> "$lane_fixture/trace"; }
-    run_ios_release_gate() { sleep 1; echo release-ran >> "$lane_fixture/trace"; return 9; }
+    run_ios_release_gate() { : > "$lane_fixture/release-up"; block_forever; echo release-ran >> "$lane_fixture/trace"; return 9; }
     run_catalyst_gate() { echo catalyst-ran >> "$lane_fixture/trace"; }
-    apple_lane & lane_pid="$!"
-    lane_exit=0
-    wait "$lane_pid" || lane_exit=$?
-    cat "$lane_fixture/trace" > "$lane_fixture/trace-at-return"
-    exit "$lane_exit"
+    apple_lane & wait "$!"
   ) >/dev/null 2>&1
   lane_status=$?
   set -e
-  [[ "$lane_status" -eq 5 && "$(cat "$lane_fixture/trace-at-return")" == "release-ran" && ! -e "$lane_fixture/apple.pass" && ! -e "$lane_fixture/ios-release.pass" ]] || {
-    echo "pre-push self-test: a failing iOS build must wait for the early Release compile, skip the unit tests and the Catalyst compile, and fail with its own status" >&2
+  [[ "$lane_status" -eq 5 && ! -e "$lane_fixture/trace" && ! -e "$lane_fixture/apple.pass" && ! -e "$lane_fixture/ios-release.pass" ]] || {
+    echo "pre-push self-test: a failing iOS build must stop the early Release compile, skip the unit tests and the Catalyst compile, and fail with its own status" >&2
     exit 1
   }
-  rm -rf "$lane_fixture"
+  rm -rf "${lane_fixture:?}"/*
+  # Fail fast across the hook's lanes, as its last lines run them: the server lane fails once the
+  # Apple lane runs a build-like tree (a child, a grandchild, and a process in a group of its own,
+  # as xcodebuild's build service is), none of which ends by itself. The wait returns the server
+  # lane's status and names it, and no process of the Apple lane's tree outlives it. The server
+  # lane's own log is left as it wrote it.
+  cat > "$lane_fixture/fail-fast.sh" <<'FAIL_FAST'
+set -euo pipefail
+source "$LANE_FIXTURE/lane-src.sh"
+source "$SYNC_SH"
+OPPI_PRE_PUSH_STOP_GRACE=5
+# Each blocked process records its own PID, then its marker.
+blocked='source "$1"; echo "$$" >> "$0/apple-pids"; : > "$0/up-$2"; block_forever'
+fake_apple() {
+  bash -c "bash -c '$blocked' \"\$0\" \"\$1\" grandchild & wait" "$LANE_FIXTURE" "$SYNC_SH" &
+  bash -c "$blocked" "$LANE_FIXTURE" "$SYNC_SH" child &
+  /usr/bin/perl -e 'setpgrp(0, 0); exec @ARGV' bash -c "$blocked" "$LANE_FIXTURE" "$SYNC_SH" own-group &
+  wait
+}
+fake_server() {
+  until_exists "$LANE_FIXTURE/up-grandchild"; until_exists "$LANE_FIXTURE/up-child"; until_exists "$LANE_FIXTURE/up-own-group"
+  echo "server log" > "$LANE_FIXTURE/server.log"
+  return 4
+}
+LANE_PIDS=()
+LANE_NAMES=()
+RED_LANE=""
+fake_server & LANE_PIDS+=("$!"); LANE_NAMES+=("server-bun")
+fake_apple & LANE_PIDS+=("$!"); LANE_NAMES+=("apple")
+st=0
+wait_lanes || st=$?
+echo "$st $RED_LANE" > "$LANE_FIXTURE/result"
+FAIL_FAST
+  printf '%s\n' "$lane_src" > "$lane_fixture/lane-src.sh"
+  LANE_FIXTURE="$lane_fixture" SYNC_SH="$sync_dir/sync.sh" bash "$lane_fixture/fail-fast.sh" >/dev/null 2>"$lane_fixture/stderr" || true
+  local fail_fast_result survivor="" pid
+  fail_fast_result="$(cat "$lane_fixture/result" 2>/dev/null || true)"
+  while read -r pid; do
+    kill -0 "$pid" 2>/dev/null && survivor="$pid"
+  done < <(cat "$lane_fixture/apple-pids" 2>/dev/null || true)
+  [[ "$fail_fast_result" == "4 server-bun" && -z "$survivor" && "$(wc -l < "$lane_fixture/apple-pids" | tr -d ' ')" -eq 3 \
+    && "$(cat "$lane_fixture/server.log")" == "server log" ]] \
+    && grep -q '^\[apple\] stopped: the server-bun lane failed first$' "$lane_fixture/stderr" || {
+    echo "pre-push self-test: a failing lane must stop its sibling lanes' whole trees and keep its own status and log (result: ${fail_fast_result:-none}; survivor: ${survivor:-none})" >&2
+    cat "$lane_fixture/stderr" >&2 || true
+    xargs kill -KILL < "$lane_fixture/apple-pids" 2>/dev/null || true
+    exit 1
+  }
+  rm -rf "$lane_fixture" "$sync_dir"
 
   # Git exports repository-local variables to hooks. Those variables are required
   # above for planning and cache checks, but they must not escape into tests that
@@ -545,8 +633,11 @@ APPLE_MODE="none"
 HARNESS_CHANGED=0
 DOCS_CHANGED=0
 CHANGED_COUNT=0
+# Fails closed: a planner that says nothing about Release leaves it on.
+APPLE_RELEASE=1
+APPLE_RELEASE_WHY="the planner gave no reason"
 PLAN_OUTPUT=""
-if ! PLAN_OUTPUT="$(bun "$PLANNER" --paths0-file "$PATHS_FILE" --format shell)"; then
+if ! PLAN_OUTPUT="$(bun "$PLANNER" --paths0-file "$PATHS_FILE" --ranges "${RANGE_KEY_INPUT//;/ }" --format shell)"; then
   echo "pre-push: planner failed." >&2
   exit 1
 fi
@@ -557,12 +648,14 @@ while IFS='=' read -r key value; do
     HARNESS_CHANGED) HARNESS_CHANGED="$value" ;;
     DOCS_CHANGED) DOCS_CHANGED="$value" ;;
     CHANGED_COUNT) CHANGED_COUNT="$value" ;;
+    APPLE_RELEASE) APPLE_RELEASE="$value" ;;
+    APPLE_RELEASE_WHY) APPLE_RELEASE_WHY="$value" ;;
   esac
 done <<< "$PLAN_OUTPUT"
 
 case "$SERVER_MODE" in none|changed|full) ;; *) echo "pre-push: invalid server plan." >&2; exit 1 ;; esac
 case "$APPLE_MODE" in none|unit|all) ;; *) echo "pre-push: invalid Apple plan." >&2; exit 1 ;; esac
-[[ "$HARNESS_CHANGED" =~ ^[01]$ && "$DOCS_CHANGED" =~ ^[01]$ && "$CHANGED_COUNT" =~ ^[1-9][0-9]*$ ]] || {
+[[ "$HARNESS_CHANGED" =~ ^[01]$ && "$DOCS_CHANGED" =~ ^[01]$ && "$APPLE_RELEASE" =~ ^[01]$ && "$CHANGED_COUNT" =~ ^[1-9][0-9]*$ ]] || {
   echo "pre-push: incomplete planner output." >&2
   exit 1
 }
@@ -938,82 +1031,190 @@ if [[ "$SERVER_MODE" != "none" || "$HARNESS_CHANGED" -eq 1 || "$APPLE_MODE" != "
   fi
 fi
 
-# The Release device-SDK compile (whole-module, ~5 min, the gate's longest compile) needs only the
-# sources, so it starts during the iOS Debug build, as soon as that build holds its xcode-build
-# slot (the Debug build gates every other lane, so it gets the first claim). After that build, the
-# sharded iOS unit tests (~3.5 min) and the Mac Catalyst compile, which takes the slot the Debug
-# build freed, join it, overlapping the server lane. A failed iOS build skips both, and the lane
-# still waits for the Release compile and ends with the iOS build's status.
+# The processes of the trees rooted at the PIDs given (a root counts while it runs): each
+# descendant, and each process in a group a member leads, since xcodebuild and sim-pool put their
+# build service, compilers and test runs in groups of their own, which outlive a parent that ends
+# first. The hook's own group is never taken whole: every lane shares it. Zombies have ended.
+lane_tree() {
+  local own_group
+  own_group="$(ps -o pgid= -p "$$" | tr -d ' ')"
+  ps -A -o pid=,ppid=,pgid=,stat= | awk -v roots="$*" -v own="$own_group" '
+    $4 !~ /^Z/ { pid[++n] = $1; parent[$1] = $2; group[$1] = $3; alive[$1] = 1 }
+    END {
+      count = split(roots, root, " ")
+      for (i = 1; i <= count; i++) if (root[i] in alive) member[root[i]] = 1
+      do {
+        added = 0
+        for (i = 1; i <= n; i++) {
+          p = pid[i]
+          if (p in member) continue
+          if ((parent[p] in member) || (group[p] != own && (group[p] in member))) { member[p] = 1; added = 1 }
+        }
+      } while (added)
+      for (p in member) print p
+    }'
+}
+
+# Stop the lanes rooted at the PIDs given and everything they started. First the trees are frozen:
+# SIGSTOP to every member, again until a pass finds no new one, because a process forked after a
+# snapshot and orphaned by its parent's death would escape the stop, and a stopped process cannot
+# fork. Then SIGTERM and SIGCONT go to every process of the frozen trees: sim-pool and unit-shards
+# stop their xcodebuild runs and free their simulator slots on it, heavy.sh waiters give up, Vitest
+# workers end. Then this waits for each of those processes, and any a stopping one starts, to end;
+# whatever still runs after OPPI_PRE_PUSH_STOP_GRACE seconds (30) gets SIGKILL, so no stopped
+# xcodebuild keeps its build.db or a slot after the hook.
+stop_lane_tree() {
+  local members frozen="" ticks=0 limit=$((${OPPI_PRE_PUSH_STOP_GRACE:-30} * 5))
+  members="$(lane_tree "$@")"
+  [[ -n "$members" ]] || return 0
+  # Word splitting is the point: one PID per word.
+  while [[ "$members" != "$frozen" ]]; do
+    # shellcheck disable=SC2086
+    kill -STOP $members 2>/dev/null || true
+    frozen="$members"
+    # shellcheck disable=SC2086
+    members="$(lane_tree $frozen | sort -n)"
+    frozen="$(sort -n <<< "$frozen")"
+  done
+  # shellcheck disable=SC2086
+  kill -TERM $members 2>/dev/null || true
+  # shellcheck disable=SC2086
+  kill -CONT $members 2>/dev/null || true
+  while members="$(lane_tree $members)"; [[ -n "$members" ]]; do
+    if [[ "$ticks" -ge "$limit" ]]; then
+      echo "pre-push: SIGKILL to $(wc -w <<< "$members" | tr -d ' ') processes still running $((limit / 5))s after SIGTERM" >&2
+      # shellcheck disable=SC2086
+      kill -KILL $members 2>/dev/null || true
+      break
+    fi
+    sleep 0.2
+    ticks=$((ticks + 1))
+  done
+}
+
+# Wait on the lanes in LANE_PIDS and LANE_NAMES (parallel arrays of the caller's) until each has
+# ended, or until the lane named $1 has passed. Ended lanes leave the arrays. The first lane to fail
+# stops the others at once (stop_lane_tree) rather than letting them run to a verdict nobody needs:
+# its own output, log and summary are complete by then, since it has ended. Returns that lane's
+# status and leaves its name in RED_LANE; 0 when every lane waited on passed.
+wait_lanes() {
+  local until="${1:-}" index status=0 red_status=0 reached=0 running
+  local -a pids names
+  RED_LANE=""
+  while [[ "${#LANE_PIDS[@]}" -gt 0 ]]; do
+    # The job table, not kill -0: a PID the kernel reused never reads as a lane still running.
+    running=" $(jobs -rp | tr '\n' ' ') "
+    pids=()
+    names=()
+    for index in "${!LANE_PIDS[@]}"; do
+      if [[ "$running" == *" ${LANE_PIDS[$index]} "* ]]; then
+        pids+=("${LANE_PIDS[$index]}")
+        names+=("${LANE_NAMES[$index]}")
+        continue
+      fi
+      status=0
+      wait "${LANE_PIDS[$index]}" || status=$?
+      if [[ "$status" -ne 0 ]]; then
+        echo "[${LANE_NAMES[$index]}] FAILED (exit $status, +${SECONDS}s)" >&2
+        if [[ -z "$RED_LANE" ]]; then RED_LANE="${LANE_NAMES[$index]}"; red_status="$status"; fi
+      elif [[ "${LANE_NAMES[$index]}" == "$until" ]]; then
+        reached=1
+      fi
+    done
+    LANE_PIDS=(${pids[@]+"${pids[@]}"})
+    LANE_NAMES=(${names[@]+"${names[@]}"})
+    if [[ -n "$RED_LANE" ]]; then
+      if [[ "${#LANE_PIDS[@]}" -gt 0 ]]; then
+        local stop_started="$SECONDS"
+        echo "pre-push: the $RED_LANE lane failed at +${SECONDS}s; stopping ${LANE_NAMES[*]}" >&2
+        stop_lane_tree "${LANE_PIDS[@]}"
+        for index in "${!LANE_PIDS[@]}"; do
+          wait "${LANE_PIDS[$index]}" 2>/dev/null || true
+          echo "[${LANE_NAMES[$index]}] stopped: the $RED_LANE lane failed first" >&2
+        done
+        echo "pre-push: stopped ${LANE_NAMES[*]} in $((SECONDS - stop_started))s" >&2
+        LANE_PIDS=()
+        LANE_NAMES=()
+      fi
+      return "$red_status"
+    fi
+    [[ "$reached" -eq 0 ]] || return 0
+    [[ "${#LANE_PIDS[@]}" -eq 0 ]] || sleep 0.5
+  done
+  return 0
+}
+
+# The Release device-SDK compile (whole-module, ~5 min, the gate's longest compile) runs only when
+# the push can compile differently in Release (APPLE_RELEASE, from the planner's
+# releaseCompileReason; OPPI_PRE_PUSH_RELEASE=1 forces it). It needs only the sources, so it starts
+# during the iOS Debug build, as soon as that build holds its xcode-build slot (the Debug build
+# gates every other lane, so it gets the first claim). After that build, the sharded iOS unit tests
+# (~3.5 min) and the Mac Catalyst compile, which takes the slot the Debug build freed, join it,
+# overlapping the server lane. The first of them to fail stops the rest (wait_lanes), so a red
+# Debug build stops the Release compile and skips the unit tests and Catalyst.
 # Keep run_cached out of || / && / if-tests here: they disable set -e inside its nested
-# shell (see run_cached). The Apple build runs in a nested `set -e` shell whose status is read
-# under set +e, so a failure is kept, never swallowed. The other lanes run in the background so
-# run_cached keeps set -e for its own marker write; their statuses are captured at `wait`
-# (set +e / status=$?) and the function returns only after all of them ended, so a failed lane
-# never leaves another running. An EXIT trap cannot do that wait: it runs after the function
-# frame is gone, so a `local` PID is already unbound under set -u.
+# shell (see run_cached). Each part runs in the background, so run_cached keeps set -e for its own
+# marker write; statuses are read by wait_lanes. An EXIT trap cannot do that wait: it runs after
+# the function frame is gone, so a `local` PID is already unbound under set -u.
 apple_lane() {
-  local unit_pid release_pid catalyst_pid apple_status=0 unit_status=0 release_status=0 catalyst_status=0
+  local -a LANE_PIDS=() LANE_NAMES=()
+  local RED_LANE="" status=0
   local APPLE_SLOT_SIGNAL
   APPLE_SLOT_SIGNAL="$(mktemp -d -t oppi-pre-push-apple-slot.XXXXXX)"
   export APPLE_SLOT_SIGNAL
-  # The Debug build gets the first claim on an xcode-build slot (with_apple_slot).
-  (
-    wait_for_apple_slot
-    run_cached ios-release run_ios_release_gate
-  ) & release_pid="$!"
-  set +e
-  (
-    set -euo pipefail
-    run_cached apple run_apple_gate
-  )
-  apple_status=$?
-  : > "$APPLE_SLOT_SIGNAL/done"
-  if [[ "$apple_status" -ne 0 ]]; then
-    wait "$release_pid"
-    rm -rf "$APPLE_SLOT_SIGNAL"
-    set -e
-    return "$apple_status"
+  if [[ "${APPLE_RELEASE:-1}" == "1" ]]; then
+    # The Debug build gets the first claim on an xcode-build slot (with_apple_slot).
+    (
+      wait_for_apple_slot
+      run_cached ios-release run_ios_release_gate
+    ) & LANE_PIDS+=("$!"); LANE_NAMES+=("ios-release")
+  else
+    echo "[ios-release] not run: no pushed change compiles differently in Release (the nightly test-rot run and the TestFlight archive compile it)"
   fi
-  set -e
-  # The Apple build above already built the unit products (run_ios_unit_gate), so the shards need
-  # no xcode-build slot and start at once, beside the Release compile that takes a slot.
-  run_cached ios-unit run_ios_unit_gate & unit_pid="$!"
-  run_cached catalyst run_catalyst_gate & catalyst_pid="$!"
-  set +e
-  wait "$unit_pid"
-  unit_status=$?
-  wait "$release_pid"
-  release_status=$?
-  wait "$catalyst_pid"
-  catalyst_status=$?
+  (
+    set +e
+    (
+      set -euo pipefail
+      run_cached apple run_apple_gate
+    )
+    status=$?
+    : > "$APPLE_SLOT_SIGNAL/done"
+    exit "$status"
+  ) & LANE_PIDS+=("$!"); LANE_NAMES+=("apple")
+  wait_lanes apple || status=$?
+  if [[ "$status" -eq 0 ]]; then
+    # The Apple build above already built the unit products (run_ios_unit_gate), so the shards need
+    # no xcode-build slot and start at once, beside the Release compile that takes a slot.
+    run_cached ios-unit run_ios_unit_gate & LANE_PIDS+=("$!"); LANE_NAMES+=("ios-unit")
+    run_cached catalyst run_catalyst_gate & LANE_PIDS+=("$!"); LANE_NAMES+=("catalyst")
+    wait_lanes || status=$?
+  fi
   rm -rf "$APPLE_SLOT_SIGNAL"
-  set -e
-  # Every lane has ended. The first failure in this order is the lane's status; the
-  # others report themselves in their logs.
-  [[ "$unit_status" -eq 0 ]] || return "$unit_status"
-  [[ "$release_status" -eq 0 ]] || return "$release_status"
-  return "$catalyst_status"
+  return "$status"
 }
 
-PIDS=()
-LANES=()
+LANE_PIDS=()
+LANE_NAMES=()
+RED_LANE=""
 if [[ "$HARNESS_CHANGED" -eq 1 ]]; then
-  run_cached harness run_harness_gate & PIDS+=("$!"); LANES+=("harness")
+  run_cached harness run_harness_gate & LANE_PIDS+=("$!"); LANE_NAMES+=("harness")
 fi
 if [[ "$SERVER_MODE" != "none" ]]; then
-  run_cached server-bun run_server_gate & PIDS+=("$!"); LANES+=("server-bun")
+  run_cached server-bun run_server_gate & LANE_PIDS+=("$!"); LANE_NAMES+=("server-bun")
 fi
 if [[ "$APPLE_MODE" != "none" ]]; then
-  apple_lane & PIDS+=("$!"); LANES+=("apple")
+  if [[ "${OPPI_PRE_PUSH_RELEASE:-0}" == "1" ]]; then
+    APPLE_RELEASE=1
+    APPLE_RELEASE_WHY="OPPI_PRE_PUSH_RELEASE=1"
+  fi
+  [[ "$APPLE_RELEASE" == "0" ]] || echo "[ios-release] runs: $APPLE_RELEASE_WHY"
+  apple_lane & LANE_PIDS+=("$!"); LANE_NAMES+=("apple")
 fi
 
 FAILED=0
-for index in "${!PIDS[@]}"; do
-  if ! wait "${PIDS[$index]}"; then
-    echo "[${LANES[$index]}] FAILED" >&2
-    FAILED=1
-  fi
-done
+if [[ "${#LANE_PIDS[@]}" -gt 0 ]]; then
+  wait_lanes || FAILED=1
+fi
 
 if [[ "$FAILED" -ne 0 ]]; then
   echo "Pre-push gate FAILED." >&2

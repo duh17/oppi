@@ -74,8 +74,8 @@
       "reason": "Telemetry review commands, privacy model, upload channels and retention, resource sampling, catalog invariants (naming, units, tag vocabulary, wire format, Apple recording), reading rules, hang correlation, build identity, importer, and the add-an-event steps. 1738 words; headroom max(15%, 100 words). The generated event tables are not counted."
     },
     "dev/testing/README.md": {
-      "words": 2120,
-      "reason": "Testing entry point: command picker, policy as code, pre-push lanes, heavy-job slots, batch gate selectors and exit codes, gate-report lines, UI/E2E launch state and launch-reuse rules, server test rules. 1841 words; headroom max(15%, 100 words)."
+      "words": 2160,
+      "reason": "Testing entry point: command picker, policy as code, pre-push lanes, heavy-job slots, batch gate selectors and exit codes, gate-report lines, UI/E2E launch state and launch-reuse rules, server test rules. 1841 words, plus 35 for the hook's fail-fast and the Release-compile rule (2026-11-17); headroom max(15%, 100 words)."
     },
     "dev/testing/apple.md": {
       "words": 2450,

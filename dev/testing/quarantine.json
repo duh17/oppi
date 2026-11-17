@@ -30,5 +30,21 @@
     "reason": "iPad only: failed and passed on rerun at three separate heads in the ui-ipad lane (rerun ledger). The failure is the first wait, \"The file link did not open a pane\": the reader's close button did not appear within 10 s after the link tap under shard load. Not yet reproduced alone; rework: wait for the pane to mount (the companion's divider) before looking for the reader's close, and record whether the tap reached the link.",
     "addedAt": "2026-11-13",
     "expires": "2026-12-13"
+  },
+  {
+    "id": "OppiUITests/ToolArgsStreamReaderUITests/testDoubleTapOpensStreamingArgumentsAndFollowsThem",
+    "owner": "lead",
+    "backlog": "reader/tool-args-stream-double-tap-flake",
+    "reason": "Failed and passed on rerun at two nightly heads (iPhone 2026-11-15, iPad 2026-11-16) and failed its rerun on iPhone 2026-11-16, always at \"The reader did not show the finished call's output\". Never in a land gate. Rework: wait for the reader to receive the finished call before asserting its output, and record what the reader showed when it times out.",
+    "addedAt": "2026-11-17",
+    "expires": "2026-12-16"
+  },
+  {
+    "id": "OppiUITests/UIHangHarnessUITests/testVisualToolsetTapThroughRendersWithoutStalls",
+    "owner": "lead",
+    "backlog": "perf/visual-toolset-stall-guardrail-under-load",
+    "reason": "Red on iPhone in the nightly run on 2026-11-11 and 2026-11-16, failing its rerun too (guardrail breaches=3, applyMax 569 ms), while both UI profiles share the machine; it passes on the other nights. The stall budget is wall-clock, so it measures load as much as the app. Rework: measure on an idle simulator (a perf lane) or count the work per tap instead of its wall time.",
+    "addedAt": "2026-11-17",
+    "expires": "2026-12-16"
   }
 ]

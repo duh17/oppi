@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { planForPaths } from "./pre-push-plan";
+import { debugConditionLines, type FileChange, parseHunks, planForPaths, releaseCompileReason } from "./pre-push-plan";
 
 describe("pre-push gate planning", () => {
   test.each([
@@ -76,5 +76,74 @@ describe("pre-push gate planning", () => {
   test("deduplicates and sorts paths for deterministic cache input", () => {
     const plan = planForPaths(["server/src/z.ts", "server/src/a.ts", "server/src/z.ts"]);
     expect(plan.changedPaths).toEqual(["server/src/a.ts", "server/src/z.ts"]);
+  });
+});
+
+describe("Release compile rule", () => {
+  const file = (lines: string[]) => `${lines.join("\n")}\n`;
+  /** Lines 3-7 are one DEBUG chain; 6 is Release-only. */
+  const chained = file(["struct A {", "  var b = 1", "#if DEBUG", "  var harness = 1", "#else", "  var shipped = 2", "#endif", "  var c = 3", "}"]);
+  const plain = file(["struct A {", "  var b = 1", "  var c = 3", "}"]);
+  const APP = "clients/apple/Oppi/App/A.swift";
+  const edit = (line: number, before = chained, after = chained): FileChange => ({ before, after, hunks: [{ oldStart: line, oldCount: 1, newStart: line, newCount: 1 }] });
+  const reason = (changed: string[], changes: Record<string, FileChange[] | undefined> = {}, addedOrDeleted: string[] = []) =>
+    releaseCompileReason(changed, new Set(addedOrDeleted), (path) => (path in changes ? changes[path] : [edit(2, plain, plain)]));
+
+  test.each([
+    ["project", "clients/apple/project.yml"],
+    ["package pins", "clients/apple/Package.resolved"],
+    ["xcconfig", "clients/apple/Base.xcconfig"],
+    ["entitlements", "clients/apple/Oppi/Resources/Oppi.entitlements"],
+    ["Info.plist", "clients/apple/Oppi/Resources/Info.plist"],
+    ["Xcode pin", "clients/apple/scripts/xcode-toolchain.txt"],
+  ])("compiles Release when a build input changes: %s", (_name, path) => {
+    expect(reason([path])).toContain(path);
+  });
+
+  test("an edit outside every DEBUG chain compiles the same in Release, even in a file that has one", () => {
+    expect(reason([APP], { [APP]: [edit(2), edit(8)] })).toBeNull();
+    expect(reason(["clients/apple/OppiCore/Models/X.swift"])).toBeNull();
+  });
+
+  test.each([
+    ["the Debug side", 4],
+    ["the Release-only side", 6],
+    ["a directive", 5],
+  ])("an edit on %s of a DEBUG chain compiles Release", (_name, line) => {
+    expect(reason([APP], { [APP]: [edit(line)] })).toContain("DEBUG condition");
+  });
+
+  test("adding or removing a DEBUG chain compiles Release", () => {
+    const wrap = { oldStart: 2, oldCount: 0, newStart: 3, newCount: 5 };
+    expect(reason([APP], { [APP]: [{ before: plain, after: chained, hunks: [wrap] }] })).toContain("DEBUG condition");
+    const unwrap = { oldStart: 3, oldCount: 5, newStart: 2, newCount: 0 };
+    expect(reason([APP], { [APP]: [{ before: chained, after: plain, hunks: [unwrap] }] })).toContain("DEBUG condition");
+  });
+
+  test("a chain counts when any condition names DEBUG, and a chain nested in one is inside it", () => {
+    expect([...debugConditionLines(file(["#if os(iOS)", "a", "#elseif DEBUG", "b", "#endif", "c"]))]).toEqual([1, 2, 3, 4, 5]);
+    expect([...debugConditionLines(file(["#if !DEBUG", "#if os(iOS)", "a", "#endif", "#endif"]))]).toEqual([1, 2, 3, 4, 5]);
+    expect([...debugConditionLines(file(["#if os(iOS)", "a", "#endif", "let DEBUGGER = 1 // #if DEBUG"]))]).toEqual([]);
+  });
+
+  test("a DEBUG chain in a test target or the harness does not count", () => {
+    expect(reason(["clients/apple/OppiTests/ATests.swift"], { "clients/apple/OppiTests/ATests.swift": [edit(4)] })).toBeNull();
+    expect(reason(["clients/apple/OppiDebugHarness/Stage.swift"], { "clients/apple/OppiDebugHarness/Stage.swift": [edit(4)] })).toBeNull();
+  });
+
+  test("an unreadable app source change compiles Release", () => {
+    expect(reason([APP], { [APP]: undefined })).toContain("could not be read");
+  });
+
+  test("a file moved out of the harness Release excludes compiles Release", () => {
+    const harness = "clients/apple/OppiDebugHarness/Fixtures/Stage.swift";
+    expect(reason(["clients/apple/Oppi/Stage.swift"], {}, [harness, "clients/apple/Oppi/Stage.swift"])).toContain(harness);
+  });
+
+  test("reads git's -U0 hunk headers, a count of 1 left out", () => {
+    expect(parseHunks("diff --git a/x b/x\n@@ -5 +5,2 @@ func f()\n-a\n+b\n+c\n@@ -9,0 +11 @@\n+d\n")).toEqual([
+      { oldStart: 5, oldCount: 1, newStart: 5, newCount: 2 },
+      { oldStart: 9, oldCount: 0, newStart: 11, newCount: 1 },
+    ]);
   });
 });
