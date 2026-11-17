@@ -277,4 +277,12 @@ final class ExtensionPanelViewController: UIViewController {
     private func closePane() {
         onClose?()
     }
+
+    /// Opens a place one of the panel's tiles names on the panel's own stack: it fills the pane
+    /// (beside the chat, or full screen on a narrow window) with Back to the panel, as a Git pane's
+    /// rows and a split pane's files open, never in a new pane.
+    func openPlace(_ entry: PaneStackEntry) {
+        guard let root = AppRootEnvironment.near(self) else { return }
+        Router.push(PaneSplitScreens.page(entry, root: root), from: self)
+    }
 }

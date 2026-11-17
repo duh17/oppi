@@ -108,6 +108,27 @@ enum PaneSplitScreens {
         return state
     }
 
+    /// `entry` as a page pushed onto a pane's own stack (a place a panel pane's tile opens): the
+    /// screen a split leaf would show for it, with Back to the screen under it. Its leaf state hands
+    /// the page's place to the content once it can open, and its Close Pane pops it.
+    static func page(_ entry: PaneStackEntry, root: AppRootEnvironment) -> UIViewController {
+        weak var page: UIViewController?
+        let replace: (UIViewController) -> Void = { screen in
+            guard let page, let navigation = page.navigationController,
+                  let index = navigation.viewControllers.firstIndex(of: page) else { return }
+            var screens = navigation.viewControllers
+            screens[index] = screen
+            navigation.setViewControllers(screens, animated: false)
+        }
+        let screen = make(entry, root: root, actions: Actions(
+            show: { replace(Self.page($0, root: root)) },
+            replaceRoot: replace,
+            close: { if let page { Router.finish(page) } }
+        ))
+        page = screen
+        return screen
+    }
+
     /// A web page needs no server: it shows whatever its server's state. The
     /// page it moves to, by a link or a typed address, becomes the leaf's
     /// entry without rebuilding it.

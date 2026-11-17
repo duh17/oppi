@@ -3,8 +3,8 @@ import XCTest
 /// The `example-shelf` plugin against the real server on the scripted faux model: a durable chat
 /// in a workspace that holds a Godot game writes a picture, a PDF, and notes and starts a
 /// subagent, all in one codemode call. With the plugin on, the **Shelf** pill opens a pane of
-/// tiles (full screen on an iPhone), and the PDF's tile opens the file beside the chat (over it
-/// on an iPhone).
+/// tiles (full screen on an iPhone), and the PDF's tile opens the file in that same pane, filling
+/// it, with Back to the tiles: no new pane on an iPad.
 ///
 /// Run with `e2e.sh --native --durable --faux-model` (iPad: `OPPI_SIM_DEVICE_PROFILE=ipad`);
 /// skipped otherwise.
@@ -100,12 +100,33 @@ final class ExtensionShelfE2ETests: E2ETestCase {
         }
         try saveLabScreenshot(name: "shelf-2-tiles")
 
+        let panel = app.descendants(matching: .any)["extensionPanel.example-shelf"]
+        XCTAssertTrue(panel.exists, "The shelf is a panel pane")
+        let paneFrame = panel.frame
+        let grips = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane.grip.'"))
+        let gripCount = grips.count
         tap(report, named: "PDF tile")
-        XCTAssertTrue(
-            app.descendants(matching: .any)["fileViewer.pdf"].waitForExistence(timeout: 20),
-            "The PDF did not open"
+        let pdf = app.descendants(matching: .any)["fileViewer.pdf"]
+        XCTAssertTrue(pdf.waitForExistence(timeout: 20), "The PDF did not open")
+        let fills = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            abs(pdf.frame.minX - paneFrame.minX) < 4 && abs(pdf.frame.width - paneFrame.width) < 4
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [fills], timeout: 10), .completed,
+                       "The PDF fills the shelf's pane: file \(pdf.frame), pane \(paneFrame)")
+        XCTAssertEqual(grips.count, gripCount, "The PDF opened in the shelf's pane, not a new one")
+        // The pane's own Back, in its bar above the PDF (a chat beside has its own).
+        let back = try XCTUnwrap(
+            app.navigationBars.buttons.matching(identifier: "BackButton").allElementsBoundByIndex.first {
+                paneFrame.contains(CGPoint(x: $0.frame.midX, y: $0.frame.midY))
+            },
+            "The PDF has the pane's Back"
         )
         try saveLabScreenshot(name: "shelf-3-file-open")
+
+        tap(back, named: "PDF Back")
+        XCTAssertTrue(report.waitForExistence(timeout: 10), "Back returns to the shelf's tiles")
+        XCTAssertFalse(pdf.exists, "Back closed the PDF")
+        try saveLabScreenshot(name: "shelf-4-back")
     }
 
     private func tile(labelContaining text: String) -> XCUIElement {

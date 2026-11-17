@@ -4,7 +4,8 @@
  * The shelf shows as a pill above the composer ("Shelf · 4"). Tapping it opens a panel pane of
  * tiles, drawn as the Pinned screen draws pins: the files the chat wrote or changed (pictures,
  * PDFs, and documents first), the subagents it started, and the Godot game of its workspace. A
- * tap on a tile opens the file, the subagent's chat, or the game beside the chat.
+ * tap on a tile opens the file, the subagent's chat, or the game in the panel's pane, with Back to
+ * the tiles.
  *
  * It has no tool and no state of its own: everything comes from what the server already knows
  * about the chat. After each round of tool calls a hook draws the shelf again.

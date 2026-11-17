@@ -4,7 +4,7 @@ An example Oppi plugin that ships with the server, turned off. It shows a panel 
 
 - a pill above the composer, **Shelf · N**, that opens a panel pane;
 - a `tiles` node per group: the files the chat wrote or changed (pictures, PDFs, and documents first), the subagents it started, and the Godot game of its workspace;
-- tiles drawn as the Pinned screen draws pins, each opening its `oppi://` link: a file or game beside the chat on an iPad, full screen on an iPhone;
+- tiles drawn as the Pinned screen draws pins, each opening its `oppi://` link in the panel's pane, with **Back** to the tiles;
 - no tool and no state of its own: `oppiHost().sessionActivity` and `oppiHost().godot` read what the server already knows, and a `GenerationTask` hook draws the shelf again after each round of tool calls, publishing through `oppiHost().sessionSurfaces`.
 
 ## Turn it on

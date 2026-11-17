@@ -586,7 +586,7 @@ A client that cannot tick the node gets the count as it was when the server sent
 
 ### Tiles
 
-A `tiles` node shows places as the Pinned screen shows pins, in rows of as many as fit: a file's first page or picture, a folder's first items, a game's last frame, a session. A tap opens the place as its link opens: beside the chat on a wide window, or in the chat's stack on an iPhone. A tile loads its preview as soon as it is drawn, without a tap, and like a pin it can name any place on the session's server.
+A `tiles` node shows places as the Pinned screen shows pins, in rows of as many as fit: a file's first page or picture, a folder's first items, a game's last frame, a session. In a panel pane, a tap opens the place in that same pane, with **Back** to the tiles. Elsewhere, such as the chat's drawer, a tap opens the place as its link opens: beside the chat on a wide window, or in the chat's stack on an iPhone. A tile loads its preview as soon as it is drawn, without a tap, and like a pin it can name any place on the session's server.
 
 ```ts
 tiles({

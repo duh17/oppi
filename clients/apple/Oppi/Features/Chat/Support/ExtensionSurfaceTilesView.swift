@@ -1,8 +1,8 @@
 import UIKit
 
 /// A `tiles` node: places drawn as the Pinned screen draws pins (`PinTileView`), each opening its
-/// `oppi://` pane link as a pin opens: beside the chat on a wide window, in the stack on a narrow
-/// one. A tile reads its preview through the same pipeline (`PinPreviewStore`), and a target the
+/// `oppi://` pane link: in a panel pane on that pane's own stack, elsewhere as a pin opens (beside
+/// the chat on a wide window, in the stack on a narrow one). A tile reads its preview through the same pipeline (`PinPreviewStore`), and a target the
 /// server says is gone draws dimmed, "Not found", and opens nothing.
 ///
 /// The tiles wrap in rows, as many across as fit at 160 points or more (never fewer than two).
@@ -202,11 +202,18 @@ final class BlocksTilesView: UIView, BlocksColumnFillable {
         )
     }
 
-    /// Opens a place as a pin opens it: `AppOpenRequest(link:)` beside the focused pane on a
-    /// wide window, else in the main stack.
+    /// Opens a place. In a panel pane it opens on that pane's own stack, with Back to the panel
+    /// (`ExtensionPanelViewController.openPlace`). Elsewhere (a chat's drawer, its full-screen
+    /// reader) it opens as a pin opens: `AppOpenRequest(link:)` beside the focused pane on a wide
+    /// window, else in the main stack.
     private func open(_ route: PaneRoute) {
         guard let root = AppRootEnvironment.near(self) else { return }
         let serverID = server?.id
+        if let serverID, let panel = sequence(first: self as UIResponder, next: \.next).lazy
+            .compactMap({ $0 as? ExtensionPanelViewController }).first {
+            panel.openPlace(PaneStackEntry(serverId: serverID, route: route))
+            return
+        }
         let link = PaneLink(server: serverID, route: route)
         root.opener.open(AppOpenRequest(link: link, origin: .inAppHyperlink, sourceServerID: serverID), inMainPane: false)
     }
