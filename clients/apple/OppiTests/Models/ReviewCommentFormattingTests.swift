@@ -158,6 +158,34 @@ struct ReviewCommentFormattingTests {
         #expect(skillBlock.contains("**Where:** `\(absolutePath)`:8 (file)"))
     }
 
+    /// A PDF selection has no lines: the comment names the file and the pages
+    /// the quote spans, and keeps them across a reload.
+    @Test func pdfCommentNamesItsPagesAndQuoteAcrossAReload() throws {
+        let suite = "ReviewCommentFormattingTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = ReviewCommentStore(defaults: defaults, keyPrefix: "pdf")
+        let request = ReviewCommentSelectionRequest(
+            selectedText: "Carry two litres per person",
+            source: ReviewCommentSourceContext(
+                sessionId: "s1",
+                surface: .fullScreenSource,
+                filePath: "docs/field-guide.pdf"
+            ),
+            pageRange: 2...3
+        )
+        #expect(ChatReviewCommentsController(store: store)
+            .save(body: "Which spring?", request: request, localScopeId: "w1", sessionId: "s1") == nil)
+
+        let reloaded = ReviewCommentStore(defaults: defaults, keyPrefix: "pdf")
+        reloaded.load(workspaceId: "w1", sessionId: "s1")
+        let comment = try #require(reloaded.stagedComments.first)
+        let block = ReviewCommentStore.reviewBlock(for: [comment])
+        #expect(block.contains("**Where:** `docs/field-guide.pdf` pages 2–3 (file)"), "\(block)")
+        #expect(block.contains("```\nCarry two litres per person\n```"), "\(block)")
+        #expect(ReviewCommentStashLocation.completeText(for: comment) == "docs/field-guide.pdf pages 2–3")
+    }
+
     @Test func reviewBlockIgnoresAlreadySentComments() {
         let sent = ReviewComment(
             id: "c1",

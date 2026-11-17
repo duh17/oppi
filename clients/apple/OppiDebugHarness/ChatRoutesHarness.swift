@@ -155,6 +155,14 @@ final class ChatRoutesPreviewController: PreviewRootController {
                     .workspaceFile(UserMessagePathPill(kind: .repoFile, path: ChatRoutesFixture.changedPath))
                 )
             },
+            // A PDF pill, with the chat's review-comment scope as a tapped pill has it.
+            control("chatRoutes.openPDF") {
+                ChatRoutesFixture.openFromTimeline(
+                    .workspaceFile(UserMessagePathPill(kind: .repoFile, path: ChatRoutesPDF.path)),
+                    reviewCommentSelectionScope: ReviewCommentSelectionActiveRouter
+                        .router(for: ChatRoutesFixture.sessionId).map { .activeSession($0) }
+                )
+            },
             // What a busy-time send does to the chat (`ChatActionHandler.sendPrompt`): the chat
             // scrolls to its bottom, and the queue pill lands while that scroll is still moving.
             control("chatRoutes.queueFollowUp") { [scrollController] in
@@ -905,7 +913,10 @@ enum ChatRoutesFixture {
 
     /// What a timeline pill tap does: the destination action the chat gave its
     /// timeline (a modal or the attached leaf, by width).
-    @MainActor static func openFromTimeline(_ destination: ChatTimelineDestination) {
+    @MainActor static func openFromTimeline(
+        _ destination: ChatTimelineDestination,
+        reviewCommentSelectionScope: ReviewCommentSelectionScope? = nil
+    ) {
         guard let timeline = timelineCollectionInWindows(),
               let open = (timeline.delegate as? ChatTimelineController)?.openDestination,
               let presenter = sequence(first: timeline as UIResponder, next: \.next)
@@ -915,7 +926,7 @@ enum ChatRoutesFixture {
             serverId: serverId,
             workspaceId: workspace.id,
             sessionId: sessionId,
-            reviewCommentSelectionScope: nil,
+            reviewCommentSelectionScope: reviewCommentSelectionScope,
             sourceView: timeline,
             presenter: presenter
         ))
@@ -1051,6 +1062,9 @@ private final class ChatRoutesURLProtocol: URLProtocol {
                 ["name": "index.org", "path": "notebook/index.org", "type": "file", "size": 6_000, "modifiedAt": 1_900_000_000_000],
             ]
             body = Self.json(["path": "notebook/", "entries": entries, "truncated": false])
+        case ("GET", "/files/current") where (url.query ?? "").contains(ChatRoutesPDF.fileName):
+            contentType = "application/pdf"
+            body = ChatRoutesPDF.data
         case ("GET", "/files/current") where (url.query ?? "").contains(ChatRoutesFixture.pdfName):
             contentType = "application/pdf"
             body = ChatRoutesFixture.pdfData

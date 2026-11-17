@@ -335,6 +335,8 @@ struct ReviewCommentSelectionRequest: Equatable {
     var htmlDOMAnchor: HTMLDOMElementAnchor? = nil
     /// Diagram-object anchor. Absent for selected-text and DOM comments.
     var semanticAnchor: ReviewCommentSemanticAnchor? = nil
+    /// 1-based PDF pages the selected text spans. Absent outside PDFs.
+    var pageRange: ClosedRange<Int>? = nil
     /// Edit-menu mic: the receiving composer starts dictation once it opens.
     var startsDictation = false
 }

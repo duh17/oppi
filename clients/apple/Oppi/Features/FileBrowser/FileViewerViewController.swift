@@ -443,7 +443,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         }
     }
 
-    private var readerSelectionContext: ReviewCommentSelectionContext? {
+    var readerSelectionContext: ReviewCommentSelectionContext? {
         configuration.reviewCommentSelectionContext
             ?? configuration.reviewCommentSelectionScope?.makeContext(sessionId: configuration.sessionId)
     }

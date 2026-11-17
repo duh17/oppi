@@ -83,7 +83,9 @@ final class ChatReviewCommentsController: ReviewCommentStashHandling {
             timelineItemId: request.source.timelineItemId,
             url: nil,
             htmlDOMAnchor: request.htmlDOMAnchor,
-            semanticAnchor: request.semanticAnchor
+            semanticAnchor: request.semanticAnchor,
+            startPage: request.pageRange?.lowerBound,
+            endPage: request.pageRange?.upperBound
         )
     }
 }

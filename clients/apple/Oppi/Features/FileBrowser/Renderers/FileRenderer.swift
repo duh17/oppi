@@ -156,6 +156,9 @@ protocol FileRendererHost: UIViewController {
     /// draws a bar, it is the screen's only one: the stack's hides, and the
     /// viewer's Share (this renderer's `share`) moves onto it.
     func mountReader(_ content: FullScreenCodeContent) -> UIView
+    /// Where selected-text comments on a page that is not a reader go; nil
+    /// when this viewer takes none.
+    var readerSelectionContext: ReviewCommentSelectionContext? { get }
     func navigateBack()
 }
 

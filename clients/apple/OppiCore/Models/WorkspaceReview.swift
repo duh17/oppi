@@ -188,12 +188,15 @@ struct ReviewCommentReference: Codable, Sendable, Equatable {
     var htmlDOMAnchor: HTMLDOMElementAnchor? = nil
     /// Local persisted diagram-object reference. Older drafts omit this key.
     var semanticAnchor: ReviewCommentSemanticAnchor? = nil
+    /// 1-based PDF pages the selected text spans. Older drafts omit these keys.
+    var startPage: Int? = nil
+    var endPage: Int? = nil
 }
 
 extension ReviewCommentReference {
     private enum CodingKeys: String, CodingKey {
         case source, label, path, side, startLine, endLine, selectedText, languageHint
-        case toolCallId, timelineItemId, url, htmlDOMAnchor, semanticAnchor
+        case toolCallId, timelineItemId, url, htmlDOMAnchor, semanticAnchor, startPage, endPage
     }
 
     init(from decoder: Decoder) throws {
@@ -215,6 +218,8 @@ extension ReviewCommentReference {
             htmlDOMAnchor = nil
         }
         semanticAnchor = try container.decodeIfPresent(ReviewCommentSemanticAnchor.self, forKey: .semanticAnchor)
+        startPage = try container.decodeIfPresent(Int.self, forKey: .startPage)
+        endPage = try container.decodeIfPresent(Int.self, forKey: .endPage)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -232,10 +237,19 @@ extension ReviewCommentReference {
         try container.encodeIfPresent(url, forKey: .url)
         try container.encodeIfPresent(htmlDOMAnchor, forKey: .htmlDOMAnchor)
         try container.encodeIfPresent(semanticAnchor, forKey: .semanticAnchor)
+        try container.encodeIfPresent(startPage, forKey: .startPage)
+        try container.encodeIfPresent(endPage, forKey: .endPage)
     }
 }
 
 extension ReviewCommentReference {
+    /// "page 3" or "pages 3–4" for a PDF selection; nil for other sources.
+    var pageText: String? {
+        guard let startPage else { return nil }
+        guard let endPage, endPage != startPage else { return "page \(startPage)" }
+        return "pages \(startPage)–\(endPage)"
+    }
+
     var displayPath: String? {
         Self.displayPath(from: path)
     }

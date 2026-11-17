@@ -22,6 +22,7 @@ enum ReviewCommentStashLocation {
     private static func locationText(for comment: ReviewComment, displayedPath: String?) -> String {
         if let displayedPath, !displayedPath.isEmpty {
             return displayedPath + lineRangeSuffix(comment.reference)
+                + (comment.reference.pageText.map { " \($0)" } ?? "")
         }
         if let label = comment.reference.label, !label.isEmpty {
             return label

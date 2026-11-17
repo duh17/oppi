@@ -310,6 +310,9 @@ final class ReviewCommentStore {
                     title += ":\(start)"
                 }
             }
+            if let page = reference.pageText {
+                title += " \(page)"
+            }
             if let side = reference.side {
                 title += " (\(side), \(source))"
             } else {
