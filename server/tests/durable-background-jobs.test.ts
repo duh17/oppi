@@ -438,6 +438,7 @@ describe("native Durable background jobs", () => {
         session,
         dataDir: f.dir,
         persistBinding: () => {},
+        onRunState: () => {},
         onEvent: (event) => {
           events.push(event);
           if (event.type === "notice" && event.message.includes("Background job bash-1"))
@@ -514,6 +515,7 @@ describe("native Durable background jobs", () => {
         session,
         dataDir: f.dir,
         persistBinding: () => {},
+        onRunState: () => {},
         onEvent: (event) => {
           if (event.type === "queue_update") onQueue();
         },

@@ -22,8 +22,8 @@ import Testing
 struct SessionLifecycleWireReplayTests {
     // MARK: - Named disagreements
 
-    /// Every difference between the client row and the server, by name. `matches` sees the path,
-    /// the frame type and every differing field at that frame; the first rule that lists the field
+    /// Every difference between the client row and the server, by name. `matches` sees the scenario
+    /// id, the path, the frame type and every differing field at that frame; the first rule that lists the field
     /// and matches claims it.
     static let disagreements: [LifecycleDisagreement] = [
         .init(
@@ -34,7 +34,7 @@ struct SessionLifecycleWireReplayTests {
                 + "already the new one. The mirror's own agent_settled relay lags the same way.",
             fields: [.program],
             expectedFires: 10
-        ) { _, frame, diff in
+        ) { _, _, frame, diff in
             ["extension_ui_request", "extension_ui_settled", "compaction_start", "agent_settled"].contains(frame)
                 && diff[.program] != nil
         },
@@ -47,7 +47,7 @@ struct SessionLifecycleWireReplayTests {
                 + "from status, lags the same beat when the stop starts from an idle row.",
             fields: [.status, .keepAlive],
             expectedFires: 39
-        ) { _, frame, diff in
+        ) { _, _, frame, diff in
             frame == "stop_requested" && diff[.status] != nil
         },
         .init(
@@ -59,7 +59,7 @@ struct SessionLifecycleWireReplayTests {
                 + "runtime_ended catches the row up first.",
             fields: [.status, .awake, .keepAlive],
             expectedFires: 6
-        ) { _, frame, diff in
+        ) { _, _, frame, diff in
             ["stop_confirmed", "compaction_start"].contains(frame) && diff[.status] != nil
         },
         .init(
@@ -71,8 +71,22 @@ struct SessionLifecycleWireReplayTests {
                 + "the state or summary that follows. keepAlive lags the same beat.",
             fields: [.status, .program, .awake, .keepAlive],
             expectedFires: 8
-        ) { path, frame, diff in
-            path != .app && frame == "agent_start" && diff[.status] == LifecycleDifference("ready", "busy")
+        ) { scenario, path, frame, diff in
+            !scenario.hasPrefix("durable.") && path != .app && frame == "agent_start"
+                && diff[.status] == LifecycleDifference("ready", "busy")
+        },
+        .init(
+            name: "durableRunStartPrecedesItsSummary",
+            closedBy: "none: the summary that follows agent_start always catches it up",
+            reason: "A durable session is busy from the view value that shows its run, before "
+                + "agent_start goes out. A run whose start reaches the session only after an abort "
+                + "in the gap has no state frame between: the row lags ready one frame at "
+                + "agent_start, until the summary that follows. keepAlive and awake lag the same beat.",
+            fields: [.status, .awake, .keepAlive],
+            expectedFires: 6
+        ) { scenario, path, frame, diff in
+            scenario.hasPrefix("durable.") && path != .app && frame == "agent_start"
+                && diff[.status] == LifecycleDifference("ready", "busy")
         },
         .init(
             name: "mirrorAgentSettledLagsBridgeState",
@@ -82,7 +96,7 @@ struct SessionLifecycleWireReplayTests {
                 + "state or summary that follows.",
             fields: [.status, .keepAlive, .awake],
             expectedFires: 12
-        ) { _, frame, diff in
+        ) { _, _, frame, diff in
             frame == "agent_settled" && diff[.status] != nil
         },
     ]
@@ -102,7 +116,7 @@ struct SessionLifecycleWireReplayTests {
                 for observation in try await LifecycleReplay.run(scenario, path: path) {
                     for (field, difference) in observation.differences.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
                         if let rule = Self.disagreements.first(where: {
-                            $0.fields.contains(field) && $0.matches(path, observation.frameType, observation.differences)
+                            $0.fields.contains(field) && $0.matches(scenario.id, path, observation.frameType, observation.differences)
                         }) {
                             fires[rule.name, default: 0] += 1
                         } else {
@@ -239,7 +253,8 @@ struct LifecycleDisagreement {
     let fields: Set<LifecycleField>
     /// How many (scenario, path, frame, field) differences the rule claims over the pinned scenarios.
     let expectedFires: Int
-    let matches: (LifecycleReplayPath, String, [LifecycleField: LifecycleDifference]) -> Bool
+    /// Scenario id, path, frame type, and every differing field at that frame.
+    let matches: (String, LifecycleReplayPath, String, [LifecycleField: LifecycleDifference]) -> Bool
 
     init(
         name: String,
@@ -247,7 +262,7 @@ struct LifecycleDisagreement {
         reason: String,
         fields: Set<LifecycleField>,
         expectedFires: Int,
-        matches: @escaping (LifecycleReplayPath, String, [LifecycleField: LifecycleDifference]) -> Bool
+        matches: @escaping (String, LifecycleReplayPath, String, [LifecycleField: LifecycleDifference]) -> Bool
     ) {
         self.name = name
         self.closedBy = closedBy

@@ -17,6 +17,12 @@ import type { ChatAttachmentRef, MessageQueueState } from "./types.js";
 
 type BackendToolDefinition = { label?: string; namespace?: { name: string } };
 
+/**
+ * A run's change as session status reads it: `started` when one runs, `settled` once no run
+ * follows (a run Oppi continues settles only if the continue starts none).
+ */
+export type BackendRunState = "started" | "settled";
+
 /** Managed-session capabilities. No live Pi AgentSession escapes this seam. */
 export interface AgentBackend {
   readonly isDisposed: boolean;
@@ -28,6 +34,11 @@ export interface AgentBackend {
   readonly abortClearsQueuedModelTurns?: boolean;
   /** Idle edits stay queued. The next real admission places them; do not start a prompt here. */
   readonly retainsIdleQueueUntilAdmission?: boolean;
+  /**
+   * Session status follows the backend's run state (`DurableBackend`'s `onRunState`), not its
+   * `agent_start`/`agent_settled` events, which other consumers still read.
+   */
+  readonly reportsRunState?: boolean;
   /** Abort owns UI cancellation; don't answer the waiting tool just before stopping it. */
   readonly cancelsExtensionUIOnAbort?: boolean;
   /** History lives in a store, not a Pi session file, so share has no file to require. */

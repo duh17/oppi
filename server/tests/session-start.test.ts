@@ -79,6 +79,7 @@ function makeDeps(session: Session): SessionStartCoordinatorDeps & {
     getSkillPathResolver: vi.fn(() => null),
     getNotifyPort: vi.fn(() => null),
     onPiEvent: vi.fn(),
+    onRunState: vi.fn(),
     onSessionEnd: vi.fn(),
     registerActiveSession: vi.fn(),
     persistSessionNow: vi.fn((_key, s) => {

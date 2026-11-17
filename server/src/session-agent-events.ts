@@ -33,7 +33,7 @@ import {
 import { hasToolMediaDetails, materializeAgentEventMedia } from "./session-agent-event-media.js";
 import { agentMessageText, type AgentMessageData } from "../plugins/subagents/agent-message.js";
 import type { EventProcessorSessionState, SessionEventProcessor } from "./session-events.js";
-import type { AgentBackend } from "./agent-backend.js";
+import type { AgentBackend, BackendRunState } from "./agent-backend.js";
 import type { SessionStopCoordinator } from "./session-stop.js";
 import type { SessionTurnCoordinator, TurnSessionState } from "./session-turns.js";
 import { materializeToolMediaDetails } from "./session-attachments.js";
@@ -329,15 +329,15 @@ export class SessionAgentEventCoordinator {
       this.deps.turnCoordinator.markNextTurnStarted(key, active);
     }
 
+    // A backend that reports run state settles through `handleRunState`, which saves and
+    // broadcasts the settled summary right after this event.
+    const runStateFromEvents = active.sdkBackend?.reportsRunState !== true;
     try {
-      this.deps.eventProcessor.updateSessionFromEvent(key, active, event);
+      this.deps.eventProcessor.updateSessionFromEvent(key, active, event, runStateFromEvents);
     } finally {
       // Pi settlement is authoritative even if projection persistence fails.
       // Do not strand a compact that was accepted during the active turn.
-      if (event.type === "agent_settled") {
-        this.deps.resumeQueuedCompactions?.(key);
-        this.handleSessionSettled(key);
-      }
+      if (event.type === "agent_settled" && runStateFromEvents) this.runSettled(key);
     }
 
     if (event.type === "agent_end") {
@@ -355,13 +355,40 @@ export class SessionAgentEventCoordinator {
       }
     }
 
-    if (this.shouldBroadcastSessionSummaryAfterUpdate(event)) {
+    if (
+      this.shouldBroadcastSessionSummaryAfterUpdate(event) &&
+      (runStateFromEvents || event.type !== "agent_settled")
+    ) {
       this.broadcastSessionSummaryIfChanged(key, active, event.type);
     }
 
     if (event.type !== "agent_settled") {
       this.deps.resetIdleTimer(key);
     }
+  }
+
+  /**
+   * A durable run started or settled, read from its conversation view (`DurableBackend`), so
+   * status holds busy through a failed run Oppi continues. Its agent_* events still reach the
+   * other consumers through `handlePiEvent`, program status among them: a start's summary goes
+   * out with the agent_start that follows it, so status and program status change in one
+   * frame.
+   */
+  handleRunState(key: string, state: BackendRunState): void {
+    const active = this.deps.getActiveSession(key);
+    if (!active) return;
+    try {
+      this.deps.eventProcessor.updateSessionFromRunState(key, active.session, state);
+    } finally {
+      // As at a classic agent_settled: settlement holds even if saving fails.
+      if (state === "settled") this.runSettled(key);
+    }
+    if (state === "settled") this.broadcastSessionSummaryIfChanged(key, active, "run_settled");
+  }
+
+  private runSettled(key: string): void {
+    this.deps.resumeQueuedCompactions?.(key);
+    this.handleSessionSettled(key);
   }
 
   private handleSessionSettled(key: string): void {
@@ -573,7 +600,7 @@ export class SessionAgentEventCoordinator {
   private broadcastSessionSummaryIfChanged(
     key: string,
     active: SessionAgentEventState,
-    reason: AgentSessionEvent["type"],
+    reason: AgentSessionEvent["type"] | "run_settled",
   ): void {
     const summary = buildSessionSummary(active.session);
     const fingerprint = sessionSummaryFingerprint(summary);
@@ -593,7 +620,7 @@ export class SessionAgentEventCoordinator {
     key: string,
     active: SessionAgentEventState,
     summary: SessionSummary,
-    reason: AgentSessionEvent["type"],
+    reason: AgentSessionEvent["type"] | "run_settled",
   ): void {
     log.debug("session_agent_events.summary_update", {
       sessionId: active.session.id,

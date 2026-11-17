@@ -191,6 +191,16 @@ function observe(manager: SessionManager, sessionId: string) {
   };
 }
 
+/** The statuses the session's summaries told a subscriber, in order, without repeats. */
+function statusesOf(messages: readonly ServerMessage[]): string[] {
+  const statuses: string[] = [];
+  for (const message of messages) {
+    const status = message.type === "session_summary" ? message.summary.status : undefined;
+    if (status && status !== statuses.at(-1)) statuses.push(status);
+  }
+  return statuses;
+}
+
 async function openHarness(
   dir: string,
   models: ModelRuntime,
@@ -312,6 +322,7 @@ async function backend(harness: Harness, models: ModelRuntime, session: Session,
     dataDir,
     persistBinding: () => {},
     onEvent: () => {},
+    onRunState: () => {},
   });
   result.startEvents();
   return result;
@@ -680,6 +691,7 @@ describe("server durable managed runtime", () => {
         session: f.session,
         dataDir: f.dir,
         persistBinding: () => {},
+        onRunState: () => {},
         onEvent: (event) => {
           if (event.type === "extension_ui_request" && event.method === "ask") {
             shown = { id: event.id, value: JSON.stringify(askResponse) };
@@ -2603,6 +2615,7 @@ describe("server durable managed runtime", () => {
       dataDir: f.dir,
       persistBinding: () => {},
       onEvent: () => {},
+      onRunState: () => {},
     });
     const stopped = owner.abortConversations(
       new Set([crashed.sessions[1]!.serverDurable!.conversationId! as ConversationId]),
@@ -3112,6 +3125,12 @@ describe("server durable managed runtime", () => {
     const confirmed = projection.next((message) => message.type === "stop_confirmed");
     await f.manager.sendAbort(f.session.id);
     await confirmed;
+    // The stop confirms at the run's end, then the run settles the session ready.
+    await vi.waitFor(() => expect(statusesOf(projection.messages).at(-1)).toBe("ready"));
+    const confirmedAt = projection.messages.findIndex(
+      (message) => message.type === "stop_confirmed",
+    );
+    expect(statusesOf(projection.messages.slice(0, confirmedAt))).not.toContain("ready");
     expect(await f.manager.getMessageQueue(f.session.id)).toMatchObject({
       steering: [],
       followUp: [],
@@ -3259,6 +3278,9 @@ describe("server durable managed runtime", () => {
     const types = observed.messages.map((message) => message.type);
     expect(types.filter((type) => type === "agent_settled")).toHaveLength(1);
     expect(types.lastIndexOf("agent_settled")).toBeGreaterThan(types.lastIndexOf("agent_start"));
+    // Status holds busy from the failed run into the follow-up's, then settles ready once.
+    expect(statusesOf(observed.messages)).toEqual(["busy", "ready"]);
+    expect(f.manager.getActiveSession(f.session.id)?.status).toBe("ready");
 
     // The failure card is the failed run's last row, before the input it did not cause.
     const harness = (
@@ -4712,6 +4734,14 @@ describe("server durable managed runtime", () => {
     managers.push(restarted);
     let observed!: ReturnType<typeof observe>;
     let end!: Promise<ServerMessage>;
+    // The row saved once the attachment found the run, before startup resumes scheduling and
+    // before any state read: a crash there must find it busy.
+    const savedAtResume: Array<string | undefined> = [];
+    const resume = SessionHost.prototype.resume;
+    vi.spyOn(SessionHost.prototype, "resume").mockImplementation(function (this: SessionHost) {
+      savedAtResume.push(storage.getSession(f.session.id)?.status);
+      return resume.call(this);
+    });
     const start = restarted.startSession.bind(restarted);
     vi.spyOn(restarted, "startSession").mockImplementation(async (sessionId, workspace) => {
       const session = await start(sessionId, workspace);
@@ -4722,6 +4752,7 @@ describe("server durable managed runtime", () => {
     try {
       await restarted.resumeDurableSessions();
       await generationStarted;
+      expect(new Set(savedAtResume)).toEqual(new Set(["busy"]));
       // GET /sessions reads persisted state, not the in-memory event projection.
       // No save-debounce delay or extra continuation input may be required.
       expect(restarted.isActive(f.session.id)).toBe(true);

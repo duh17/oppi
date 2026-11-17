@@ -15,6 +15,7 @@ import { EventEmitter } from "node:events";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { AgentRuntimeTransport, RuntimeClientCommand } from "./agent-runtime-transport.js";
 import type { HeldTurnInput } from "./agent-runtime-transport.js";
+import type { BackendRunState } from "./agent-backend.js";
 import { SessionRestartHold } from "./session-restart-hold.js";
 import { abandonQueuedResume, openQueuedStores } from "./session-restart-resume.js";
 import type {
@@ -222,6 +223,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       onProgramStatusChange: (session, change) =>
         this.emit("program_status_change", session, change),
       onPiEvent: (key, event) => this.handlePiEvent(key, event),
+      onRunState: (key, state) => this.handleRunState(key, state),
       hasUI: (key) =>
         (this.starting.get(key)?.subscribers.size ?? 0) > 0 ||
         (this.active.get(key)?.subscribers.size ?? 0) > 0,
@@ -426,6 +428,19 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     } catch (error: unknown) {
       log.error("sessions.pi_event_handler.failed", {
         sessionId: key,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /** A durable run's start or settle. A throw would end the backend's view watch. */
+  private handleRunState(key: string, state: BackendRunState): void {
+    try {
+      this.agentEventCoordinator.handleRunState(key, state);
+    } catch (error: unknown) {
+      log.error("sessions.run_state_handler.failed", {
+        sessionId: key,
+        state,
         error: error instanceof Error ? error.message : String(error),
       });
     }

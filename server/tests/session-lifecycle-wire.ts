@@ -1113,6 +1113,7 @@ async function untilFrame(
 }
 
 type HandlePiEvent = (key: string, event: { type: string }) => void;
+type HandleRunState = (key: string, state: "started" | "settled") => void;
 
 const focusedType = (type: string) => (frame: { type: string }, channel: string) =>
   channel === "focused" && frame.type === type;
@@ -1229,34 +1230,51 @@ export const DURABLE_SCENARIOS: Array<() => Promise<LifecycleScenario>> = [
       async (world) => {
         const { recorder, manager } = world;
         await startDurable(world);
-        // Hold every event from agent_start on, as a store that commits before the session
-        // hears of the run: the backend is running, the lifecycle has not heard of it.
-        const held: Array<[string, unknown]> = [];
+        // Hold the run's start and every event from agent_start on, in order, as a store that
+        // commits before the session hears of the run: the backend is running, the lifecycle
+        // has not heard of it.
+        const held: Array<() => void> = [];
         let holding = true;
-        const handle = (SessionManager.prototype as unknown as { handlePiEvent: HandlePiEvent })
-          .handlePiEvent;
-        vi.spyOn(
-          SessionManager.prototype as unknown as { handlePiEvent: HandlePiEvent },
-          "handlePiEvent",
-        ).mockImplementation(function (this: SessionManager, key, event) {
-          if (holding && (held.length > 0 || event.type === "agent_start")) {
-            held.push([key, event]);
+        let heldStart = false;
+        const prototype = SessionManager.prototype as unknown as {
+          handlePiEvent: HandlePiEvent;
+          handleRunState: HandleRunState;
+        };
+        const handle = prototype.handlePiEvent;
+        const handleRunState = prototype.handleRunState;
+        vi.spyOn(prototype, "handlePiEvent").mockImplementation(function (
+          this: SessionManager,
+          key,
+          event,
+        ) {
+          heldStart ||= event.type === "agent_start";
+          if (holding && heldStart) {
+            held.push(() => handle.call(this, key, event));
             return;
           }
           return handle.call(this, key, event);
         });
+        vi.spyOn(prototype, "handleRunState").mockImplementation(function (
+          this: SessionManager,
+          key,
+          state,
+        ) {
+          if (holding) {
+            held.push(() => handleRunState.call(this, key, state));
+            return;
+          }
+          return handleRunState.call(this, key, state);
+        });
         await recorder.step("committed", async () => {
           await manager.sendPrompt(SESSION_ID, "hello");
-          await until(() => held.length > 0, "the held agent_start");
+          await until(() => heldStart, "the held agent_start");
           await recorder.untilQuiet();
         });
         await recorder.step("abort_in_gap", () => manager.sendAbort(SESSION_ID));
         await recorder.step("released", async () => {
           const settled = untilFrame(recorder, "settled and ready", readySummary);
           holding = false;
-          for (const [key, event] of held.splice(0)) {
-            handle.call(manager, key, event as { type: string });
-          }
+          for (const release of held.splice(0)) release();
           await settled;
           await recorder.untilQuiet();
         });

@@ -2,6 +2,7 @@ import { trustedSessionAttachmentSourceRoots } from "./chat-attachments.js";
 import type { InlineExtension } from "@earendil-works/pi-coding-agent";
 import { applyHostEnv } from "./host-env.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
+import type { BackendRunState } from "./agent-backend.js";
 import type { SessionBackendEvent } from "./pi-events.js";
 import type { ProgramStatusChangeListener } from "./program-status.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
@@ -74,6 +75,7 @@ export interface SessionCoordinatorBundleDeps {
   emitSessionEvent: (payload: SessionBroadcastEvent) => void;
   onProgramStatusChange?: ProgramStatusChangeListener;
   onPiEvent: (key: string, event: SessionBackendEvent) => void;
+  onRunState: (key: string, state: BackendRunState) => void;
   onSessionEnd: (key: string, reason: string, stopConfirmationReason?: string) => Promise<void>;
   persistSessionNow: (key: string, session: Session) => void;
   markSessionDirty: (key: string) => void;
@@ -164,6 +166,7 @@ export function createSessionCoordinatorBundle(
     getSkillPathResolver: () => deps.getSkillPathResolver(),
     getNotifyPort: () => deps.getNotifyPort(),
     onPiEvent: (key, event) => deps.onPiEvent(key, event),
+    onRunState: (key, state) => deps.onRunState(key, state),
     onSessionEnd: (key, reason) => deps.onSessionEnd(key, reason),
     registerActiveSession: (key, active) => {
       // Unawaited session_start dialogs still belong to this bridge after activation.

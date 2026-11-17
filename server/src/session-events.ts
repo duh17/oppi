@@ -1,6 +1,7 @@
 import type { ToolOutputSnapshots } from "./tool-output-sidecar.js";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
+import type { BackendRunState } from "./agent-backend.js";
 import type { ExtensionUIState } from "./extension-ui-state.js";
 import { gitTrustForWorkspace } from "./git-safe.js";
 import { getGitStatus } from "./git-status.js";
@@ -205,6 +206,8 @@ export class SessionEventProcessor {
     key: string,
     active: EventProcessorSessionState,
     event: AgentSessionEvent,
+    /** False when the backend reports run state itself (`updateSessionFromRunState`). */
+    runStateFromEvents = true,
   ): void {
     const session = active.session;
     let shouldFlushNow = false;
@@ -212,7 +215,7 @@ export class SessionEventProcessor {
 
     switch (event.type) {
       case "agent_start": {
-        applyLifecycle(session, "run_started");
+        if (runStateFromEvents) applyLifecycle(session, "run_started");
         const now = Date.now();
         session.currentTurnStartedAt = now;
         active.turnStartedAt = now;
@@ -239,8 +242,9 @@ export class SessionEventProcessor {
         break;
 
       case "agent_settled":
-        applyLifecycle(session, "run_settled");
         session.currentTurnStartedAt = undefined;
+        if (!runStateFromEvents) break;
+        applyLifecycle(session, "run_settled");
         shouldFlushNow = true;
         break;
 
@@ -448,6 +452,23 @@ export class SessionEventProcessor {
     }
 
     this.deps.markSessionDirty(key);
+  }
+
+  /**
+   * The status a run moves for a backend that reports run state (`AgentBackend.reportsRunState`):
+   * what agent_start and agent_settled move for one that does not. A settle saves now; a start
+   * is saved with the run's agent_start, which follows it at once.
+   */
+  updateSessionFromRunState(key: string, session: Session, state: BackendRunState): void {
+    session.lastActivity = Date.now();
+    if (state === "started") {
+      applyLifecycle(session, "run_started");
+      this.deps.markSessionDirty(key);
+      return;
+    }
+    applyLifecycle(session, "run_settled");
+    session.currentTurnStartedAt = undefined;
+    this.deps.persistSessionNow(key, session);
   }
 
   /**

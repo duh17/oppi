@@ -47,7 +47,7 @@ import {
   toolAllowed,
   type OppiAgentState,
 } from "./durable-agent.js";
-import type { AgentBackend } from "./agent-backend.js";
+import type { AgentBackend, BackendRunState } from "./agent-backend.js";
 import { isControlConversation } from "./control-session.js";
 import { readRequestDisplay, type DurableAgentController } from "./durable-agent-controller.js";
 import { controlConversationTools } from "./durable-control-conversation.js";
@@ -162,6 +162,8 @@ interface DurableBackendOptions {
   dataDir: string;
   persistBinding: () => void;
   onEvent: (event: SessionBackendEvent) => void;
+  /** The run state session status follows (`AgentBackend.reportsRunState`). */
+  onRunState: (state: BackendRunState) => void;
   /** Startup dialogs (project trust) before the projection exists, as for SDK sessions. */
   onUIBridgeReady?: (bridge: SdkUiBridge | undefined) => void;
   metrics?: ServerTelemetry;
@@ -309,6 +311,7 @@ export class DurableBackend implements AgentBackend {
   readonly isQueueReconciliationRequired = false;
   readonly persistsWithoutSessionFile = true;
   readonly retainsIdleQueueUntilAdmission = true;
+  readonly reportsRunState = true;
   private queueVersion = 0;
   private queueFingerprint = "";
   /** Error texts the current run already showed live; cleared when it ends. */
@@ -327,6 +330,7 @@ export class DurableBackend implements AgentBackend {
     /** The conversation's state and the classic events it tells; its view backs the getters. */
     private readonly events: DurableClassicEvents,
     private readonly onEvent: (event: SessionBackendEvent) => void,
+    private readonly onRunState: (state: BackendRunState) => void,
     private readonly mcp: DurableMcp | undefined,
     private resources: PresentedResources,
     private readonly loadResources: () => Promise<PresentedResources>,
@@ -748,6 +752,7 @@ export class DurableBackend implements AgentBackend {
         session,
         events,
         options.onEvent,
+        options.onRunState,
         mcp,
         resources,
         target.loadResources,
@@ -835,12 +840,15 @@ export class DurableBackend implements AgentBackend {
         });
     });
     if (!this.host.isResumeHeld) this.harness.resume();
+    // A run this attachment finds (a restart resumes it, a reattach re-binds it) keeps it busy.
+    if (this.live.run !== undefined) this.onRunState("started");
     for (const event of this.events.snapshot(this.host.isResumeHeld)) this.onEvent(event);
     this.events.start(async (frame) => {
       if (this.disposed) return;
       // A new run starts with nothing shown, also after an idle task's failure. A frame
       // that also ends a run keeps that run's texts until its settlement is handled below.
       if (frame.runStarted && !frame.runEnded) this.shownRunErrors.clear();
+      if (frame.runStarted) this.onRunState("started");
       for (const pi of frame.events) {
         if (this.disposed) return;
         // The protocol already shows an assistant error as the live error row.
@@ -852,6 +860,9 @@ export class DurableBackend implements AgentBackend {
           this.shownRunErrors.add(`Compaction failed: ${pi.errorMessage}`);
         this.onEvent(pi);
       }
+      // After the ended run's events, so a stop confirms at its end first. A run Oppi continues
+      // settles below, if at all.
+      if (frame.settled) this.onRunState("settled");
       for (const entry of frame.appended) {
         const card = this.events.inputCards.entries.get(entry.id);
         if (entry.model?.length) {
@@ -937,7 +948,7 @@ export class DurableBackend implements AgentBackend {
         }
       }
       // A run that failed with inputs queued behind it: its card is written above, so start them
-      // now, behind it. The frame held the run's `agent_settled`; send it if none starts.
+      // now, behind it. The frame held the run's settle; send it if none starts.
       const failed = frame.continuation;
       if (failed !== undefined && !this.disposed) {
         let next: "running" | "idle" = "idle";
@@ -949,7 +960,10 @@ export class DurableBackend implements AgentBackend {
             error: safeErrorMessage(error),
           });
         }
-        if (next === "idle") for (const pi of this.events.settle()) this.onEvent(pi);
+        if (next === "idle") {
+          for (const pi of this.events.settle()) this.onEvent(pi);
+          this.onRunState("settled");
+        }
       }
       // A run's settlement commits with its end, so its errors are in this frame or earlier.
       // A later run starts with nothing shown.

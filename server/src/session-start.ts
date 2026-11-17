@@ -13,7 +13,7 @@ import type { DurableBackend as DurableBackendType } from "./durable-backend.js"
 import { createLogger } from "./logger.js";
 import { featureOn } from "./server-features.js";
 import { safeErrorMessage } from "./log-utils.js";
-import type { AgentBackend } from "./agent-backend.js";
+import type { AgentBackend, BackendRunState } from "./agent-backend.js";
 import { replayCacheMissHistory } from "./cache-miss.js";
 import type { SdkUiBridge } from "./sdk-ui-bridge.js";
 import {
@@ -49,6 +49,8 @@ export interface SessionStartCoordinatorDeps {
   getSkillPathResolver: () => ((skillNames: string[]) => Promise<string[]>) | null;
   getNotifyPort: () => SessionNotifyPort | null;
   onPiEvent: (key: string, event: SessionBackendEvent) => void;
+  /** A durable run's start or settle, which session status follows. */
+  onRunState: (key: string, state: BackendRunState) => void;
   /** Tears the registered runtime down; a start that fails after registering ends through it. */
   onSessionEnd: (key: string, reason: string) => void | Promise<void>;
   registerActiveSession: (key: string, active: SessionStartActiveSession) => void;
@@ -298,6 +300,7 @@ export class SessionStartCoordinator {
       dataDir: this.deps.storage.getDataDir(),
       persistBinding: () => this.deps.persistSessionNow(key, session),
       onEvent: (event) => this.deps.onPiEvent(key, event),
+      onRunState: (state) => this.deps.onRunState(key, state),
       onUIBridgeReady: (bridge) => this.deps.onUIBridgeReady?.(key, bridge),
       hasUI: () => this.deps.hasUI?.(key) ?? false,
       metrics: this.deps.metrics,

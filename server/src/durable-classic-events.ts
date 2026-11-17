@@ -55,7 +55,7 @@ type PlacedInput = Extract<SubmissionRecord, { type: "input"; status: "placed" |
 type Slot = ToolSlot | NestedToolSlot;
 
 /** A task that faulted or was orphaned: its card and live error. */
-export type DurableTaskFailure = { taskId: TaskId; kind: string; message: string };
+type DurableTaskFailure = { taskId: TaskId; kind: string; message: string };
 
 /** What one view value (or one batch of task faults) told, in order. */
 export type ClassicFrame = {
@@ -70,6 +70,8 @@ export type ClassicFrame = {
   inboxChanged: boolean;
   runStarted: boolean;
   runEnded: boolean;
+  /** No run follows the one this value ended: it tells `agent_settled`. */
+  settled: boolean;
   /**
    * A run Oppi continues (`continuesAfter`): one a host stop cut off (`interrupted`), or one
    * that failed (`model_error`, `no_model`) with inputs queued behind it. Its `agent_settled`
@@ -103,6 +105,7 @@ function emptyFrame(): ClassicFrame {
     inboxChanged: false,
     runStarted: false,
     runEnded: false,
+    settled: false,
     taskFailures: [],
   };
 }
@@ -112,9 +115,7 @@ function emptyFrame(): ClassicFrame {
  * Compaction summaries and reset handoffs are user-role but not a new turn.
  * An assistant older than that user entry belongs to a finished turn.
  */
-export function newestAssistantOfActiveRun(
-  entries: readonly EntryRecord[],
-): AssistantMessage | undefined {
+function newestAssistantOfActiveRun(entries: readonly EntryRecord[]): AssistantMessage | undefined {
   let lastUserId = -1;
   let newest: { id: number; message: AssistantMessage } | undefined;
   for (const entry of entries) {
@@ -143,7 +144,7 @@ function contentDelta(
  * block, the grown text as a delta, and a tool call whose arguments changed. Built from the
  * values, not from watch operations, so a folded or replaced value reads the same.
  */
-export function messageUpdates(
+function messageUpdates(
   prev: AssistantMessage | undefined,
   next: AssistantMessage,
 ): AssistantMessageEvent[] {
@@ -586,7 +587,10 @@ export class DurableClassicEvents {
       if (failure && (await continuesAfter(this.harness, failure, inboxOf(next)))) {
         this.settleHeld = true;
         frame.continuation = failure;
-      } else out.push(pi({ type: "agent_settled" }));
+      } else {
+        frame.settled = true;
+        out.push(pi({ type: "agent_settled" }));
+      }
     }
     for (const status of startedCompactions)
       out.push(pi({ type: "compaction_start", reason: status.trigger }));

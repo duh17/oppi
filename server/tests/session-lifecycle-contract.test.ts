@@ -543,9 +543,12 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
       "agent_settled: ready/idle wait:idle saved:ready",
     ],
   },
+  // A durable run is busy from the view value that shows it, so the prompt's own state frame,
+  // told before agent_start, already says busy.
   "durable.prompt_settle": {
     ws: [
       "state ready/idle",
+      "state busy/working",
       "agent_start",
       "summary busy/working",
       "state busy/working",
@@ -554,7 +557,7 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
       "agent_settled",
       "summary ready/done",
     ],
-    app: ["summary ready/idle", "summary busy/working", "summary ready/done"],
+    app: ["summary busy/working", "summary ready/done"],
     steps: [
       "start: ready/idle wait:idle saved:starting>ready",
       "prompt: ready/done wait:idle saved:ready",
@@ -563,6 +566,7 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
   "durable.abort_mid_turn": {
     ws: [
       "state ready/idle",
+      "state busy/working",
       "agent_start",
       "summary busy/working",
       "stop_requested",
@@ -574,7 +578,6 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
       "summary ready/done",
     ],
     app: [
-      "summary ready/idle",
       "summary busy/working",
       "stop_requested",
       "summary stopping/working",
@@ -591,6 +594,7 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
   "durable.terminate_busy": {
     ws: [
       "state ready/idle",
+      "state busy/working",
       "agent_start",
       "summary busy/working",
       "stop_requested",
@@ -604,7 +608,6 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
       'session_ended "stopped"',
     ],
     app: [
-      "summary ready/idle",
       "summary busy/working",
       "stop_requested",
       "summary stopping/working",
@@ -621,7 +624,8 @@ const EXPECTED: Record<string, { ws: string[]; app: string[]; steps: string[] }>
   },
   // The store committed the prompt and its run is going, but the session has not seen agent_start:
   // the row is ready and the CLI wait holds (the pending-work read). An abort reads the engine,
-  // which runs, so it stops the run. The test holds every event from agent_start on, so the abort
+  // which runs, so it stops the run. The test holds the run's start and every event from
+  // agent_start on, so the abort
   // is confirmed once the engine is idle, before the held run's frames arrive. The run was cut
   // short before its first token, so it sends no answer.
   "durable.commit_before_agent_start": {
