@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -87,6 +88,48 @@ exec ${JSON.stringify(realGit)} "$@"
 `,
   );
   chmodSync(join(bin, "git"), 0o755);
+}
+
+/**
+ * Run every `git worktree add` with a post-checkout hook, so the hook runs inside git's add, after
+ * the new `.git/worktrees/<id>` exists. Each hook marks itself active, waits up to a second for
+ * another add to become active too, and logs how many were active. Two adds of one repository that
+ * share that window are the ones that can read each other's half-written `commondir`.
+ */
+function installAddWindowGit(bin: string, stateDir: string): void {
+  const realGit = execFileSync("/bin/sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  const hooks = join(stateDir, "hooks");
+  mkdirSync(join(stateDir, "active"), { recursive: true });
+  mkdirSync(hooks);
+  const active = JSON.stringify(join(stateDir, "active"));
+  writeFileSync(
+    join(hooks, "post-checkout"),
+    `#!/bin/sh
+mkdir ${active}/$$
+i=0
+while [ "$(ls ${active} | wc -l)" -lt 2 ] && [ "$i" -lt 50 ]; do
+  sleep 0.02
+  i=$((i + 1))
+done
+ls ${active} | wc -l | tr -d ' ' >> ${JSON.stringify(join(stateDir, "active-log"))}
+rmdir ${active}/$$
+`,
+  );
+  chmodSync(join(hooks, "post-checkout"), 0o755);
+  writeFileSync(
+    join(bin, "git"),
+    `#!/bin/sh
+if [ "$1" = "worktree" ] && [ "$2" = "add" ]; then
+  exec ${JSON.stringify(realGit)} -c core.hooksPath=${JSON.stringify(hooks)} "$@"
+fi
+exec ${JSON.stringify(realGit)} "$@"
+`,
+  );
+  chmodSync(join(bin, "git"), 0o755);
+}
+
+function activeAddCounts(stateDir: string): number[] {
+  return readFileSync(join(stateDir, "active-log"), "utf8").trim().split("\n").map(Number);
 }
 
 function makeGitWorkspace(): { root: string; linkedPath: string; workspace: Workspace } {
@@ -649,6 +692,45 @@ describe("workspace worktrees", async () => {
       process.env.PATH = previousPath;
     }
   });
+
+  it("runs one worktree add at a time per repository, and adds of different repositories together", async () => {
+    const one = makeGitWorkspace();
+    const other = makeGitWorkspace();
+    other.workspace = { ...other.workspace, id: "ws-worktrees-other" };
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-add-lock-"));
+    roots.push(dataDir);
+    const sameRepo = mkdtempSync(join(tmpdir(), "oppi-worktrees-add-lock-same-"));
+    roots.push(sameRepo);
+    const twoRepos = mkdtempSync(join(tmpdir(), "oppi-worktrees-add-lock-two-"));
+    roots.push(twoRepos);
+    // Both shims find the real git before either is on PATH.
+    installAddWindowGit(sameRepo, sameRepo);
+    installAddWindowGit(twoRepos, twoRepos);
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${sameRepo}${delimiter}${previousPath ?? ""}`;
+    try {
+      const created = await Promise.all(
+        ["a", "b", "c"].map((name) =>
+          createWorkspaceWorktree(one.workspace, { branch: `subagent/${name}` }, { dataDir }),
+        ),
+      );
+      expect(created.map((worktree) => worktree.branch)).toEqual([
+        "subagent/a",
+        "subagent/b",
+        "subagent/c",
+      ]);
+      expect(activeAddCounts(sameRepo)).toEqual([1, 1, 1]);
+
+      process.env.PATH = `${twoRepos}${delimiter}${previousPath ?? ""}`;
+      await Promise.all([
+        createWorkspaceWorktree(one.workspace, { branch: "subagent/d" }, { dataDir }),
+        createWorkspaceWorktree(other.workspace, { branch: "subagent/d" }, { dataDir }),
+      ]);
+      expect(activeAddCounts(twoRepos)).toEqual([2, 2]);
+    } finally {
+      process.env.PATH = previousPath;
+    }
+  }, 30_000);
 
   it("lets the event loop run while git lists worktrees", async () => {
     const bin = mkdtempSync(join(tmpdir(), "oppi-worktrees-slow-git-"));

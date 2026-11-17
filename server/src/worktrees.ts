@@ -11,6 +11,7 @@ import {
 } from "./git-safe.js";
 import { HttpStatusError } from "./http-status-error.js";
 import { resolveHostPath } from "./host.js";
+import { KeyedMutex } from "./keyed-mutex.js";
 import { isPathWithinRoot } from "./path-utils.js";
 import { DEFAULT_DATA_DIR } from "./storage/config-store.js";
 import type {
@@ -107,6 +108,28 @@ async function runGitOrThrow(cwd: string, args: string[], statusCode = 409): Pro
   if (result.status === 0) return result.stdout;
   const detail = result.stderr.trim() || result.stdout.trim() || `git ${args.join(" ")} failed`;
   throw new WorkspaceWorktreeError(statusCode, detail);
+}
+
+/**
+ * `git worktree add` and `remove` write `.git/worktrees/<id>` without a lock, and each of them
+ * reads every other entry there (add to refuse a branch that is already checked out). An add that
+ * reads another add's `commondir` before git has written it dies with "failed to read
+ * .git/worktrees/<id>/commondir". So the server runs one add or remove per repository at a time.
+ * The key is the common dir, which every workspace and linked worktree of a repository shares;
+ * other repositories run in parallel.
+ */
+const worktreeMetadataLocks = new KeyedMutex();
+
+async function withWorktreeMetadataLock<T>(
+  workspaceRoot: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const commonDir = await runGitOrThrow(workspaceRoot, [
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-common-dir",
+  ]);
+  return worktreeMetadataLocks.withLock(safeRealpath(commonDir.trim()), fn);
 }
 
 async function runGitAsync(cwd: string, args: string[], timeout: number): Promise<GitResult> {
@@ -631,14 +654,16 @@ export async function createWorkspaceWorktree(
     const args = branchAlreadyExists
       ? ["worktree", "add", target.path, branch]
       : ["worktree", "add", "-b", branch, target.path, base];
-    await runGitOrThrow(workspaceRoot, args);
-
-    const created = (
-      await listWorkspaceWorktrees(workspace, {
-        dataDir: options.dataDir,
-        includePendingRemovals: true,
-      })
-    ).find((worktree) => worktree.id === target.id);
+    // The listing reads every entry in `.git/worktrees` too, so it stays inside the lock.
+    const created = await withWorktreeMetadataLock(workspaceRoot, async () => {
+      await runGitOrThrow(workspaceRoot, args);
+      return (
+        await listWorkspaceWorktrees(workspace, {
+          dataDir: options.dataDir,
+          includePendingRemovals: true,
+        })
+      ).find((worktree) => worktree.id === target.id);
+    });
     if (!created) {
       throw new WorkspaceWorktreeError(500, "Created worktree was not discoverable");
     }
@@ -953,10 +978,13 @@ export async function removeWorkspaceWorktree(
       }
     }
 
-    const removed = await runGitAsync(
-      workspaceRoot,
-      ["worktree", "remove", ...(options.force ? ["--force"] : []), worktree.path],
-      WORKTREE_REMOVE_TIMEOUT_MS,
+    // Held for the whole delete: git reads the other entries before it and drops this one after.
+    const removed = await withWorktreeMetadataLock(workspaceRoot, () =>
+      runGitAsync(
+        workspaceRoot,
+        ["worktree", "remove", ...(options.force ? ["--force"] : []), worktree.path],
+        WORKTREE_REMOVE_TIMEOUT_MS,
+      ),
     );
     if (removed.status !== 0) {
       throw new WorkspaceWorktreeError(
