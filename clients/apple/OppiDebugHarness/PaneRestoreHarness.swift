@@ -21,6 +21,8 @@ import UIKit
 /// `PANE_RESTORE_SEED=files-below` saves the sessions over the home folder's
 /// `notebook` (Org files) in a pane below them, the window a pinned folder
 /// opened from a portrait iPad leaves.
+/// `PANE_RESTORE_SEED=chat-over-pdf` saves the chat over a PDF from the home
+/// folder in a pane below it, the window a divider is dragged to the top of.
 /// `PANE_RESTORE_REX=1` saves one SSH host whose Rex is a fake one in process
 /// (`SSHTerminalRexListPreviewController.makeList`), so the launcher's Rex pane
 /// lists its sessions and opens one in the pane.
@@ -82,6 +84,7 @@ final class PaneRestorePreviewController: PreviewRootController {
         case "splits": PaneTreeStore().save(Self.splitsTree(), scene: scene)
         case "godot": PaneTreeStore().save(Self.godotTree(), scene: scene)
         case "files-below": PaneTreeStore().save(Self.filesBelowTree(), scene: scene)
+        case "chat-over-pdf": PaneTreeStore().save(Self.chatOverPDFTree(), scene: scene)
         default: break
         }
         panes.connect(scene: scene)
@@ -158,6 +161,25 @@ final class PaneRestorePreviewController: PreviewRootController {
                                attachedTo: nil, origin: .split)),
             ], weights: [0.45, 0.55]),
             focus: files
+        ))
+    }
+
+    private static func chatOverPDFTree() -> PaneLayoutArchive? {
+        let workspace = ChatRoutesFixture.workspace.id
+        let routed = ScenePanes().routedLeafID
+        guard let pdf = PaneID("leaf-pdf") else { return nil }
+        let chat = [
+            PaneStackEntry(serverId: serverId, route: .sessions(workspace: workspace)),
+            PaneStackEntry(serverId: serverId, route: .session(ChatRoutesFixture.sessionId)),
+        ]
+        let file = PaneRoute.file(.host, path: "~/\(ChatRoutesFixture.pdfName)", line: nil)
+        return PaneLayoutArchive(restorable: PaneLayout(
+            root: .split(axis: .column, children: [
+                .leaf(PaneLeaf(id: routed, name: nil, stack: chat, attachedTo: nil, origin: .split)),
+                .leaf(PaneLeaf(id: pdf, name: nil, stack: [PaneStackEntry(serverId: serverId, route: file)],
+                               attachedTo: nil, origin: .split)),
+            ], weights: [0.5, 0.5]),
+            focus: pdf
         ))
     }
 

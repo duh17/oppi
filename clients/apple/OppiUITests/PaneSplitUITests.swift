@@ -276,6 +276,72 @@ final class PaneSplitUITests: XCTestCase, PreviewUITestCase {
         attachScreenCapture("collapse-restored")
     }
 
+    /// The chat over a PDF on the iPad mini, its divider dragged all the way
+    /// up: the chat folds into a strip whose mark sits below the status bar,
+    /// out of the system's pull-down, and a drag down from that mark (or a
+    /// tap) brings the chat back. An ordinary drag still resizes.
+    func testAChatDraggedToTheTopFoldsBelowTheStatusBarAndPullsBackInPortrait() throws {
+        try chatDraggedToTheTopFoldsBelowTheStatusBar(.portrait, name: "portrait")
+    }
+
+    func testAChatDraggedToTheTopFoldsBelowTheStatusBarAndPullsBackInLandscape() throws {
+        try chatDraggedToTheTopFoldsBelowTheStatusBar(.landscapeLeft, name: "landscape")
+    }
+
+    private func chatDraggedToTheTopFoldsBelowTheStatusBar(_ orientation: UIDeviceOrientation, name: String) throws {
+        guard UIDevice.current.userInterfaceIdiom == .pad else {
+            throw XCTSkip("A pane below another is regular width only on the iPad mini")
+        }
+        XCUIDevice.shared.orientation = orientation
+        addTeardownBlock { @MainActor in XCUIDevice.shared.orientation = .portrait }
+        launchPreview(screen: "pane-restore", environment: ["PANE_RESTORE_SEED": "chat-over-pdf"], colorScheme: "dark", ready: nil)
+        let window = app.windows.firstMatch
+        let timeline = app.collectionViews["chat.timeline"]
+        let pdf = app.descendants(matching: .any)["pane.leaf.leaf-pdf"]
+        XCTAssertTrue(timeline.waitUntilExists(timeout: 10), "The chat is in the upper pane")
+        XCTAssertTrue(pdf.waitUntilExists(timeout: 10), "The PDF is in the pane below")
+        let divider = app.descendants(matching: .any)["pane.divider.1"]
+        XCTAssertTrue(divider.waitUntilExists(timeout: 5), "A divider sits between the panes")
+        hold()
+        attachScreenCapture("\(name)-1-split")
+
+        // An ordinary drag resizes: the chat grows, and nothing folds. The
+        // synthesized drag loses the pan's start slop, so it gives less than 80 pt.
+        let chatHeight = timeline.frame.height
+        divider.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: divider.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).withOffset(CGVector(dx: 0, dy: 80)))
+        XCTAssertTrue(waitFor(timeline.frame.height > chatHeight + 30), "The drag gave the chat room (\(timeline.frame.height) from \(chatHeight))")
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane.strip.'")).firstMatch.exists)
+        hold()
+        attachScreenCapture("\(name)-2-dragged")
+
+        divider.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.01)))
+        let strip = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane.strip.'")).firstMatch
+        XCTAssertTrue(strip.waitUntilExists(timeout: 5), "Dragged past the chat's minimum, the release folded it")
+        // The strip's 20 pt sit under the status bar's inset, never in it.
+        XCTAssertEqual(strip.frame.minY, window.frame.minY, accuracy: 1)
+        XCTAssertGreaterThanOrEqual(strip.frame.height, 40, "The strip carries the status bar's inset above its mark")
+        XCTAssertGreaterThan(pdf.frame.minY, strip.frame.maxY - 1, "The PDF starts under the strip")
+        hold()
+        attachScreenCapture("\(name)-3-folded-to-top")
+
+        // Pull the strip down from its mark, the way it was pushed up.
+        let mark = strip.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: (strip.frame.height - 10) / strip.frame.height))
+        mark.press(forDuration: 0.05, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)))
+        XCTAssertTrue(strip.waitUntilGone(timeout: 5), "The drag brought the chat back")
+        XCTAssertTrue(waitFor(timeline.exists && timeline.frame.height > 200), "at a pane's height")
+        hold()
+        attachScreenCapture("\(name)-4-pulled-back")
+
+        // A tap on the strip does the same.
+        divider.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.01)))
+        XCTAssertTrue(strip.waitUntilExists(timeout: 5), "Folded again")
+        mark.tap()
+        XCTAssertTrue(strip.waitUntilGone(timeout: 5), "A tap on the strip brought the chat back")
+    }
+
     /// §1.5 and I2: a compact window (the iPhone) shows a tree a wide window
     /// left behind one pane at a time. The chip under the bar names the pane
     /// and its place; its list shows another pane, and a swipe the next or

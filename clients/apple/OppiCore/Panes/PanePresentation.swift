@@ -30,6 +30,10 @@ struct PanePresentation: Equatable, Sendable {
     ///     home-indicator swipe starts. A leaf that reaches the bottom keeps
     ///     its minimum height above it, and a collapsed one its strip, so no
     ///     pane's grip, strip or bar sits in that gesture zone.
+    ///   - topInset: the window's top safe area (status bar, window
+    ///     controls), where the system's pull-down starts. A collapsed leaf
+    ///     at the top keeps its strip below it, so a strip there can be
+    ///     touched; an open leaf's own bar already clears it.
     ///   - keyboardHeight: the software keyboard's overlap with the pane area's bottom edge.
     ///   - minimumSize: each leaf's minimum, by its content (`PaneMinimumSize`).
     ///   - liveCap: the most leaves that may be live (visible and not collapsed) at once.
@@ -37,6 +41,7 @@ struct PanePresentation: Equatable, Sendable {
         _ layout: PaneLayout,
         size: CGSize,
         sidebarWidth: CGFloat,
+        topInset: CGFloat,
         bottomInset: CGFloat,
         keyboardHeight: CGFloat,
         firstResponderLeaf: PaneID?,
@@ -50,6 +55,7 @@ struct PanePresentation: Equatable, Sendable {
         let minimums = PaneMinimums(
             sizes: Dictionary(uniqueKeysWithValues: layout.leaves.map { ($0.id, minimumSize($0)) }),
             collapsed: Set(layout.collapsed.keys),
+            topInset: max(0, topInset),
             bottomInset: max(0, bottomInset)
         )
         let collapsed = minimums.collapsed
@@ -69,7 +75,7 @@ struct PanePresentation: Equatable, Sendable {
         }
 
         var frames: [PaneID: CGRect] = [:]
-        shown?.place(in: area, minimums: minimums, reachesBottom: true, frames: &frames)
+        shown?.place(in: area, minimums: minimums, reach: .whole, frames: &frames)
         let zoomedForKeyboard = shown.flatMap {
             keyboardZoom(in: $0, frames: &frames, area: area, keyboardHeight: keyboardHeight,
                          firstResponderLeaf: firstResponderLeaf, minimums: minimums.sizes)
@@ -83,21 +89,26 @@ struct PanePresentation: Equatable, Sendable {
 
     /// The least `node` can take along `axis`, by the same rule `resolve`
     /// fits and places with: a divider drag holds each side there.
-    /// `reachesBottom`: the node's bottom edge is the pane area's.
+    /// `reachesTop`, `reachesBottom`: the node's top or bottom edge is the
+    /// pane area's.
     static func minimumLength(
         of node: PaneNode,
         along axis: PaneAxis,
         in layout: PaneLayout,
+        topInset: CGFloat,
         bottomInset: CGFloat,
+        reachesTop: Bool,
         reachesBottom: Bool,
         minimumSize: (PaneLeaf) -> CGSize
     ) -> CGFloat {
         let minimums = PaneMinimums(
             sizes: Dictionary(uniqueKeysWithValues: node.leaves.map { ($0.id, minimumSize($0)) }),
             collapsed: Set(layout.collapsed.keys),
+            topInset: max(0, topInset),
             bottomInset: max(0, bottomInset)
         )
-        let size = node.minimumSize(minimums: minimums, parentAxis: nil, reachesBottom: reachesBottom)
+        let reach = PaneEdgeReach(top: reachesTop, bottom: reachesBottom)
+        let size = node.minimumSize(minimums: minimums, parentAxis: nil, reach: reach)
         return axis == .row ? size.width : size.height
     }
 
@@ -163,11 +174,27 @@ enum PaneMinimumSize {
 }
 
 /// What `resolve` holds each leaf to: its minimum size, which leaves are
-/// strips, and the bottom safe area a leaf at the bottom keeps clear of.
+/// strips, and the safe areas a leaf or strip at the top or bottom keeps
+/// clear of.
 private struct PaneMinimums {
     var sizes: [PaneID: CGSize]
     var collapsed: Set<PaneID>
+    var topInset: CGFloat
     var bottomInset: CGFloat
+
+    /// What a column's strip costs: its thickness, plus the inset of each
+    /// window edge it meets, which it paints but keeps its mark out of.
+    func columnStrip(_ reach: PaneEdgeReach) -> CGFloat {
+        PanePresentation.collapsedThickness + (reach.top ? topInset : 0) + (reach.bottom ? bottomInset : 0)
+    }
+}
+
+/// Whether a node's top and bottom edges are the pane area's.
+private struct PaneEdgeReach {
+    var top: Bool
+    var bottom: Bool
+
+    static let whole = Self(top: true, bottom: true)
 }
 
 private extension PaneNode {
@@ -190,34 +217,40 @@ private extension PaneNode {
     }
 
     func fits(in size: CGSize, minimums: PaneMinimums) -> Bool {
-        let needed = minimumSize(minimums: minimums, parentAxis: nil, reachesBottom: true)
+        let needed = minimumSize(minimums: minimums, parentAxis: nil, reach: .whole)
         return needed.width <= size.width && needed.height <= size.height
     }
 
-    /// Whether each child's bottom edge is this node's: every child of a
-    /// row, only the last of a column.
-    func childrenReachBottom(_ reachesBottom: Bool) -> [Bool] {
+    /// Which window edges each child meets: every child of a row meets this
+    /// node's; in a column only the first meets its top and the last its bottom.
+    func childrenReach(_ reach: PaneEdgeReach) -> [PaneEdgeReach] {
         guard case .split(let axis, let children, _) = self else { return [] }
-        return children.indices.map { reachesBottom && (axis == .row || $0 == children.count - 1) }
+        return children.indices.map {
+            PaneEdgeReach(
+                top: reach.top && (axis == .row || $0 == 0),
+                bottom: reach.bottom && (axis == .row || $0 == children.count - 1)
+            )
+        }
     }
 
     /// The smallest size this node can take. A collapsed leaf costs its strip
     /// along its parent's axis and nothing across it. A node that reaches
     /// the bottom adds the bottom inset to its height: a leaf's minimum, or
-    /// a column's strip, sits above it.
-    func minimumSize(minimums: PaneMinimums, parentAxis: PaneAxis?, reachesBottom: Bool) -> CGSize {
-        let inset = reachesBottom ? minimums.bottomInset : 0
+    /// a column's strip, sits above it. A column's strip at the top sits
+    /// below the top inset too; an open leaf there clears it with its own bar.
+    func minimumSize(minimums: PaneMinimums, parentAxis: PaneAxis?, reach: PaneEdgeReach) -> CGSize {
         switch self {
         case .leaf(let leaf):
             guard let parentAxis, minimums.collapsed.contains(leaf.id) else {
                 let size = minimums.sizes[leaf.id] ?? .zero
-                return CGSize(width: size.width, height: size.height + inset)
+                return CGSize(width: size.width, height: size.height + (reach.bottom ? minimums.bottomInset : 0))
             }
-            let strip = PanePresentation.collapsedThickness
-            return parentAxis == .row ? CGSize(width: strip, height: 0) : CGSize(width: 0, height: strip + inset)
+            return parentAxis == .row
+                ? CGSize(width: PanePresentation.collapsedThickness, height: 0)
+                : CGSize(width: 0, height: minimums.columnStrip(reach))
         case .split(let axis, let children, _):
-            let sizes = zip(children, childrenReachBottom(reachesBottom)).map {
-                $0.minimumSize(minimums: minimums, parentAxis: axis, reachesBottom: $1)
+            let sizes = zip(children, childrenReach(reach)).map {
+                $0.minimumSize(minimums: minimums, parentAxis: axis, reach: $1)
             }
             let dividers = PanePresentation.dividerThickness * CGFloat(children.count - 1)
             switch axis {
@@ -229,22 +262,21 @@ private extension PaneNode {
         }
     }
 
-    func place(in rect: CGRect, minimums: PaneMinimums, reachesBottom: Bool, frames: inout [PaneID: CGRect]) {
+    func place(in rect: CGRect, minimums: PaneMinimums, reach: PaneEdgeReach, frames: inout [PaneID: CGRect]) {
         switch self {
         case .leaf(let leaf):
             frames[leaf.id] = rect
         case .split(let axis, let children, let weights):
             let length = axis == .row ? rect.width : rect.height
             let available = max(0, length - PanePresentation.dividerThickness * CGFloat(children.count - 1))
-            let bottoms = childrenReachBottom(reachesBottom)
-            let fixed: [CGFloat?] = zip(children, bottoms).map { child, bottom in
+            let reaches = childrenReach(reach)
+            let fixed: [CGFloat?] = zip(children, reaches).map { child, reach in
                 guard case .leaf(let leaf) = child, minimums.collapsed.contains(leaf.id) else { return nil }
-                // A column's last strip sits above the bottom inset.
-                let inset = axis == .column && bottom ? minimums.bottomInset : 0
-                return PanePresentation.collapsedThickness + inset
+                // A column's last strip sits above the bottom inset, its first below the top inset.
+                return axis == .column ? minimums.columnStrip(reach) : PanePresentation.collapsedThickness
             }
-            let floors = zip(children, bottoms).map { child, bottom -> CGFloat in
-                let size = child.minimumSize(minimums: minimums, parentAxis: axis, reachesBottom: bottom)
+            let floors = zip(children, reaches).map { child, reach -> CGFloat in
+                let size = child.minimumSize(minimums: minimums, parentAxis: axis, reach: reach)
                 return axis == .row ? size.width : size.height
             }
             let lengths = Self.allocate(available, weights: weights, fixed: fixed, floors: floors)
@@ -257,7 +289,7 @@ private extension PaneNode {
                 let childRect = axis == .row
                     ? CGRect(x: start, y: rect.minY, width: end - start, height: rect.height)
                     : CGRect(x: rect.minX, y: start, width: rect.width, height: end - start)
-                child.place(in: childRect, minimums: minimums, reachesBottom: bottoms[index], frames: &frames)
+                child.place(in: childRect, minimums: minimums, reach: reaches[index], frames: &frames)
                 start = end + PanePresentation.dividerThickness
                 exactEnd += PanePresentation.dividerThickness
             }

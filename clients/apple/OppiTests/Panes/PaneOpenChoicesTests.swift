@@ -17,6 +17,7 @@ struct PaneOpenChoicesTests: PaneFixtureBuilding {
                 layout,
                 size: CGSize(width: width, height: 700),
                 sidebarWidth: 0,
+                topInset: 0,
                 bottomInset: 0,
                 keyboardHeight: 0,
                 firstResponderLeaf: nil,

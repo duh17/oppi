@@ -407,8 +407,9 @@ extension PaneSplitDividerView: UIPointerInteractionDelegate {
 
 /// A collapsed pane: a 20 pt strip in its place along its split, with a mark
 /// across it and the pane's title for VoiceOver, the pointer and the Large
-/// Content Viewer. A tap (or VoiceOver's activate) expands the pane to the
-/// share it had.
+/// Content Viewer. A tap (or VoiceOver's activate), or a drag across it,
+/// expands the pane to the share it had: a finger that pulls the strip open
+/// the way it pulled the divider shut gets its pane back.
 final class PaneStripView: UIView {
     var onExpand: @MainActor () -> Void = {}
     /// The part of the strip under its bottom edge's home indicator: it
@@ -416,6 +417,11 @@ final class PaneStripView: UIView {
     /// system's swipe up never lands on it.
     var bottomInset: CGFloat = 0 {
         didSet { if bottomInset != oldValue { setNeedsLayout() } }
+    }
+    /// The part of the strip under its top edge's status bar, the same way:
+    /// the system's pull-down starts there and would take the touch.
+    var topInset: CGFloat = 0 {
+        didSet { if topInset != oldValue { setNeedsLayout() } }
     }
 
     private let mark = UIView()
@@ -433,6 +439,7 @@ final class PaneStripView: UIView {
         mark.isUserInteractionEnabled = false
         addSubview(mark)
         addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(expand)))
+        addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(panned(_:))))
         addInteraction(UIPointerInteraction(delegate: self))
         showsLargeContentViewer = true
         largeContentImage = UIImage(systemName: "rectangle.expand.vertical")
@@ -454,23 +461,31 @@ final class PaneStripView: UIView {
         super.layoutSubviews()
         // The mark runs along the strip, as the divider's grabber does.
         let size = axis == .row ? CGSize(width: 5, height: 48) : CGSize(width: 48, height: 5)
-        let height = bounds.height - bottomInset
+        let touchable = touchableRect
         mark.frame = CGRect(
-            x: (bounds.width - size.width) / 2, y: (height - size.height) / 2,
+            x: (bounds.width - size.width) / 2, y: touchable.midY - size.height / 2,
             width: size.width, height: size.height
         )
     }
 
+    /// The strip clear of the window edges' insets.
+    private var touchableRect: CGRect {
+        CGRect(x: 0, y: topInset, width: bounds.width, height: max(0, bounds.height - topInset - bottomInset))
+    }
+
     /// The strip draws 20 pt thin but takes touches 44 pt across, reaching
-    /// evenly into its neighbours; above a home indicator it reaches up only.
+    /// evenly into its neighbours; above a home indicator it reaches up
+    /// only, and below a status bar down only.
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        let touchable = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height - bottomInset)
+        let touchable = touchableRect
         let target: CGRect
         if axis == .row {
             target = touchable.insetBy(dx: min(0, (touchable.width - Self.hitThickness) / 2), dy: 0)
         } else if bottomInset > 0 {
             let height = max(touchable.height, Self.hitThickness)
-            target = CGRect(x: 0, y: touchable.height - height, width: touchable.width, height: height)
+            target = CGRect(x: 0, y: touchable.maxY - height, width: touchable.width, height: height)
+        } else if topInset > 0 {
+            target = CGRect(x: 0, y: touchable.minY, width: touchable.width, height: max(touchable.height, Self.hitThickness))
         } else {
             target = touchable.insetBy(dx: 0, dy: min(0, (touchable.height - Self.hitThickness) / 2))
         }
@@ -480,6 +495,19 @@ final class PaneStripView: UIView {
     static let hitThickness: CGFloat = 44
 
     @objc private func expand() { onExpand() }
+
+    /// A drag across the strip, along its split, expands it as it starts.
+    @objc private func panned(_ recognizer: UIPanGestureRecognizer) {
+        if recognizer.state == .began { onExpand() }
+    }
+
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard let pan = gestureRecognizer as? UIPanGestureRecognizer else {
+            return super.gestureRecognizerShouldBegin(gestureRecognizer)
+        }
+        let velocity = pan.velocity(in: self)
+        return axis == .row ? abs(velocity.x) > abs(velocity.y) : abs(velocity.y) > abs(velocity.x)
+    }
 
     override func accessibilityActivate() -> Bool {
         onExpand()

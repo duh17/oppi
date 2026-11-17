@@ -123,6 +123,7 @@ extension PaneHostController {
             cells,
             size: view.bounds.size,
             sidebarWidth: sideInsets.leading + sideInsets.trailing,
+            topInset: view.safeAreaInsets.top,
             bottomInset: view.safeAreaInsets.bottom,
             keyboardHeight: keyboardHeight,
             firstResponderLeaf: firstResponderCell,
@@ -262,7 +263,9 @@ extension PaneHostController {
     private func minimumLength(_ node: PaneNode, axis: PaneAxis, frame: CGRect) -> CGFloat {
         PanePresentation.minimumLength(
             of: node, along: axis, in: panes.cellLayout,
+            topInset: view.safeAreaInsets.top,
             bottomInset: view.safeAreaInsets.bottom,
+            reachesTop: frame.minY <= view.bounds.minY + 0.5,
             reachesBottom: frame.maxY >= view.bounds.maxY - 0.5,
             minimumSize: { [weak self] leaf in self?.minimumSize(of: leaf) ?? PaneMinimumSize.list }
         )
@@ -590,9 +593,10 @@ extension PaneHostController {
     // MARK: Strips
 
     /// A collapsed cell is a 20 pt strip in its place; a tap expands it. A
-    /// strip at the window's bottom sits above the home indicator: its cell
-    /// reaches under it (the fit rule adds the inset), and the strip's part
-    /// there only paints.
+    /// strip at the window's bottom sits above the home indicator, and one at
+    /// its top below the status bar: its cell reaches under them (the fit
+    /// rule adds the insets), and the strip's part there only paints, so
+    /// the system's edge swipes never take a touch meant for it.
     private func layoutStrips(_ presentation: PanePresentation) {
         let collapsed = panes.collapsedCells
         for (id, strip) in strips where !collapsed.contains(id) || presentation.frames[id] == nil {
@@ -611,8 +615,10 @@ extension PaneHostController {
             }()
             strip.show(title: cellTitle(id), axis: axis)
             strip.frame = frame
+            let reachesTop = axis == .column && frame.minY <= view.bounds.minY + 0.5
             let reachesBottom = axis == .column && frame.maxY >= view.bounds.maxY - 0.5
-            strip.bottomInset = reachesBottom ? max(0, frame.height - PanePresentation.collapsedThickness) : 0
+            strip.topInset = reachesTop ? view.safeAreaInsets.top : 0
+            strip.bottomInset = reachesBottom ? view.safeAreaInsets.bottom : 0
             view.bringSubviewToFront(strip)
         }
     }

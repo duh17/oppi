@@ -11,11 +11,11 @@ struct PanePresentationTests: PaneFixtureBuilding {
     static let sidebar: CGFloat = 320
 
     func resolve(
-        _ layout: PaneLayout, size: CGSize, sidebar: CGFloat = 0, bottomInset: CGFloat = 0, keyboard: CGFloat = 0,
-        firstResponder: PaneID? = nil, liveCap: Int = 4
+        _ layout: PaneLayout, size: CGSize, sidebar: CGFloat = 0, topInset: CGFloat = 0, bottomInset: CGFloat = 0,
+        keyboard: CGFloat = 0, firstResponder: PaneID? = nil, liveCap: Int = 4
     ) -> PanePresentation {
         PanePresentation.resolve(
-            layout, size: size, sidebarWidth: sidebar, bottomInset: bottomInset,
+            layout, size: size, sidebarWidth: sidebar, topInset: topInset, bottomInset: bottomInset,
             keyboardHeight: keyboard, firstResponderLeaf: firstResponder,
             minimumSize: { $0.stack.last.flatMap { PaneMinimumSize.standard(for: $0.route) } ?? .zero },
             liveCap: liveCap
@@ -97,6 +97,26 @@ struct PanePresentationTests: PaneFixtureBuilding {
         // Collapsed beside another in a row, it is a full-height strip as before.
         let sideBySide = try row([(chat("chat"), 0.5), (list("git"), 0.5)]).collapse(id("git"))
         #expect(resolve(sideBySide, size: Self.miniLandscape, bottomInset: 20).frames[id("git")] == CGRect(x: 1133 - 20, y: 0, width: 20, height: 744))
+    }
+
+    /// An upper pane collapsed to its strip keeps the strip below the status
+    /// bar, where the system's pull-down would take a touch: its cell is the
+    /// inset and the strip under it. An open upper pane keeps its plain
+    /// minimum, since its own bar clears the status bar.
+    @Test func aCollapsedUpperLeafsStripSitsBelowTheStatusBar() throws {
+        let layout = try PaneLayout(
+            root: .split(axis: .column, children: [.leaf(chat("chat")), .leaf(reader("doc"))], weights: [0.5, 0.5]),
+            focus: id("doc"), recency: ids("doc", "chat")
+        ).collapse(id("chat"))
+        let presentation = resolve(layout, size: Self.miniPortrait, topInset: 24, bottomInset: 20)
+        #expect(presentation.frames[id("chat")] == CGRect(x: 0, y: 0, width: 744, height: 44))
+        #expect(presentation.frames[id("doc")] == CGRect(x: 0, y: 45, width: 744, height: 1133 - 45))
+
+        let open = PaneLayout(
+            root: .split(axis: .column, children: [.leaf(list("git")), .leaf(chat("chat"))], weights: [0.05, 0.95]),
+            focus: id("chat"), recency: ids("chat", "git")
+        )
+        #expect(resolve(open, size: Self.miniPortrait, topInset: 24).frames[id("git")]?.height == 280)
     }
 
     /// Two panes that cannot both keep their minimums above the home

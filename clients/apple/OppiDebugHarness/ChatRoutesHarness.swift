@@ -312,6 +312,29 @@ enum ChatRoutesFixture {
     static let sessionId = "chat-routes-session"
     static let commitSha = "abc1234"
     static let changedPath = "Sources/App.swift"
+    /// A PDF in the home folder, which `/files/current` serves as a few pages
+    /// of prose, so a pane shows a real document.
+    static let pdfName = "field-guide.pdf"
+    static let pdfData: Data = {
+        let page = CGRect(x: 0, y: 0, width: 612, height: 792)
+        let paragraph = "Panes split a window into a chat and what it works on: a file, a terminal, a page. "
+            + "Drag the divider to give one more room, double-tap it to share the window evenly, "
+            + "and drag it past a pane to fold that pane into a strip you tap to bring back."
+        return UIGraphicsPDFRenderer(bounds: page).pdfData { context in
+            for number in 1...3 {
+                context.beginPage()
+                ("Field guide, part \(number)" as NSString).draw(
+                    at: CGPoint(x: 72, y: 72),
+                    withAttributes: [.font: UIFont.systemFont(ofSize: 26, weight: .semibold)]
+                )
+                let body = Array(repeating: paragraph, count: 6).joined(separator: "\n\n") as NSString
+                body.draw(
+                    in: CGRect(x: 72, y: 124, width: page.width - 144, height: page.height - 196),
+                    withAttributes: [.font: UIFont.systemFont(ofSize: 13)]
+                )
+            }
+        }
+    }()
 
     /// What `/files/current` serves. `CHAT_ROUTES_LONG_FILE=1`: 60 lines, some
     /// far wider than a 369 pt pane, to see how a document wraps beside the chat.
@@ -1028,6 +1051,9 @@ private final class ChatRoutesURLProtocol: URLProtocol {
                 ["name": "index.org", "path": "notebook/index.org", "type": "file", "size": 6_000, "modifiedAt": 1_900_000_000_000],
             ]
             body = Self.json(["path": "notebook/", "entries": entries, "truncated": false])
+        case ("GET", "/files/current") where (url.query ?? "").contains(ChatRoutesFixture.pdfName):
+            contentType = "application/pdf"
+            body = ChatRoutesFixture.pdfData
         case ("GET", "/files/current") where (url.query ?? "").contains(".org"):
             contentType = "text/plain"
             body = Data(FileBrowserColumnFixture.gardenOrg.utf8)

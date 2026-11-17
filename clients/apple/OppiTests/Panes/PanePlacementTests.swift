@@ -25,7 +25,7 @@ struct PanePlacementTests: PaneFixtureBuilding {
     private func window(_ size: CGSize) -> (PaneLayout) -> PanePresentation {
         { layout in
             PanePresentation.resolve(
-                layout, size: size, sidebarWidth: 0, bottomInset: 0, keyboardHeight: 0, firstResponderLeaf: nil,
+                layout, size: size, sidebarWidth: 0, topInset: 0, bottomInset: 0, keyboardHeight: 0, firstResponderLeaf: nil,
                 minimumSize: { PaneMinimumSize.standard(for: $0.stack.last?.route ?? .sessions(workspace: nil)) ?? PaneMinimumSize.list },
                 liveCap: 8
             )
