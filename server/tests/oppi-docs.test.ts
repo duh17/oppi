@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -131,6 +131,34 @@ describe("Oppi documentation prompt hint", () => {
       ]);
     } finally {
       await backend.dispose();
+    }
+  });
+});
+
+// The guide teaches agents the oppi:// links they write. Each one, with its placeholders filled, must
+// be a decoding vector in protocol/links.json, whose every vector Apple PaneLinkCodecTests decodes:
+// a link the guide shows always opens in the app.
+describe("Mobile Output Guide links", () => {
+  const SAMPLES: Record<string, string> = {
+    "full-session-id": "11111111-1111-4111-8111-111111111111",
+  };
+  const vectors = (
+    JSON.parse(
+      readFileSync(new URL("../../protocol/links.json", import.meta.url), "utf8"),
+    ) as { vectors: { input: string; route?: unknown }[] }
+  ).vectors;
+
+  it("shows only links the app's link codec decodes", () => {
+    const links = buildMobileOutputGuide().match(/oppi:\/\/[^\s)]+/g) ?? [];
+    expect(links.length).toBeGreaterThan(0);
+    for (const link of links) {
+      const example = link.replace(/<([^>]+)>/g, (_, name: string) => {
+        const sample = SAMPLES[name];
+        if (sample === undefined) throw new Error(`No sample value for <${name}> in ${link}`);
+        return sample;
+      });
+      const vector = vectors.find((candidate) => candidate.input === example);
+      expect(vector?.route, `${example} is not a decoding vector in protocol/links.json`).toBeDefined();
     }
   });
 });

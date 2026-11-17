@@ -164,15 +164,58 @@ struct AppOpenerTests {
             PaneLink(server: nil, route: .files(workspace: "w1", path: "src")), sourceServerID: nil
         ))
         // The codec's stricter rules: a nested session path, a repeated or
-        // unknown parameter on a pane link. Any other oppi link stays an
-        // invite, which drops silently unless it looks like connect/pair.
+        // unknown parameter on a pane link.
         for raw in ["oppi://session/a/b", "oppi://session/a?server=x&server=y", "oppi://files?workspace=w1&sort=name"] {
             let url = try #require(URL(string: raw))
             #expect(AppOpenRequest(url: url, origin: .externalURL) == .invalidLink(url), Comment(rawValue: raw))
         }
-        let other = try #require(URL(string: "oppi://nonsense"))
-        #expect(AppOpenRequest(url: other, origin: .externalURL) == .invite(other))
-        #expect(!InAppInviteLink.claims(other))
+    }
+
+    /// Only connect and pair start pairing; any other route Oppi does not know
+    /// (a typo, a newer app's link) says it cannot open instead.
+    @Test func onlyInviteRoutesStartPairing() throws {
+        for raw in ["oppi://connect?v=3&invite=abc", "oppi:///connect?v=3&invite=abc", "oppi://pair?v=3&invite=abc", "OPPI://Connect"] {
+            let url = try #require(URL(string: raw))
+            #expect(AppOpenRequest(url: url, origin: .externalURL) == .invite(url), Comment(rawValue: raw))
+        }
+        for raw in ["oppi://nonsense", "oppi://sesion/abc", "oppi://connected?v=3", "oppi://", "oppi:"] {
+            let url = try #require(URL(string: raw))
+            #expect(AppOpenRequest(url: url, origin: .externalURL) == .unsupportedLink(url), Comment(rawValue: raw))
+            #expect(AppOpenRequest.unsupportedLinkMessage(url) == "Oppi can\u{2019}t open this link")
+        }
+    }
+
+    /// An agent's internal URLs: `history://` and `agent://` name a session
+    /// on the server the link came from; the rest say why they do not open.
+    @Test func agentInternalURLsMapToASessionOrSayWhy() throws {
+        func request(_ raw: String, source: String? = "server-a") throws -> AppOpenRequest {
+            AppOpenRequest(url: try #require(URL(string: raw)), origin: .inAppHyperlink, sourceServerID: source)
+        }
+        for raw in ["history://3f2a", "agent://3f2a", "agent://3f2a/", "AGENT://3f2a", "history://%203f2a%20"] {
+            #expect(try request(raw) == .sessionPrefix(SessionOpen(
+                serverId: "server-a", sessionId: "3f2a", origin: .inAppHyperlink
+            )), Comment(rawValue: raw))
+        }
+        #expect(try request("history://3f2a", source: nil) == .sessionPrefix(SessionOpen(
+            sessionId: "3f2a", origin: .inAppHyperlink
+        )))
+        // A bare scheme lists sessions for the agent; a sub-path or query is
+        // not a session.
+        for raw in ["history://", "agent://3f2a/answer", "history://3f2a?full=1", "agent://3f2a#end", "agent://u@3f2a"] {
+            let url = try #require(URL(string: raw))
+            #expect(try request(raw) == .unsupportedLink(url), Comment(rawValue: raw))
+            #expect(AppOpenRequest.unsupportedLinkMessage(url) == "Oppi can\u{2019}t open this link")
+        }
+        let messages = [
+            "proc://job-7": "Job output opens from the Background jobs panel",
+            "mcp://docs/readme": "Oppi can\u{2019}t open mcp:// links here",
+            "ssh://mini/~/notes.md": "Oppi can\u{2019}t open ssh:// links here",
+        ]
+        for (raw, message) in messages {
+            let url = try #require(URL(string: raw))
+            #expect(try request(raw) == .unsupportedLink(url), Comment(rawValue: raw))
+            #expect(AppOpenRequest.unsupportedLinkMessage(url) == message, Comment(rawValue: raw))
+        }
     }
 
     /// `oppi://pins` opens the Pinned screen and takes nothing else.
@@ -446,6 +489,93 @@ struct AppOpenerTests {
 
         #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
         #expect(harness.coordinator.activeServerId == "server-a")
+    }
+
+    /// Tool output, thinking and user rows have no chat context: their web and
+    /// internal links open in Oppi; a session link and `mailto:` still go
+    /// through the system, which hands an `oppi://` link back as a scene URL.
+    @MainActor @Test func aRowWithoutAChatContextKeepsInternalURLsInOppi() throws {
+        func request(_ raw: String) throws -> AppOpenRequest? {
+            MarkdownLinkInteractionSupport.contextFreeRequest(for: try #require(URL(string: raw)))
+        }
+        #expect(try request("agent://3f2a") == .sessionPrefix(SessionOpen(sessionId: "3f2a", origin: .inAppHyperlink)))
+        let proc = try #require(URL(string: "proc://job-7"))
+        #expect(try request("proc://job-7") == .unsupportedLink(proc))
+        let page = try #require(URL(string: "https://example.com"))
+        #expect(try request("https://example.com") == .webLink(page))
+        #expect(try request("oppi://session/abc") == nil)
+        #expect(try request("mailto:support@example.com") == nil)
+    }
+
+    @Test func anInAppLinkToASessionOlderThanTheRecentListAsksItsServer() async throws {
+        let harness = await OpenerHarness(servers: [makeServer("server-a"), makeServer("server-b")])
+        var asked: [String] = []
+        harness.coordinator._getSessionRecordForTesting = { serverId, id in
+            asked.append(serverId)
+            guard serverId == "server-a", id == "old" else { throw APIError.server(status: 404, message: "Not found") }
+            return makeTestSession(id: "old", workspaceId: "w1", status: .stopped)
+        }
+
+        harness.opener.open(.session(SessionOpen(serverId: "server-a", sessionId: "old", origin: .inAppHyperlink)))
+        await harness.settle()
+
+        harness.expectSessionRoute(serverId: "server-a", sessionId: "old")
+        #expect(asked == ["server-a"])
+    }
+
+    @Test func anInAppLinkToASessionNoServerHasSaysSoAndStaysPut() async throws {
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
+        harness.coordinator._getSessionRecordForTesting = { _, _ in throw APIError.server(status: 404, message: "Not found") }
+
+        harness.opener.open(.session(SessionOpen(serverId: "server-a", sessionId: "gone", origin: .inAppHyperlink)))
+        await harness.settle()
+
+        #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
+        #expect(harness.connection("server-a").extensionToast == "Oppi can\u{2019}t find this session")
+    }
+
+    /// `history://<prefix>` opens the one loaded session of the link's server
+    /// whose id begins with it; an exact id wins over a longer one it begins.
+    @Test func aSessionPrefixOpensTheOneSessionItBegins() async throws {
+        let harness = await OpenerHarness(servers: [makeServer("server-a"), makeServer("server-b")])
+        harness.addSession("3f2a-1111", workspaceId: "w1", to: "server-a")
+        harness.addSession("9c1d-2222", workspaceId: "w1", to: "server-a")
+        // Another server's session with the same prefix is not this link's.
+        harness.addSession("3f2a-3333", workspaceId: "w1", to: "server-b")
+
+        harness.opener.open(.sessionPrefix(SessionOpen(serverId: "server-a", sessionId: "3f2a", origin: .inAppHyperlink)))
+        await harness.settle()
+        harness.expectSessionRoute(serverId: "server-a", sessionId: "3f2a-1111")
+
+        harness.addSession("9c1d", workspaceId: "w1", to: "server-a")
+        harness.opener.open(.sessionPrefix(SessionOpen(serverId: "server-a", sessionId: "9c1d", origin: .inAppHyperlink)))
+        await harness.settle()
+        harness.expectSessionRoute(serverId: "server-a", sessionId: "9c1d")
+    }
+
+    @Test func anAmbiguousSessionPrefixSaysSoAndOpensNothing() async throws {
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
+        harness.addSession("3f2a-1111", workspaceId: "w1", to: "server-a")
+        harness.addSession("3f2a-2222", workspaceId: "w1", to: "server-a")
+
+        harness.opener.open(.sessionPrefix(SessionOpen(serverId: "server-a", sessionId: "3f2a", origin: .inAppHyperlink)))
+        await harness.settle()
+
+        #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
+        #expect(harness.connection("server-a").extensionToast == "More than one session starts with 3f2a")
+    }
+
+    @Test func anUnsupportedLinkSaysWhyAndOpensNothing() async throws {
+        let harness = await OpenerHarness(servers: [makeServer("server-a")])
+        let url = try #require(URL(string: "proc://job-7"))
+
+        harness.opener.open(AppOpenRequest(url: url, origin: .inAppHyperlink, sourceServerID: "server-a"))
+        await harness.settle()
+
+        #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
+        #expect(harness.recorder.systemURLs.isEmpty)
+        #expect(harness.opener.invitePairingTask == nil)
+        #expect(harness.connection("server-a").extensionToast == "Job output opens from the Background jobs panel")
     }
 
     @Test func inAppLinkWithoutASourceUsesTheUniqueMatch() async throws {

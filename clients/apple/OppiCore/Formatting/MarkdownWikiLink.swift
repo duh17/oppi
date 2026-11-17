@@ -625,7 +625,7 @@ enum MarkdownWikiLinkRewriter {
         }
 
         if let scheme = rfc3986Scheme(of: rawDestination) {
-            if passThroughMarkdownLinkSchemes.contains(scheme) {
+            if passThroughMarkdownLinkSchemes.contains(scheme) || AgentInternalURL.schemes.contains(scheme) {
                 return passthrough
             }
             if scheme != "file" {

@@ -29,10 +29,15 @@ enum AppOpenRequest: Equatable, Sendable {
     /// An `oppi://` pane link the codec refused: an unknown or repeated
     /// parameter, a path the route does not take.
     case invalidLink(URL)
+    /// `history://<id>` or `agent://<id>`: that session, by full id or unique prefix.
+    case sessionPrefix(SessionOpen)
+    /// An `oppi://` route Oppi does not know, or an agent's `proc://`,
+    /// `mcp://` or `ssh://` URL: says so instead of opening anything.
+    case unsupportedLink(URL)
     /// `oppi://pins`, the Home Screen's Pinned quick action, and the Show
     /// Pinned key: the Pinned screen of the window's server.
     case pinned
-    /// `oppi://connect` or `oppi://pair`.
+    /// `oppi://connect`, or the older `oppi://pair`.
     case invite(URL)
     /// http(s): the browser preference decides in-app or system.
     case webLink(URL)
@@ -67,7 +72,9 @@ enum AppOpenRequest: Equatable, Sendable {
         } else if let valid = Self.pinnedLink(url) {
             self = valid ? .pinned : .invalidLink(url)
         } else if scheme == "oppi" {
-            self = .invite(url)
+            self = InAppInviteLink.claims(url) ? .invite(url) : .unsupportedLink(url)
+        } else if let request = Self.agentInternalURL(url, origin: origin, sourceServerID: sourceServerID) {
+            self = request
         } else if let reference = ResourceReferenceURL.parse(url) {
             self = .resourceReference(reference)
         } else if scheme == "http" || scheme == "https" {
@@ -560,7 +567,7 @@ final class AppOpener {
     /// resolve their server later are cleared by the destination's own lookup.
     private func serverIdReferenced(by request: AppOpenRequest) -> String? {
         switch request {
-        case .session(let open), .thread(let open):
+        case .session(let open), .thread(let open), .sessionPrefix(let open):
             return open.serverId
         case .pairing(let serverId, _, _):
             return serverId
@@ -672,6 +679,11 @@ final class AppOpener {
         case .invalidLink:
             toast(String(localized: "This Oppi link isn\u{2019}t valid"))
             outcome = .finished
+        case .sessionPrefix(let open):
+            outcome = await performSessionPrefix(open, generation: generation)
+        case .unsupportedLink(let url):
+            toast(AppOpenRequest.unsupportedLinkMessage(url))
+            outcome = .finished
         case .pinned:
             navigation.openWorkspaceUtility(.pinned)
             outcome = .finished
@@ -717,10 +729,21 @@ final class AppOpener {
     ) async -> LinkServer {
         switch open.origin {
         case .inAppHyperlink:
-            // A link inside Oppi knows its source server; a stale link that
-            // server does not have is dropped rather than guessed.
-            guard let resolved = inAppSessionServerId(for: open) else { return .done(.finished) }
-            return .server(resolved)
+            // A link inside Oppi knows its source server. A session it has not
+            // loaded (older than the recent list) is asked of that server by
+            // its exact id, never guessed onto another one.
+            if let resolved = inAppSessionServerId(for: open) { return .server(resolved) }
+            let lookup = if let source = open.serverId {
+                await coordinator.lookupSession(id: open.sessionId, on: source)
+            } else {
+                await coordinator.lookupSession(id: open.sessionId)
+            }
+            guard isCurrent(generation) else { return .done(.finished) }
+            switch lookup {
+            case .found(let found): return .server(found.serverId)
+            case .notFound: return .notFound
+            case .unreachable: return .lookupFailed
+            }
         case .externalURL:
             if let named = open.serverId {
                 guard serverStore.server(for: named) != nil else {
@@ -766,7 +789,7 @@ final class AppOpener {
 #endif
     }
 
-    private func performSession(
+    func performSession(
         _ open: SessionOpen,
         generation: UInt64
     ) async -> AppOpenOutcome {
@@ -776,6 +799,11 @@ final class AppOpener {
         case .server(let resolved):
             serverId = resolved
         case .notFound, .lookupFailed:
+            // A tapped link leaves the chat where it is and says why.
+            if open.origin == .inAppHyperlink {
+                toast(String(localized: "Oppi can\u{2019}t find this session"))
+                return .finished
+            }
             // No paired server gave this session: the workspace root,
             // the same landing a missing deep link always had.
             showWorkspaceRoot()

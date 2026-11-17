@@ -1821,6 +1821,25 @@ struct StandardMarkdownFileLinkTests {
         #expect(resourceLinks(in: attributed).isEmpty)
     }
 
+    /// An agent's internal URL stays a link, so the tap reaches the opener,
+    /// which opens the session or says why it can't.
+    @Test(arguments: [
+        "history://3f2a",
+        "agent://3f2a",
+        "proc://job-7",
+        "mcp://docs/readme",
+        "ssh://mini/~/notes.md",
+    ])
+    func givenAnAgentInternalURLMarkdownLinkThenItStaysTappable(destination: String) throws {
+        let attributed = try textSegment(from: FlatSegment.build(
+            from: [.paragraph([.link(children: [.text("Open")], destination: destination)])],
+            themeID: .dark,
+            workspaceID: "workspace-1"
+        ))
+        #expect(try firstLink(in: attributed).absoluteString == destination)
+        #expect(resourceLinks(in: attributed).isEmpty)
+    }
+
     @Test func givenQueryStringMarkdownFileLinkThenItIsNotAResourceReference() throws {
         let attributed = try textSegment(from: FlatSegment.build(
             from: parseCommonMark("Open [leaky](CONTRIBUTING.md?leak=1)"),

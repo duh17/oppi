@@ -10,6 +10,13 @@
       "canonical": "oppi://session/2f6c1a9e-session"
     },
     {
+      "name": "the Mobile Output Guide's session link, with a full session id",
+      "input": "oppi://session/11111111-1111-4111-8111-111111111111",
+      "server": null,
+      "route": { "kind": "session", "id": "11111111-1111-4111-8111-111111111111" },
+      "canonical": "oppi://session/11111111-1111-4111-8111-111111111111"
+    },
+    {
       "name": "session link ignores workspaceId",
       "input": "oppi://session/2f6c1a9e-session?workspaceId=ws-other",
       "server": null,

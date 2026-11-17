@@ -429,9 +429,11 @@ enum MarkdownLinkInteractionSupport {
         guard let scheme = normalizedURL.scheme?.lowercased() else {
             return nil
         }
-        if scheme == "oppi" {
+        if scheme == "oppi" || AgentInternalURL.schemes.contains(scheme) {
             // A session link keeps the back stack; any other oppi:// route
             // (workspace, invite) is the same request the system delivers.
+            // An agent's internal URL (`history://`, `proc://`, ...) has no
+            // other app to open it, so Oppi answers it here.
             return AppOpenRequest(
                 url: normalizedURL,
                 origin: .inAppHyperlink,
@@ -481,6 +483,21 @@ enum MarkdownLinkInteractionSupport {
             ))
         }
         return nil
+    }
+
+    /// What a link in a row without a chat's context (tool output, thinking,
+    /// a user message, a notebook cell) opens in Oppi: a web page, an agent's
+    /// internal URL, which no other app opens, or a link Oppi says it cannot
+    /// open. Nil keeps UIKit's default: any other `oppi://` link comes back
+    /// through the system as a scene URL, and `mailto:` goes to its app.
+    static func contextFreeRequest(for url: URL) -> AppOpenRequest? {
+        let request = classify(url, workspaceID: nil)
+        switch request {
+        case .webLink, .sessionPrefix, .unsupportedLink:
+            return request
+        default:
+            return nil
+        }
     }
 
     /// The tap action: deliver the request to the window's opener, which waits

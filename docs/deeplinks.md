@@ -92,7 +92,9 @@ A terminal link has no `server` parameter: a link tapped in a chat uses that cha
 The chat timeline handles links before UIKit does:
 
 - `oppi://session/<id>` pushes the target session on the current stack; Back and swipe-back return to the chat. Session URLs from outside the app, including cold launches, replace the visible route instead.
-- Other `oppi://` links use the app-level handler, so pairing, workspace, and terminal links keep their global behavior. This holds in an ask card's Markdown too.
+- Other `oppi://` links use the app-level handler, so pairing, workspace, and terminal links keep their global behavior. This holds in an ask card's Markdown too. Only `oppi://connect` and `oppi://pair` start pairing; Oppi says it can't open any other `oppi://` route it does not know.
+- A session link tapped in a chat opens on that chat's server. A session too old for the session list is looked up there by its full ID; if the server does not have it, Oppi says so and the chat stays.
+- The internal URLs a session's `read` tool reads (see [Usage](usage.md)): `history://<id>` and `agent://<id>` open that session, by its full ID or by a prefix that matches one session the app has loaded from the chat's server. `proc://<id>` says that job output is in the Background jobs panel. `mcp://` and `ssh://` say that Oppi can't open them.
 - `http://` and `https://` follow the Browser link-opening setting (Oppi's in-app browser or the external browser). On an iPad window wide enough for two panes, Oppi's browser is a pane beside the pane you tapped in; on iPhone and narrow windows it covers the screen. Other schemes use the system default.
 
 An agent can print a link such as `[Create workspace](oppi://workspace?path=/Users/example/workspace/oppi&name=Oppi)`. The tap is user-initiated. Oppi strips common trailing Markdown delimiters from tapped URLs, including encoded backticks from malformed autolinks.

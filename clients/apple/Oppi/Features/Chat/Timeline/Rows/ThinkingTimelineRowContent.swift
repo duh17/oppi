@@ -859,8 +859,7 @@ extension ThinkingTimelineRowContentView: UITextViewDelegate {
         from textView: UITextView,
         defaultAction: UIAction
     ) -> UIAction? {
-        let request = MarkdownLinkInteractionSupport.classify(url, workspaceID: nil)
-        guard case .webLink = request else { return defaultAction }
+        guard let request = MarkdownLinkInteractionSupport.contextFreeRequest(for: url) else { return defaultAction }
         return MarkdownLinkInteractionSupport.primaryAction(
             for: request,
             from: textView,

@@ -73,7 +73,7 @@ enum ExtensionSurfaceLinkRouting {
             return nil
         case .open(let request):
             switch request {
-            case .session:
+            case .session, .sessionPrefix:
                 return "Opens the related session"
             case .thread:
                 return "Opens the session's thread"
@@ -83,7 +83,7 @@ enum ExtensionSurfaceLinkRouting {
                 return "Opens the file"
             case .invite, .createWorkspace, .terminal, .pane, .pinned:
                 return "Opens the link"
-            case .invalidLink:
+            case .invalidLink, .unsupportedLink:
                 return nil
             case .quickSession, .pairing, .system:
                 return nil
