@@ -111,26 +111,6 @@ export function validateCwdAlignment(sessionCwd: string, workspaceHostMount: str
   return isPathWithinRoot(resolve(expandHome(sessionCwd)), resolve(expandHome(workspaceHostMount)));
 }
 
-/**
- * Control-session Pi artifacts under the data dir's control-session root must
- * never appear as importable local TUI rows.
- */
-export function isControlSessionLocalArtifact(
-  sessionCwd: string,
-  options: { dataDir?: string } = {},
-): boolean {
-  const trimmed = sessionCwd.trim();
-  if (!trimmed) return false;
-
-  const dataDir = options.dataDir?.trim();
-  if (!dataDir) return false;
-
-  return isPathWithinRoot(
-    resolve(expandHome(trimmed)),
-    resolve(expandHome(dataDir), "control-sessions"),
-  );
-}
-
 /** Minimal session header from first line of JSONL. */
 interface SessionHeaderData {
   id: string;

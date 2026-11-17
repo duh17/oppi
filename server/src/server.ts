@@ -75,7 +75,6 @@ import {
 } from "./session-route-scope.js";
 import { ServerResourceService } from "./server-resource-service.js";
 import { SessionLifecycleService } from "./session-lifecycle-service.js";
-import { deleteClassicControlSessions } from "./classic-control-sessions.js";
 import {
   HeldInputDelivery,
   queueOrphanedSessionsForRestart,
@@ -1153,7 +1152,6 @@ export class Server {
     // live server's sessions stopped. This runs before any request is served.
     queueOrphanedSessionsForRestart(this.storage);
     await this.sessions.resumeDurableSessions();
-    await deleteClassicControlSessions(this.storage, this.restartLifecycle());
     // Heal stale persisted contextWindow fallbacks: it saves sessions, so it waits for ownership.
     this.models.healPersistedSessionContextWindows();
     this.localApiServer.on("upgrade", (req, socket, head) => {

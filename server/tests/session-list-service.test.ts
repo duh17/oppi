@@ -19,7 +19,6 @@ vi.mock("../src/local-sessions.js", () => ({
   })),
   discoverLocalSessions: vi.fn(async () => localSessionState.snapshot.sessions),
   listCatalogedLocalSessions: vi.fn(() => localSessionState.snapshot),
-  isControlSessionLocalArtifact: vi.fn(() => false),
   validateCwdAlignment: vi.fn(() => true),
 }));
 

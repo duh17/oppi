@@ -21,7 +21,6 @@ import {
 import {
   deleteCatalogedLocalSessionPaths,
   invalidateLocalSessionsCache,
-  isControlSessionLocalArtifact,
   validateCwdAlignment,
   validateLocalSessionPath,
 } from "./local-sessions.js";
@@ -564,17 +563,6 @@ export class SessionLifecycleService {
     if (!validateCwdAlignment(localHeader.cwd, params.workspace.hostMount)) {
       throw new SessionLifecycleError(
         `Session CWD (${localHeader.cwd}) is not within workspace path (${params.workspace.hostMount})`,
-        400,
-      );
-    }
-
-    if (
-      isControlSessionLocalArtifact(localHeader.cwd, {
-        dataDir: this.deps.storage.getDataDir(),
-      })
-    ) {
-      throw new SessionLifecycleError(
-        "Control session transcripts cannot be imported into a workspace",
         400,
       );
     }
@@ -1163,7 +1151,7 @@ export class SessionLifecycleService {
    * The session's Pi JSONL trace files that `deleteSession` unlinks: the referenced ones that
    * exist and are local Pi session files. Other referenced paths are never deleted.
    */
-  async localPiTraceFiles(session: Session): Promise<string[]> {
+  private async localPiTraceFiles(session: Session): Promise<string[]> {
     const existingPaths = await this.collectExistingSessionJsonlPaths(session);
     const traces = new Set<string>();
 

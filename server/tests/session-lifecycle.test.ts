@@ -1623,7 +1623,6 @@ describe("SessionManager prompt", () => {
 
       expect(sdkBackend.prompt).not.toHaveBeenCalled();
       expect(existsSync(join(dataDir, "control-conversation"))).toBe(false);
-      expect(existsSync(join(dataDir, "control-sessions"))).toBe(false);
     } finally {
       await rm(dataDir, { recursive: true, force: true });
     }

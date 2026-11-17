@@ -153,10 +153,6 @@ describe("session_state_sessions columns-only migration", () => {
         expect(store.getSession(legacy.id)).toEqual(expectedAfterMigration(legacy));
       }
       expect(store.findSessionByDurableConversation("store-1", 3)?.id).toBe("sess-durable");
-      // The old `$.control` reached the column the classic-control removal reads and backs up.
-      const classic = store.listClassicControlSessions();
-      expect(classic.map((row) => row.id)).toEqual(["sess-control"]);
-      expect(JSON.parse(classic[0]!.controlJson)).toEqual(CONTROL_SESSION.control);
       expect(store.findSessionByLaunchIdempotencyKey("idem-durable")?.id).toBe("sess-durable");
     } finally {
       store.close();
@@ -219,7 +215,6 @@ describe("session_state_sessions columns-only migration", () => {
         "sess-classic",
       ]);
       expect(store.findSessionByDurableConversation("store-1", 3)?.id).toBe("sess-durable");
-      expect(store.listClassicControlSessions().map((row) => row.id)).toEqual(["sess-control"]);
       expect(store.findSessionByLaunchIdempotencyKey("idem-durable")?.id).toBe("sess-durable");
     } finally {
       store.close();
@@ -300,7 +295,7 @@ describe("session_state_sessions columns-only migration", () => {
     }
     const store = new SessionSqliteStore(dataDir);
     try {
-      expect(store.listClassicControlSessions().map((row) => row.id)).toEqual(["sess-control"]);
+      expect(store.getSession("sess-control")?.id).toBe("sess-control");
     } finally {
       store.close();
     }

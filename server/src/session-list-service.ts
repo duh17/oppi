@@ -2,7 +2,6 @@ import {
   collectKnownLocalSessionIdentities,
   discoverLocalSessions,
   listCatalogedLocalSessions,
-  isControlSessionLocalArtifact,
   validateCwdAlignment,
   type LocalSessionCatalogSnapshot,
 } from "./local-sessions.js";
@@ -339,14 +338,9 @@ export class SessionListService {
       return { ...snapshot, sessions: [] };
     }
 
-    const dataDir = this.deps.storage.getDataDir();
     return {
       ...snapshot,
-      sessions: snapshot.sessions.filter(
-        (session) =>
-          validateCwdAlignment(session.cwd, hostMount) &&
-          !isControlSessionLocalArtifact(session.cwd, { dataDir }),
-      ),
+      sessions: snapshot.sessions.filter((session) => validateCwdAlignment(session.cwd, hostMount)),
     };
   }
 

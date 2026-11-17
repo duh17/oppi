@@ -249,20 +249,6 @@ export class SessionSqliteStore {
     return rows.flatMap((row) => this.getSession(row.id) ?? []);
   }
 
-  /**
-   * Workspace-less rows with `control_json`: the classic Pi Control sessions of servers that
-   * predate durable Oppi Control. No Session field carries it any more, and no write touches
-   * the column, so only `deleteClassicControlSessions` reads it.
-   */
-  listClassicControlSessions(): Array<{ id: string; controlJson: string }> {
-    return this.db
-      .prepare(
-        `SELECT id, control_json AS controlJson FROM session_state_sessions
-         WHERE control_json IS NOT NULL AND workspace_id IS NULL`,
-      )
-      .all() as Array<{ id: string; controlJson: string }>;
-  }
-
   /** Whether any session names durable store `storeId`, bound to a conversation yet or not. */
   hasDurableStoreSessions(storeId: string): boolean {
     return (
@@ -430,20 +416,8 @@ export class SessionSqliteStore {
 
   /**
    * Runs `run` once per data directory: the first call under `key` runs it and records the key
-   * in the migration ledger, later calls do not. A `run` that throws is not recorded, so the
-   * next start tries again.
-   */
-  async runMigrationOnce(key: string, run: () => Promise<void>): Promise<boolean> {
-    ensureMigrationsTable(this.db);
-    if (hasCompletedMigration(this.db, key)) return false;
-    await run();
-    recordMigration(this.db, key);
-    return true;
-  }
-
-  /**
-   * Synchronous `runMigrationOnce` for rewrites that run while a store is being built. `run`
-   * returns false when it did not finish: that is not recorded, so the next start tries again.
+   * in the migration ledger, later calls do not. `run` returns false when it did not finish:
+   * that is not recorded, so the next start tries again.
    */
   runMigrationOnceSync(key: string, run: () => boolean): boolean {
     ensureMigrationsTable(this.db);

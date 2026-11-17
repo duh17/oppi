@@ -104,14 +104,9 @@ export class Storage {
     });
   }
 
-  /** Runs `run` once per data directory, recorded in the migration ledger of session-state.db. */
-  runMigrationOnce(key: string, run: () => Promise<void>): Promise<boolean> {
-    return this.sessionStore.runMigrationOnce(key, run);
-  }
-
   /**
-   * Synchronous `runMigrationOnce`, for a rewrite a caller cannot await. `run` returns false
-   * when it did not finish: that is not recorded, so the next start tries again.
+   * Runs `run` once per data directory, recorded in the migration ledger of session-state.db.
+   * `run` returns false when it did not finish: that is not recorded, so the next start tries again.
    */
   runMigrationOnceSync(key: string, run: () => boolean): boolean {
     return this.sessionStore.runMigrationOnceSync(key, run);
@@ -326,11 +321,6 @@ export class Storage {
   /** Sessions bound to a conversation of durable store `storeId`; an indexed lookup. */
   listDurableStoreSessions(storeId: string): Session[] {
     return this.withWorkspaceNames(this.sessionStore.listDurableStoreSessions(storeId));
-  }
-
-  /** Classic Pi Control rows still stored; see `deleteClassicControlSessions`. */
-  listClassicControlSessions(): Array<{ id: string; controlJson: string }> {
-    return this.sessionStore.listClassicControlSessions();
   }
 
   /** Whether any session names durable store `storeId`, bound to a conversation yet or not. */

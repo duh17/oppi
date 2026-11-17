@@ -20,7 +20,6 @@ import {
   invalidateLocalSessionsCache,
   validateLocalSessionPath,
   validateCwdAlignment,
-  isControlSessionLocalArtifact,
   getPiSessionsRoot,
   listCatalogedLocalSessions,
   deleteCatalogedLocalSessionPaths,
@@ -131,25 +130,6 @@ describe("validateCwdAlignment", () => {
     const home = homedir();
     expect(validateCwdAlignment(`~bob/code`, `${home}bob`)).toBe(false);
     expect(validateCwdAlignment(`${home}bob/code`, "~bob")).toBe(false);
-  });
-});
-
-describe("isControlSessionLocalArtifact", () => {
-  it("matches the real data-dir control cwd tree", () => {
-    const dataDir = "/Users/alex/.config/oppi";
-    expect(isControlSessionLocalArtifact(`${dataDir}/control-sessions/cwd`, { dataDir })).toBe(
-      true,
-    );
-    expect(isControlSessionLocalArtifact(`${dataDir}/other`, { dataDir })).toBe(false);
-  });
-
-  it("does not treat ordinary workspace cwds as control artifacts", () => {
-    expect(isControlSessionLocalArtifact("/Users/alex/workspace/oppi")).toBe(false);
-    expect(
-      isControlSessionLocalArtifact("/Users/alex/workspace/oppi/server", {
-        dataDir: "/Users/alex/.config/oppi",
-      }),
-    ).toBe(false);
   });
 });
 

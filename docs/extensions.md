@@ -40,8 +40,6 @@ An Oppi Control session is the workspace-less session Oppi opens for **Edit with
 
 No other session gets the Oppi tools.
 
-Pi Control sessions that older servers ran on the classic engine no longer run. At its first start, the server removes them from the session list. Before it removes one, it copies the session's record, Pi session files, and stored attachments to `$OPPI_DATA_DIR/backups/pi-control-sessions-pre-classic_pi_control_sessions_deleted_v1-<time>-<id>/<session id>/` (`session.json`, `traces/`, `attachments/`). If a copy fails, that session stays as it was, and the next start tries again.
-
 Older iOS builds keep working: `POST /control-sessions` accepts their `domain`, `intent`, `targetId`, and `targetName` fields and starts an Oppi Control session.
 
 ## Mobile Output Guide
