@@ -7,7 +7,7 @@ import UIKit
 /// installs for the launch phase, and what it comes back to after a
 /// window-covering modal closes.
 @MainActor
-@Suite("App root launch", .serialized)
+@Suite("App root launch", .serialized, .timeLimit(.minutes(1)))
 struct AppRootLaunchTests {
     /// The control for the test below: the same launch with no What's New over
     /// it. A red control means the empty stack is the test host's, not the app's.
@@ -49,15 +49,24 @@ struct AppRootLaunchTests {
         )
 
         app.root.navigation.app.showWhatsNew = true
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { isSettled(root.presentedViewController) })
+        // The slot presents within a few run-loop turns; the animated cover
+        // then takes as long as the machine needs, so wait for its transition
+        // to end rather than for a wall-clock budget.
+        #expect(
+            await waitForMainActorCondition(timeout: .seconds(5)) { root.presentedViewController is WhatsNewViewController },
+            "What's New was not presented: \(String(describing: root.presentedViewController))"
+        )
         let whatsNew = try #require(root.presentedViewController as? WhatsNewViewController)
+        await transitionEnd(of: whatsNew)
+        #expect(!whatsNew.isBeingPresented && whatsNew.viewIfLoaded?.window != nil, "What's New did not settle on screen")
 
         // The launch resolves behind the cover.
         app.root.navigation.app.revealPairedServerShell()
 
         // What's New's Done button.
         Router.finish(whatsNew)
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { root.presentedViewController == nil })
+        await transitionEnd(of: whatsNew)
+        #expect(root.presentedViewController == nil, "What's New is still up: \(String(describing: root.presentedViewController))")
         #expect(
             await waitForMainActorCondition(timeout: .seconds(5)) { root.children.contains { $0 is WorkspaceShellController } },
             "the root came back showing \(childKinds(of: root))"
@@ -148,8 +157,15 @@ struct AppRootLaunchTests {
         window.rootViewController = nil
     }
 
-    private func isSettled(_ presented: UIViewController?) -> Bool {
-        guard let presented else { return false }
-        return !presented.isBeingPresented && presented.viewIfLoaded?.window != nil
+    /// Returns once `controller`'s presentation or dismissal transition has
+    /// ended, or at once when none is running. A coordinator that cannot
+    /// queue the completion has already ended its transition.
+    private func transitionEnd(of controller: UIViewController) async {
+        guard let transition = controller.transitionCoordinator else { return }
+        await withCheckedContinuation { (finished: CheckedContinuation<Void, Never>) in
+            if !transition.animate(alongsideTransition: nil, completion: { _ in finished.resume() }) {
+                finished.resume()
+            }
+        }
     }
 }
