@@ -1,0 +1,1 @@
+- **Client:** A wrapped code block takes the height of its text at its final width. Before, a block first laid out narrower (a pane beside the chat as it opens) could keep that taller height, leaving a large empty gap under it.

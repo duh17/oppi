@@ -165,10 +165,14 @@ final class NativeCodeBlockView: UIView {
     /// Horizontal padding around the text view inside `codeScrollView`.
     static let codeHorizontalPadding: CGFloat = 24
 
-    /// Explicit width constraint for the label. In the default unwrapped mode it
-    /// is the measured code width so the scroll view can pan horizontally. In
-    /// wrap mode it tracks the visible viewport width so TextKit wraps lines.
+    /// The label's width while unwrapped: the measured code width, so the
+    /// scroll view can pan horizontally.
     private var codeLabelWidthConstraint: NSLayoutConstraint?
+    /// The label's width while wrapped: the viewport's, solved with everything
+    /// else, so the wrapped height is right in the pass that sets the width. A
+    /// width set from `layoutSubviews` instead came after the ancestors were laid
+    /// out, and they kept the height wrapped at an earlier, narrower width.
+    private var wrappedLabelWidthConstraint: NSLayoutConstraint?
 
     private lazy var longPressCopyGesture: UILongPressGestureRecognizer = {
         UILongPressGestureRecognizer(target: self, action: #selector(longPressCopy(_:)))
@@ -216,6 +220,9 @@ final class NativeCodeBlockView: UIView {
 
         let widthConstraint = codeLabel.widthAnchor.constraint(equalToConstant: 0)
         codeLabelWidthConstraint = widthConstraint
+        wrappedLabelWidthConstraint = codeLabel.widthAnchor.constraint(
+            equalTo: codeScrollView.frameLayoutGuide.widthAnchor, constant: -Self.codeHorizontalPadding
+        )
 
         NSLayoutConstraint.activate([
             headerBackground.topAnchor.constraint(equalTo: topAnchor),
@@ -284,18 +291,6 @@ final class NativeCodeBlockView: UIView {
         longPressCopyGesture.isEnabled = !selectionEnabled
     }
 
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        guard isLineWrappingEnabled else { return }
-
-        let width = wrappedCodeWidth()
-        if abs((codeLabelWidthConstraint?.constant ?? 0) - width) > 0.5 {
-            codeLabelWidthConstraint?.constant = width
-            updateTextContainerForCurrentWrapping()
-            codeLabel.invalidateIntrinsicContentSize()
-        }
-    }
-
     override func systemLayoutSizeFitting(
         _ targetSize: CGSize,
         withHorizontalFittingPriority horizontalFittingPriority: UILayoutPriority,
@@ -305,11 +300,7 @@ final class NativeCodeBlockView: UIView {
             let hasTargetWidth = targetSize.width.isFinite
                 && targetSize.width > Self.codeHorizontalPadding
             let targetWidth = hasTargetWidth ? targetSize.width : nil
-            let width = wrappedCodeWidth(availableWidth: targetWidth)
-            if abs((codeLabelWidthConstraint?.constant ?? 0) - width) > 0.5 {
-                codeLabelWidthConstraint?.constant = width
-            }
-            updateTextContainerForCurrentWrapping()
+            updateTextContainerForCurrentWrapping(width: wrappedCodeWidth(availableWidth: targetWidth))
             codeLabel.invalidateIntrinsicContentSize()
         }
 
@@ -662,7 +653,14 @@ final class NativeCodeBlockView: UIView {
         codeScrollView.isScrollEnabled = !isLineWrappingEnabled
         codeScrollView.alwaysBounceHorizontal = false
         codeScrollView.showsHorizontalScrollIndicator = false
-        codeLabelWidthConstraint?.constant = isLineWrappingEnabled ? wrappedCodeWidth() : measuredUnwrappedCodeWidth
+        if isLineWrappingEnabled {
+            codeLabelWidthConstraint?.isActive = false
+            wrappedLabelWidthConstraint?.isActive = true
+        } else {
+            wrappedLabelWidthConstraint?.isActive = false
+            codeLabelWidthConstraint?.constant = measuredUnwrappedCodeWidth
+            codeLabelWidthConstraint?.isActive = true
+        }
         updateTextContainerForCurrentWrapping()
 
         if resetHorizontalOffset {
@@ -676,11 +674,14 @@ final class NativeCodeBlockView: UIView {
         superview?.setNeedsLayout()
     }
 
-    private func updateTextContainerForCurrentWrapping() {
+    /// Wrapped, the container tracks the label's width once laid out; `width`
+    /// is the wrap width until then (a measurement at a target width).
+    private func updateTextContainerForCurrentWrapping(width: CGFloat? = nil) {
         codeLabel.textContainer.widthTracksTextView = isLineWrappingEnabled
+        let laidOutWidth = codeLabel.bounds.width > 0 ? codeLabel.bounds.width : nil
         codeLabel.textContainer.size = isLineWrappingEnabled
             ? CGSize(
-                width: max(1, codeLabelWidthConstraint?.constant ?? wrappedCodeWidth()),
+                width: max(1, width ?? laidOutWidth ?? wrappedCodeWidth()),
                 height: CGFloat.greatestFiniteMagnitude
             )
             : CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
