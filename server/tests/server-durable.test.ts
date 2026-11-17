@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, existsSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +9,7 @@ import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 import {
   fauxProvider,
   fauxAssistantMessage,
+  fauxText,
   fauxToolCall,
   fauxThinking,
   type FauxResponseStep,
@@ -73,6 +75,8 @@ import {
 } from "../src/session-restart-resume.js";
 import type { ChatAttachmentRef, ServerMessage, Session } from "../src/types.js";
 import type { ProgramStatusSync } from "../src/program-status.js";
+import type { ServerTelemetry } from "../src/telemetry/server-telemetry.js";
+import { LayoutFiles } from "../src/layout-files.js";
 import { DurableClassicEvents, type ClassicFrame } from "../src/durable-classic-events.js";
 import { DurableAsk } from "../plugins/ask/server.js";
 import { DurableWorkingWords } from "../plugins/working-words/server.js";
@@ -98,6 +102,15 @@ import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
 import { makeTempDir } from "./harness/temp-dir.js";
 import { toolArguments, toolNamed } from "./helpers/tool-arguments.js";
 
+const TURN_METRICS = new Set([
+  "server.turn",
+  "server.turn_ttft",
+  "server.turn_usage",
+  "server.tool_call",
+  "server.compaction",
+  "server.auto_retry",
+]);
+
 const managers: SessionManager[] = [];
 const harnesses: Harness[] = [];
 const harnessStorage = new WeakMap<Harness, DurableStorage>();
@@ -116,7 +129,13 @@ afterEach(async () => {
 
 async function fixture(
   responses: FauxResponseStep[],
-  options?: { slow?: boolean; settings?: Parameters<typeof SettingsManager.inMemory>[0] },
+  options?: {
+    slow?: boolean;
+    settings?: Parameters<typeof SettingsManager.inMemory>[0];
+    /** The workspace's folder, when not the fixture's data folder. */
+    hostMount?: string;
+    metrics?: ServerTelemetry;
+  },
 ) {
   const dir = makeTempDir("oppi-server-durable-test-");
   const models = await ModelRuntime.create({
@@ -144,11 +163,14 @@ async function fixture(
   );
   const storage = new Storage(dir);
   storage.mutateConfig(() => ({ experimental: { serverDurable: true } }));
-  const workspace = storage.createWorkspace({ name: "Durable proof", hostMount: dir });
+  const workspace = storage.createWorkspace({
+    name: "Durable proof",
+    hostMount: options?.hostMount ?? dir,
+  });
   const session = createDurableSession(storage, "Durable proof");
   session.workspaceId = workspace.id;
   storage.saveSession(session);
-  const manager = new SessionManager(storage);
+  const manager = new SessionManager(storage, options?.metrics);
   managers.push(manager);
   await manager.resumeDurableSessions();
   return { dir, models, faux, storage, workspace, session, manager };
@@ -3908,6 +3930,128 @@ describe("server durable managed runtime", () => {
       ]);
       observed.unsubscribe();
     });
+  });
+
+  it("records turn telemetry, change stats, git status and layout cards for its tool calls", async () => {
+    const repo = makeTempDir("oppi-server-durable-repo-");
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    const metrics: string[] = [];
+    const telemetry = {
+      record(name: string, fields: Record<string, unknown>, tags: Record<string, unknown>) {
+        if (!TURN_METRICS.has(name)) return;
+        // Durations vary run to run: only whether one was measured.
+        const shown = { ...fields, ...("duration_ms" in fields ? { duration_ms: "ms" } : {}) };
+        metrics.push(`${name} ${JSON.stringify(shown)} ${JSON.stringify(tags)}`);
+      },
+    } as unknown as ServerTelemetry;
+    const call = (name: string, args: Record<string, unknown>, id: string) =>
+      fauxAssistantMessage([fauxToolCall(name, args, { id })], { stopReason: "toolUse" });
+    const f = await fixture(
+      [
+        call("write", { path: "note.txt", content: "hello\n" }, "write-note"),
+        call("edit", { path: "note.txt", edits: [{ oldText: "hello", newText: "world" }] }, "edit"),
+        call("edit", { path: "note.txt", edits: [{ oldText: "absent", newText: "x" }] }, "miss"),
+        call("bash", { command: "echo hi" }, "bash"),
+        call("write", { path: ".oppi/layouts/board.json", content: "{}" }, "layout"),
+        fauxAssistantMessage([fauxThinking("Done thinking."), fauxText("DONE")]),
+        fauxAssistantMessage("", { stopReason: "error", errorMessage: "429 overloaded" }),
+        fauxAssistantMessage("RECOVERED"),
+        fauxAssistantMessage("## Goal\nSummary"),
+      ],
+      { settings: compactionSettings, hostMount: repo, metrics: telemetry },
+    );
+    f.manager.layoutFiles = new LayoutFiles(f.storage, { emitWorkspaceLayoutsChanged() {} });
+    await f.manager.startSession(f.session.id, f.workspace);
+    const observed = observe(f.manager, f.session.id);
+    const layout = observed.next((message) => message.type === "layout_proposal");
+    await answer(f, observed, "work");
+    await layout;
+    await observed.next((message) => message.type === "git_status");
+    await answer(f, observed, "retry");
+    const compacted = observed.next((message) => message.type === "compaction_end");
+    await f.manager.runCommand(f.session.id, { type: "compact" });
+    await compacted;
+    await vi.waitFor(() => expect(f.manager.getActiveSession(f.session.id)?.status).toBe("ready"));
+
+    const summaryStats: string[] = [];
+    for (const message of observed.messages) {
+      if (message.type !== "session_summary") continue;
+      const shown = JSON.stringify(message.summary.changeStats ?? null);
+      if (shown !== summaryStats.at(-1)) summaryStats.push(shown);
+    }
+    const tags = '{"runtime":"durable","provider":"faux","model":"faux-1","thinking":"off"';
+    const usage = (output: number) =>
+      `server.turn_usage {"input_tokens":0,"output_tokens":${output},"cost_usd_micros":0} ${tags}}`;
+    const tool = (name: string, status: string) =>
+      `server.tool_call {"duration_ms":"ms"} ${tags},"tool":"${name}","status":"${status}"}`;
+    const ttft = `server.turn_ttft {"duration_ms":"ms"} ${tags}}`;
+    expect(metrics).toEqual([
+      usage(12),
+      tool("write", "ok"),
+      usage(18),
+      tool("edit", "ok"),
+      usage(18),
+      tool("edit", "error"),
+      usage(7),
+      tool("bash", "ok"),
+      usage(14),
+      tool("write", "ok"),
+      ttft,
+      usage(5),
+      `server.turn {"duration_ms":"ms","tool_calls":5} ${tags},"status":"ok"}`,
+      `server.auto_retry {"attempt":1} ${tags}}`,
+      usage(0),
+      ttft,
+      usage(3),
+      `server.turn {"duration_ms":"ms","tool_calls":0} ${tags},"status":"ok"}`,
+      `server.compaction {"duration_ms":"ms"} ${tags},"status":"ok"}`,
+    ]);
+    const changedFiles = ["note.txt", ".oppi/layouts/board.json"];
+    expect(f.manager.getActiveSession(f.session.id)?.changeStats).toEqual({
+      changedFiles,
+      compactionCount: 1,
+      filesChanged: 2,
+      mutatingToolCalls: 4,
+    });
+    // Each change reaches the session list as it happens.
+    const stats = (calls: number, files: string[], compactions?: number) =>
+      JSON.stringify({
+        mutatingToolCalls: calls,
+        ...(compactions ? { compactionCount: compactions } : {}),
+        filesChanged: files.length,
+        changedFiles: files,
+      });
+    expect(summaryStats).toEqual([
+      "null",
+      stats(1, ["note.txt"]),
+      stats(2, ["note.txt"]),
+      stats(3, ["note.txt"]),
+      stats(4, changedFiles),
+      stats(4, changedFiles, 1),
+    ]);
+    const gitStatus = observed.messages.filter((message) => message.type === "git_status");
+    expect(gitStatus.at(-1)).toMatchObject({
+      worktreeId: "main",
+      status: {
+        isGitRepo: true,
+        files: [
+          { path: ".oppi/", status: "??" },
+          { path: "note.txt", status: "??", addedLines: 1 },
+        ],
+      },
+    });
+    expect(observed.messages.filter((message) => message.type === "layout_proposal")).toMatchObject(
+      [
+        {
+          toolCallId: "layout",
+          name: "board",
+          path: ".oppi/layouts/board.json",
+          worktreeId: "main",
+          file: { state: "invalid" },
+        },
+      ],
+    );
+    observed.unsubscribe();
   });
 
   it("exports a durable session to Pi's HTML page with its turns and prompt", async () => {
