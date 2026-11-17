@@ -4,10 +4,12 @@ import { resolveSdkSessionCwdAsync, SdkBackend } from "./sdk-backend.js";
 import { isControlConversation } from "./control-session.js";
 import {
   DURABLE_STORE_MISSING,
+  durableSessionConversations,
   durableStoreId,
   requireDurableStoreId,
   usesDurableEngine,
 } from "./session-runtime-capabilities.js";
+import type { ConversationId } from "@earendil-works/pi-durable";
 import type { DurableHarness, SessionHost } from "./durable-harness.js";
 import type { DurableBackend as DurableBackendType } from "./durable-backend.js";
 import { createLogger } from "./logger.js";
@@ -23,7 +25,7 @@ import {
 import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
 import { NOTIFY_EXTENSION } from "../plugins/notify/contract.js";
-import { applyLifecycle } from "./session-lifecycle-state.js";
+import { applyLifecycle, isStopping } from "./session-lifecycle-state.js";
 import type { SessionMessageQueueStore } from "./session-queue.js";
 import type { Storage } from "./storage.js";
 import type { Session, Workspace } from "./types.js";
@@ -54,6 +56,9 @@ export interface SessionStartCoordinatorDeps {
   /** Tears the registered runtime down; a start that fails after registering ends through it. */
   onSessionEnd: (key: string, reason: string) => void | Promise<void>;
   registerActiveSession: (key: string, active: SessionStartActiveSession) => void;
+  getActiveSession: (key: string) => SessionStartActiveSession | undefined;
+  /** A durable session now runs on another branch: tell its clients and its search row. */
+  onConversationSwitched: (key: string) => void;
   persistSessionNow: (key: string, session: Session) => void;
   resetIdleTimer: (key: string) => void;
   bootstrapSessionState: (key: string) => Promise<void>;
@@ -308,7 +313,59 @@ export class SessionStartCoordinator {
       getMobileOutputGuideSettings: () => this.deps.storage.getMobileOutputGuideSettings(),
       mcpEnabled: () => featureOn(this.deps.storage.getConfig(), "mcp"),
       godotEnabled: () => featureOn(this.deps.storage.getConfig(), "godotPane"),
+      navigation: {
+        lock: (fn) =>
+          this.deps.runtimeManager.withWorkspaceLock(
+            this.resolveSessionWorkspaceId(session, workspace),
+            fn,
+          ),
+        switchTo: (id) => this.switchDurableConversation(key, host, id),
+      },
     });
+  }
+
+  /**
+   * Rebind an idle durable session to conversation `id`, its new current branch, which its
+   * branch list already names: the row, then a new attachment on that branch, as a store
+   * recovery re-attaches. A session stopping meanwhile keeps the attachment its stop ends. A
+   * re-attach that fails ends the session, as a failed store recovery does: nothing would take
+   * its input, and a Stop could not reach its branches through a disposed attachment. The
+   * caller holds the workspace lock (`DurableNavigation.lock`).
+   */
+  private async switchDurableConversation(
+    key: string,
+    host: SessionHost,
+    id: number,
+  ): Promise<void> {
+    const active = this.deps.getActiveSession(key);
+    if (!active) throw new Error("The session is not running");
+    const session = active.session;
+    const left = session.serverDurable?.conversationId;
+    const known = session.serverDurable?.branches ?? (left === undefined ? [] : [left]);
+    const branches = known.includes(id) ? known : [...known, id];
+    session.serverDurable = { ...session.serverDurable, conversationId: id, branches };
+    this.deps.persistSessionNow(key, session);
+    if (isStopping(session)) return;
+    try {
+      await this.reattachDurableLocked(key, active, host);
+    } catch (error) {
+      this.deps.onPiEvent(key, {
+        type: "prompt_error",
+        error: `This session could not switch branches: ${safeErrorMessage(error)}`,
+      });
+      for (const conversationId of durableSessionConversations(session)) {
+        await host.abortConversation(conversationId as ConversationId).catch(() => undefined);
+        await host.unbindSandboxEnv(conversationId as ConversationId, true).catch(() => undefined);
+      }
+      await this.deps.onSessionEnd(key, "branch_switch_failed");
+      throw error;
+    }
+    // The session ended while it re-attached: its end disposed the attachment it had then.
+    if (this.deps.getActiveSession(key) !== active) {
+      await active.sdkBackend.dispose().catch(() => undefined);
+      return;
+    }
+    this.deps.onConversationSwitched(key);
   }
 
   /**
@@ -321,29 +378,37 @@ export class SessionStartCoordinator {
     active: SessionStartActiveSession,
     host: SessionHost,
   ): Promise<void> {
+    await this.deps.runtimeManager.withWorkspaceLock(active.workspaceId, () =>
+      this.reattachDurableLocked(key, active, host),
+    );
+  }
+
+  private async reattachDurableLocked(
+    key: string,
+    active: SessionStartActiveSession,
+    host: SessionHost,
+  ): Promise<void> {
     const session = active.session;
     const workspace = session.workspaceId
       ? this.deps.storage.getWorkspace(session.workspaceId)
       : undefined;
-    await this.deps.runtimeManager.withWorkspaceLock(active.workspaceId, async () => {
-      // The old projection watched the failed Harness; its teardown may only find it closed.
-      await active.sdkBackend.detachForRestart?.().catch((error: unknown) => {
-        log.warn("session_start.durable_detach_failed", {
-          sessionId: session.id,
-          error: safeErrorMessage(error),
-        });
+    // The old projection watched the failed Harness; its teardown may only find it closed.
+    await active.sdkBackend.detachForRestart?.().catch((error: unknown) => {
+      log.warn("session_start.durable_detach_failed", {
+        sessionId: session.id,
+        error: safeErrorMessage(error),
       });
-      const release = host.retain("reattach");
-      try {
-        const backend = await this.createDurableBackend(key, host, session, workspace);
-        active.sdkBackend = backend;
-        await backend.startEvents();
-        this.deps.persistSessionNow(key, session);
-        await host.resume();
-      } finally {
-        release();
-      }
     });
+    const release = host.retain("reattach");
+    try {
+      const backend = await this.createDurableBackend(key, host, session, workspace);
+      active.sdkBackend = backend;
+      await backend.startEvents();
+      this.deps.persistSessionNow(key, session);
+      await host.resume();
+    } finally {
+      release();
+    }
   }
 
   private resolveAgentDefinition(session: Session): AgentDefinition | undefined {

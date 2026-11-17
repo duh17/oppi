@@ -480,6 +480,45 @@ describe("durable store sessions", () => {
       rmSync(dataDir, { recursive: true, force: true });
     }
   });
+
+  it("adds the branches column to an existing table and finds a session by a branch it left", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-durable-branches-"));
+    const row = (serverDurable: Session["serverDurable"]): Session => ({
+      id: "navigated",
+      status: "stopped",
+      createdAt: 1,
+      lastActivity: 1,
+      messageCount: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+      serverDurable,
+    });
+    try {
+      // A table an earlier release wrote: no branches column, one bound session.
+      let store = new SessionSqliteStore(dataDir);
+      store.upsertSession(row({ storeId: "store-1", conversationId: 1 }));
+      store.close();
+      const db = openDatabase(join(dataDir, "session-state.db"));
+      db.exec("ALTER TABLE session_state_sessions DROP COLUMN durable_branches_json");
+      db.close();
+
+      store = new SessionSqliteStore(dataDir);
+      expect(store.getSession("navigated")?.serverDurable).toEqual({
+        storeId: "store-1",
+        conversationId: 1,
+      });
+      store.upsertSession(row({ storeId: "store-1", conversationId: 4, branches: [1, 4] }));
+      store.close();
+
+      store = new SessionSqliteStore(dataDir);
+      expect(store.getSession("navigated")?.serverDurable?.branches).toEqual([1, 4]);
+      expect(store.findSessionByDurableConversation("store-1", 1)?.id).toBe("navigated");
+      expect(store.findSessionByDurableConversation("store-1", 2)).toBeUndefined();
+      store.close();
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("child sessions", () => {

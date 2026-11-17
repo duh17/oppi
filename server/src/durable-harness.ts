@@ -1299,6 +1299,26 @@ export class SessionHost {
     );
     const [chosen, previous] = items;
     if (chosen?.id !== entryId) return undefined;
+    // A compaction entry carries a user-role summary but is not a user message: branch at it,
+    // so the fork keeps the summary instead of the pre-compaction transcript.
+    const isUserMessage = chosen.model?.[0]?.role === "user" && chosen.kind !== "pi.compaction";
+    return this.forkAt(sourceId, isUserMessage ? previous?.id : chosen.id);
+  }
+
+  /**
+   * A new ownerless conversation with `sourceId`'s history through `branchPoint`, an entry
+   * visible from it, or a fresh one with its agent when there is none (see `forkConversation`).
+   * `also` runs in the commit that creates the conversation, for a record that must never exist
+   * without it (a session's branch list).
+   */
+  async forkAt(
+    sourceId: ConversationId,
+    branchPoint: EntryId | undefined,
+    also?: (tx: Tx, id: ConversationId) => Promise<void>,
+  ): Promise<ConversationId> {
+    const { harness } = await this.open();
+    const source = await harness.conversation(sourceId, BACKGROUND_CONTEXT);
+    if (!source) throw new Error(`Server durable conversation ${sourceId} is missing`);
     // What a fork starts with beyond what the engine copies (`pi.agent` as of the branch point,
     // `oppi.agent` as it is now): the runtime, which forks as its initial value. A fork at the
     // first message has no entry to branch from, so the new conversation also takes those copies
@@ -1313,6 +1333,7 @@ export class SessionHost {
       (copyEngineDocs: boolean) =>
       async (tx: Tx, id: ConversationId): Promise<void> => {
         const { runtime, agent, launch } = carried;
+        await also?.(tx, id);
         if (runtime) {
           const doc = await tx.doc(DurableRuntime, id);
           doc.kind = runtime.kind;
@@ -1326,10 +1347,6 @@ export class SessionHost {
         if (launch) Object.assign(await tx.doc(OppiAgentDoc, id), structuredClone(launch));
       };
     const ownership = { kind: "ownerless" } as const;
-    // A compaction entry carries a user-role summary but is not a user message: branch at it,
-    // so the fork keeps the summary instead of the pre-compaction transcript.
-    const isUserMessage = chosen.model?.[0]?.role === "user" && chosen.kind !== "pi.compaction";
-    const branchPoint = isUserMessage ? previous?.id : chosen.id;
     if (branchPoint !== undefined) {
       const fork = await source.fork(
         branchPoint,

@@ -76,6 +76,8 @@ export interface SessionCoordinatorBundleDeps {
   onProgramStatusChange?: ProgramStatusChangeListener;
   onPiEvent: (key: string, event: SessionBackendEvent) => void;
   onRunState: (key: string, state: BackendRunState) => void;
+  /** A durable session now runs on another branch (`SessionStartCoordinatorDeps`). */
+  onConversationSwitched: (key: string) => void;
   onSessionEnd: (key: string, reason: string, stopConfirmationReason?: string) => Promise<void>;
   persistSessionNow: (key: string, session: Session) => void;
   markSessionDirty: (key: string) => void;
@@ -168,6 +170,8 @@ export function createSessionCoordinatorBundle(
     onPiEvent: (key, event) => deps.onPiEvent(key, event),
     onRunState: (key, state) => deps.onRunState(key, state),
     onSessionEnd: (key, reason) => deps.onSessionEnd(key, reason),
+    getActiveSession: (key) => deps.active.get(key),
+    onConversationSwitched: (key) => deps.onConversationSwitched(key),
     registerActiveSession: (key, active) => {
       // Unawaited session_start dialogs still belong to this bridge after activation.
       const requests = deps.takeStartupUIRequests?.(key);

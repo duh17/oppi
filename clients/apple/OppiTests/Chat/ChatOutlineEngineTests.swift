@@ -3,16 +3,15 @@ import Testing
 import UIKit
 @testable import Oppi
 
-/// The outline a chat opens: a classic session switches between its timeline
-/// and its tree; a durable conversation has no in-place tree (the server
-/// refuses it), so its outline is the timeline alone, with no switch to a tree
-/// that could only fail.
+/// The outline a chat opens switches between its timeline and its tree on
+/// either engine: a classic session's tree is its Pi session's, a durable
+/// session's is its branches.
 @Suite("Chat outline per engine")
 @MainActor
 struct ChatOutlineEngineTests {
-    @Test("A classic chat's outline offers Timeline and Tree; a durable chat's outline is the timeline with no switch",
-          arguments: [(SessionEngine.classic, true), (.durable, false)])
-    func theTreeSwitchFollowsTheEngine(engine: SessionEngine, offersTree: Bool) async throws {
+    @Test("A chat's outline offers Timeline and Tree on either engine",
+          arguments: [SessionEngine.classic, .durable])
+    func theOutlineOffersTheTree(engine: SessionEngine) async throws {
         let sessionId = "outline-\(engine)"
         let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.setAPIClientForTesting(nil)
@@ -28,12 +27,9 @@ struct ChatOutlineEngineTests {
         defer { hideTestWindow(window) }
         outline.view.layoutIfNeeded()
 
-        // A switch the outline draws, if any: a durable outline may hide it or never build it.
         let switcher = Self.segmentedControls(in: outline.view).first { Self.titles(of: $0) == ["Timeline", "Tree"] }
-        #expect((switcher.map { Self.isDrawn($0, in: outline.view) } ?? false) == offersTree)
-        if offersTree {
-            #expect(switcher?.selectedSegmentIndex == 0, "the outline opens on the timeline")
-        }
+        #expect(switcher.map { Self.isDrawn($0, in: outline.view) } == true)
+        #expect(switcher?.selectedSegmentIndex == 0, "the outline opens on the timeline")
     }
 
     private static func segmentedControls(in view: UIView) -> [UISegmentedControl] {

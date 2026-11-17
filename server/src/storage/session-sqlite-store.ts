@@ -18,6 +18,7 @@ import {
   recordMigration,
   runSessionInteractionsDrop,
   runSessionStateDeadSchemaCleanup,
+  tableColumns,
 } from "./session-state-cleanup-migration.js";
 import {
   backfillContextTokensFromTrace,
@@ -48,6 +49,7 @@ interface SessionRow {
   durable_store_id: string | null;
   durable_conversation_id: number | null;
   durable_role: string | null;
+  durable_branches_json: string | null;
   program_status_json: string | null;
   summary_json: string;
 }
@@ -135,6 +137,7 @@ const SESSION_COLUMNS = `
   durable_store_id,
   durable_conversation_id,
   durable_role,
+  durable_branches_json,
   program_status_json,
   summary_json
 `;
@@ -224,11 +227,15 @@ export class SessionSqliteStore {
 
   /**
    * Session for a durable conversation, by the `(durable_store_id, durable_conversation_id)`
-   * index. Conversation ids are per store, so both are required.
+   * index, else the store's session whose tree branches include it (one it navigated away
+   * from). Conversation ids are per store, so both are required.
    */
   findSessionByDurableConversation(storeId: string, conversationId: number): Session | undefined {
     const row = this.stmtFindDurable.get(storeId, conversationId) as { id: string } | undefined;
-    return row ? this.getSession(row.id) : undefined;
+    if (row) return this.getSession(row.id);
+    return this.listDurableStoreSessions(storeId).find((session) =>
+      session.serverDurable?.branches?.includes(conversationId),
+    );
   }
 
   /**
@@ -501,6 +508,9 @@ export class SessionSqliteStore {
     runSessionStateDeadSchemaCleanup(this.db, this.dataDir);
     runSessionColumnsRecordMigration(this.db, this.dataDir);
     runSessionInteractionsDrop(this.db, this.dataDir);
+    // A nullable column added after the columns-only shape: older servers write rows without it.
+    if (!tableColumns(this.db, "session_state_sessions").has("durable_branches_json"))
+      this.db.exec("ALTER TABLE session_state_sessions ADD COLUMN durable_branches_json TEXT");
     this.ensureSessionIndexesAndSchemaVersion();
   }
 
@@ -830,6 +840,8 @@ function buildSession(row: SessionRow): Session {
         : {}),
       ...(row.durable_role === "control" ? { role: "control" as const } : {}),
     };
+    const branches = parseJsonValue<number[]>(row.durable_branches_json, row.id, "branches");
+    if (branches?.length) session.serverDurable.branches = branches;
   }
 
   const programStatus = parseJsonValue<Session["programStatus"]>(
@@ -890,6 +902,7 @@ const SESSION_WRITE_COLUMNS = [
   "durable_store_id",
   "durable_conversation_id",
   "durable_role",
+  "durable_branches_json",
   "program_status_json",
   "summary_json",
 ] as const;
@@ -917,6 +930,7 @@ function sessionRowValues(session: Session): unknown[] {
     session.serverDurable?.storeId ?? null,
     session.serverDurable?.conversationId ?? null,
     session.serverDurable?.role ?? null,
+    session.serverDurable?.branches ? JSON.stringify(session.serverDurable.branches) : null,
     session.programStatus ? JSON.stringify(session.programStatus) : null,
     encodeSummaryCache(session),
   ];
@@ -1045,9 +1059,11 @@ function normalizeDeclaredSession(session: Session): Session {
     if (storeId !== undefined && (typeof storeId !== "string" || storeId.length === 0)) {
       throw new Error("Invalid server durable store binding");
     }
+    const branches = session.serverDurable.branches;
     normalized.serverDurable = {
       ...(storeId === undefined ? {} : { storeId }),
       ...(id === undefined ? {} : { conversationId: id }),
+      ...(branches?.length ? { branches: [...branches] } : {}),
       ...(session.serverDurable.role === "control" ? { role: "control" as const } : {}),
     };
   }

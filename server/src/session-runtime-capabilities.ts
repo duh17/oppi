@@ -20,6 +20,16 @@ export function hasServerDurableBinding<T extends Pick<Session, "runtime" | "ser
   return isServerDurableSession(session) && session.serverDurable?.conversationId !== undefined;
 }
 
+/**
+ * Every conversation of a durable session: its current one, then the tree branches it left
+ * (`serverDurable.branches`). Work on any of them is the session's.
+ */
+export function durableSessionConversations(session: Pick<Session, "serverDurable">): number[] {
+  const current = session.serverDurable?.conversationId;
+  if (current === undefined) return [];
+  return [current, ...(session.serverDurable?.branches ?? []).filter((id) => id !== current)];
+}
+
 /** Plain error when a durable row is opened without a per-tree store. */
 export const DURABLE_STORE_MISSING = "This durable session has no store";
 

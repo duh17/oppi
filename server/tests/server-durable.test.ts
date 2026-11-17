@@ -62,7 +62,8 @@ import {
   recordRunFailure,
 } from "../src/durable-failure-cards.js";
 import { SessionTraceService } from "../src/session-trace-service.js";
-import { readDurableTrace } from "../src/durable-history.js";
+import { readDurableSessionEntries, readDurableTrace } from "../src/durable-history.js";
+import { DurableBranchesDoc } from "../src/durable-branches.js";
 import { SessionAgentEventCoordinator } from "../src/session-agent-events.js";
 import { SessionStopCoordinator } from "../src/session-stop.js";
 import { SessionMessageQueueCoordinator } from "../src/session-queue.js";
@@ -3213,24 +3214,266 @@ describe("server durable managed runtime", () => {
     await runtime.dispose();
   });
 
-  it("fails operations durable cannot honor with a typed error instead of pretending success", async () => {
-    const f = await fixture([]);
-    await f.manager.startSession(f.session.id, f.workspace);
-    for (const [command, operation] of [
-      [{ type: "get_session_tree" }, "sessionTree (fork a message instead)"],
-      [{ type: "navigate_tree", targetId: "1" }, "navigateTree (fork a message instead)"],
-    ] as const)
-      await expect(f.manager.runCommand(f.session.id, command)).rejects.toMatchObject({
-        code: "server_durable_not_supported",
-        message: `${operation} is not supported for server durable sessions`,
+  describe("tree navigation", () => {
+    type TreeNode = {
+      id: string;
+      parentId: string | null;
+      role?: string;
+      textPreview?: string;
+      isLeafPath: boolean;
+    };
+    async function ask(manager: SessionManager, sessionId: string, text: string) {
+      const observed = observe(manager, sessionId);
+      const settled = observed.next((message) => message.type === "agent_settled");
+      await manager.sendPrompt(sessionId, text);
+      await settled;
+      observed.unsubscribe();
+    }
+    async function tree(f: Awaited<ReturnType<typeof fixture>>) {
+      const result = (await f.manager.runCommand(f.session.id, {
+        type: "get_session_tree",
+        filterMode: "no-tools",
+      })) as { leafId: string | null; nodes: TreeNode[] };
+      const byText = (text: string) => result.nodes.find((node) => node.textPreview === text)!;
+      return { ...result, byText };
+    }
+    const navigate = (f: Awaited<ReturnType<typeof fixture>>, targetId: string) =>
+      f.manager.runCommand(f.session.id, { type: "navigate_tree", targetId }) as Promise<{
+        cancelled: boolean;
+        editorText?: string;
+      }>;
+    const bound = (f: Awaited<ReturnType<typeof fixture>>) =>
+      f.storage.getSession(f.session.id)!.serverDurable!.conversationId!;
+    async function branchesOf(f: Awaited<ReturnType<typeof fixture>>) {
+      const durable = await (f.manager as unknown as { durableHarness: Promise<DurableHarness> })
+        .durableHarness;
+      const { harness } = await (await durable.openHost(f.session.id, { cwd: f.dir })).open();
+      return {
+        harness,
+        record: await harness.snapshot(DurableBranchesDoc, f.session.id, context),
+      };
+    }
+    const context_ = async (f: Awaited<ReturnType<typeof fixture>>) =>
+      (await f.manager.getServerDurableTrace(f.session.id, "context"))!
+        .filter((event) => event.type === "user" || event.type === "assistant")
+        .map((event) => `${event.type}:${event.text}`);
+
+    it("branches the same session at earlier messages and shows every branch in one tree", async () => {
+      const f = await fixture([
+        fauxAssistantMessage("ANSWER_ONE"),
+        fauxAssistantMessage("ANSWER_TWO"),
+        fauxAssistantMessage("BRANCH_ANSWER"),
+        fauxAssistantMessage("AFTER_ONE_ANSWER"),
+        fauxAssistantMessage("FRESH_ANSWER"),
+      ]);
+      await f.manager.startSession(f.session.id, f.workspace);
+      await ask(f.manager, f.session.id, "first question");
+      await ask(f.manager, f.session.id, "second question");
+      const root = bound(f);
+      const linear = await tree(f);
+      expect(linear.nodes.map((node) => node.textPreview)).toEqual([
+        "first question",
+        "ANSWER_ONE",
+        "second question",
+        "ANSWER_TWO",
+      ]);
+      expect(linear.leafId).toBe(linear.byText("ANSWER_TWO").id);
+      const ids = {
+        first: linear.byText("first question").id,
+        answerOne: linear.byText("ANSWER_ONE").id,
+        second: linear.byText("second question").id,
+        answerTwo: linear.byText("ANSWER_TWO").id,
+      };
+
+      // A user message: the session continues before it, in a new branch of the same session,
+      // and its text comes back for the composer.
+      expect(await navigate(f, ids.second)).toEqual({
+        cancelled: false,
+        editorText: "second question",
       });
-    await expect(
-      f.manager.runCommand(f.session.id, { type: "get_session_tree" }),
-    ).rejects.toBeInstanceOf(DurableNotSupportedError);
-    expect(await f.manager.takeMessageQueue(f.session.id)).toMatchObject({
-      steering: [],
-      followUp: [],
-    });
+      const branch = bound(f);
+      expect(branch).not.toBe(root);
+      expect((await branchesOf(f)).record).toEqual({
+        conversation: branch,
+        branches: [root, branch],
+      });
+      expect(await context_(f)).toEqual(["user:first question", "assistant:ANSWER_ONE"]);
+      await ask(f.manager, f.session.id, "branch question");
+      expect(await context_(f)).toEqual([
+        "user:first question",
+        "assistant:ANSWER_ONE",
+        "user:branch question",
+        "assistant:BRANCH_ANSWER",
+      ]);
+
+      // Both branches in one tree: the new one hangs below the answer it continues from, and
+      // the earlier branch stays, off the current path.
+      const forked = await tree(f);
+      expect(forked.byText("branch question").parentId).toBe(ids.answerOne);
+      expect(forked.byText("second question").parentId).toBe(ids.answerOne);
+      expect(forked.byText("ANSWER_TWO").isLeafPath).toBe(false);
+      expect(forked.byText("BRANCH_ANSWER").isLeafPath).toBe(true);
+      expect(forked.leafId).toBe(forked.byText("BRANCH_ANSWER").id);
+      // The earlier branch's own history is untouched.
+      const { harness } = await branchesOf(f);
+      const rootEntries = await readDurableSessionEntries(harness, root as ConversationId);
+      expect(rootEntries.map((entry) => entry.id)).toContain(ids.answerTwo);
+      expect(JSON.stringify(rootEntries)).not.toContain("branch question");
+
+      // Another message at the end of an existing branch switches back to it: no new branch.
+      expect(await navigate(f, ids.answerTwo)).toEqual({ cancelled: false });
+      expect(bound(f)).toBe(root);
+      expect((await branchesOf(f)).record?.branches).toEqual([root, branch]);
+      expect(await context_(f)).toEqual([
+        "user:first question",
+        "assistant:ANSWER_ONE",
+        "user:second question",
+        "assistant:ANSWER_TWO",
+      ]);
+      // Choosing where the session already is changes nothing.
+      expect(await navigate(f, ids.answerTwo)).toEqual({ cancelled: false });
+      expect(bound(f)).toBe(root);
+
+      // Another message no branch ends at: a new branch continues after it.
+      await navigate(f, ids.answerOne);
+      const afterOne = bound(f);
+      expect([root, branch]).not.toContain(afterOne);
+      await ask(f.manager, f.session.id, "after one");
+      expect(await context_(f)).toEqual([
+        "user:first question",
+        "assistant:ANSWER_ONE",
+        "user:after one",
+        "assistant:AFTER_ONE_ANSWER",
+      ]);
+
+      // The first message: a fresh conversation, still this session's branch; choosing it
+      // again finds that empty branch instead of making another.
+      expect(await navigate(f, ids.first)).toEqual({
+        cancelled: false,
+        editorText: "first question",
+      });
+      const fresh = bound(f);
+      expect(await context_(f)).toEqual([]);
+      await navigate(f, ids.answerTwo);
+      expect(await navigate(f, ids.first)).toMatchObject({ editorText: "first question" });
+      expect(bound(f)).toBe(fresh);
+      expect((await branchesOf(f)).record?.branches).toEqual([root, branch, afterOne, fresh]);
+      await ask(f.manager, f.session.id, "fresh question");
+      const all = await tree(f);
+      expect(all.byText("fresh question").parentId).toBeNull();
+      expect(all.nodes.filter((node) => node.parentId === ids.answerOne)).toHaveLength(3);
+      expect(all.leafId).toBe(all.byText("FRESH_ANSWER").id);
+
+      await expect(navigate(f, "999999")).rejects.toThrow("not in this session's tree");
+      await expect(
+        f.manager.runCommand(f.session.id, {
+          type: "navigate_tree",
+          targetId: ids.answerOne,
+          summarize: true,
+        }),
+      ).rejects.toBeInstanceOf(DurableNotSupportedError);
+    }, 20_000);
+
+    it("navigates only an idle session, and keeps the branch left the session's", async () => {
+      const f = await fixture([fauxAssistantMessage("ANSWER_ONE")], { slow: true });
+      await f.manager.startSession(f.session.id, f.workspace);
+      await ask(f.manager, f.session.id, "first question");
+      const root = bound(f);
+      const answerOne = (await tree(f)).byText("ANSWER_ONE").id;
+      f.faux.setResponses([
+        fauxAssistantMessage(`LONG_ANSWER ${"x".repeat(30)}`),
+        fauxAssistantMessage("NEW_BRANCH_ANSWER"),
+      ]);
+      const observed = observe(f.manager, f.session.id);
+      const streaming = observed.next((message) => message.type === "text_delta");
+      const settled = observed.next((message) => message.type === "agent_settled");
+      await f.manager.sendPrompt(f.session.id, "long question");
+      await streaming;
+      // As classic: a tree navigation waits for an idle session.
+      await expect(navigate(f, answerOne)).rejects.toThrow("requires an idle session");
+      expect(bound(f)).toBe(root);
+      await settled;
+      observed.unsubscribe();
+
+      await navigate(f, answerOne);
+      const branch = bound(f);
+      expect(f.storage.getSession(f.session.id)!.serverDurable?.branches).toEqual([root, branch]);
+      // Stored, so a stop's fence after a restart still reaches the branch left.
+      expect(new Storage(f.dir).getSession(f.session.id)!.serverDurable?.branches).toEqual([
+        root,
+        branch,
+      ]);
+      // Work still landing on the branch left (a background job, a subagent's report) finds
+      // the session that owns it.
+      expect(f.storage.findSessionByDurableConversation(f.session.id, root)?.id).toBe(f.session.id);
+      await ask(f.manager, f.session.id, "new question");
+      const { harness } = await branchesOf(f);
+      const left = JSON.stringify(await readDurableSessionEntries(harness, root as ConversationId));
+      expect(left).not.toContain("new question");
+      expect(await context_(f)).toEqual([
+        "user:first question",
+        "assistant:ANSWER_ONE",
+        "user:new question",
+        "assistant:NEW_BRANCH_ANSWER",
+      ]);
+    }, 30_000);
+
+    it("refuses a navigation once the store admitted a prompt the status does not show yet", async () => {
+      const f = await fixture([fauxAssistantMessage("ANSWER_ONE")], { slow: true });
+      await f.manager.startSession(f.session.id, f.workspace);
+      await ask(f.manager, f.session.id, "first question");
+      const root = bound(f);
+      const answerOne = (await tree(f)).byText("ANSWER_ONE").id;
+      const backend = (
+        f.manager as unknown as {
+          active: Map<string, { sdkBackend: DurableBackend }>;
+        }
+      ).active.get(f.session.id)!.sdkBackend;
+      f.faux.setResponses([fauxAssistantMessage("ANSWER_TWO")]);
+      const settled = observe(f.manager, f.session.id).next((m) => m.type === "agent_settled");
+      // Admitted, before its run's start reaches the session: only the store knows.
+      await backend.prompt("second question");
+      await expect(backend.navigateTree(answerOne)).rejects.toThrow("requires an idle session");
+      expect(bound(f)).toBe(root);
+      await settled;
+    }, 20_000);
+
+    it("ends the session when it cannot attach to the new branch", async () => {
+      const f = await fixture([fauxAssistantMessage("ANSWER_ONE")]);
+      await f.manager.startSession(f.session.id, f.workspace);
+      await ask(f.manager, f.session.id, "first question");
+      const observed = observe(f.manager, f.session.id);
+      vi.spyOn(DurableBackend, "create").mockRejectedValueOnce(new Error("sandbox VM gone"));
+      await expect(navigate(f, (await tree(f)).byText("first question").id)).rejects.toThrow(
+        "sandbox VM gone",
+      );
+      expect(observed.messages).toContainEqual(
+        expect.objectContaining({
+          type: "error",
+          error: expect.stringContaining("could not switch branches: sandbox VM gone"),
+        }),
+      );
+      expect(f.manager.isActive(f.session.id)).toBe(false);
+      observed.unsubscribe();
+    }, 20_000);
+
+    it("binds a restarted session to the branch its record names", async () => {
+      const f = await fixture([fauxAssistantMessage("ANSWER_ONE"), fauxAssistantMessage("LATER")]);
+      await f.manager.startSession(f.session.id, f.workspace);
+      await ask(f.manager, f.session.id, "first question");
+      const root = bound(f);
+      await navigate(f, (await tree(f)).byText("first question").id);
+      const branch = bound(f);
+      await f.manager.stopSession(f.session.id);
+      // A crash after the navigation's commit, before the row was saved.
+      const row = f.storage.getSession(f.session.id)!;
+      row.serverDurable = { ...row.serverDurable, conversationId: root, branches: undefined };
+      f.storage.saveSession(row);
+      await f.manager.startSession(f.session.id, f.workspace);
+      expect(bound(f)).toBe(branch);
+      await ask(f.manager, f.session.id, "later question");
+      expect(await context_(f)).toEqual(["user:later question", "assistant:LATER"]);
+    }, 20_000);
   });
 
   /** A run that fails after its one retry, with a follow-up queued during the backoff. */

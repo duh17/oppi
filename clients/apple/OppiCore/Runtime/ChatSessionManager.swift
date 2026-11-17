@@ -157,9 +157,11 @@ final class ChatSessionManager {
     @ObservationIgnored private var lastChildTailPublish: ContinuousClock.Instant?
     /// Lines each busy child's row keeps room for, by conversation id.
     @ObservationIgnored private var childTailLineReservations: [Int: Int] = [:]
-    /// The conversation the session's own stream attached. Survives a replica reset, so a frame
-    /// of a child detached while in flight is never taken for the session's.
-    @ObservationIgnored private var ownConversationId: Int?
+    /// Children this socket stopped following, so a frame of theirs still in flight is never
+    /// taken for the session's. Every other conversation id is the session's own: a durable
+    /// tree navigation moves the session to another conversation, whose snapshot replaces the
+    /// replica.
+    @ObservationIgnored private var detachedChildTails: Set<Int> = []
     @ObservationIgnored private(set) var _childTailPublicationsForTesting = 0
 
     private struct ChildStream {
@@ -1121,7 +1123,7 @@ final class ChatSessionManager {
             if case .streaming = entryState {
                 if childStreams[frame.conversationId] != nil {
                     applyChildTailFrame(frame)
-                } else if let own = ownConversationId, own != frame.conversationId {
+                } else if detachedChildTails.contains(frame.conversationId) {
                     // A child tail detached while its frames were in flight.
                 } else {
                     applyConversationFrame(frame)
@@ -1952,6 +1954,8 @@ final class ChatSessionManager {
         // server without live tails (v1) replaces the socket's only stream on every attach, so a
         // child attach there would end the session's own: follow none.
         refusedChildTails.removeAll()
+        // The old socket's streams ended with it.
+        detachedChildTails.removeAll()
         if focusedStreamPort.conversationStreamLiveTailsAvailable {
             for child in childStreams.values { sendChildTailAttach(child.driver) }
         } else {
@@ -2071,16 +2075,17 @@ final class ChatSessionManager {
 
     /// Follow the newest children the replica's tool calls name, and stop following the rest.
     private func followChildTails() {
-        if let own = conversationStream?.replica.conversationId { ownConversationId = own }
         guard focusedStreamPort.conversationStreamLiveTailsAvailable, let conversationStream else { return }
         let wanted = conversationStream.children.children(limit: Self.maxChildTails)
             .filter { followsReturnedChildren || $0.callIsRunning }
         let wantedIds = Set(wanted.map(\.conversationId))
         for (conversationId, child) in childStreams where !wantedIds.contains(conversationId) {
             childStreams[conversationId] = nil
+            detachedChildTails.insert(conversationId)
             if let detach = child.driver.detachRequest() { sendChildTailMessage(detach) }
         }
         for reference in wanted {
+            detachedChildTails.remove(reference.conversationId)
             if childStreams[reference.conversationId] != nil {
                 childStreams[reference.conversationId]?.reference = reference
             } else if !refusedChildTails.contains(reference.conversationId) {
@@ -2185,6 +2190,7 @@ final class ChatSessionManager {
     /// stream live tails: stop following its children.
     private func dropChildTails() {
         for child in childStreams.values { child.driver.cancelPendingRequests() }
+        detachedChildTails.formUnion(childStreams.keys)
         childStreams.removeAll()
         refusedChildTails.removeAll()
         childTailPublishTask?.cancel()

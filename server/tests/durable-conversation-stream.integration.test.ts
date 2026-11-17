@@ -474,6 +474,46 @@ describe("durable conversation stream over the focused session socket", { timeou
     await expectConverged(resumed);
   });
 
+  it("follows the session to the branch a tree navigation makes", async () => {
+    const driver = await connect();
+    const watcher = await connect();
+    await watcher.attach();
+    const left = watcher.conversationId!;
+    await prompt(driver, "one");
+    await settle();
+    const tree = await driver.request({ type: "get_session_tree" });
+    const nodes = (tree.data as { nodes: Array<{ id: string; role?: string }> }).nodes;
+    const first = nodes.find((node) => node.role === "user")!;
+
+    const from = watcher.frames.length;
+    const navigated = await driver.request({ type: "navigate_tree", targetId: first.id });
+    expect(navigated).toMatchObject({ success: true, data: { editorText: "one" } });
+    // Another socket replicating the branch left gets the new branch's snapshot, unasked.
+    const snapshot = await watcher.next(
+      (frame) => frame.type === "snapshot" && frame.conversationId !== left,
+      from,
+    );
+    const branch = snapshot.conversationId as number;
+    expect(storage.getSession(session.id)?.serverDurable?.conversationId).toBe(branch);
+    expect(snapshot.entries).toEqual([]);
+    watcher.conversationId = branch;
+    watcher.entries = [];
+    watcher.docs = { ...(snapshot.docs as Record<string, unknown>) };
+    watcher.head = snapshot.head as number;
+
+    const sinceSnapshot = watcher.frames.indexOf(snapshot);
+    await prompt(driver, "two");
+    await settle();
+    expect(
+      watcher
+        .conversationFrames()
+        .filter((frame) => watcher.frames.indexOf(frame) > sinceSnapshot)
+        .every((frame) => frame.conversationId === branch),
+    ).toBe(true);
+    await expectConverged(watcher);
+    expect(watcher.entries.some((entry) => JSON.stringify(entry).includes("two"))).toBe(true);
+  });
+
   it("sends a snapshot when compaction moves the head, and for a stale cursor", async () => {
     const client = await connect();
     await client.attach();

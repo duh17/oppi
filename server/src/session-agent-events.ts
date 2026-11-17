@@ -396,7 +396,7 @@ export class SessionAgentEventCoordinator {
   }
 
   private sessionTreeFor(active: SessionAgentEventState): CanonicalSessionTree | undefined {
-    return sessionTreeFromUnknown(active.sdkBackend?.sessionTree());
+    return sessionTreeFromUnknown(active.sdkBackend?.sessionTree?.());
   }
 
   private flushPendingCanonicalMessage(key: string, active: SessionAgentEventState): void {

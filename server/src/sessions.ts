@@ -94,6 +94,7 @@ import { loadedScreens, type ScreenHost } from "./plugin-screens.js";
 import { loadDurableHarness } from "./session-durable-harness.js";
 import { createDurableSearchSource } from "./durable-search-source.js";
 import {
+  durableSessionConversations,
   durableStoreId,
   hasServerDurableBinding,
   requireDurableStoreId,
@@ -224,6 +225,12 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
         this.emit("program_status_change", session, change),
       onPiEvent: (key, event) => this.handlePiEvent(key, event),
       onRunState: (key, state) => this.handleRunState(key, state),
+      // Sockets streaming the branch left follow the session to its new one (`stream.ts`).
+      onConversationSwitched: (key) => {
+        const session = this.active.get(key)?.session;
+        if (session) this.broadcast(key, { type: "state", session });
+        if (session) this.searchIndex?.reindexSession(session.id);
+      },
       hasUI: (key) =>
         (this.starting.get(key)?.subscribers.size ?? 0) > 0 ||
         (this.active.get(key)?.subscribers.size ?? 0) > 0,
@@ -1093,11 +1100,11 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     }
     if (!this.isActive(sessionId)) {
       const session = this.storage.getSession(sessionId);
-      const id = this.boundConversationId(sessionId);
-      if (session && id !== undefined && durableStoreId(session)) {
+      const ids = session ? (durableSessionConversations(session) as ConversationId[]) : [];
+      if (session && ids.length && durableStoreId(session)) {
         await (
           await this.durableHarness
-        ).withSession(session, (_harness, host) => host.abortConversations(new Set([id])));
+        ).withSession(session, (_harness, host) => host.abortConversations(new Set(ids)));
       }
       return;
     }
@@ -1254,8 +1261,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       this.handlePiEvent(key, { type: "prompt_error", error });
       // The backend's own dispose would need the store; release its sandbox work directly.
       await active.sdkBackend.detachForRestart?.().catch(() => undefined);
-      const conversationId = active.session.serverDurable?.conversationId;
-      if (conversationId !== undefined)
+      for (const conversationId of durableSessionConversations(active.session))
         await host.unbindSandboxEnv(conversationId as ConversationId, true).catch(() => undefined);
       await this.handleSessionEnd(key, "store_failed");
     }
@@ -1280,7 +1286,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
         // still fence a stopped one being reopened so leftover jobs stay aborted.
         const prior = this.starting.get(this.sessionKey(session.id))?.start?.priorStatus;
         if (prior !== undefined && prior !== "stopped" && prior !== "stopping") continue;
-        ids.add(conversationId);
+        for (const id of durableSessionConversations(session)) ids.add(id as ConversationId);
       }
       if (!ids.size) continue;
       const started = Date.now();

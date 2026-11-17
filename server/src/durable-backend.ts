@@ -56,6 +56,13 @@ import { DurableSessionDoc } from "./durable-session-doc.js";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import { readDurableInputCards } from "./durable-input-cards.js";
 import { DurableClassicEvents } from "./durable-classic-events.js";
+import {
+  navigateDurableBranch,
+  readDurableBranches,
+  readDurableSessionTree,
+} from "./durable-branches.js";
+import type { SessionTreeManager } from "./session-tree.js";
+import { durableSessionConversations } from "./session-runtime-capabilities.js";
 import { exportDurableToHtml } from "./durable-export.js";
 import {
   durableCacheMissHistory,
@@ -176,6 +183,22 @@ interface DurableBackendOptions {
   mcpEnabled?: () => boolean;
   /** The server's Godot Pane switch (`features.godotPane`), read at each attach. Absent means on. */
   godotEnabled?: () => boolean;
+  /** What `navigateTree` needs from the session's owner; without it the session cannot. */
+  navigation?: DurableNavigation;
+}
+
+/** The session owner's half of a tree navigation (`navigateTree`). */
+export interface DurableNavigation {
+  /**
+   * Run the whole navigation under the session's workspace lock, the one a start or Stop takes
+   * before this attachment's exclusive lock, so the two never wait on each other.
+   */
+  lock<T>(fn: () => Promise<T>): Promise<T>;
+  /**
+   * Rebind the session to conversation `id`, its new current branch, already holding `lock`:
+   * the session's row, this attachment's replacement, and everything that follows them.
+   */
+  switchTo(id: ConversationId): Promise<void>;
 }
 
 /**
@@ -339,6 +362,7 @@ export class DurableBackend implements AgentBackend {
     private readonly readSkillFile: (path: string) => Promise<string>,
     /** The session's effective Pi settings, the same manager its Pi Tools setting came from. */
     private readonly piSettings: SettingsManager,
+    private readonly navigation: DurableNavigation | undefined,
   ) {
     this.registry = new ModelRegistry(models);
   }
@@ -348,6 +372,7 @@ export class DurableBackend implements AgentBackend {
     const workspace = options.workspace;
     const unsupported = durableUnsupportedFeature({ ephemeral: session.ephemeral });
     if (unsupported) throw new DurableNotSupportedError(unsupported);
+    await DurableBackend.followCurrentBranch(options);
     const sandbox = workspace?.runtime === "sandbox";
     const hostCwd = await resolveSdkSessionCwdAsync(options.workspace, session, {
       dataDir: options.dataDir,
@@ -495,6 +520,27 @@ export class DurableBackend implements AgentBackend {
       await host.closeMcp(session.id);
       throw error;
     }
+  }
+
+  /**
+   * The row mirrors the session's branch list (`DurableBranchesDoc`): its current conversation
+   * and every branch. A navigation commits the list first, so a crash before the row was saved
+   * leaves the row behind, never ahead.
+   */
+  private static async followCurrentBranch(options: DurableBackendOptions): Promise<void> {
+    const { session } = options;
+    const bound = session.serverDurable?.conversationId as ConversationId | undefined;
+    if (bound === undefined) return;
+    const { conversation, branches } = await readDurableBranches(
+      options.harness,
+      session.id,
+      bound,
+    );
+    if (branches.length < 2) return;
+    const row = session.serverDurable;
+    if (row?.conversationId === conversation && row.branches?.join() === branches.join()) return;
+    session.serverDurable = { ...row, conversationId: conversation, branches };
+    options.persistBinding();
   }
 
   /**
@@ -759,6 +805,7 @@ export class DurableBackend implements AgentBackend {
         options.dataDir,
         readInView,
         target.piSettings,
+        options.navigation,
       );
       backend.ui = await DurableUIProjection.create(harness, conversation, options.onEvent);
       // Last, so nothing after it can fail with the toggle registered. The attach's `{ add }`
@@ -1014,16 +1061,44 @@ export class DurableBackend implements AgentBackend {
   get isDisposed(): boolean {
     return this.disposed;
   }
-  hasPendingWake(): Promise<boolean> {
-    return this.host.hasPendingWake(this.conversation.id);
+  /**
+   * Every branch of this session, the current one first. A branch left can still work: its
+   * background jobs, and a turn a subagent's report starts there.
+   */
+  private branches(): ConversationId[] {
+    return [
+      this.conversation.id,
+      ...(durableSessionConversations(this.session) as ConversationId[]).filter(
+        (id) => id !== this.conversation.id,
+      ),
+    ];
+  }
+  async hasPendingWake(): Promise<boolean> {
+    for (const id of this.branches()) if (await this.host.hasPendingWake(id)) return true;
+    return false;
   }
   async hasPendingWork(): Promise<boolean> {
+    for (const id of this.branches()) if (await this.conversationHasWork(id)) return true;
+    return false;
+  }
+  /** A live run or queued input in conversation `id`, read from the store. */
+  private async conversationHasWork(id: ConversationId): Promise<boolean> {
     const { harness } = await this.host.open();
     const [live, inbox] = await Promise.all([
-      harness.snapshot(LiveDoc, this.conversation.id, BACKGROUND_CONTEXT),
-      harness.snapshot(InboxDoc, this.conversation.id, BACKGROUND_CONTEXT),
+      harness.snapshot(LiveDoc, id, BACKGROUND_CONTEXT),
+      harness.snapshot(InboxDoc, id, BACKGROUND_CONTEXT),
     ]);
     return live?.run !== undefined || (inbox?.items.length ?? 0) > 0;
+  }
+  /** Stopping the session stops every branch's work, the branches it left included. */
+  private async abortBranches(): Promise<void> {
+    for (const id of this.branches()) {
+      await this.host.abortConversation(id);
+      await this.host.abortSessionReporters(id);
+    }
+  }
+  private async unbindSandboxEnvs(): Promise<void> {
+    for (const id of this.branches()) await this.host.unbindSandboxEnv(id);
   }
   /** Durable tasks recover after a restart and report an interrupted job themselves. */
   readonly holdsWorkLostOnRestart = false;
@@ -1142,10 +1217,9 @@ export class DurableBackend implements AgentBackend {
       });
     if (this.disposed) return { disposal: "graceful" };
     this.transactions.assertPermit(permit, "exclusive");
-    await this.host.abortConversation(this.conversation.id);
-    await this.host.abortSessionReporters(this.conversation.id);
+    await this.abortBranches();
     await this.detachForRestart();
-    await this.host.unbindSandboxEnv(this.conversation.id);
+    await this.unbindSandboxEnvs();
     await this.host.closeMcp(this.session.id);
     return { disposal: "graceful" };
   }
@@ -1197,10 +1271,9 @@ export class DurableBackend implements AgentBackend {
     return async (timeoutMs) => {
       // Never report a successful stop until Durable has admitted cancellation.
       // A rejected abort leaves the projection alive and propagates stop_failed.
-      await this.host.abortConversation(this.conversation.id);
-      await this.host.abortSessionReporters(this.conversation.id);
+      await this.abortBranches();
       await this.detachForRestart();
-      await this.host.unbindSandboxEnv(this.conversation.id);
+      await this.unbindSandboxEnvs();
       await this.host.closeMcp(this.session.id);
       this.transactions.poison(new Error("Server durable stop timed out"));
       return { disposal: "forced", cause: "lifecycle_timeout", operation: "stop", timeoutMs };
@@ -1476,24 +1549,52 @@ export class DurableBackend implements AgentBackend {
       return text ? [{ entryId: String(entry.id), text }] : [];
     });
   }
-  // A durable conversation has no in-place leaf. Navigating would fork the conversation and
-  // rebind this session to the fork, which drops every later turn from the tree, cannot
-  // summarize the abandoned branch, and abandons the old conversation's background work. The
-  // tree view would then misread the session. `get_fork_messages` + `fork` is the supported
-  // way to continue from an earlier turn, as its own session.
-  sessionTree(): never {
-    return this.unsupported("sessionTree (fork a message instead)");
+  /** Every branch's entries as one tree (`durable-branches.ts`). */
+  async branchTree(): Promise<SessionTreeManager> {
+    this.assertOpen();
+    return readDurableSessionTree(this.harness, this.session.id, this.conversation.id);
   }
+  // A durable conversation has no in-place leaf: its leaf is its last entry.
   leafId(): null {
     return null;
   }
-  navigateTree(): never {
-    return this.unsupported("navigateTree (fork a message instead)");
+  /**
+   * Continue the idle session at `targetId` on another branch (`navigateDurableBranch`), then
+   * rebind the session to it, which replaces this attachment. Under the workspace lock, then
+   * exclusive, so no input or stop lands on the branch left while it switches; only the
+   * current branch takes input. Live Voice leaves with it.
+   */
+  navigateTree(
+    targetId: string,
+    options?: Parameters<AgentBackend["navigateTree"]>[1],
+  ): ReturnType<AgentBackend["navigateTree"]> {
+    if (options?.summarize) return this.unsupported("navigateTree with a branch summary");
+    const navigation = this.navigation;
+    if (!navigation) throw new Error("This durable session cannot switch branches");
+    return navigation.lock(() =>
+      this.withRuntimeLifecycleTransaction("navigateTree", async () => {
+        // The session's status can lag a prompt the store already admitted: read the store.
+        if (await this.conversationHasWork(this.conversation.id))
+          throw new Error("navigate_tree requires an idle session");
+        const { conversation, editorText } = await navigateDurableBranch(
+          this.host,
+          this.session.id,
+          this.conversation.id,
+          targetId,
+        );
+        if (conversation !== this.conversation.id) {
+          this.selectLiveVoice(false);
+          await this.liveVoiceSelection;
+          await navigation.switchTo(conversation);
+        }
+        return { cancelled: false, ...(editorText !== undefined ? { editorText } : {}) };
+      }),
+    );
   }
   /**
    * Only what a durable session runs from a slash command: `/compact` and `/share` have
-   * backend commands, `/reload` rebuilds resources, `/skill:*` expands in `prompt`. Fork, tree,
-   * new and resume replace the session's identity or leaf (unsupported here), and classic
+   * backend commands, `/reload` rebuilds resources, `/skill:*` expands in `prompt`. Fork, new
+   * and resume replace the session's identity, `/tree` is the Session Outline's, and classic
    * extension and prompt-template commands cannot load, so none of them is advertised.
    */
   commands(): ReturnType<AgentBackend["commands"]> {

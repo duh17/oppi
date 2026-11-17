@@ -137,7 +137,10 @@ export interface AgentBackend {
   messages(): PiMessage[] | Promise<PiMessage[]>;
   forkMessages():
     Array<{ entryId: string; text: string }> | Promise<Array<{ entryId: string; text: string }>>;
-  sessionTree(): SessionTreeManager & CanonicalSessionTree;
+  /** A Pi session's own tree, also its canonical entries; a durable session has `branchTree`. */
+  sessionTree?(): SessionTreeManager & CanonicalSessionTree;
+  /** A durable session's branches as one tree, read from its store. */
+  branchTree?(): Promise<SessionTreeManager>;
   leafId(): string | null;
   toolDefinition(name: string): BackendToolDefinition | undefined;
   navigateTree(

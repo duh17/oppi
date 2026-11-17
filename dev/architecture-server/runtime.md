@@ -91,7 +91,8 @@ A sandbox conversation persists its boundary in `oppi.execution-runtime` and att
 
 ## Durable gaps and unsupported operations
 
-- `DurableNotSupportedError` (`server_durable_not_supported`) for `sessionTree`/`navigateTree` (navigating would fork, drop later turns, and strand background work; fork-from-a-message is the way back), `abortBash`, `appendAssistantMessage`, and classic queued-turn replacement. Incognito and Extension selections without a plugin are rejected.
+- `DurableNotSupportedError` (`server_durable_not_supported`) for `abortBash`, `appendAssistantMessage`, classic queued-turn replacement, and branch summaries. Incognito and Extension selections without a plugin are rejected.
+- Tree navigation (idle only): `durable-branches.ts` (a forked conversation per branch, listed in session-scoped `oppi.branches` keyed by session id, committed with each fork, mirrored in `serverDurable.branches`), then `switchDurableConversation` re-attaches. A branch left takes no input, keeps its subagents, and loses MCP (re-attach replaces it).
 - Fork uses `conversation.fork(entryId)` at the entry before the chosen user message; `SessionHost.forkConversation` decides what a fork carries, so it launches as its source. A durable source never falls back to a Pi JSONL fork. Share exports through a temporary JSONL (`durable-export.ts`).
 - After an aborted run, queued inputs wait for the next message; after a failed run, `DurableAgentController.continueAfterFailedRun` submits a `continue` after the failure card's commit (a continue places the queued inputs in its own commit, so it cannot share the card's), and the session settles once. Older stores keep hidden `oppi.continue` writes.
 

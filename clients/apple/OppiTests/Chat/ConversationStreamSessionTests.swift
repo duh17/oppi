@@ -1089,6 +1089,27 @@ struct ConversationStreamSessionTests {
         await harness.finish()
     }
 
+    /// A durable tree navigation moves the session to another conversation: the server sends
+    /// that branch's snapshot, unasked on another device, and the timeline follows it.
+    @Test func aSnapshotOfTheSessionsNewBranchReplacesTheReplica() async throws {
+        let harness = Harness(liveTails: true)
+        await harness.connect()
+        _ = try await harness.attach(1)
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [
+            Wire.user(1, "first"), Wire.assistant(2, [Wire.text("one")]), Wire.user(3, "left"),
+        ], docs: [:])))
+        #expect(await harness.waitForRows(["1", "2-text-0", "3"]))
+
+        harness.frame(.snapshot(.init(conversationId: 8, head: 0, hasOlder: false, entries: [
+            Wire.user(1, "first"), Wire.assistant(2, [Wire.text("one")]),
+        ], docs: [:])))
+        #expect(await harness.waitForRows(["1", "2-text-0"]))
+        #expect(harness.manager.conversationStream?.replica.conversationId == 8)
+        harness.frame(.update(.init(conversationId: 8, entries: [Wire.user(4, "branch")])))
+        #expect(await harness.waitForRows(["1", "2-text-0", "4"]))
+        await harness.finish()
+    }
+
     /// A child the parent waits on (its spawn call still runs) streams with no drawer open and
     /// shows under that call's row. Once the call returns, its tail leaves the timeline and it
     /// streams only while a drawer could list it.

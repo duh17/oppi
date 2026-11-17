@@ -179,6 +179,85 @@ final class DurableSessionE2ETests: E2ETestCase {
         XCTAssertEqual(userRows.count, 2, "Expected each prompt once after the reconnect")
     }
 
+    /// The Session Outline's tree shows a durable session's branches: choosing an earlier
+    /// message continues the same session on a new branch, and the branch left stays in
+    /// the tree. Screenshots: `/tmp/oppi-screenshots/durable-tree-*.png`.
+    func testDurableTreeNavigationBranchesTheSameSession() throws {
+        guard E2ELabServerContext.durableSessions else {
+            throw XCTSkip("Needs e2e.sh --native --durable --faux-model")
+        }
+
+        createSession()
+        waitForWebSocketConnected()
+        let sessionId = waitForFocusedSessionId(timeout: 20)
+        waitForAckedSubscription(sessionId: sessionId, level: "full")
+        let tag = String(UUID().uuidString.prefix(6))
+        let first = "TREE_FIRST_\(tag)"
+        let left = "TREE_LEFT_\(tag)"
+        let branch = "TREE_BRANCH_\(tag)"
+
+        for prompt in [first, left] {
+            sendMessage(prompt)
+            XCTAssertTrue(
+                rowShowsText(assistantRow(replyingTo: prompt), Self.replyEnd, timeout: 60),
+                "The reply to \(prompt) did not land"
+            )
+            waitForTurnToEnd(after: "the reply to \(prompt)")
+        }
+
+        openOutlineTree()
+        try saveLabScreenshot(name: "durable-tree-before")
+        tap(treeRow(user: left), named: "tree node of the second prompt", timeout: 10)
+        tap(app.buttons["Switch branch"], named: "switch branch", timeout: 5)
+        XCTAssertTrue(
+            waitForElementToDisappear(app.navigationBars["Session Outline"], timeout: 15),
+            "Tree navigation did not close the outline"
+        )
+
+        // The same session continues before the chosen message, which is back in the composer.
+        XCTAssertEqual(waitForFocusedSessionId(sessionId), sessionId)
+        let input = app.textViews["chat.input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 10), "The composer did not return")
+        XCTAssertTrue((input.value as? String)?.contains(left) == true, "The chosen prompt is not in the composer")
+        XCTAssertFalse(
+            rowShowsText(timeline, left, timeout: 5),
+            "The timeline still shows the branch left"
+        )
+        XCTAssertTrue(rowShowsText(timeline, first, timeout: 5), "The timeline lost the shared history")
+        try saveLabScreenshot(name: "durable-tree-after-switch")
+
+        emptyTextView(focusChatInput(), named: "chat input")
+        sendMessage(branch)
+        XCTAssertTrue(
+            rowShowsText(assistantRow(replyingTo: branch), Self.replyEnd, timeout: 60),
+            "The reply on the new branch did not land"
+        )
+        waitForTurnToEnd(after: "the reply on the new branch")
+        XCTAssertEqual(userRows.count, 2, "The new branch shows the shared prompt and its own")
+
+        // Both branches in one tree: the one left is still there beside the new one.
+        openOutlineTree()
+        XCTAssertTrue(waitForElementToExist(treeRow(user: left), timeout: 10), "The branch left is gone from the tree")
+        XCTAssertTrue(waitForElementToExist(treeRow(user: branch), timeout: 10), "The new branch is not in the tree")
+        try saveLabScreenshot(name: "durable-tree-branches")
+        tap(app.buttons["chat.outline.close"], named: "close outline", timeout: 5)
+    }
+
+    private func openOutlineTree() {
+        tap(app.buttons["chat.toolbar.outline"], named: "session outline toolbar button", timeout: 10)
+        XCTAssertTrue(
+            app.navigationBars["Session Outline"].waitForExistence(timeout: 10),
+            "Session outline did not open"
+        )
+        tap(app.buttons["Tree"], named: "session tree tab", timeout: 5)
+    }
+
+    private func treeRow(user prompt: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "chat.outline.tree.row.", "user: \(prompt)")
+        ).firstMatch
+    }
+
     private var timeline: XCUIElement { app.collectionViews["chat.timeline"] }
 
     private var liveRow: XCUIElement {

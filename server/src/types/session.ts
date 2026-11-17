@@ -199,8 +199,15 @@ export interface Session {
    * `engine` and, for the control conversation only, `serverDurable.role`.
    * `role: "control"` marks the one workspace-less control conversation per data directory.
    * `storeId` is the root session id of the pi-durable store (server-internal; list rows omit it).
+   * `branches`: every conversation of a session that navigated its tree, `conversationId` (the
+   * current one) among them, mirrored from its `oppi.branches` document (server-internal).
    */
-  serverDurable?: { storeId?: string; conversationId?: number; role?: "control" };
+  serverDurable?: {
+    storeId?: string;
+    conversationId?: number;
+    branches?: number[];
+    role?: "control";
+  };
 
   // Trace metadata (used for trace recovery/replay)
   // Local pi JSONL paths under ~/.pi/agent/sessions are deleted with the Oppi

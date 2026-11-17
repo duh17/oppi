@@ -1775,7 +1775,7 @@ export class SdkBackend implements AgentBackend {
     return this.piSession.sessionManager.getLeafId();
   }
 
-  sessionTree(): ReturnType<AgentBackend["sessionTree"]> {
+  sessionTree(): ReturnType<NonNullable<AgentBackend["sessionTree"]>> {
     return this.piSession.sessionManager;
   }
 

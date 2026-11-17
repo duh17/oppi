@@ -134,8 +134,11 @@ export class SessionCommandCoordinator {
     ["get_fork_messages", async (session) => ({ messages: await session.forkMessages() })],
     [
       "get_session_tree",
-      (session, cmd) =>
-        serializeSessionTree(session.sessionTree(), readSessionTreeFilterMode(cmd.filterMode)),
+      async (session, cmd) => {
+        const tree = session.branchTree ? await session.branchTree() : session.sessionTree?.();
+        if (!tree) throw new Error("This session has no tree");
+        return serializeSessionTree(tree, readSessionTreeFilterMode(cmd.filterMode));
+      },
     ],
     [
       "navigate_tree",

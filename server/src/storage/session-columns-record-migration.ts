@@ -45,6 +45,7 @@ export function createSessionStateSessionsTable(db: SqliteDatabase, table: strin
       durable_store_id TEXT,
       durable_conversation_id INTEGER,
       durable_role TEXT,
+      durable_branches_json TEXT,
       control_json TEXT,
       program_status_json TEXT,
       summary_json TEXT NOT NULL,

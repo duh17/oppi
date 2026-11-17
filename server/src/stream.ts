@@ -624,6 +624,48 @@ export class BoundSessionStreamMux {
       for (const stream of conversationStreams.values()) if (stream.full) return true;
       return false;
     };
+    /** Stream `conversationId` to this socket, replacing its stream of that conversation. */
+    const startConversationStream = async (
+      targetSession: Session,
+      conversationId: number,
+      request: ConversationStreamAttach,
+    ): Promise<void> => {
+      const full = request.mode !== "live";
+      stopConversationStream(conversationId);
+      // Full mode streams only the bound conversation: one left behind is a branch the session
+      // left, whose frames the client's replica would refuse.
+      if (full)
+        for (const [id, stream] of [...conversationStreams])
+          if (stream.full) stopConversationStream(id);
+      const stop = await this.ctx.sessions.attachConversationStream(
+        targetSession,
+        conversationId,
+        request,
+        (frame) => send(frame, true),
+      );
+      if (connectionClosed) {
+        stop();
+        return;
+      }
+      // Another attach of this conversation may have finished while this one waited.
+      stopConversationStream(conversationId);
+      conversationStreams.set(conversationId, { stop, full });
+    };
+    /**
+     * A durable session that navigated its tree is bound to another branch: a socket replicating
+     * the branch it left gets the new one's snapshot instead, as a fresh attach would.
+     */
+    const followBoundConversation = (bound: Session): void => {
+      const conversationId = bound.serverDurable?.conversationId;
+      if (conversationId === undefined) return;
+      const left = [...conversationStreams].some(
+        ([id, stream]) => stream.full && id !== conversationId,
+      );
+      if (!left) return;
+      void startConversationStream(bound, conversationId, { type: "attach" }).catch(
+        (error: unknown) => send({ type: "error", error: safeErrorMessage(error), sessionId }),
+      );
+    };
     /** Whether this socket draws the shape a frame was built for; frames with no shape go to all. */
     const drawsAudience = (audience?: ExtensionUISurfaceAudience): boolean =>
       !audience || audience === this.ctx.sessions.surfaceAudience(sessionId, connId);
@@ -646,6 +688,7 @@ export class BoundSessionStreamMux {
       if (msg.type === "layout_proposal" && !drawsLayoutCards) return;
       if (restatedByConversationStream(msg) && replicatesOwnConversation()) return;
       sendForSession(msg);
+      if (msg.type === "state") followBoundConversation(msg.session);
     };
 
     // Playback PCM skips permessage-deflate: speech, pauses included, deflates only to ~89% for a
@@ -1031,30 +1074,18 @@ export class BoundSessionStreamMux {
                 return;
               }
               const targetSession = this.ctx.storage.getSession(sessionId) ?? session;
-              let stop: () => void;
-              let conversationId: number;
               try {
-                conversationId = await this.ctx.sessions.conversationStreamTarget(
+                const conversationId = await this.ctx.sessions.conversationStreamTarget(
                   targetSession,
                   msg,
                 );
                 // One stream per conversation; a new attach replaces it.
-                stopConversationStream(conversationId);
-                stop = await this.ctx.sessions.attachConversationStream(
-                  targetSession,
-                  conversationId,
-                  msg,
-                  (frame) => send(frame, true),
-                );
+                await startConversationStream(targetSession, conversationId, msg);
               } catch (error) {
                 reply(false, safeErrorMessage(error));
                 return;
               }
-              if (connectionClosed) {
-                stop();
-                return;
-              }
-              conversationStreams.set(conversationId, { stop, full: msg.mode !== "live" });
+              if (connectionClosed) return;
               reply(true);
               return;
             }

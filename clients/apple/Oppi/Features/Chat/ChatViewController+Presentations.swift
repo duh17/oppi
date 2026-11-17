@@ -410,16 +410,9 @@ extension ChatViewController {
         let sessionManager = sessionManager
         let connection = connection
         let sessionStore = sessionStore
-        // A durable conversation has no in-place tree: the server refuses its tree
-        // and tree navigation, and forking a message is how it branches. Without a
-        // tree, the outline is the timeline alone, with no Timeline/Tree switch.
-        let offersTree = session?.engine != .durable
-        let navigateTree: ((SessionTreeNavigationRequest) async throws -> Void)? = offersTree
-            ? { [weak self] request in try await self?.navigateFromTree(request) }
-            : nil
-        let loadTree: ((SessionTreeFilterMode) async throws -> SessionTreeSnapshot)? = offersTree
-            ? { filterMode in try await connection.getSessionTree(filterMode: filterMode) }
-            : nil
+        // A durable session's tree is its branches, each a conversation of its own: the
+        // branch left keeps its history, so a switch summarizes nothing.
+        let durable = session?.engine == .durable
         return SessionOutlineViewController(
             items: reducer.items,
             toolArgsStore: reducer.toolArgsStore,
@@ -441,9 +434,10 @@ extension ChatViewController {
                 }
             },
             onFork: { [weak self] in self?.forkFromMessage($0) },
-            onNavigateTreeNode: navigateTree,
+            onNavigateTreeNode: { [weak self] request in try await self?.navigateFromTree(request) },
             allowsBranchSummary: { [weak self] in await self?.requestAISharing() ?? false },
-            loadTree: loadTree,
+            offersBranchSummary: !durable,
+            loadTree: { filterMode in try await connection.getSessionTree(filterMode: filterMode) },
             loadOutline: { [weak self] in
                 guard let self, let routeScope = self.focusedRouteScope else {
                     throw TreeNavigationError.sessionNotReady

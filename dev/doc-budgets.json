@@ -42,8 +42,8 @@
       "reason": "Server cleanup targets and entry points: one row of owning files per area. 347 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server/durable-conversation-stream.md": {
-      "words": 1670,
-      "reason": "Durable conversation stream wire (gate, messages, live tails, presentation, documents, delivery) and its Apple client replica rules, moved here from the deleted flows doc so both halves live in one place. 1451 words; headroom max(15%, 100 words)."
+      "words": 1690,
+      "reason": "Durable conversation stream wire (gate, messages, live tails, presentation, documents, delivery) and its Apple client replica rules, moved here from the deleted flows doc so both halves live in one place. 1451 words; headroom max(15%, 100 words); raised 20 for the stream following a tree navigation."
     },
     "dev/architecture-server/durable-extension-ui.md": {
       "words": 1090,
@@ -54,8 +54,8 @@
       "reason": "Session list and history read models, touched-file and worktree change views with their git budget, and the app-event allowlist. 477 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server/runtime.md": {
-      "words": 3260,
-      "reason": "Session runtime owners and invariants: runtime dispatch, managed SDK and sandbox Skills, server durable (stores, classic-event facade, sandbox execution, restart and store failure, MCP, extensions), subagents, Oppi Control's cards and replay risks, durable gaps, Agents and schedules, mirror. 2829 words; headroom max(15%, 100 words)."
+      "words": 3280,
+      "reason": "Session runtime owners and invariants: runtime dispatch, managed SDK and sandbox Skills, server durable (stores, classic-event facade, sandbox execution, restart and store failure, MCP, extensions), subagents, Oppi Control's cards and replay risks, durable gaps and tree navigation, Agents and schedules, mirror. 2829 words; headroom max(15%, 100 words); raised 20 for durable tree navigation."
     },
     "dev/architecture-server/tool-inspection.md": {
       "words": 480,

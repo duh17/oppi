@@ -31,6 +31,9 @@ final class SessionOutlineViewController: UIViewController, UICollectionViewDele
     /// sharing consent first. False switches nothing and keeps the choice, and any typed
     /// instructions, on screen.
     private let allowsBranchSummary: (() async -> Bool)?
+    /// A durable session's branch left keeps its history and summarizes nothing, so its
+    /// switch offers no summary.
+    private let offersBranchSummary: Bool
     private let initialTreeSnapshot: SessionTreeSnapshot?
     private let loadTree: ((SessionTreeFilterMode) async throws -> SessionTreeSnapshot)?
     private let initialOutlineSnapshot: SessionOutlineSnapshot?
@@ -98,6 +101,7 @@ final class SessionOutlineViewController: UIViewController, UICollectionViewDele
         onFork: ((String) -> Void)? = nil,
         onNavigateTreeNode: ((SessionTreeNavigationRequest) async throws -> Void)? = nil,
         allowsBranchSummary: (() async -> Bool)? = nil,
+        offersBranchSummary: Bool = true,
         initialTreeSnapshot: SessionTreeSnapshot? = nil,
         loadTree: ((SessionTreeFilterMode) async throws -> SessionTreeSnapshot)? = nil,
         initialOutlineSnapshot: SessionOutlineSnapshot? = nil,
@@ -111,6 +115,7 @@ final class SessionOutlineViewController: UIViewController, UICollectionViewDele
         self.onFork = onFork
         self.onNavigateTreeNode = onNavigateTreeNode
         self.allowsBranchSummary = allowsBranchSummary
+        self.offersBranchSummary = offersBranchSummary
         self.initialTreeSnapshot = initialTreeSnapshot
         self.loadTree = loadTree
         self.initialOutlineSnapshot = initialOutlineSnapshot
@@ -633,18 +638,26 @@ final class SessionOutlineViewController: UIViewController, UICollectionViewDele
     private func presentTreeNavigationOptions(from sourceView: UIView?) {
         let options = UIAlertController(
             title: "Navigate Session Tree",
-            message: "Choose how to handle the branch you leave behind.",
+            message: offersBranchSummary
+                ? "Choose how to handle the branch you leave behind."
+                : "The branch you leave stays in the tree.",
             preferredStyle: .actionSheet
         )
-        options.addAction(UIAlertAction(title: "Switch without summary", style: .default) { [weak self] _ in
-            self?.beginPendingTreeNavigation(summarize: false, customInstructions: nil)
-        })
-        options.addAction(UIAlertAction(title: "Summarize abandoned branch", style: .default) { [weak self] _ in
-            self?.beginPendingTreeNavigation(summarize: true, customInstructions: nil)
-        })
-        options.addAction(UIAlertAction(title: "Summarize with custom instructions", style: .default) { [weak self] _ in
-            self?.presentSummaryInstructions()
-        })
+        if offersBranchSummary {
+            options.addAction(UIAlertAction(title: "Switch without summary", style: .default) { [weak self] _ in
+                self?.beginPendingTreeNavigation(summarize: false, customInstructions: nil)
+            })
+            options.addAction(UIAlertAction(title: "Summarize abandoned branch", style: .default) { [weak self] _ in
+                self?.beginPendingTreeNavigation(summarize: true, customInstructions: nil)
+            })
+            options.addAction(UIAlertAction(title: "Summarize with custom instructions", style: .default) { [weak self] _ in
+                self?.presentSummaryInstructions()
+            })
+        } else {
+            options.addAction(UIAlertAction(title: "Switch branch", style: .default) { [weak self] _ in
+                self?.beginPendingTreeNavigation(summarize: false, customInstructions: nil)
+            })
+        }
         // Also runs when a popover (iPad) is dismissed by a tap outside it.
         options.addAction(UIAlertAction(title: "Cancel", style: .cancel) { [weak self] _ in
             self?.pendingTreeNavigationTargetId = nil
