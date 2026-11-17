@@ -9,13 +9,15 @@
  * - `trackProgramRunEvent` folds Pi events into a small run tracker. It mirrors Pi 1.1.0's own
  *   terminal reporter (`ProgramStatusReporter`): the latest assistant response decides a run's
  *   outcome, so a retried error is replaced by its successful retry, and `agent_settled.aborted`
- *   means idle.
+ *   means idle. A backend that reports run state (durable) feeds the same steps through
+ *   `trackProgramRunState` instead.
  * - `deriveProgramStatus` is the pure table: lifecycle status + tracker + pending dialogs.
  *
  * Privacy line (same as Pi): messages are the session name, a dialog title's first line, the first question
  * of an `ask`, or the first line of an error. Never prompts or model output.
  */
 
+import type { BackendRunState } from "./agent-backend.js";
 import { isPendingUserReplyRequest } from "./session-attention.js";
 import type { ProgramStatus, ProgramStatusKind, Session } from "./types.js";
 
@@ -117,46 +119,76 @@ interface ProgramRunEvent {
   message?: { role?: unknown; stopReason?: unknown; errorMessage?: unknown };
 }
 
+function startRun(tracker: ProgramRunTracker): void {
+  tracker.runActive = true;
+  tracker.awaitingWake = false;
+  tracker.runResult = { state: "done" };
+}
+
+/** The latest response decides the outcome, so a retried error is replaced by its retry. */
+function answered(
+  tracker: ProgramRunTracker,
+  answer: { stopReason?: unknown; errorMessage?: unknown },
+): void {
+  tracker.runResult =
+    answer.stopReason === "error" ? errorOutcome(answer.errorMessage) : { state: "done" };
+}
+
+function compactionEnded(
+  tracker: ProgramRunTracker,
+  end: { reason?: unknown; aborted?: unknown; errorMessage?: unknown },
+): void {
+  tracker.compacting = false;
+  const aborted = end.aborted === true;
+  if (tracker.runActive) {
+    // A failed recovery compaction ends the run unless a later response succeeds.
+    if (aborted) tracker.runResult = { state: "idle" };
+    else if (end.errorMessage) tracker.runResult = errorOutcome(end.errorMessage);
+  } else if (aborted) {
+    tracker.resting = { state: "idle" };
+  } else if (end.reason === "manual") {
+    tracker.resting = end.errorMessage ? errorOutcome(end.errorMessage) : { state: "done" };
+  }
+}
+
+function settleRun(tracker: ProgramRunTracker, aborted: boolean): void {
+  tracker.runActive = false;
+  tracker.resting = aborted ? { state: "idle" } : tracker.runResult;
+}
+
 export function trackProgramRunEvent(tracker: ProgramRunTracker, event: ProgramRunEvent): void {
   switch (event.type) {
     case "agent_start":
-      tracker.runActive = true;
-      tracker.awaitingWake = false;
-      tracker.runResult = { state: "done" };
+      startRun(tracker);
       return;
     case "message_end":
-      // The latest response decides the outcome, so a retried error is replaced by its retry.
-      if (event.message?.role !== "assistant") return;
-      tracker.runResult =
-        event.message.stopReason === "error"
-          ? errorOutcome(event.message.errorMessage)
-          : { state: "done" };
+      if (event.message?.role === "assistant") answered(tracker, event.message);
       return;
     case "compaction_start":
       tracker.compacting = true;
       return;
-    case "compaction_end": {
-      tracker.compacting = false;
-      const aborted = event.aborted === true;
-      if (tracker.runActive) {
-        // A failed recovery compaction ends the run unless a later response succeeds.
-        if (aborted) tracker.runResult = { state: "idle" };
-        else if (event.errorMessage) tracker.runResult = errorOutcome(event.errorMessage);
-      } else if (aborted) {
-        tracker.resting = { state: "idle" };
-      } else if (event.reason === "manual") {
-        tracker.resting = event.errorMessage ? errorOutcome(event.errorMessage) : { state: "done" };
-      }
+    case "compaction_end":
+      compactionEnded(tracker, event);
       return;
-    }
     case "agent_settled":
-      tracker.runActive = false;
       // `aborted` exists from Pi 1.1.0; older mirrored TUIs omit it and count as finished.
-      tracker.resting = event.aborted === true ? { state: "idle" } : tracker.runResult;
+      settleRun(tracker, event.aborted === true);
       return;
     default:
       return;
   }
+}
+
+/**
+ * The same steps for a backend that reports run state (`AgentBackend.reportsRunState`). Its
+ * settle carries no abort: a stopped run's outcome is its answer, as its events said.
+ */
+export function trackProgramRunState(tracker: ProgramRunTracker, state: BackendRunState): void {
+  if (state === "started") return startRun(tracker);
+  if (state === "settled") return settleRun(tracker, false);
+  if (state.answer) answered(tracker, state.answer);
+  for (const end of state.compactionsEnded) compactionEnded(tracker, end);
+  tracker.compacting = state.compacting;
 }
 
 /**

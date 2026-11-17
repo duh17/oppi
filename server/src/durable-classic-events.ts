@@ -46,6 +46,7 @@ import {
   AGENT_MESSAGE_ENTRY_KIND,
   agentMessageOrigin,
 } from "../plugins/subagents/agent-message.js";
+import type { BackendCompactionEnd } from "./agent-backend.js";
 import { continuesAfter } from "./durable-failure-cards.js";
 import { compactionSummary, isRecoveredPartial } from "./durable-history.js";
 import { readDurableInputCards } from "./durable-input-cards.js";
@@ -67,8 +68,17 @@ export type ClassicFrame = {
   placed: PlacedInput[];
   /** Why the run this value ended gave no answer (`pi.live.runFailure`). */
   runFailure?: RunFailure;
+  /** The newest answer this value showed (its `message_end`). */
+  answer?: AssistantMessage;
+  /** How the compactions this value ended went (their `compaction_end`). */
+  compactionsEnded: BackendCompactionEnd[];
+  /** Set when this value began or ended a compaction: whether one still runs. */
+  compacting?: boolean;
   inboxChanged: boolean;
+  /** A run began: the value's `pi.live.run`, or one folded inside the value. */
   runStarted: boolean;
+  /** The value shows a new `pi.live.run`, not only a run folded inside it. */
+  newRun: boolean;
   runEnded: boolean;
   /** No run follows the one this value ended: it tells `agent_settled`. */
   settled: boolean;
@@ -102,8 +112,10 @@ function emptyFrame(): ClassicFrame {
     events: [],
     appended: [],
     placed: [],
+    compactionsEnded: [],
     inboxChanged: false,
     runStarted: false,
+    newRun: false,
     runEnded: false,
     settled: false,
     taskFailures: [],
@@ -289,6 +301,11 @@ export class DurableClassicEvents {
     return this.current;
   }
 
+  /** A compaction began and has not ended, as the events told it. */
+  get isCompacting(): boolean {
+    return this.compacting.size > 0;
+  }
+
   private async refreshInputCards(): Promise<void> {
     this.inputCards = await readDurableInputCards(this.harness, [
       this.conversation.id,
@@ -439,11 +456,15 @@ export class DurableClassicEvents {
         hidden.add(entry.id);
     }
     const compactionEnds = await this.compactionEnds(was, now, appended, frame.inboxChanged);
+    frame.compactionsEnded = compactionEnds.ended;
+    if (startedCompactions.length || compactionEnds.ended.length)
+      frame.compacting = this.compacting.size > 0;
     const nestedEnds = await this.nestedEnds(was, now, next.entries);
     const runChanged = now.run?.inputs[0] !== was.run?.inputs[0];
     const runStarted = now.run !== undefined && runChanged;
     const runs = await this.endedRuns(was, now, runChanged, runStarted, appended, hidden);
     frame.runEnded = runs.length > 0;
+    frame.newRun = runStarted;
     frame.runStarted = runStarted || runs.some((run) => run.folded);
     frame.placed = await this.placedInputs(prev, next);
     frame.runFailure = [...runs].reverse().find((run) => run.failure)?.failure;
@@ -515,7 +536,10 @@ export class DurableClassicEvents {
       // partial of it was shown) streams its content now, as Pi's start is empty then deltas.
       if (message.role !== "assistant") out.push(pi({ type: "message_start", message }));
       else if (!this.shown) out.push(...this.streamed(message));
-      if (message.role === "assistant") this.shown = undefined;
+      if (message.role === "assistant") {
+        this.shown = undefined;
+        frame.answer = message;
+      }
       const agentMessage = agentMessageOrigin(entry.kind, entry.data);
       out.push(
         pi({
@@ -849,17 +873,27 @@ export class DurableClassicEvents {
     now: LiveState,
     appended: readonly EntryRecord[],
     inboxChanged: boolean,
-  ): Promise<{ placed: Map<number, AgentSessionEvent[]>; unplaced: AgentSessionEvent[] }> {
+  ): Promise<{
+    placed: Map<number, AgentSessionEvent[]>;
+    unplaced: AgentSessionEvent[];
+    ended: BackendCompactionEnd[];
+  }> {
     const placed = new Map<number, AgentSessionEvent[]>();
     const unplaced: AgentSessionEvent[] = [];
-    const end = (active: Compacting, fields: object): AgentSessionEvent =>
-      pi({
-        type: "compaction_end",
-        reason: active.reason,
-        aborted: false,
-        willRetry: false,
-        ...fields,
+    const ended: BackendCompactionEnd[] = [];
+    const end = (
+      active: Compacting,
+      fields: { aborted?: boolean; errorMessage?: string; willRetry?: boolean; result?: object },
+    ): AgentSessionEvent => {
+      const { reason } = active;
+      const aborted = fields.aborted ?? false;
+      ended.push({
+        reason,
+        aborted,
+        ...(fields.errorMessage ? { errorMessage: fields.errorMessage } : {}),
       });
+      return pi({ type: "compaction_end", reason, aborted, willRetry: false, ...fields });
+    };
     for (const status of was.compactions ?? []) {
       const taskId = status.taskId;
       if ((now.compactions ?? []).some((other) => other.taskId === taskId)) continue;
@@ -891,7 +925,7 @@ export class DurableClassicEvents {
       );
       this.compacting.delete(taskId);
     }
-    if (!appended.length && !inboxChanged) return { placed, unplaced };
+    if (!appended.length && !inboxChanged) return { placed, unplaced, ended };
     for (const [taskId, active] of this.compacting) {
       if (!active.result) continue;
       let entryId: EntryId | undefined = active.result.entryId;
@@ -922,7 +956,7 @@ export class DurableClassicEvents {
       ]);
       this.compacting.delete(taskId);
     }
-    return { placed, unplaced };
+    return { placed, unplaced, ended };
   }
 
   /**

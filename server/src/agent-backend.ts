@@ -17,11 +17,23 @@ import type { ChatAttachmentRef, MessageQueueState } from "./types.js";
 
 type BackendToolDefinition = { label?: string; namespace?: { name: string } };
 
+/** How a compaction ended, as program status reads it. */
+export type BackendCompactionEnd = { reason: string; aborted: boolean; errorMessage?: string };
+
 /**
- * A run's change as session status reads it: `started` when one runs, `settled` once no run
- * follows (a run Oppi continues settles only if the continue starts none).
+ * A run's change as session and program status read it: `started` when one runs, `settled` once
+ * no run follows (a run Oppi continues settles only if the continue starts none). Between them,
+ * a progress report: the newest answer shown (the latest decides the run's outcome, so a retried
+ * error is replaced by its retry), compactions that ended, and whether one still runs.
  */
-export type BackendRunState = "started" | "settled";
+export type BackendRunState =
+  | "started"
+  | "settled"
+  | {
+      answer?: { stopReason?: string; errorMessage?: string };
+      compactionsEnded: readonly BackendCompactionEnd[];
+      compacting: boolean;
+    };
 
 /** Managed-session capabilities. No live Pi AgentSession escapes this seam. */
 export interface AgentBackend {
@@ -35,8 +47,9 @@ export interface AgentBackend {
   /** Idle edits stay queued. The next real admission places them; do not start a prompt here. */
   readonly retainsIdleQueueUntilAdmission?: boolean;
   /**
-   * Session status follows the backend's run state (`DurableBackend`'s `onRunState`), not its
-   * `agent_start`/`agent_settled` events, which other consumers still read.
+   * Session and program status follow the backend's run state (`DurableBackend`'s
+   * `onRunState`), not its `agent_*`, `message_end` and `compaction_*` events, which other
+   * consumers still read.
    */
   readonly reportsRunState?: boolean;
   /** Abort owns UI cancellation; don't answer the waiting tool just before stopping it. */

@@ -72,6 +72,8 @@ import {
   recordLiveSessionsForRestart,
 } from "../src/session-restart-resume.js";
 import type { ChatAttachmentRef, ServerMessage, Session } from "../src/types.js";
+import type { ProgramStatusSync } from "../src/program-status.js";
+import { DurableClassicEvents, type ClassicFrame } from "../src/durable-classic-events.js";
 import { DurableAsk } from "../plugins/ask/server.js";
 import { DurableWorkingWords } from "../plugins/working-words/server.js";
 import { DurableBackgroundJobs } from "../plugins/background-jobs/server.js";
@@ -3568,6 +3570,344 @@ describe("server durable managed runtime", () => {
     });
     expect(observed.messages.filter((message) => message.type === "agent_settled")).toHaveLength(1);
     observed.unsubscribe();
+  });
+
+  describe("program status", () => {
+    /**
+     * Each program status change the session told the push and Live Activity notifiers, as
+     * `state kind message`. Pushes and Live Activity updates follow these changes alone.
+     */
+    function programStatusesOf(manager: SessionManager, sessionId: string): string[] {
+      const told: string[] = [];
+      manager.on("program_status_change", (session: Session, change: ProgramStatusSync) => {
+        if (session.id !== sessionId) return;
+        const { state, kind, message } = change.current;
+        told.push([state, kind, message].filter(Boolean).join(" "));
+      });
+      return told;
+    }
+
+    async function settled(f: Awaited<ReturnType<typeof fixture>>): Promise<void> {
+      await vi.waitFor(() => {
+        const active = f.manager.getActiveSession(f.session.id);
+        expect(active?.status).toBe("ready");
+        expect(active?.programStatus?.state).not.toBe("working");
+      });
+    }
+
+    it("works, then is done when a run answers", async () => {
+      const f = await fixture([fauxAssistantMessage("ANSWER")]);
+      await f.manager.startSession(f.session.id, f.workspace);
+      const told = programStatusesOf(f.manager, f.session.id);
+      const observed = observe(f.manager, f.session.id);
+      await answer(f, observed, "question");
+      await settled(f);
+      expect(told).toEqual(["working Durable proof", "done Durable proof"]);
+      observed.unsubscribe();
+    });
+
+    it("stays working through retries and fails with the last error", async () => {
+      const failure = (text: string) =>
+        fauxAssistantMessage("", { stopReason: "error", errorMessage: text });
+      const f = await fixture(
+        [failure("429 overloaded"), failure("429 overloaded again"), failure("429 gave up")],
+        { settings: { retry: { enabled: true, maxRetries: 2, baseDelayMs: 20 } } },
+      );
+      await f.manager.startSession(f.session.id, f.workspace);
+      const told = programStatusesOf(f.manager, f.session.id);
+      const observed = observe(f.manager, f.session.id);
+      await answer(f, observed, "retry");
+      await settled(f);
+      expect(told).toEqual(["working Durable proof", "error 429 gave up"]);
+      observed.unsubscribe();
+    });
+
+    it("is done after a stopped run", async () => {
+      const f = await fixture([fauxAssistantMessage("A long answer cut off by a stop.")], {
+        slow: true,
+      });
+      await f.manager.startSession(f.session.id, f.workspace);
+      const told = programStatusesOf(f.manager, f.session.id);
+      const observed = observe(f.manager, f.session.id);
+      const delta = observed.next((message) => message.type === "text_delta");
+      await f.manager.sendPrompt(f.session.id, "Stream slowly");
+      await delta;
+      await f.manager.sendAbort(f.session.id);
+      await settled(f);
+      expect(told).toEqual(["working Durable proof", "done Durable proof"]);
+      observed.unsubscribe();
+    });
+
+    it("stays working from a failed run into the follow-up it continues with", async () => {
+      const { f, observed } = await failWithQueuedFollowUp();
+      const told = programStatusesOf(f.manager, f.session.id);
+      await observed.next(
+        (message) =>
+          message.type === "message_end" && JSON.stringify(message).includes("FOLLOW_UP_ANSWER"),
+      );
+      await settled(f);
+      expect(told).toEqual(["done Durable proof"]);
+      observed.unsubscribe();
+    });
+
+    it("shows a manual compaction, then done or its error", async () => {
+      const f = await fixture(
+        [
+          fauxAssistantMessage("Old context ".repeat(50)),
+          fauxAssistantMessage("Latest"),
+          fauxAssistantMessage("## Goal\nSummary"),
+          fauxAssistantMessage("More context ".repeat(50)),
+          fauxAssistantMessage("", { stopReason: "error", errorMessage: "invalid summary" }),
+        ],
+        { settings: compactionSettings },
+      );
+      await f.manager.startSession(f.session.id, f.workspace);
+      const observed = observe(f.manager, f.session.id);
+      await answer(f, observed, "first");
+      await answer(f, observed, "second");
+      await settled(f);
+      const told = programStatusesOf(f.manager, f.session.id);
+      await f.manager.runCommand(f.session.id, { type: "compact" });
+      await settled(f);
+      expect(told).toEqual(["working Compacting context", "done Durable proof"]);
+      told.length = 0;
+      await answer(f, observed, "third");
+      await settled(f);
+      const end = observed.next((message) => message.type === "compaction_end");
+      await expect(f.manager.runCommand(f.session.id, { type: "compact" })).rejects.toThrow();
+      await end;
+      await settled(f);
+      expect(told).toEqual([
+        "working Durable proof",
+        "done Durable proof",
+        "working Compacting context",
+        "error Summarization failed: invalid summary",
+      ]);
+      observed.unsubscribe();
+    });
+
+    it("runs a follow-up sent during a manual compaction without failing on the compaction", async () => {
+      let entered!: () => void;
+      let release!: () => void;
+      const summarizing = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const f = await fixture(
+        [
+          fauxAssistantMessage("Old context ".repeat(50)),
+          fauxAssistantMessage("Latest"),
+          async () => {
+            entered();
+            await held;
+            return fauxAssistantMessage("", {
+              stopReason: "error",
+              errorMessage: "invalid summary",
+            });
+          },
+          fauxAssistantMessage("QUEUED ANSWER"),
+        ],
+        { settings: compactionSettings },
+      );
+      await f.manager.startSession(f.session.id, f.workspace);
+      const observed = observe(f.manager, f.session.id);
+      await answer(f, observed, "first");
+      await answer(f, observed, "second");
+      await settled(f);
+      const told = programStatusesOf(f.manager, f.session.id);
+      const compact = expect(
+        f.manager.runCommand(f.session.id, { type: "compact" }),
+      ).rejects.toThrow();
+      await summarizing;
+      await f.manager.sendPrompt(f.session.id, "queued behind the compaction", {
+        streamingBehavior: "followUp",
+      });
+      const answered = observed.next(
+        (message) => message.type === "message_end" && JSON.stringify(message).includes("QUEUED"),
+      );
+      release();
+      await compact;
+      await answered;
+      await settled(f);
+      // The follow-up's run starts while the compaction runs; its answer, not the failed
+      // compaction, is the outcome.
+      expect(told).toEqual([
+        "working Compacting context",
+        "working Durable proof",
+        "done Durable proof",
+      ]);
+      observed.unsubscribe();
+    });
+
+    it("tells a compaction that failed before a new run in the same value first", async () => {
+      // A value that ends an idle compaction and shows a new run: the watch folds commits into
+      // one value, which a live session cannot be made to do on cue, so the test hands the
+      // backend that frame itself.
+      let listener!: (frame: ClassicFrame) => Promise<void>;
+      const start = DurableClassicEvents.prototype.start;
+      vi.spyOn(DurableClassicEvents.prototype, "start").mockImplementation(function (
+        this: DurableClassicEvents,
+        next,
+      ) {
+        listener = next;
+        return start.call(this, next);
+      });
+      const f = await fixture([fauxAssistantMessage("ANSWER")]);
+      await f.manager.startSession(f.session.id, f.workspace);
+      const observed = observe(f.manager, f.session.id);
+      await answer(f, observed, "first");
+      await settled(f);
+      const told = programStatusesOf(f.manager, f.session.id);
+      const frame = (fields: Partial<ClassicFrame>): ClassicFrame => ({
+        events: [],
+        appended: [],
+        placed: [],
+        compactionsEnded: [],
+        inboxChanged: false,
+        runStarted: false,
+        newRun: false,
+        runEnded: false,
+        settled: false,
+        taskFailures: [],
+        ...fields,
+      });
+      await listener(frame({ compacting: true }));
+      await listener(
+        frame({
+          compacting: false,
+          compactionsEnded: [
+            { reason: "manual", aborted: false, errorMessage: "Summarization failed: boom" },
+          ],
+          runStarted: true,
+          newRun: true,
+          events: [{ type: "agent_start" }] as ClassicFrame["events"],
+        }),
+      );
+      // The run settles without an answer: its outcome is its own, not the compaction's.
+      await listener(
+        frame({
+          runEnded: true,
+          settled: true,
+          events: [
+            { type: "agent_end", messages: [], willRetry: false },
+            { type: "agent_settled" },
+          ] as ClassicFrame["events"],
+        }),
+      );
+      expect(told).toEqual([
+        "working Compacting context",
+        "error Summarization failed: boom",
+        "working Durable proof",
+        "done Durable proof",
+      ]);
+      observed.unsubscribe();
+    });
+
+    it("is idle after a cancelled manual compaction", async () => {
+      let entered!: () => void;
+      const summarizing = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const opening = vi.spyOn(SessionHost.prototype, "open");
+      const f = await fixture(
+        [
+          fauxAssistantMessage("Old context ".repeat(50)),
+          fauxAssistantMessage("Latest"),
+          async (_transcript, options) => {
+            entered();
+            return new Promise((_resolve, reject) => {
+              options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), {
+                once: true,
+              });
+            });
+          },
+        ],
+        { settings: compactionSettings },
+      );
+      await f.manager.startSession(f.session.id, f.workspace);
+      const observed = observe(f.manager, f.session.id);
+      await answer(f, observed, "first");
+      await answer(f, observed, "second");
+      await settled(f);
+      const told = programStatusesOf(f.manager, f.session.id);
+      const end = observed.next((message) => message.type === "compaction_end");
+      const rejected = expect(
+        f.manager.runCommand(f.session.id, { type: "compact" }),
+      ).rejects.toThrow();
+      await summarizing;
+      const { harness } = await opening.mock.results[0]!.value;
+      const task = (await harness.inspect(context)).tasks.find(
+        (item: { record: { kind: string } }) => item.record.kind === "pi.compaction",
+      );
+      await harness.abortTask(task!.record.id, context);
+      await end;
+      await rejected;
+      await settled(f);
+      expect(told).toEqual(["working Compacting context", "idle"]);
+      observed.unsubscribe();
+    });
+
+    it("fails a run whose blocking compaction fails, with the compaction's error", async () => {
+      const f = await fixture(
+        [
+          fauxAssistantMessage("Old context ".repeat(200)),
+          fauxAssistantMessage("", { stopReason: "error", errorMessage: "invalid summary" }),
+        ],
+        {
+          settings: {
+            compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 127_900 },
+            retry: { enabled: false },
+          },
+        },
+      );
+      await f.manager.startSession(f.session.id, f.workspace);
+      const observed = observe(f.manager, f.session.id);
+      await answer(f, observed, "first");
+      await settled(f);
+      const told = programStatusesOf(f.manager, f.session.id);
+      const end = observed.next((message) => message.type === "compaction_end");
+      await f.manager.sendPrompt(f.session.id, "needs room");
+      await end;
+      await settled(f);
+      expect(told).toEqual([
+        "working Durable proof",
+        "working Compacting context",
+        "working Durable proof",
+        "error Summarization failed: invalid summary",
+      ]);
+      observed.unsubscribe();
+    });
+
+    it("shows a run's overflow compaction, then done with its retried answer", async () => {
+      const f = await fixture(
+        [
+          fauxAssistantMessage("Old context ".repeat(50)),
+          fauxAssistantMessage("", {
+            stopReason: "error",
+            errorMessage: "prompt is too long: 999999 tokens",
+          }),
+          fauxAssistantMessage("Overflow summary"),
+          fauxAssistantMessage("FRESH ANSWER"),
+        ],
+        { settings: compactionSettings },
+      );
+      await f.manager.startSession(f.session.id, f.workspace);
+      const observed = observe(f.manager, f.session.id);
+      await answer(f, observed, "first");
+      await settled(f);
+      const told = programStatusesOf(f.manager, f.session.id);
+      await answer(f, observed, "overflow");
+      await settled(f);
+      expect(told).toEqual([
+        "working Durable proof",
+        "working Compacting context",
+        "working Durable proof",
+        "done Durable proof",
+      ]);
+      observed.unsubscribe();
+    });
   });
 
   it("exports a durable session to Pi's HTML page with its turns and prompt", async () => {

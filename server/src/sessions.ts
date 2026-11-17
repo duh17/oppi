@@ -440,14 +440,14 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     }
   }
 
-  /** A durable run's start or settle. A throw would end the backend's view watch. */
+  /** A durable run's start, progress or settle. A throw would end the backend's view watch. */
   private handleRunState(key: string, state: BackendRunState): void {
     try {
       this.agentEventCoordinator.handleRunState(key, state);
     } catch (error: unknown) {
       log.error("sessions.run_state_handler.failed", {
         sessionId: key,
-        state,
+        state: typeof state === "string" ? state : "progress",
         error: error instanceof Error ? error.message : String(error),
       });
     }

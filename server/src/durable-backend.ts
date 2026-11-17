@@ -890,11 +890,28 @@ export class DurableBackend implements AgentBackend {
     // A run this attachment finds (a restart resumes it, a reattach re-binds it) keeps it busy.
     if (this.live.run !== undefined) this.onRunState("started");
     for (const event of this.events.snapshot(this.host.isResumeHeld)) this.onEvent(event);
+    if (this.events.isCompacting) this.onRunState({ compactionsEnded: [], compacting: true });
     this.events.start(async (frame) => {
       if (this.disposed) return;
       // A new run starts with nothing shown, also after an idle task's failure. A frame
       // that also ends a run keeps that run's texts until its settlement is handled below.
       if (frame.runStarted && !frame.runEnded) this.shownRunErrors.clear();
+      // Program status: the run's newest answer decides its outcome; a compaction shows while it
+      // runs and decides an idle session's outcome when it ends. What ended before a new run
+      // (`newRun`) goes first, as its events precede that run's agent_start; a run folded into
+      // the value starts before its own answer.
+      const answer = frame.answer;
+      const progress =
+        answer || frame.compacting !== undefined
+          ? {
+              ...(answer
+                ? { answer: { stopReason: answer.stopReason, errorMessage: answer.errorMessage } }
+                : {}),
+              compactionsEnded: frame.compactionsEnded,
+              compacting: frame.compacting ?? this.events.isCompacting,
+            }
+          : undefined;
+      if (frame.newRun && progress) this.onRunState(progress);
       if (frame.runStarted) this.onRunState("started");
       for (const pi of frame.events) {
         if (this.disposed) return;
@@ -907,6 +924,7 @@ export class DurableBackend implements AgentBackend {
           this.shownRunErrors.add(`Compaction failed: ${pi.errorMessage}`);
         this.onEvent(pi);
       }
+      if (!frame.newRun && progress) this.onRunState(progress);
       // After the ended run's events, so a stop confirms at its end first. A run Oppi continues
       // settles below, if at all.
       if (frame.settled) this.onRunState("settled");

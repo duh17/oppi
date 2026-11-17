@@ -368,22 +368,28 @@ export class SessionAgentEventCoordinator {
   }
 
   /**
-   * A durable run started or settled, read from its conversation view (`DurableBackend`), so
-   * status holds busy through a failed run Oppi continues. Its agent_* events still reach the
-   * other consumers through `handlePiEvent`, program status among them: a start's summary goes
-   * out with the agent_start that follows it, so status and program status change in one
-   * frame.
+   * A durable run started, progressed or settled, read from its conversation view
+   * (`DurableBackend`), so status holds busy through a failed run Oppi continues. Session and
+   * program status follow it; its agent_* events still reach the other consumers through
+   * `handlePiEvent`: a start's summary goes out with the agent_start that follows it, so status
+   * and program status change in one frame.
    */
   handleRunState(key: string, state: BackendRunState): void {
     const active = this.deps.getActiveSession(key);
     if (!active) return;
+    let programChanged: boolean;
     try {
-      this.deps.eventProcessor.updateSessionFromRunState(key, active.session, state);
+      programChanged = this.deps.eventProcessor.updateSessionFromRunState(key, active, state);
     } finally {
       // As at a classic agent_settled: settlement holds even if saving fails.
       if (state === "settled") this.runSettled(key);
     }
     if (state === "settled") this.broadcastSessionSummaryIfChanged(key, active, "run_settled");
+    // A compaction's status ("Compacting context", then its outcome) reaches the session list.
+    // Only when program status changed: the summary also carries `lastActivity`, which the
+    // run's events move, so an ungated progress would send an extra summary before the settle.
+    else if (state !== "started" && programChanged)
+      this.broadcastSessionSummaryIfChanged(key, active, "run_progress");
   }
 
   private runSettled(key: string): void {
@@ -600,7 +606,7 @@ export class SessionAgentEventCoordinator {
   private broadcastSessionSummaryIfChanged(
     key: string,
     active: SessionAgentEventState,
-    reason: AgentSessionEvent["type"] | "run_settled",
+    reason: AgentSessionEvent["type"] | "run_settled" | "run_progress",
   ): void {
     const summary = buildSessionSummary(active.session);
     const fingerprint = sessionSummaryFingerprint(summary);
@@ -620,7 +626,7 @@ export class SessionAgentEventCoordinator {
     key: string,
     active: SessionAgentEventState,
     summary: SessionSummary,
-    reason: AgentSessionEvent["type"] | "run_settled",
+    reason: AgentSessionEvent["type"] | "run_settled" | "run_progress",
   ): void {
     log.debug("session_agent_events.summary_update", {
       sessionId: active.session.id,

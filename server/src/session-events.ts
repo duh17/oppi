@@ -12,6 +12,7 @@ import {
   programRunFor,
   syncProgramStatus,
   trackProgramRunEvent,
+  trackProgramRunState,
   type ProgramRunTracker,
   type ProgramStatusChangeListener,
 } from "./program-status.js";
@@ -440,9 +441,10 @@ export class SessionEventProcessor {
 
     session.lastActivity = Date.now();
 
-    // Program status follows the same events Pi's own terminal reporter reads; the lifecycle
-    // status above is already updated, so one sync sees both.
-    trackProgramRunEvent(programRunFor(active), event);
+    // Program status follows the same events Pi's own terminal reporter reads, or the backend's
+    // run state (`updateSessionFromRunState`); the lifecycle status above is already updated, so
+    // one sync sees both.
+    if (runStateFromEvents) trackProgramRunEvent(programRunFor(active), event);
     const programChange = syncProgramStatus(active);
     if (programChange.changed) this.deps.onProgramStatusChange?.(session, programChange);
 
@@ -456,19 +458,37 @@ export class SessionEventProcessor {
 
   /**
    * The status a run moves for a backend that reports run state (`AgentBackend.reportsRunState`):
-   * what agent_start and agent_settled move for one that does not. A settle saves now; a start
-   * is saved with the run's agent_start, which follows it at once.
+   * what agent_start, agent_settled, an answer's message_end and compaction_* move for one that
+   * does not. A settle saves now, which syncs program status. A start syncs with the run's
+   * agent_start, which follows it at once, so status and program status reach the wire in one
+   * summary. A progress syncs here and is saved with the next flush; true when it changed
+   * program status.
    */
-  updateSessionFromRunState(key: string, session: Session, state: BackendRunState): void {
-    session.lastActivity = Date.now();
+  updateSessionFromRunState(
+    key: string,
+    active: EventProcessorSessionState,
+    state: BackendRunState,
+  ): boolean {
+    const session = active.session;
+    trackProgramRunState(programRunFor(active), state);
+    if (state === "settled") {
+      session.lastActivity = Date.now();
+      applyLifecycle(session, "run_settled");
+      session.currentTurnStartedAt = undefined;
+      this.deps.persistSessionNow(key, session);
+      return false;
+    }
     if (state === "started") {
+      session.lastActivity = Date.now();
       applyLifecycle(session, "run_started");
       this.deps.markSessionDirty(key);
-      return;
+      return false;
     }
-    applyLifecycle(session, "run_settled");
-    session.currentTurnStartedAt = undefined;
-    this.deps.persistSessionNow(key, session);
+    const programChange = syncProgramStatus(active);
+    if (!programChange.changed) return false;
+    this.deps.onProgramStatusChange?.(session, programChange);
+    this.deps.markSessionDirty(key);
+    return true;
   }
 
   /**

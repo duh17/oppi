@@ -4,6 +4,7 @@ import {
   programRunFor,
   syncProgramStatus,
   trackProgramRunEvent,
+  trackProgramRunState,
   type ProgramStatusHost,
 } from "../src/program-status.js";
 import type { Session } from "../src/types.js";
@@ -312,6 +313,22 @@ describe("program status derivation", () => {
     const failed = makeHost(makeSession());
     feed(failed, { type: "compaction_end", reason: "manual", errorMessage: "too big" });
     expect(status(failed)).toEqual({ state: "error", message: "too big" });
+  });
+
+  it("a reported compaction that ends while another runs stays compacting until the last ends", () => {
+    const host = makeHost(makeSession());
+    const run = programRunFor(host);
+    trackProgramRunState(run, { compactionsEnded: [], compacting: true });
+    trackProgramRunState(run, {
+      compactionsEnded: [{ reason: "manual", aborted: false }],
+      compacting: true,
+    });
+    expect(status(host)).toEqual({ state: "working", message: "Compacting context" });
+    trackProgramRunState(run, {
+      compactionsEnded: [{ reason: "threshold", aborted: false }],
+      compacting: false,
+    });
+    expect(status(host)).toEqual({ state: "done", message: "Fix login" });
   });
 
   it("restores the last outcome from the persisted value after a restart", () => {

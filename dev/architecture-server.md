@@ -38,7 +38,7 @@ graph TD
 
 ## Program status
 
-`Session.programStatus` is the one status vocabulary for every session (OSC 7501: `idle`, `working`, `done`, `blocked` with a `kind`, `error`), owned by `server/src/program-status.ts`: `trackProgramRunEvent` folds Pi events, `deriveProgramStatus` derives, `syncProgramStatus` stores. Managed and mirrored sessions call the same sync (`SessionEventProcessor`, `SessionBroadcaster`, the mirror's bridge-state path).
+`Session.programStatus` is the one status vocabulary for every session (OSC 7501: `idle`, `working`, `done`, `blocked` with a `kind`, `error`), owned by `server/src/program-status.ts`: `trackProgramRunEvent` folds Pi events (`trackProgramRunState` a durable backend's run state), `deriveProgramStatus` derives, `syncProgramStatus` stores. Managed and mirrored sessions call the same sync (`SessionEventProcessor`, `SessionBroadcaster`, the mirror's bridge-state path).
 
 - `Storage.saveSession` re-derives every `stopped` and `error` row from the stored outcome (persisted as `program_status_json`), so a stop of a disconnected mirror never leaves `working`/`blocked`; `starting` rows are excluded so a stop mid-start keeps the last outcome.
 - Lifecycle `Session.status` stays for controls; list summaries, pushes, and `oppi session wait` read program status. The `message` is never a prompt. `editor` dialogs count as blocking replies (`isPendingUserReplyRequest`).
