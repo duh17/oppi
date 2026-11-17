@@ -1584,6 +1584,94 @@ struct UserTimelineRowContentTests {
     }
 
     @MainActor
+    @Test("an image-only message is just its thumbnails, also after reuse with text")
+    func imageOnlyMessageDrawsNoEmptyCard() throws {
+        let image = ImageAttachment(data: "aGVsbG8=", mimeType: "image/png")
+        func configuration(text: String, images: [ImageAttachment]) -> UserTimelineRowConfiguration {
+            UserTimelineRowConfiguration(text: text, images: images, canFork: false, onFork: nil)
+        }
+        let imageOnly = configuration(text: "", images: [image])
+        let view = UserTimelineRowContentView(configuration: imageOnly)
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 600)
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        host.view.addSubview(view)
+        defer { hideTestWindow(window); window.rootViewController = nil }
+
+        let bubble = try #require(userMessageBubbleContainer(in: view))
+        let strip = try #require(
+            Mirror(reflecting: view).children.first { $0.label == "imageStrip" }?.value as? UIView
+        )
+        // Measures and lays the row out at the timeline's width, as the list does.
+        func fittedHeight() -> CGFloat {
+            let height = view.systemLayoutSizeFitting(
+                CGSize(width: 390, height: UIView.layoutFittingCompressedSize.height),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            ).height
+            view.frame = CGRect(x: 0, y: 0, width: 390, height: height)
+            view.layoutIfNeeded()
+            return height
+        }
+
+        // Whitespace counts as no text: one image, two images, or a blank message
+        // around an image end at the thumbnails, with no card under them.
+        for config in [
+            imageOnly,
+            configuration(text: "  \n ", images: [image]),
+            configuration(text: "", images: [image, image]),
+        ] {
+            view.configuration = config
+            let height = fittedHeight()
+            #expect(bubble.isHidden)
+            #expect(!strip.isHidden)
+            #expect(height == strip.frame.maxY, "row is \(height) pt; the thumbnails end at \(strip.frame.maxY)")
+        }
+        let imageOnlyHeight = fittedHeight()
+
+        // Reused for a message with text, the card comes back below the image.
+        view.configuration = configuration(text: "What is this?", images: [image])
+        let withTextHeight = fittedHeight()
+        #expect(!bubble.isHidden)
+        #expect(bubble.frame.height > 0)
+        #expect(bubble.frame.minY > strip.frame.maxY)
+        #expect(withTextHeight == bubble.frame.maxY)
+
+        // Reused for text only: the strip goes and the card stays.
+        view.configuration = configuration(text: "Hello", images: [])
+        _ = fittedHeight()
+        #expect(strip.isHidden)
+        #expect(!bubble.isHidden)
+
+        // And back to an image-only message: the card goes away again.
+        view.configuration = imageOnly
+        #expect(fittedHeight() == imageOnlyHeight)
+        #expect(bubble.isHidden)
+    }
+
+    @MainActor
+    @Test("Differentiate Without Color keeps the You card under an image-only message")
+    func imageOnlyMessageKeepsYouCaptionCard() throws {
+        let view = UserTimelineRowContentView(
+            configuration: UserTimelineRowConfiguration(
+                text: "",
+                images: [ImageAttachment(data: "aGVsbG8=", mimeType: "image/png")],
+                canFork: false,
+                onFork: nil,
+                differentiateWithoutColor: true
+            )
+        )
+        view.frame = CGRect(x: 0, y: 0, width: 390, height: 200)
+        view.layoutIfNeeded()
+
+        #expect(userMessageBubbleContainer(in: view)?.isHidden == false)
+        #expect(userMessageYouCaption(in: view)?.isHidden == false)
+    }
+
+    @MainActor
     @Test("user row reconfigure keeps thumbnail view identity for same images")
     func userRowReconfigureKeepsThumbnailViewIdentityForSameImages() throws {
         let image = ImageAttachment(data: "aGVsbG8=", mimeType: "image/png")

@@ -73,14 +73,9 @@ struct UserTimelineBubbleContent {
     let visibleBadges: [UserMessageAttachmentBadge]
     let nonImagePathPills: [UserMessagePathPill]
     let inlineImagePathPills: [UserMessagePathPill]
-    let allPathPills: [UserMessagePathPill]
 
     var showsTextRow: Bool { !displayText.isEmpty }
     var showsBadgeRow: Bool { !visibleBadges.isEmpty }
-
-    func showsBubble(hasImages: Bool) -> Bool {
-        showsTextRow || hasImages || showsBadgeRow || !allPathPills.isEmpty
-    }
 
     @MainActor
     static func resolve(text: String, images: [ImageAttachment]) -> Self {
@@ -109,8 +104,7 @@ struct UserTimelineBubbleContent {
             displayWasTruncated: display.wasTruncated,
             visibleBadges: visibleBadges,
             nonImagePathPills: nonImagePathPills,
-            inlineImagePathPills: inlineImagePathPills,
-            allPathPills: parsed.pathPills
+            inlineImagePathPills: inlineImagePathPills
         )
     }
 }
@@ -489,11 +483,18 @@ final class UserTimelineRowContentView: UIView, UIContentView {
 
         addSubview(outerStack)
 
+        // An image-only row has nothing that can stretch (the strip and its
+        // thumbnails are fixed at 80 pt), so in a frame taller than the row the
+        // bottom pin gives way and the row sits at the top instead of breaking
+        // the thumbnails' size. Self-sizing still fits the row to the stack.
+        let bottomPin = outerStack.bottomAnchor.constraint(equalTo: bottomAnchor)
+        bottomPin.priority = .required - 1
         NSLayoutConstraint.activate([
             outerStack.leadingAnchor.constraint(equalTo: leadingAnchor),
             outerStack.trailingAnchor.constraint(equalTo: trailingAnchor),
             outerStack.topAnchor.constraint(equalTo: topAnchor),
-            outerStack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            outerStack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
+            bottomPin,
         ])
     }
 
@@ -528,7 +529,10 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         updatePathPills(content.nonImagePathPills, palette: palette)
         applyAgentCard(palette: palette)
         textRow.isHidden = !content.showsTextRow || isFoldedAgentMessage
-        bubbleContainer.isHidden = !content.showsBubble(hasImages: !configuration.images.isEmpty)
+        // The card shows only around something it draws. Images sit in the strip
+        // above it, so a message that is only images is just the strip, with no
+        // empty card under it. The You caption alone still makes a card.
+        bubbleContainer.isHidden = bubbleStack.arrangedSubviews.allSatisfy(\.isHidden)
         iconLabel.isHidden = !content.showsTextRow
             || configuration.chromeStyle == .conversation
             || configuration.agentMessage != nil
