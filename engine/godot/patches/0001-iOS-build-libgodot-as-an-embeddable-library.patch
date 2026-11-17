@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Oppi <noreply@oppi.invalid>
 Date: Fri, 13 Nov 2026 22:09:59 -0800
-Subject: [PATCH 1/6] iOS: build libgodot as an embeddable library
+Subject: [PATCH 1/7] iOS: build libgodot as an embeddable library
 
 ---
  drivers/apple_embedded/SCsub | 24 +++++++++++++-----------

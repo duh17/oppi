@@ -6,7 +6,8 @@ extends Node2D
 ## too. VERSION and BALL_COLOR are what a reload test edits; `taps` and the
 ## ring's place are the state script reload must keep. MODE_3D adds 400 lit
 ## cubes, for measuring a heavier scene. The game argument --keep letterboxes
-## it (stretch aspect keep) instead of expanding it to the pane.
+## it (stretch aspect keep) instead of expanding it to the pane; --bodies
+## drops 400 balls in 3D physics, so every frame runs Jolt's jobs.
 
 const VERSION := "sample"
 const MODE_3D := false
@@ -34,6 +35,8 @@ func _ready() -> void:
 		_spawn(Vector2(60 + i * 40, 120 + i * 30))
 	if MODE_3D:
 		_build_3d()
+	if "--bodies" in OS.get_cmdline_user_args():
+		_drop_bodies()
 	print("sample ready ", VERSION)
 	if "--probe" in OS.get_cmdline_user_args():
 		Probe.run(self)
@@ -104,6 +107,27 @@ func _build_3d() -> void:
 		cube.mesh = mesh
 		cube.position = Vector3((i % 20) - 9.5, (i / 20) - 9.5, randf_range(-6, 0)) * 1.4
 		cubes.add_child(cube)
+
+## The physics sample: 400 balls falling on a floor, many physics steps a frame.
+func _drop_bodies() -> void:
+	Engine.physics_ticks_per_second = 240
+	var ground := StaticBody3D.new()
+	var ground_shape := CollisionShape3D.new()
+	var slab := BoxShape3D.new()
+	slab.size = Vector3(40, 1, 40)
+	ground_shape.shape = slab
+	ground.add_child(ground_shape)
+	add_child(ground)
+	for i in 400:
+		var body := RigidBody3D.new()
+		var shape := CollisionShape3D.new()
+		var sphere := SphereShape3D.new()
+		sphere.radius = 0.4
+		shape.shape = sphere
+		body.add_child(shape)
+		body.position = Vector3((i % 20) - 10, 2 + (i / 20) * 0.9, 0.3 * (i % 7))
+		add_child(body)
+	print("sample dropped 400 bodies")
 
 func _physics_process(delta: float) -> void:
 	if cubes:

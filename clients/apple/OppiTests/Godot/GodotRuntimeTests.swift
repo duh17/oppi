@@ -51,6 +51,42 @@ struct GodotRuntimeTests {
         }
     }
 
+    /// A game with 3D physics (the sample's `--bodies`) ends and starts again
+    /// in the same process, as when its last pane closes and it is opened
+    /// again: the first physics step of the next engine must not reach jobs
+    /// the previous engine's Jolt freed. Before, a few rounds crashed in
+    /// `JoltJobSystem::post_step`.
+    @Test func aPhysicsGameStartsAgainManyTimes() throws {
+        guard let runtime = GodotRuntimes.make() else { return }
+        let folder = FileManager.default.temporaryDirectory.appending(path: "godot-physics-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let pack = folder.appending(path: "sample.pck")
+        try FileManager.default.copyItem(
+            at: try #require(TestFixtures.bundle.url(forResource: "godot-sample", withExtension: "pck")), to: pack
+        )
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 375, height: 600))
+        let view = UIView(frame: window.bounds)
+        window.addSubview(view)
+        runtime.attach(to: view.layer)
+        runtime.resize(to: view.bounds.size, scale: 2)
+        let config = GodotStartConfig(
+            packs: [pack], userFolder: folder.appending(path: "user"), cacheFolder: folder.appending(path: "cache"),
+            readableFolders: [], arguments: ["--", "--bodies"]
+        )
+        var dropped = 0
+        runtime.onLog = { if $0.message == "sample dropped 400 bodies" { dropped += 1 } }
+        defer { runtime.onLog = nil }
+        // The freed jobs crash only when their memory no longer reads as one,
+        // which took a few rounds on the old engine.
+        for round in 1...40 {
+            #expect(runtime.start(config), "Start \(round)")
+            for _ in 0..<30 { #expect(runtime.iterate()) }
+            runtime.stop()
+        }
+        #expect(dropped == 40, "Every round ran the physics scene")
+    }
+
     @Test func theGameDrawsOverItsPaneThroughAHoldARestartAMoveAndARotation() async throws {
         guard let runtime = GodotRuntimes.make() else { return }
         defer { runtime.stop() }

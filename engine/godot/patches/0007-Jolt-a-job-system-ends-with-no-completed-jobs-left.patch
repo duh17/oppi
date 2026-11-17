@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Oppi <noreply@oppi.invalid>
+Date: Tue, 17 Nov 2026 08:49:05 -0800
+Subject: [PATCH 7/7] Jolt: a job system ends with no completed jobs left
+
+The list of completed jobs is a static, so it outlives the job system
+whose free list holds its jobs. A job a worker releases after the last
+step's post_step stays on it, and a host that starts the engine again
+in the same process then pops a job from freed memory on its first
+physics step. The job system now reclaims them as it ends.
+---
+ modules/jolt_physics/spaces/jolt_job_system.cpp | 8 ++++++++
+ modules/jolt_physics/spaces/jolt_job_system.h   | 1 +
+ 2 files changed, 9 insertions(+)
+
+diff --git a/modules/jolt_physics/spaces/jolt_job_system.cpp b/modules/jolt_physics/spaces/jolt_job_system.cpp
+index fc28ce2..0af452f 100644
+--- a/modules/jolt_physics/spaces/jolt_job_system.cpp
++++ b/modules/jolt_physics/spaces/jolt_job_system.cpp
+@@ -163,6 +163,14 @@ JoltJobSystem::JoltJobSystem() :
+ 	jobs.Init(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsJobs);
+ }
+ 
++JoltJobSystem::~JoltJobSystem() {
++	// The completed list is process-wide, and a job a worker released after
++	// the last step's post_step is still on it. Reclaim those jobs while
++	// their storage lives, so the list is empty when this engine ends and a
++	// later engine in the same process never pops a job freed with it.
++	_reclaim_jobs();
++}
++
+ void JoltJobSystem::pre_step() {
+ 	// Nothing to do.
+ }
+diff --git a/modules/jolt_physics/spaces/jolt_job_system.h b/modules/jolt_physics/spaces/jolt_job_system.h
+index 372d161..2d7a536 100644
+--- a/modules/jolt_physics/spaces/jolt_job_system.h
++++ b/modules/jolt_physics/spaces/jolt_job_system.h
+@@ -93,6 +93,7 @@ class JoltJobSystem final : public JPH::JobSystemWithBarrier {
+ 
+ public:
+ 	JoltJobSystem();
++	~JoltJobSystem();
+ 
+ 	void pre_step();
+ 	void post_step();

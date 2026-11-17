@@ -1,0 +1,1 @@
+- **Client:** A Godot game with 3D physics no longer crashes the app when it starts again in the same launch, for example after its last pane closed and the game was opened from **Pinned**.
