@@ -392,7 +392,7 @@ struct ConversationStreamSessionTests {
     }
 
     /// Rows only classic frames carry (a worktree rebind notice, a non-fatal prompt error,
-    /// a cache miss, a session that ended) still show while the replica owns the timeline.
+    /// a session that ended) still show while the replica owns the timeline.
     @Test func classicOnlyRowsStillShowForAnAttachedSession() async throws {
         let harness = Harness()
         await harness.connect()
@@ -400,21 +400,17 @@ struct ConversationStreamSessionTests {
         harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [Wire.user(1, "go")], docs: [:])))
         #expect(await harness.waitForRows(["1"]))
 
-        // A notice restating a committed card (`entry:<id>`) is not one of them.
-        harness.yield(.notice(id: "entry:1", message: "Job finished"))
         harness.yield(.notice(id: "rebind", message: "Resuming on Main checkout. The worktree is gone."))
         harness.yield(.error(message: "Could not answer the extension", code: nil, fatal: false))
-        harness.yield(.cacheMiss(id: "miss", message: "Prompt cache missed"))
         harness.yield(.sessionEnded(reason: "store could not reattach"))
 
         let reducer = harness.manager.reducer
         #expect(await waitForMainActorCondition {
             harness.manager.coalescer.flushNow()
-            return reducer.items.count == 5
+            return reducer.items.count == 4
         })
         #expect(reducer.items.contains { if case .notice("rebind", _) = $0 { true } else { false } })
         #expect(reducer.items.contains { if case .error(_, "Could not answer the extension") = $0 { true } else { false } })
-        #expect(reducer.items.contains { if case .cacheMiss("miss", _) = $0 { true } else { false } })
         #expect(reducer.items.contains {
             if case .systemEvent(_, let message) = $0 { message.contains("store could not reattach") } else { false }
         })

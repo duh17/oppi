@@ -77,7 +77,6 @@ describe("SessionAgentEventCoordinator", () => {
       session: makeSession(overrides),
       pendingUIRequests: new Map(),
       toolOutputSnapshots: new ToolOutputSnapshots(),
-      streamedAssistantText: "",
       toolNames: new Map(),
       toolArgs: new Map(),
       streamingToolUpdatesSeen: new Map<string, string>(),
@@ -111,7 +110,6 @@ describe("SessionAgentEventCoordinator", () => {
         translationContext: vi.fn(() => ({
           sessionId: active.session.id,
           toolOutputSnapshots: active.toolOutputSnapshots,
-          streamedAssistantText: active.streamedAssistantText,
           currentThinkingContentIndex: active.currentThinkingContentIndex,
           mobileRenderers: {
             renderCall: vi.fn(),

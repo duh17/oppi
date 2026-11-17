@@ -271,7 +271,6 @@ function makeManagerHarness(status: Session["status"] = "busy", stopTimers?: Ses
     subscribers: new Set<(msg: ServerMessage) => void>(),
     pendingUIRequests: new Map(),
     toolOutputSnapshots: new ToolOutputSnapshots(),
-    streamedAssistantText: "",
     toolNames: new Map(),
     streamingToolUpdatesSeen: new Map(),
     turnCache: new TurnDedupeCache(),

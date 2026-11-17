@@ -209,8 +209,8 @@ enum ServerMessage: Sendable, Equatable {
     case cacheMiss(id: String, message: String)
     case notice(id: String, message: String)
     case customCard(id: String, text: String, presentation: TraceEventPresentation)
-    case textDelta(delta: String, contentIndex: Int? = nil, replace: Bool = false)
-    case thinkingDelta(delta: String, contentIndex: Int? = nil, replace: Bool = false)
+    case textDelta(delta: String, contentIndex: Int? = nil)
+    case thinkingDelta(delta: String, contentIndex: Int? = nil)
     case audioStream(AudioStreamMessage)
 
     // Tool execution
@@ -440,7 +440,7 @@ extension ServerMessage: Decodable {
         // session_ended / stop lifecycle
         case reason, source
         // message_end / cache_miss / notice / text_delta / thinking_delta / audio_stream
-        case role, content, assistantContent, entryId, origin, delta, contentIndex, replace, event, mimeType, sampleRate, channels, chunkIndex, audioBase64, durationSeconds, playbackBehavior, presentation
+        case role, content, assistantContent, entryId, origin, delta, contentIndex, event, mimeType, sampleRate, channels, chunkIndex, audioBase64, durationSeconds, playbackBehavior, presentation
         // tool_start / tool_update / tool_end
         case tool, args, toolCallId, parentToolCallId, details, callSegments, resultSegments, inputPresentation, nestedCalls, display, outputPresentation, outputAvailability
         // tool_output
@@ -567,18 +567,13 @@ extension ServerMessage: Decodable {
             let delta = try c.decode(String.self, forKey: .delta)
             self = .textDelta(
                 delta: delta,
-                contentIndex: try c.decodeIfPresent(Int.self, forKey: .contentIndex),
-                replace: try c.decodeIfPresent(Bool.self, forKey: .replace) ?? false
+                contentIndex: try c.decodeIfPresent(Int.self, forKey: .contentIndex)
             )
 
         case "thinking_delta":
             let delta = try c.decode(String.self, forKey: .delta)
             let contentIndex = try c.decodeIfPresent(Int.self, forKey: .contentIndex)
-            self = .thinkingDelta(
-                delta: delta,
-                contentIndex: contentIndex,
-                replace: try c.decodeIfPresent(Bool.self, forKey: .replace) ?? false
-            )
+            self = .thinkingDelta(delta: delta, contentIndex: contentIndex)
 
         case "audio_stream":
             let stream = AudioStreamMessage(

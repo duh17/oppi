@@ -121,7 +121,6 @@ function makeManagerHarness(
     pendingUIRequests: new Map(),
     persistentExtensionUINotifications: new Map(),
     toolOutputSnapshots: new ToolOutputSnapshots(),
-    streamedAssistantText: "",
     toolNames: new Map(),
     streamingToolUpdatesSeen: new Map(),
     turnCache: new TurnDedupeCache(),

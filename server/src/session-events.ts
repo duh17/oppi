@@ -123,7 +123,6 @@ export interface EventProcessorSessionState extends ExtensionUIState {
   /** Event-folded run state behind `session.programStatus`. */
   programRun?: ProgramRunTracker;
   toolOutputSnapshots: ToolOutputSnapshots;
-  streamedAssistantText: string;
   currentThinkingContentIndex?: number;
   /** Tool names per toolCallId — tracked for terminal-kind routing. */
   toolNames: Map<string, string>;
@@ -189,7 +188,6 @@ export class SessionEventProcessor {
     return {
       sessionId: active.session.id,
       toolOutputSnapshots: active.toolOutputSnapshots,
-      streamedAssistantText: active.streamedAssistantText,
       currentThinkingContentIndex: active.currentThinkingContentIndex,
       mobileRenderers: this.deps.mobileRenderers,
       toolNames: active.toolNames,

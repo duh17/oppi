@@ -113,7 +113,6 @@ function turnErrors(events: readonly AgentSessionEvent[]): Sample[] {
     },
     pendingUIRequests: new Map(),
     toolOutputSnapshots: new ToolOutputSnapshots(),
-    streamedAssistantText: "",
     toolNames: new Map(),
     streamingToolUpdatesSeen: new Map(),
   };
@@ -161,7 +160,6 @@ function translationContext(): TranslationContext {
     sessionId: "sess-1",
     mobileRenderers: new MobileRendererRegistry(),
     toolOutputSnapshots: new ToolOutputSnapshots(),
-    streamedAssistantText: "",
     toolNames: new Map(),
     shellPreviewLastSent: new Map(),
     streamingToolUpdatesSeen: new Map(),
@@ -182,7 +180,7 @@ function streaming(message: AssistantMessage): ConversationView {
 }
 
 describe("durable live text", () => {
-  it("keeps prefix streaming as a suffix delta and replaces a non-prefix rewrite", async () => {
+  it("keeps prefix streaming as a suffix delta and carries a non-prefix rewrite whole", async () => {
     const messages = translate(
       await tell(view([user(1)], running), [
         streaming(partial([fauxText("Hello world")])),
@@ -194,14 +192,10 @@ describe("durable live text", () => {
       (message): message is Extract<ServerMessage, { type: "text_delta" }> =>
         message.type === "text_delta",
     );
-    expect(deltas.map(({ delta, replace }) => ({ delta, replace }))).toEqual([
-      { delta: "Hello world", replace: undefined },
-      { delta: "!", replace: undefined },
-      { delta: "Hi", replace: true },
-    ]);
+    expect(deltas.map(({ delta }) => delta)).toEqual(["Hello world", "!", "Hi"]);
   });
 
-  it("replaces thinking the same way", async () => {
+  it("streams thinking the same way", async () => {
     const messages = translate(
       await tell(view([user(1)], running), [
         streaming(partial([fauxThinking("Plan the whole answer")])),
@@ -212,10 +206,7 @@ describe("durable live text", () => {
       (message): message is Extract<ServerMessage, { type: "thinking_delta" }> =>
         message.type === "thinking_delta",
     );
-    expect(deltas.map(({ delta, replace }) => ({ delta, replace }))).toEqual([
-      { delta: "Plan the whole answer", replace: undefined },
-      { delta: "Shorter", replace: true },
-    ]);
+    expect(deltas.map(({ delta }) => delta)).toEqual(["Plan the whole answer", "Shorter"]);
   });
 
   it("ends a streamed answer with its entry without starting it again", async () => {
@@ -227,7 +218,6 @@ describe("durable live text", () => {
     ]);
     expect(events.map((event) => event.type)).toEqual([
       "message_start",
-      "message_update", // text_start
       "message_update", // text_delta
       "message_end",
       "turn_end",
@@ -383,7 +373,6 @@ describe("durable values that fold several commits", () => {
     );
     expect(frame.events.map((event) => event.type)).toEqual([
       "agent_start",
-      "turn_start",
       "message_start",
       "message_end",
       "turn_end",
@@ -421,9 +410,7 @@ describe("durable values that fold several commits", () => {
       "message_start",
       "message_end",
       "turn_end",
-      "turn_start",
       "message_start",
-      "message_update",
       "message_update",
     ]);
   });

@@ -152,7 +152,7 @@ struct ProtocolSnapshotTests {
         #expect(origin == MessageOrigin(kind: "session", sessionId: "child-session-1", name: "Review", intent: "report"))
 
         let textDelta = try decodeMessage("text_delta")
-        guard case .textDelta(_, let deltaContentIndex, _) = textDelta else {
+        guard case .textDelta(_, let deltaContentIndex) = textDelta else {
             Issue.record("Expected indexed text_delta snapshot")
             return
         }

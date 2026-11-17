@@ -17,7 +17,7 @@
  * sent goes out again as an upsert of that entry. The same passes decide how `pi.inbox`
  * shows each queued input (its stored display, or hidden when generated).
  *
- * An attached socket gets no classic event that the entries and documents restate
+ * A durable session's socket gets no classic event that the entries and documents restate
  * (`restatedByConversationStream` in `stream.ts`).
  */
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";

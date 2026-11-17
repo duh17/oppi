@@ -63,10 +63,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Content indexes that belong to the open assistant run, including
     /// consecutive text blocks that share one bubble.
     private var assistantRunIndexes: [Int] = []
-    /// Closed and open rows for this assistant message, keyed by content index.
-    /// A `replace` writes the partial back into that row instead of opening another.
-    private var assistantIDByContentIndex: [Int: String] = [:]
-    private var thinkingIDByContentIndex: [Int: String] = [:]
     private var assistantBuffer: String = ""
     /// Stable timestamp for the streaming assistant message — avoids
     /// creating a new Date() on every streaming upsert, which would cause
@@ -1409,8 +1405,8 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
         case .system:
             if event.cacheMiss == true {
-                // The live `cache_miss` frame may have added this row before its answer landed
-                // through an append: the committed notice takes that row instead of a second one.
+                // A classic session's live `cache_miss` frame may have added this row before its
+                // answer landed through an append: the committed notice takes that row.
                 insertItem(
                     .cacheMiss(id: event.id, message: event.text ?? ""),
                     appendOnly: appendOnly && indexForID(event.id) == nil
@@ -1646,13 +1642,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 continue
             }
             switch event {
-            case .textDelta(_, let delta, let contentIndex, let replace):
-                // A rewrite of an earlier text index updates that row. It does
-                // not close the open thinking block.
-                if replace, replaceClosedAssistantPartial(delta, contentIndex: contentIndex) {
-                    didMutate = true
-                    break
-                }
+            case .textDelta(_, let delta, let contentIndex):
                 // Text is a structural boundary. Pi streams content blocks in
                 // order, so the thinking block before it has ended even though
                 // message_end may still be far away.
@@ -1668,23 +1658,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                     didMutate = true
                 }
                 noteAssistantContentIndex(contentIndex)
-                if replace {
-                    flushPendingUpserts()
-                    assistantBuffer = delta
-                    upsertAssistantMessage()
-                    didMutate = true
-                } else {
-                    pendingAssistantDeltas.append(delta)
-                    hasPendingAssistantUpsert = true
-                }
+                pendingAssistantDeltas.append(delta)
+                hasPendingAssistantUpsert = true
 
-            case .thinkingDelta(_, let delta, let contentIndex, let replace):
-                // A rewrite of an earlier thinking index updates that row. It
-                // does not close the open text bubble or start a second thinking row.
-                if replace, replaceClosedThinkingPartial(delta, contentIndex: contentIndex) {
-                    didMutate = true
-                    break
-                }
+            case .thinkingDelta(_, let delta, let contentIndex):
                 // Thinking is a structural boundary. Finalize text that arrived
                 // before it so later text starts a distinct adjacent run.
                 if hasPendingAssistantUpsert || currentAssistantID != nil {
@@ -1693,7 +1670,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                     didMutate = true
                 }
                 // The item's preview holds the whole thinking text; skip no-op rerenders.
-                if appendThinkingDelta(delta, contentIndex: contentIndex, replace: replace) {
+                if appendThinkingDelta(delta, contentIndex: contentIndex) {
                     hasPendingThinkingUpsert = true
                 }
 
@@ -1840,10 +1817,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             closeAllOrphanedTools()
             return renderMutationCheckpoint() != before
 
-        case .textDelta(_, let delta, let contentIndex, let replace):
-            if replace, replaceClosedAssistantPartial(delta, contentIndex: contentIndex) {
-                return true
-            }
+        case .textDelta(_, let delta, let contentIndex):
             finalizeThinking()
             let crossedBoundary = assistantRunCrosses(contentIndex)
             if crossedBoundary {
@@ -1851,21 +1825,14 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 assistantRunIndexes.removeAll(keepingCapacity: true)
             }
             noteAssistantContentIndex(contentIndex)
-            if replace {
-                assistantBuffer = delta
-            } else {
-                assistantBuffer += delta
-            }
+            assistantBuffer += delta
             upsertAssistantMessage()
             return true
 
-        case .thinkingDelta(_, let delta, let contentIndex, let replace):
-            if replace, replaceClosedThinkingPartial(delta, contentIndex: contentIndex) {
-                return true
-            }
+        case .thinkingDelta(_, let delta, let contentIndex):
             let before = renderMutationCheckpoint()
             finalizeAssistantMessage()
-            if appendThinkingDelta(delta, contentIndex: contentIndex, replace: replace) {
+            if appendThinkingDelta(delta, contentIndex: contentIndex) {
                 upsertThinking()
                 return true
             }
@@ -2269,7 +2236,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         case .system(let message):
             items.append(.systemEvent(id: UUID().uuidString, message: message))
             return true
-        case .notice, .cacheMiss, nil:
+        case .notice, nil:
             return false
         }
     }
@@ -2401,13 +2368,11 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
     /// Show a row no conversation entry or document carries. The replica path calls this
     /// directly, not through the coalescer; rebuilds from the replica keep these rows
-    /// (`clientOnlyRows`). A notice or cache miss with an id it already shows is updated in place.
+    /// (`clientOnlyRows`). A notice with an id it already shows is updated in place.
     func appendClientRow(_ row: TimelineClientRow) {
         switch row {
         case .notice(let id, let message):
             guard upsertLiveWarningRow(.notice(id: id, message: message), id: id) else { return }
-        case .cacheMiss(let id, let message):
-            guard upsertLiveWarningRow(.cacheMiss(id: id, message: message), id: id) else { return }
         case .error(let message):
             let item = ChatItem.error(id: UUID().uuidString, message: message)
             items.append(item)
@@ -2461,8 +2426,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         assistantIDsThisMessage.removeAll(keepingCapacity: false)
         thinkingIDsThisMessage.removeAll(keepingCapacity: false)
         assistantRunIndexes.removeAll(keepingCapacity: false)
-        assistantIDByContentIndex.removeAll(keepingCapacity: false)
-        thinkingIDByContentIndex.removeAll(keepingCapacity: false)
     }
 
     private func handleMessageEnd(
@@ -2955,8 +2918,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         assistantIDsThisMessage.removeAll(keepingCapacity: true)
         thinkingIDsThisMessage.removeAll(keepingCapacity: true)
         assistantRunIndexes.removeAll(keepingCapacity: true)
-        assistantIDByContentIndex.removeAll(keepingCapacity: true)
-        thinkingIDByContentIndex.removeAll(keepingCapacity: true)
         messageRegionStart = items.count
     }
 
@@ -2976,44 +2937,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         if !assistantRunIndexes.contains(contentIndex) {
             assistantRunIndexes.append(contentIndex)
         }
-        if let currentAssistantID {
-            assistantIDByContentIndex[contentIndex] = currentAssistantID
-        }
-    }
-
-    /// A replace of an earlier text index writes that row and leaves the other modality open.
-    private func replaceClosedAssistantPartial(_ text: String, contentIndex: Int?) -> Bool {
-        guard let contentIndex,
-              let id = assistantIDByContentIndex[contentIndex],
-              assistantIDsThisMessage.contains(id),
-              id != currentAssistantID,
-              let idx = indexForID(id),
-              case .assistantMessage(_, _, let timestamp) = items[idx] else {
-            return false
-        }
-        items[idx] = TimelineTurnAssembler.makeAssistantItem(id: id, text: text, timestamp: timestamp)
-        bumpItemsMutationSeq()
-        return true
-    }
-
-    /// A replace of an earlier thinking index writes that row and leaves the open text bubble alone.
-    private func replaceClosedThinkingPartial(_ text: String, contentIndex: Int?) -> Bool {
-        guard let contentIndex,
-              let id = thinkingIDByContentIndex[contentIndex],
-              thinkingIDsThisMessage.contains(id),
-              id != currentThinkingID,
-              let idx = indexForID(id),
-              case .thinking(_, _, _, let isDone) = items[idx] else {
-            return false
-        }
-        items[idx] = TimelineTurnAssembler.makeThinkingItem(
-            id: id,
-            preview: text,
-            hasMore: text.utf8.count > ChatItem.maxPreviewLength,
-            isDone: isDone
-        )
-        bumpItemsMutationSeq()
-        return true
     }
 
     private func shouldSuppressDuplicateMessageEnd(_ content: String) -> Bool {
@@ -3060,12 +2983,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         if turnInProgress, !assistantIDsThisMessage.contains(id) {
             assistantIDsThisMessage.append(id)
         }
-        for index in assistantRunIndexes {
-            assistantIDByContentIndex[index] = id
-        }
-        if let currentAssistantContentIndex {
-            assistantIDByContentIndex[currentAssistantContentIndex] = id
-        }
 
         let item = TimelineTurnAssembler.makeAssistantItem(
             id: id,
@@ -3090,9 +3007,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         currentThinkingID = id
         if turnInProgress, !thinkingIDsThisMessage.contains(id) {
             thinkingIDsThisMessage.append(id)
-        }
-        if let currentThinkingContentIndex {
-            thinkingIDByContentIndex[currentThinkingContentIndex] = id
         }
         return id
     }
@@ -3121,20 +3035,14 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// container manages viewport height and full-screen takes over for full
     /// reading.
     @discardableResult
-    private func appendThinkingDelta(_ delta: String, contentIndex: Int? = nil, replace: Bool = false) -> Bool {
-        if !replace {
-            guard !delta.isEmpty else { return false }
-        }
+    private func appendThinkingDelta(_ delta: String, contentIndex: Int? = nil) -> Bool {
+        guard !delta.isEmpty else { return false }
         prepareThinkingBlock(contentIndex: contentIndex)
 
         let previousPreview = thinkingPreviewText()
         let previousHasMore = thinkingBuffer.utf8.count > ChatItem.maxPreviewLength
 
-        if replace {
-            thinkingBuffer = delta
-        } else {
-            thinkingBuffer += delta
-        }
+        thinkingBuffer += delta
 
         let newPreview = thinkingPreviewText()
         let newHasMore = thinkingBuffer.utf8.count > ChatItem.maxPreviewLength
@@ -3372,7 +3280,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 /// `TimelineReducer.appendClientRow`; text is ready to show.
 enum TimelineClientRow: Equatable, Sendable {
     case notice(id: String, message: String)
-    case cacheMiss(id: String, message: String)
     case error(String)
     case system(String)
 

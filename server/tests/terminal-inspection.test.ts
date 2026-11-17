@@ -38,7 +38,6 @@ function context(mobileRenderers: MobileRendererRegistry): TranslationContext {
     toolNames: new Map(),
     toolArgs: new Map(),
     streamingToolUpdatesSeen: new Map(),
-    streamedAssistantText: "",
   };
 }
 

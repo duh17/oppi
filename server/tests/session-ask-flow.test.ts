@@ -48,7 +48,6 @@ function createHarness(): {
     session: makeSession(key),
     pendingUIRequests: new Map<string, ExtensionUIRequest>(),
     toolOutputSnapshots: new ToolOutputSnapshots(),
-    streamedAssistantText: "",
     toolNames: new Map<string, string>(),
     streamingToolUpdatesSeen: new Map<string, string>(),
     sdkBackend,

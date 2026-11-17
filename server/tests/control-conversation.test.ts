@@ -506,10 +506,13 @@ describe("control conversation lifecycle on the durable harness", () => {
         await ws.next((m) => m.type === "agent_end");
         expect(store.listAgents()).toHaveLength(before + rows);
         expect(ws.sent.filter((m) => m.type === "error")).toEqual([]);
-        // The script's call reaches the phone as a call of the codemode row, not a row of its own.
-        const script = ws.sent.find((m) => m.type === "tool_start" && m.tool === "codemode") as
+        // The phone reads tool calls from the conversation stream: the socket gets no tool frames.
+        expect(ws.sent.filter((m) => m.type === "tool_start" || m.type === "tool_end")).toEqual([]);
+        // The event ring tells the script's call as a call of the codemode row, not a row of its own.
+        const ring = booted.manager.getCatchUp(sessionId, 0)?.events ?? [];
+        const script = ring.find((m) => m.type === "tool_start" && m.tool === "codemode") as
           Extract<ServerMessage, { type: "tool_start" }> | undefined;
-        const nested = ws.sent.filter(
+        const nested = ring.filter(
           (m): m is Extract<ServerMessage, { type: "tool_start" | "tool_end" }> =>
             (m.type === "tool_start" || m.type === "tool_end") && m.tool === "oppi",
         );

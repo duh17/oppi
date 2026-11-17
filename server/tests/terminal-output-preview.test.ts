@@ -25,7 +25,6 @@ describe("terminal preview source handoff", () => {
     const ctx: TranslationContext = {
       sessionId: "s",
       toolOutputSnapshots: new ToolOutputSnapshots(),
-      streamedAssistantText: "",
       mobileRenderers: registry,
       toolNames: new Map(),
       streamingToolUpdatesSeen: new Map(),
@@ -86,7 +85,6 @@ describe("terminal preview source handoff", () => {
       const ctx: TranslationContext = {
         sessionId: "sess-1",
         toolOutputSnapshots: new ToolOutputSnapshots(),
-        streamedAssistantText: "",
         currentThinkingContentIndex: undefined,
         mobileRenderers: registry,
         toolNames: new Map(),

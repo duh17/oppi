@@ -288,7 +288,7 @@ async function prompt(client: StreamClient, message: string): Promise<void> {
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 300));
 
-/** Classic events an attached socket must not get: its entries and documents restate them. */
+/** Classic events a durable session's socket must not get: the stream's entries and documents restate them. */
 const RESTATED_EVENTS = new Set([
   "text_delta",
   "thinking_delta",
@@ -355,16 +355,16 @@ describe("durable conversation stream over the focused session socket", { timeou
     await prompt(attached, "stream please");
     await settle();
 
-    // A socket that never attaches keeps the classic event path and gets no stream frames.
-    // The attached one gets no event its entries and documents restate, and still gets the
-    // run boundaries.
-    expect(plain.frames.some((frame) => frame.type === "message_end")).toBe(true);
-    expect(plain.frames.some((frame) => frame.type === "text_delta")).toBe(true);
+    // No socket of a durable session gets an event the stream's entries and documents restate,
+    // attached or not; both still get the run boundaries. One that never attaches gets no
+    // stream frames.
+    for (const client of [attached, plain]) {
+      expect(
+        client.frames.filter((frame) => RESTATED_EVENTS.has(frame.type)).map((frame) => frame.type),
+      ).toEqual([]);
+      expect(client.frames.some((frame) => frame.type === "agent_end")).toBe(true);
+    }
     expect(plain.conversationFrames()).toEqual([]);
-    expect(
-      attached.frames.filter((frame) => RESTATED_EVENTS.has(frame.type)).map((frame) => frame.type),
-    ).toEqual([]);
-    expect(attached.frames.some((frame) => frame.type === "agent_end")).toBe(true);
 
     const textOps = attached.conversationFrames().flatMap(liveTextOps);
     expect(textOps.filter((op) => op[0] === "a").length).toBeGreaterThanOrEqual(2);
@@ -387,11 +387,8 @@ describe("durable conversation stream over the focused session socket", { timeou
     const probe = await connect();
     const after = await probe.attach();
     await probe.close();
-    const textEvents = plain.frames.filter(
-      (frame) => frame.type === "text_delta" || frame.type === "message_end",
-    );
-    // Payload sizes for one streamed reply, both paths, in the run log (a file in the
-    // test's temp dir would be removed with it).
+    // Payload sizes for one streamed reply in the run log (a file in the test's temp dir would
+    // be removed with it).
     console.info(
       "conversation stream payload sizes",
       JSON.stringify({
@@ -399,8 +396,6 @@ describe("durable conversation stream over the focused session socket", { timeou
         updateFrames: updates.length,
         updateBytes: frameBytes(updates),
         snapshotAfterTurnBytes: frameBytes([after])[0],
-        classicTextFrames: textEvents.length,
-        classicTextBytes: frameBytes(textEvents),
       }),
     );
     await expectConverged(attached);
@@ -438,11 +433,11 @@ describe("durable conversation stream over the focused session socket", { timeou
       from,
     );
     expect(attached.docs["pi.inbox"]).toEqual({ steering: [], followUp: [] });
-    // The classic socket got the queue as events; the attached one only as documents.
-    expect(plain.frames.some((frame) => frame.type === "queue_state")).toBe(true);
-    expect(
-      attached.frames.filter((frame) => RESTATED_EVENTS.has(frame.type)).map((frame) => frame.type),
-    ).toEqual([]);
+    // The queue went out only as documents, to the socket that never attached as well.
+    for (const client of [attached, plain])
+      expect(
+        client.frames.filter((frame) => RESTATED_EVENTS.has(frame.type)).map((frame) => frame.type),
+      ).toEqual([]);
     await expectConverged(attached);
   });
 
@@ -682,10 +677,11 @@ describe("durable conversation stream over the focused session socket", { timeou
       childFrames.every((frame) => ((frame.entries as unknown[] | undefined) ?? []).length === 0),
     ).toBe(true);
     expect(childFrames.every((frame) => parent.frames.indexOf(frame) < afterDetach)).toBe(true);
-    // Only a socket replicating the parent's own conversation in full drops the classic events
-    // it restates; one that follows only a child's live tail still gets the parent's turn.
-    expect(parent.frames.filter((frame) => RESTATED_EVENTS.has(frame.type))).toEqual([]);
-    expect(reconnected.frames.some((frame) => frame.type === "message_end")).toBe(true);
+    // Neither socket gets the parent's restated events; one that follows only a child's live
+    // tail still gets the parent's run boundaries.
+    for (const client of [parent, reconnected])
+      expect(client.frames.filter((frame) => RESTATED_EVENTS.has(frame.type))).toEqual([]);
+    expect(reconnected.frames.some((frame) => frame.type === "agent_end")).toBe(true);
     await expectConverged(parent);
   });
 

@@ -5,20 +5,6 @@ import Foundation
 @Suite("TimelineReducer — Basic")
 @MainActor
 struct TimelineReducerBasicTests {
-    private func thinkingPreviews(_ items: [ChatItem]) -> [String] {
-        items.compactMap { item in
-            guard case .thinking(_, let preview, _, _) = item else { return nil }
-            return preview
-        }
-    }
-
-    private func assistantTexts(_ items: [ChatItem]) -> [String] {
-        items.compactMap { item in
-            guard case .assistantMessage(_, let text, _) = item else { return nil }
-            return text
-        }
-    }
-
     @Test func basicAgentTurn() {
         let reducer = TimelineReducer()
 
@@ -33,66 +19,6 @@ struct TimelineReducerBasicTests {
             return
         }
         #expect(text == "Hello world!")
-    }
-
-    @Test func nonPrefixReplacementShowsTheCurrentPartial() {
-        let reducer = TimelineReducer()
-        reducer.process(.agentStart(sessionId: "s1"))
-        reducer.process(.textDelta(sessionId: "s1", delta: "Hello world", contentIndex: 0))
-        reducer.process(.textDelta(sessionId: "s1", delta: "Hi", contentIndex: 0, replace: true))
-        reducer.process(.thinkingDelta(sessionId: "s1", delta: "Plan the whole answer", contentIndex: 0))
-        reducer.process(.thinkingDelta(sessionId: "s1", delta: "Shorter", contentIndex: 0, replace: true))
-
-        let thinking = reducer.items.compactMap { item -> String? in
-            guard case .thinking(_, let preview, _, _) = item else { return nil }
-            return preview
-        }
-        let assistant = reducer.items.compactMap { item -> String? in
-            guard case .assistantMessage(_, let text, _) = item else { return nil }
-            return text
-        }
-        #expect(thinking == ["Shorter"])
-        #expect(assistant == ["Hi"])
-    }
-
-    @Test func earlierThinkingReplaceInABatchDoesNotSplitTheOpenTextBubble() {
-        let reducer = TimelineReducer()
-        reducer.process(.agentStart(sessionId: "s1"))
-        reducer.process(.thinkingDelta(sessionId: "s1", delta: "Plan the answer", contentIndex: 0))
-        reducer.process(.textDelta(sessionId: "s1", delta: "Hello world", contentIndex: 1))
-        reducer.processBatch([
-            .thinkingDelta(sessionId: "s1", delta: "Revised plan", contentIndex: 0, replace: true),
-            .textDelta(sessionId: "s1", delta: "!", contentIndex: 1),
-        ])
-
-        #expect(thinkingPreviews(reducer.items) == ["Revised plan"])
-        #expect(assistantTexts(reducer.items) == ["Hello world!"])
-    }
-
-    @Test func earlierThinkingReplaceDoesNotSplitTheOpenTextBubble() {
-        let reducer = TimelineReducer()
-        reducer.process(.agentStart(sessionId: "s1"))
-        reducer.process(.thinkingDelta(sessionId: "s1", delta: "Plan the answer", contentIndex: 0))
-        reducer.process(.textDelta(sessionId: "s1", delta: "Hello world", contentIndex: 1))
-        reducer.process(.thinkingDelta(sessionId: "s1", delta: "Revised plan", contentIndex: 0, replace: true))
-        reducer.process(.textDelta(sessionId: "s1", delta: "!", contentIndex: 1))
-
-        #expect(thinkingPreviews(reducer.items) == ["Revised plan"])
-        #expect(assistantTexts(reducer.items) == ["Hello world!"])
-    }
-
-    @Test func earlierTextReplaceDoesNotCloseTheOpenThinkingRow() {
-        let reducer = TimelineReducer()
-        reducer.process(.agentStart(sessionId: "s1"))
-        reducer.process(.textDelta(sessionId: "s1", delta: "Hello world", contentIndex: 0))
-        reducer.process(.thinkingDelta(sessionId: "s1", delta: "Still thinking", contentIndex: 1))
-        reducer.processBatch([
-            .textDelta(sessionId: "s1", delta: "Hi", contentIndex: 0, replace: true),
-            .thinkingDelta(sessionId: "s1", delta: " more", contentIndex: 1),
-        ])
-
-        #expect(assistantTexts(reducer.items) == ["Hi"])
-        #expect(thinkingPreviews(reducer.items) == ["Still thinking more"])
     }
 
     @Test func thinkingThenText() {

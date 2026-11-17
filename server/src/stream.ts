@@ -32,6 +32,7 @@ import {
   WORKTREE_REBIND_NOTICE,
 } from "./session-lifecycle-service.js";
 import type { SessionRuntimes } from "./runtime-router.js";
+import { usesDurableEngine } from "./session-runtime-capabilities.js";
 import {
   parseDictationClientMessage,
   type DictationClientMessage,
@@ -104,13 +105,16 @@ function isLiveVoiceFrame(msg: { type: string; command?: string }): boolean {
 }
 
 /**
- * Classic session events a socket attached to the durable conversation stream no longer
- * gets, because its entries and documents restate them: streamed text and thinking, tool
- * calls and output, committed messages, cards, compaction and retry status (`pi.live`), the
- * queue (`pi.inbox`), a notice restating a committed card (`entry:<id>`), and a cache miss
- * (the answer's entry carries it as `cacheMiss`, same id). Run boundaries, session state, stop
- * feedback, errors, other notices, extension UI, command results, and audio still go: no entry
- * or document carries those effects to clients yet. Here rather than in `durable-conversation-stream.ts`, which loads lazily.
+ * Classic session events a durable session's socket never gets, because its conversation
+ * stream's entries and documents restate them: streamed text and thinking, tool calls and
+ * output, committed messages, cards, compaction and retry status (`pi.live`), the queue
+ * (`pi.inbox`), a notice restating a committed card (`entry:<id>`), and a cache miss (the
+ * answer's entry carries it as `cacheMiss`, same id). Every client that shows durable sessions
+ * attaches that stream, so these go neither live nor in the bootstrap replay; the event ring
+ * keeps them for `/events` readers. Run boundaries, session state, stop feedback, errors, other
+ * notices, extension UI, command results, and audio still go: no entry or document carries
+ * those effects to clients yet. Here rather than in `durable-conversation-stream.ts`, which
+ * loads lazily.
  */
 function restatedByConversationStream(message: ServerMessage): boolean {
   switch (message.type) {
@@ -617,9 +621,8 @@ export class BoundSessionStreamMux {
 
     // A socket carrying a Live Voice call gets the call, not the session's traffic: that stays on
     // the chat socket, and its errors and command results are not the call's to act on.
-    // A socket that replicates its own conversation in full gets none of the events that
-    // conversation's entries and documents restate. Live tails of child conversations do not
-    // count: they restate nothing of this session's events.
+    const durable = usesDurableEngine(session);
+    /** Whether this socket replicates its own conversation in full, not only children's live tails. */
     const replicatesOwnConversation = (): boolean => {
       for (const stream of conversationStreams.values()) if (stream.full) return true;
       return false;
@@ -686,7 +689,7 @@ export class BoundSessionStreamMux {
       // shape it draws (`client_capabilities`), and the session stream never mixes them.
       if (!drawsAudience(audience)) return;
       if (msg.type === "layout_proposal" && !drawsLayoutCards) return;
-      if (restatedByConversationStream(msg) && replicatesOwnConversation()) return;
+      if (durable && restatedByConversationStream(msg)) return;
       sendForSession(msg);
       if (msg.type === "state") followBoundConversation(msg.session);
     };
@@ -896,6 +899,7 @@ export class BoundSessionStreamMux {
 
       const catchUpEvents = catchUp?.events ?? [];
       for (const event of catchUpEvents) {
+        if (durable && restatedByConversationStream(event)) continue;
         sendForSession(event);
       }
 

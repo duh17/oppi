@@ -320,31 +320,23 @@ final class DeltaCoalescer {
 
     private func appendAppendableEvent(_ event: AgentEvent) {
         switch event {
-        case .textDelta(let sessionId, let delta, let contentIndex, let replace):
+        case .textDelta(let sessionId, let delta, let contentIndex):
             recordOversizedTimelinePayloadIfNeeded(
                 sessionId: sessionId,
                 eventCount: 1,
                 bytes: delta.utf8.count
             )
-            if replace {
-                appendBuffered(.textDelta(sessionId: sessionId, delta: delta, contentIndex: contentIndex, replace: true))
-            } else {
-                appendChunkedText(delta) { chunk in
-                    .textDelta(sessionId: sessionId, delta: chunk, contentIndex: contentIndex)
-                }
+            appendChunkedText(delta) { chunk in
+                .textDelta(sessionId: sessionId, delta: chunk, contentIndex: contentIndex)
             }
-        case .thinkingDelta(let sessionId, let delta, let contentIndex, let replace):
+        case .thinkingDelta(let sessionId, let delta, let contentIndex):
             recordOversizedTimelinePayloadIfNeeded(
                 sessionId: sessionId,
                 eventCount: 1,
                 bytes: delta.utf8.count
             )
-            if replace {
-                appendBuffered(.thinkingDelta(sessionId: sessionId, delta: delta, contentIndex: contentIndex, replace: true))
-            } else {
-                appendChunkedText(delta) { chunk in
-                    .thinkingDelta(sessionId: sessionId, delta: chunk, contentIndex: contentIndex)
-                }
+            appendChunkedText(delta) { chunk in
+                .thinkingDelta(sessionId: sessionId, delta: chunk, contentIndex: contentIndex)
             }
         case .toolOutput(let payload) where payload.mode == .replace:
             appendOrReplaceBufferedToolOutput(payload)
@@ -588,10 +580,10 @@ final class DeltaCoalescer {
              .agentSettled:
             return 0
 
-        case .textDelta(_, let delta, _, _):
+        case .textDelta(_, let delta, _):
             return delta.utf8.count
 
-        case .thinkingDelta(_, let delta, _, _):
+        case .thinkingDelta(_, let delta, _):
             return delta.utf8.count
 
         case .messageEnd(_, let content, let assistantContent, _):

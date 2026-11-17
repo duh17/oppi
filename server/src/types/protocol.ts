@@ -1032,8 +1032,8 @@ export type ServerMessage =
         };
       }
     // ── Streaming ──
-    | { type: "text_delta"; delta: string; contentIndex?: number; replace?: true }
-    | { type: "thinking_delta"; delta: string; contentIndex?: number; replace?: true }
+    | { type: "text_delta"; delta: string; contentIndex?: number }
+    | { type: "thinking_delta"; delta: string; contentIndex?: number }
     | {
         type: "audio_stream";
         kind: "audio-stream";

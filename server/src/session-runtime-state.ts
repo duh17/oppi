@@ -22,7 +22,6 @@ export interface RuntimeSessionStateScaffold<
   runtimeEpoch: string;
   eventRing: EventRing;
   toolOutputSnapshots: ToolOutputSnapshots;
-  streamedAssistantText: string;
   currentThinkingContentIndex?: number;
   toolNames: Map<string, string>;
   toolArgs: Map<string, Record<string, unknown>>;
@@ -68,7 +67,6 @@ export function createRuntimeSessionStateScaffold<
     pendingUIRequests: new Map(),
     persistentExtensionUINotifications: new Map(),
     toolOutputSnapshots: new ToolOutputSnapshots(),
-    streamedAssistantText: "",
     toolNames: new Map(),
     toolArgs: new Map(),
     streamingToolUpdatesSeen: new Map(),

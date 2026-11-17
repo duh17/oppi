@@ -271,7 +271,6 @@ export class SessionAgentEventCoordinator {
     const ctx = this.deps.eventProcessor.translationContext(active);
     ctx.getToolDefinition = (name) => active.sdkBackend?.toolDefinition(name);
     const messages = translatePiEvent(event, ctx);
-    active.streamedAssistantText = ctx.streamedAssistantText;
     active.currentThinkingContentIndex = ctx.currentThinkingContentIndex;
 
     if (event.type === "tool_execution_update" || event.type === "tool_execution_end") {

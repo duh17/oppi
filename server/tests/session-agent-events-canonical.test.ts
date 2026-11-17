@@ -34,7 +34,6 @@ function makeActiveSession(
     pendingUIRequests: new Map(),
     persistentExtensionUINotifications: new Map(),
     toolOutputSnapshots: new ToolOutputSnapshots(),
-    streamedAssistantText: "",
     toolNames: new Map(),
     toolArgs: new Map(),
     streamingToolUpdatesSeen: new Map<string, string>(),
@@ -60,7 +59,6 @@ function makeCoordinator(active: SessionAgentEventState) {
       translationContext: vi.fn(() => ({
         sessionId: active.session.id,
         toolOutputSnapshots: active.toolOutputSnapshots,
-        streamedAssistantText: active.streamedAssistantText,
         currentThinkingContentIndex: active.currentThinkingContentIndex,
         mobileRenderers: {
           renderCall: vi.fn(),

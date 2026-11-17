@@ -270,15 +270,6 @@ extension ChatSessionFocusedStreamPort {
     func send(_ message: ClientMessage) async throws {
         throw ChatSessionFocusedStreamBindError.timedOut
     }
-
-    /// Mac does not attach yet; its durable sessions keep the event path.
-    var conversationStreamAvailable: Bool { false }
-    var conversationStreamLiveTailsAvailable: Bool { false }
-}
-
-extension ChatSessionEffectsStatePort {
-    /// Mac does not attach yet, so it has no replica queue.
-    func applyConversationQueue(_ queue: MessageQueueState?, sessionId: String) {}
 }
 
 /// Shared session state and outward effects produced by the chat runtime.

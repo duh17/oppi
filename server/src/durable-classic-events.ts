@@ -141,20 +141,16 @@ function newestAssistantOfActiveRun(entries: readonly EntryRecord[]): AssistantM
   return newest.message;
 }
 
-/** Prefix growth stays a suffix delta. A rewrite carries the whole current text and `replace`. */
-function contentDelta(
-  previous: string,
-  next: string,
-): { delta: string; replace?: true } | undefined {
+/** Prefix growth stays a suffix delta. A rewrite carries the whole current text. */
+function contentDelta(previous: string, next: string): string | undefined {
   if (next === previous) return undefined;
-  if (next.startsWith(previous)) return { delta: next.slice(previous.length) };
-  return { delta: next, replace: true };
+  return next.startsWith(previous) ? next.slice(previous.length) : next;
 }
 
 /**
- * How the streamed answer changed from `prev` to `next`, block by block: a start for each new
- * block, the grown text as a delta, and a tool call whose arguments changed. Built from the
- * values, not from watch operations, so a folded or replaced value reads the same.
+ * How the streamed answer's text and thinking grew from `prev` to `next`, block by block, as
+ * deltas: the context gauge, turn TTFT, and Live Voice read them. Built from the values, not
+ * from watch operations, so a folded or replaced value reads the same.
  */
 function messageUpdates(
   prev: AssistantMessage | undefined,
@@ -162,37 +158,24 @@ function messageUpdates(
 ): AssistantMessageEvent[] {
   const events: AssistantMessageEvent[] = [];
   for (const [contentIndex, block] of next.content.entries()) {
+    if (block.type !== "text" && block.type !== "thinking") continue;
+    const kind = block.type;
     const old = prev?.content[contentIndex];
-    if (block.type === "text" || block.type === "thinking") {
-      const kind = block.type;
-      const text = block.type === "text" ? block.text : block.thinking;
-      const oldText =
-        old?.type === "text" && kind === "text"
-          ? old.text
-          : old?.type === "thinking" && kind === "thinking"
-            ? old.thinking
-            : "";
-      if (old?.type !== kind)
-        events.push({
-          type: `${kind}_start`,
-          contentIndex,
-          partial: next,
-        } as AssistantMessageEvent);
-      const projected = contentDelta(oldText, text);
-      if (projected)
-        events.push({
-          type: `${kind}_delta`,
-          contentIndex,
-          delta: projected.delta,
-          partial: next,
-          ...(projected.replace ? { replace: true } : {}),
-        } as AssistantMessageEvent);
-    } else if (block.type === "toolCall") {
-      if (old?.type !== "toolCall")
-        events.push({ type: "toolcall_start", contentIndex, partial: next });
-      else if (old !== block)
-        events.push({ type: "toolcall_delta", contentIndex, delta: "", partial: next });
-    }
+    const text = block.type === "text" ? block.text : block.thinking;
+    const oldText =
+      old?.type === "text" && kind === "text"
+        ? old.text
+        : old?.type === "thinking" && kind === "thinking"
+          ? old.thinking
+          : "";
+    const delta = contentDelta(oldText, text);
+    if (delta)
+      events.push({
+        type: `${kind}_delta`,
+        contentIndex,
+        delta,
+        partial: next,
+      } as AssistantMessageEvent);
   }
   return events;
 }
@@ -473,8 +456,7 @@ export class DurableClassicEvents {
     // end a tool round and stream the next answer, or hold a whole run. Progress of what was
     // already shown goes first; then entries and ends, turn and run boundaries, and last the
     // progress of what began.
-    if (runs[0]?.folded && !was.run)
-      out.push(pi({ type: "agent_start" }), pi({ type: "turn_start" }));
+    if (runs[0]?.folded && !was.run) out.push(pi({ type: "agent_start" }));
     const before = slotsOf(was);
     const after = slotsOf(now);
     const message = now.generation?.message as AssistantMessage | undefined;
@@ -571,13 +553,13 @@ export class DurableClassicEvents {
       if (end.entry === undefined) out.push(...this.endTool(end.slot, next.entries));
     out.push(...compactionEnds.unplaced);
 
-    // Turn and run ends, then what began.
+    // Turn and run ends, then what began. Only a turn's end is told: it releases the tool-output
+    // snapshots the translation held for full-output reads; nothing reads a turn's start.
     if (was.run !== undefined && was.run.taskId !== now.run?.taskId)
       out.push(pi({ type: "turn_end", message: this.shown ?? dummyAssistant(), toolResults: [] }));
     for (const [index, run] of runs.entries()) {
       // A run that began after another ended in this value starts here.
-      if (run.folded && index > 0)
-        out.push(pi({ type: "agent_start" }), pi({ type: "turn_start" }));
+      if (run.folded && index > 0) out.push(pi({ type: "agent_start" }));
       if (run.folded)
         out.push(pi({ type: "turn_end", message: dummyAssistant(), toolResults: [] }));
       if (this.retry) {
@@ -622,8 +604,6 @@ export class DurableClassicEvents {
       this.settleHeld = false;
       out.push(pi({ type: "agent_start" }));
     }
-    if (now.run !== undefined && now.run.taskId !== was.run?.taskId)
-      out.push(pi({ type: "turn_start" }));
     // What began: calls that started running, and an answer not shown before.
     for (const [key, slot] of after) {
       if (slot.status !== "running" || before.get(key)?.status === "running") continue;

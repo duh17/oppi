@@ -522,8 +522,6 @@ export interface TranslationContext {
   sessionId: string;
   /** Accumulated partial-result text per toolCallId (replace → delta conversion). */
   toolOutputSnapshots: ToolOutputSnapshots;
-  /** Assistant text already streamed via text_delta for the current turn. */
-  streamedAssistantText: string;
   /** Current thinking block content index from thinking_start, used when deltas omit it. */
   currentThinkingContentIndex?: number;
   /** Mobile renderer registry for pre-rendering tool call/result summaries. */
@@ -852,8 +850,8 @@ function contentIndexFrom(value: unknown): number | undefined {
 /**
  * Translate a single pi agent event into zero or more ServerMessages.
  *
- * Mutates `ctx.streamedAssistantText` and `ctx.toolOutputSnapshots` as a
- * side effect (streaming state for the current turn).
+ * Mutates `ctx.toolOutputSnapshots` and the other streaming state of the current turn as a
+ * side effect.
  */
 export function translatePiEvent(
   event: AgentSessionEvent,
@@ -880,13 +878,11 @@ export function translatePiEvent(
 function translateEvent(event: AgentSessionEvent, ctx: TranslationContext): ServerMessage[] {
   switch (event.type) {
     case "agent_start":
-      ctx.streamedAssistantText = "";
       ctx.currentThinkingContentIndex = undefined;
       ctx.streamingToolUpdatesSeen.clear();
       return [{ type: "agent_start" }];
 
     case "agent_end":
-      ctx.streamedAssistantText = "";
       ctx.currentThinkingContentIndex = undefined;
       ctx.streamingToolUpdatesSeen.clear();
       return [{ type: "agent_end" }];
@@ -911,22 +907,12 @@ function translateEvent(event: AgentSessionEvent, ctx: TranslationContext): Serv
     case "message_update": {
       const evt = event.assistantMessageEvent;
       if (evt?.type === "text_delta" && typeof evt.delta === "string") {
-        const replace = (evt as { replace?: boolean }).replace === true;
         const contentIndex = contentIndexFrom(evt.contentIndex);
-        // Classic deltas have no replace flag. A durable rewrite carries the
-        // current partial; older clients still append that delta.
-        if (replace) {
-          if (contentIndex === undefined || contentIndex === 0)
-            ctx.streamedAssistantText = evt.delta;
-        } else {
-          ctx.streamedAssistantText += evt.delta;
-        }
         return [
           {
             type: "text_delta",
             delta: evt.delta,
             ...(contentIndex !== undefined ? { contentIndex } : {}),
-            ...(replace ? { replace: true as const } : {}),
           },
         ];
       }
@@ -935,14 +921,12 @@ function translateEvent(event: AgentSessionEvent, ctx: TranslationContext): Serv
         return EMPTY_MESSAGES;
       }
       if (evt?.type === "thinking_delta") {
-        const replace = (evt as { replace?: boolean }).replace === true;
         const contentIndex = contentIndexFrom(evt.contentIndex) ?? ctx.currentThinkingContentIndex;
         return [
           {
             type: "thinking_delta",
             delta: evt.delta,
             ...(contentIndex !== undefined ? { contentIndex } : {}),
-            ...(replace ? { replace: true as const } : {}),
           },
         ];
       }
@@ -1400,7 +1384,6 @@ function translateEvent(event: AgentSessionEvent, ctx: TranslationContext): Serv
           ];
       }
       if (message.role !== "assistant") {
-        ctx.streamedAssistantText = "";
         ctx.currentThinkingContentIndex = undefined;
         return EMPTY_MESSAGES;
       }
@@ -1413,12 +1396,10 @@ function translateEvent(event: AgentSessionEvent, ctx: TranslationContext): Serv
         const rawError =
           typeof msgRecord.errorMessage === "string" ? msgRecord.errorMessage : "Unknown error";
 
-        ctx.streamedAssistantText = "";
         ctx.currentThinkingContentIndex = undefined;
         return [{ type: "error", error: normalizeUserFacingError(rawError) }];
       }
 
-      ctx.streamedAssistantText = "";
       ctx.currentThinkingContentIndex = undefined;
       return EMPTY_MESSAGES;
     }

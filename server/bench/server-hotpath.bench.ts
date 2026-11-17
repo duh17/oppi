@@ -37,7 +37,6 @@ function makeCtx(renderers?: MobileRendererRegistry): TranslationContext {
   return {
     sessionId: "bench-session-001",
     toolOutputSnapshots: new ToolOutputSnapshots(),
-    streamedAssistantText: "",
     mobileRenderers: renderers,
     toolNames: new Map(),
     streamingToolUpdatesSeen: new Map(),
@@ -273,7 +272,6 @@ function benchTranslatePiEvent(renderers: MobileRendererRegistry): BenchResult[]
   const textDeltaCtx = makeCtx(renderers);
   results.push(
     runBench("translate:text_delta", BENCH_ITERATIONS, () => {
-      textDeltaCtx.streamedAssistantText = "";
       translatePiEvent(TEXT_DELTA_EVENT, textDeltaCtx);
     }),
   );

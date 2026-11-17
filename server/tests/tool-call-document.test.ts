@@ -27,7 +27,6 @@ function context(): TranslationContext {
   return {
     sessionId: "s",
     toolOutputSnapshots: new ToolOutputSnapshots(),
-    streamedAssistantText: "",
     toolNames: new Map(),
     streamingToolUpdatesSeen: new Map(),
     mobileRenderers: new MobileRendererRegistry(),

@@ -1888,11 +1888,8 @@ final class ChatSessionManager {
 
     /// The row an attached durable session shows for a classic frame no entry or document
     /// carries: notices (a worktree rebind, a recovered store), errors (a failed prompt or
-    /// extension UI answer, connection errors), cache misses (from usage, not committed),
-    /// the reason a session ended, and stop feedback. A notice whose id is `entry:<id>`
-    /// restates a committed card; the server no longer sends those to an attached socket,
-    /// but its bootstrap replay before `attach` can. A run failure's error is later
-    /// committed as a failure card too; the reducer drops the error row when that card
+    /// extension UI answer, connection errors), the reason a session ended, and stop
+    /// feedback. A run failure's error is later committed as a failure card too; the reducer drops the error row when that card
     /// lands. The reducer keeps these rows through rebuilds from the replica.
     private static func conversationClientRow(for message: ServerMessage) -> TimelineClientRow? {
         if let stopEffect = FocusedSessionStopTurnPolicy.timelineEffect(for: message) {
@@ -1902,9 +1899,8 @@ final class ChatSessionManager {
             }
         }
         switch message {
-        case .notice(let id, let text) where !id.hasPrefix("entry:"): return .notice(id: id, message: text)
+        case .notice(let id, let text): return .notice(id: id, message: text)
         case .error(let text, _, _): return .error(UserFacingErrorText.normalize(text))
-        case .cacheMiss(let id, let text): return .cacheMiss(id: id, message: text)
         case .sessionEnded(let reason): return .system("Session ended: \(reason)")
         default: return nil
         }

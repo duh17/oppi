@@ -41,7 +41,6 @@ function makeActiveSession(session: Session): EventProcessorSessionState {
     session,
     pendingUIRequests: new Map(),
     toolOutputSnapshots: new ToolOutputSnapshots(),
-    streamedAssistantText: "",
     toolNames: new Map<string, string>(),
     streamingToolUpdatesSeen: new Map<string, string>(),
   };

@@ -22,7 +22,6 @@ function makeCtx(overrides?: Partial<TranslationContext>): TranslationContext {
     sessionId: "test-session",
     mobileRenderers: new MobileRendererRegistry(),
     toolOutputSnapshots: new ToolOutputSnapshots(),
-    streamedAssistantText: "",
     toolNames: new Map(),
     streamingToolUpdatesSeen: new Map(),
     ...overrides,
@@ -458,21 +457,17 @@ describe("updateSessionChangeStats", () => {
 
 describe("translatePiEvent", () => {
   describe("agent_start / agent_end", () => {
-    it("emits agent_start and resets streamedAssistantText", () => {
-      const ctx = makeCtx({ streamedAssistantText: "leftover" });
-      const result = translatePiEvent({ type: "agent_start" } as AgentSessionEvent, ctx);
+    it("emits agent_start", () => {
+      const result = translatePiEvent({ type: "agent_start" } as AgentSessionEvent, makeCtx());
       expect(result).toEqual([{ type: "agent_start" }]);
-      expect(ctx.streamedAssistantText).toBe("");
     });
 
-    it("emits agent_end and resets streamedAssistantText", () => {
-      const ctx = makeCtx({ streamedAssistantText: "leftover" });
+    it("emits agent_end", () => {
       const result = translatePiEvent(
         { type: "agent_end", messages: [] } as AgentSessionEvent,
-        ctx,
+        makeCtx(),
       );
       expect(result).toEqual([{ type: "agent_end" }]);
-      expect(ctx.streamedAssistantText).toBe("");
     });
 
     it("emits agent_settled as the authoritative idle boundary", () => {
@@ -502,38 +497,15 @@ describe("translatePiEvent", () => {
   });
 
   describe("message_update: text_delta", () => {
-    it("accumulates text and emits text_delta", () => {
-      const ctx = makeCtx();
+    it("emits text_delta", () => {
       const event = {
         type: "message_update",
         message: {},
         assistantMessageEvent: { type: "text_delta", delta: "hello", contentIndex: 0 },
       } as AgentSessionEvent;
 
-      const result = translatePiEvent(event, ctx);
+      const result = translatePiEvent(event, makeCtx());
       expect(result).toEqual([{ type: "text_delta", delta: "hello", contentIndex: 0 }]);
-      expect(ctx.streamedAssistantText).toBe("hello");
-    });
-
-    it("accumulates across multiple deltas", () => {
-      const ctx = makeCtx();
-      translatePiEvent(
-        {
-          type: "message_update",
-          message: {},
-          assistantMessageEvent: { type: "text_delta", delta: "hello ", contentIndex: 0 },
-        } as AgentSessionEvent,
-        ctx,
-      );
-      translatePiEvent(
-        {
-          type: "message_update",
-          message: {},
-          assistantMessageEvent: { type: "text_delta", delta: "world", contentIndex: 0 },
-        } as AgentSessionEvent,
-        ctx,
-      );
-      expect(ctx.streamedAssistantText).toBe("hello world");
     });
   });
 
@@ -1877,17 +1849,15 @@ describe("translatePiEvent", () => {
   });
 
   describe("message_end", () => {
-    it("resets state for non-assistant messages", () => {
-      const ctx = makeCtx({ streamedAssistantText: "data" });
+    it("emits nothing for non-assistant messages", () => {
       const result = translatePiEvent(
         {
           type: "message_end",
           message: { role: "user", content: "hello" },
         } as AgentSessionEvent,
-        ctx,
+        makeCtx(),
       );
       expect(result).toEqual([]);
-      expect(ctx.streamedAssistantText).toBe("");
     });
 
     it("does not synthesize thinking_delta from assistant thinking blocks", () => {
@@ -1908,18 +1878,6 @@ describe("translatePiEvent", () => {
       );
 
       expect(result).toEqual([]);
-    });
-
-    it("resets streamedAssistantText after processing", () => {
-      const ctx = makeCtx({ streamedAssistantText: "some text" });
-      translatePiEvent(
-        {
-          type: "message_end",
-          message: { role: "assistant", content: [] },
-        } as unknown as AgentSessionEvent,
-        ctx,
-      );
-      expect(ctx.streamedAssistantText).toBe("");
     });
 
     it("does not synthesize thinking_delta after live thinking and tools", () => {

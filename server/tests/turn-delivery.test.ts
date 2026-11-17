@@ -63,7 +63,6 @@ function makeManagerHarness(status: Session["status"] = "ready"): {
     subscribers: new Set<(msg: ServerMessage) => void>(),
     pendingUIRequests: new Map(),
     toolOutputSnapshots: new ToolOutputSnapshots(),
-    streamedAssistantText: "",
     toolNames: new Map(),
     streamingToolUpdatesSeen: new Map(),
     turnCache: new TurnDedupeCache(),

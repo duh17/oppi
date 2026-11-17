@@ -50,7 +50,6 @@ async function harness() {
     session,
     pendingUIRequests: new Map(),
     toolOutputSnapshots: new ToolOutputSnapshots(),
-    streamedAssistantText: "",
     toolNames: new Map(),
     streamingToolUpdatesSeen: new Map(),
     shellPreviewLastSent: new Map(),
