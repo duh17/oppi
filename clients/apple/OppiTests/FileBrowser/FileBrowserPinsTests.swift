@@ -11,7 +11,10 @@ import UIKit
 struct FileBrowserPinsTests {
     private nonisolated static func pin(_ id: String, _ path: String, _ kind: String, _ status: String, label: String? = nil) -> String {
         let label = label.map { #","label":"\#($0)""# } ?? ""
-        return #"{"id":"\#(id)","target":{"origin":"host","path":"\#(path)"},"kind":"\#(kind)","createdAt":1,"status":"\#(status)"\#(label)}"#
+        let target = kind == "directory"
+            ? #"{"kind":"files","origin":"host","path":"\#(path)"}"#
+            : #"{"kind":"file","origin":"host","path":"\#(path)","line":null}"#
+        return #"{"id":"\#(id)","target":\#(target),"createdAt":1,"status":"\#(status)"\#(label)}"#
     }
 
     private nonisolated static var pins: String {

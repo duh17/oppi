@@ -1,17 +1,20 @@
 import UIKit
 
-/// Pinned (route `.utility(.pinned)`): the window server's pins in three
-/// groups, Sessions, Folders, and Files, each in its saved order.
+/// Pinned (route `.utility(.pinned)`): the window server's pins grouped by
+/// what they open (`PinKind`: Sessions, Games, Git, Web Pages, Panels,
+/// Folders, Files), each group in its saved order.
 ///
 /// A session row is the session lists' own row (`SessionListEntryConfiguration`),
 /// so it shows the session's live status; a tap opens its chat as a session
 /// link does. A session this device has not loaded, or one the server says
 /// was deleted, draws as a plain pin row. Folder and file rows are the File
 /// Browser's pins: breadcrumbs, Not found, locks, and a tap that opens them
-/// as a pane link does (beside the focused pane on a wide window).
+/// as a pane link does (beside the focused pane on a wide window). Every
+/// other pin opens as its link does, with the title and icon of its kind; a
+/// game while Godot Pane is off here is dimmed and says so.
 ///
 /// `PinsSection` owns every pin's tap, menu, swipe, drag, and Edit mode; the
-/// bar's Edit enters it with the three groups, so a pin moves only within its
+/// bar's Edit enters it with the groups, so a pin moves only within its
 /// group, and Done saves the order and removals once.
 @MainActor
 final class PinnedViewController: UIViewController {
@@ -19,32 +22,14 @@ final class PinnedViewController: UIViewController {
         didSet { setNeedsUpdateProperties() }
     }
 
-    enum Group: Int, Hashable, Sendable, CaseIterable {
-        case sessions, folders, files
-
-        var title: String {
-            switch self {
-            case .sessions: String(localized: "Sessions")
-            case .folders: String(localized: "Folders")
-            case .files: String(localized: "Files")
-            }
-        }
-
-        init(_ kind: Pin.Kind) {
-            switch kind {
-            case .session: self = .sessions
-            case .directory: self = .folders
-            case .file: self = .files
-            }
-        }
-    }
+    typealias Group = PinKind
 
     /// What one row draws; a row reconfigures only when this changes.
     private enum RowContent: Equatable {
         /// A session this device has, drawn as the session lists draw it.
         case session(SessionListRowContent, pin: PinsSection.Row)
-        /// A folder, a file, or a session that is gone or not loaded here.
-        case place(PinsSection.Row, isSession: Bool)
+        /// Any other pin, or a session that is gone or not loaded here.
+        case place(PinsSection.Row, kind: PinKind)
     }
 
     private let root: AppRootEnvironment
@@ -179,8 +164,8 @@ final class PinnedViewController: UIViewController {
         var nextRows: [String: RowContent] = [:]
         var nextGroups: [Group: [String]] = [:]
         for row in pinRows {
-            guard let pin = pins[row.id] else { continue }
-            nextGroups[Group(pin.kind), default: []].append(row.id)
+            guard let pin = pins[row.id], let group = pin.kind else { continue }
+            nextGroups[group, default: []].append(row.id)
             nextRows[row.id] = content(for: pin, row: row, connection: connection)
         }
 
@@ -204,7 +189,7 @@ final class PinnedViewController: UIViewController {
     /// session row; anything else as a pin row.
     private func content(for pin: Pin, row: PinsSection.Row, connection: ServerConnection?) -> RowContent {
         guard let connection, case .session(let sessionId) = pin.target, !row.isGone,
-              let session = Self.session(sessionId, in: connection) else { return .place(row, isSession: pin.kind == .session) }
+              let session = Self.session(sessionId, in: connection) else { return .place(row, kind: pin.kind ?? .files) }
         let workspaceName = session.workspaceId.flatMap { id in
             connection.workspaceStore.workspaces.first { $0.id == id }?.name
         }
@@ -232,13 +217,13 @@ final class PinnedViewController: UIViewController {
             .empty(
                 title: String(localized: "Pins Unavailable"),
                 systemImage: "pin.slash",
-                message: String(localized: "Update Oppi on this server to pin sessions, folders, and files.")
+                message: String(localized: "Update Oppi on this server to pin sessions, games, web pages, and anything else a pane shows.")
             )
         } else if available, isEmpty {
             .empty(
                 title: String(localized: "No Pins"),
                 systemImage: "pin",
-                message: String(localized: "Pin a session from its row or its chat\u{2019}s \u{2026} menu, or a folder or file from Files.")
+                message: String(localized: "Pin a session from its row or its chat\u{2019}s \u{2026} menu, a folder or file from Files, or anything a pane shows from its pane menu.")
             )
         } else {
             nil
@@ -250,16 +235,13 @@ final class PinnedViewController: UIViewController {
 
     // MARK: Opening
 
-    /// A session opens as a session link does, over this screen; a folder or
-    /// file as a pane link does: beside the focused pane on a wide window
-    /// (`inMainPane` false), else in the main stack.
+    /// A pin opens as its link does (`AppOpenRequest(link:)`): a session or
+    /// thread over this screen; anything else as a pane link, beside the
+    /// focused pane on a wide window (`inMainPane` false), else in the main
+    /// stack. A game the opener can't play (Godot Pane off) gets its toast.
     private func open(_ pin: Pin, serverId: String, inMainPane: Bool) {
-        if case .session(let sessionId) = pin.target, !inMainPane {
-            root.opener.open(.session(SessionOpen(serverId: serverId, sessionId: sessionId, origin: .inAppHyperlink)))
-            return
-        }
-        let entry = pin.paneEntry(serverId: serverId)
-        root.opener.open(.pane(PaneLink(server: serverId, route: entry.route), sourceServerID: serverId), inMainPane: inMainPane)
+        let link = PaneLink(server: serverId, route: pin.target)
+        root.opener.open(AppOpenRequest(link: link, origin: .inAppHyperlink, sourceServerID: serverId), inMainPane: inMainPane)
     }
 
     // MARK: Editing
@@ -347,23 +329,25 @@ final class PinnedViewController: UIViewController {
             // cell adds the pin's own accessories and actions.
             cell.accessories = section.accessories(for: row, palette: palette)
             cell.accessibilityCustomActions = section.accessibilityActions(row)
-        case .place(let row, let isSession):
-            configurePlace(cell, row: row, isSession: isSession, palette: palette)
+        case .place(let row, let kind):
+            configurePlace(cell, row: row, kind: kind, palette: palette)
             section.decorate(cell, row: row, palette: palette)
         }
     }
 
-    /// A folder, a file, or a session not shown as its session row: its icon,
-    /// name, and where it lives (or why it can't open), dimmed when it is gone.
-    private func configurePlace(_ cell: UICollectionViewListCell, row: PinsSection.Row, isSession: Bool, palette: ThemePalette) {
-        let symbol = isSession ? "bubble.left.and.text.bubble.right" : row.icon?.symbolName ?? "folder.fill"
-        let tint = row.isGone || !row.isDirectory ? palette.ui.comment : palette.ui.blue
+    /// A pin not shown as its session row: its kind's icon (a file's own),
+    /// name, and where it lives (or why it can't open), dimmed when it is
+    /// gone or Godot Pane is off.
+    private func configurePlace(_ cell: UICollectionViewListCell, row: PinsSection.Row, kind: PinKind, palette: ThemePalette) {
+        let symbol = row.icon?.symbolName ?? kind.symbol
+        let dimmed = row.isGone || row.isOff
+        let tint = dimmed || kind == .files ? palette.ui.comment : palette.ui.blue
         var content = UIListContentConfiguration.subtitleCell()
         content.image = UIImage(systemName: symbol)
         content.imageProperties.tintColor = tint
         content.imageProperties.reservedLayoutSize = CGSize(width: 28, height: 28)
         content.text = row.title
-        content.textProperties.color = row.isGone ? palette.ui.comment : palette.ui.fg
+        content.textProperties.color = dimmed ? palette.ui.comment : palette.ui.fg
         content.textProperties.numberOfLines = 1
         content.textProperties.lineBreakMode = .byTruncatingMiddle
         content.secondaryText = row.detail
@@ -393,7 +377,7 @@ final class PinnedViewController: UIViewController {
     )
 
     private func pinId(forSession sessionId: String) -> String? {
-        root.windowConnection?.pins.pin(for: .session(id: sessionId))?.id
+        root.windowConnection?.pins.pin(for: .session(sessionId))?.id
     }
 
     private func sidebarItems() -> [UIBarButtonItem] {

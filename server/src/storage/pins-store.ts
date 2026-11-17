@@ -2,10 +2,11 @@ import { randomBytes } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { GODOT_PROJECT_ID } from "../godot/godot-protocol.js";
 import { HttpStatusError } from "../http-status-error.js";
 import { isRecord } from "../json-shape.js";
-import { cleanLabel } from "../layout-validation.js";
-import type { Pin, PinTarget } from "../types.js";
+import { cleanLabel, isLoopbackHost } from "../layout-validation.js";
+import type { Pin, PinRoute } from "../types.js";
 import { writeFileAtomic } from "./atomic-file.js";
 
 export class PinsError extends HttpStatusError {}
@@ -13,11 +14,18 @@ export class PinsError extends HttpStatusError {}
 export const MAX_PINS = 50;
 export const MAX_PIN_LABEL_CHARACTERS = 40;
 const MAX_PIN_PATH_BYTES = 1024;
-const MAX_PIN_SESSION_ID_BYTES = 256;
+const MAX_PIN_NAME_BYTES = 256;
+const MAX_PIN_URL_BYTES = 2048;
 const PIN_ID = /^pin_[A-Za-z0-9_-]{12}$/;
+const COMMIT_SHA = /^[0-9a-f]{4,64}$/;
 
+/**
+ * `pins.json`. Version 2 stores pane routes; version 1 (folders, files, and sessions as
+ * `{ origin, … }` targets with a `kind`) is read as routes and written as version 2 on the next
+ * change.
+ */
 interface PinsRecord {
-  version: 1;
+  version: 2;
   revision: number;
   pins: Pin[];
 }
@@ -50,47 +58,166 @@ function plainRelativePath(path: string): string | null {
   return trimmed;
 }
 
+/** A home path as stored: `~` for the home folder itself, else `~/` and a plain relative path. */
+function homePath(path: string): string | null {
+  if (path === "~" || path === "~/") return "~";
+  const rest = path.startsWith("~/") ? plainRelativePath(path.slice(2)) : null;
+  return rest ? `~/${rest}` : null;
+}
+
+/** A session, workspace, worktree, or panel id: plain characters, at most 256 bytes. */
+function isName(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    Buffer.byteLength(value, "utf8") <= MAX_PIN_NAME_BYTES &&
+    // eslint-disable-next-line no-control-regex
+    !/[\u0000-\u001f\u007f]/.test(value)
+  );
+}
+
+/** A web page a pin may name: the rules a layout's `web` and a browser link follow. */
+function isPinnableURL(value: unknown): value is string {
+  if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > MAX_PIN_URL_BYTES) {
+    return false;
+  }
+  try {
+    const url = new URL(value);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      !url.username &&
+      !url.password &&
+      !isLoopbackHost(url.hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
- * The target a pin may store, in its one canonical form, or a 400. A host path is `~` or `~/…`
- * (never absolute, never `~user`); a workspace path is relative to the workspace root; a session
- * target names a session id of plain characters.
+ * The route a pin may store, in its one canonical form, or a 400. Every field of the kind must be
+ * present (`null` where the link leaves it out) and no other. Paths stay inside their root: a
+ * workspace or session path is plain and relative, a home path is `~` or `~/…` (never absolute).
  */
-export function validatePinTarget(value: unknown): PinTarget {
-  if (isRecord(value) && value.origin === "session") {
-    const id = value.sessionId;
-    if (
-      Object.keys(value).length !== 2 ||
-      typeof id !== "string" ||
-      !id ||
-      Buffer.byteLength(id, "utf8") > MAX_PIN_SESSION_ID_BYTES ||
-      // eslint-disable-next-line no-control-regex
-      /[\u0000-\u001f\u007f]/.test(id)
-    ) {
-      throw new PinsError(400, "A session pin names a session id");
+export function validatePinRoute(value: unknown): PinRoute {
+  const bad = (what: string): never => {
+    throw new PinsError(400, `A ${what}`);
+  };
+  if (!isRecord(value) || typeof value.kind !== "string") return bad("pin names a pane route");
+  const v = value;
+  const has = (...keys: string[]): boolean => {
+    const own = Object.keys(v);
+    return own.length === keys.length + 1 && keys.every((key) => key in v);
+  };
+  const nullable = (field: unknown): field is string | null => field === null || isName(field);
+  const line = (field: unknown): field is number | null =>
+    field === null || (Number.isSafeInteger(field) && (field as number) > 0);
+  const relative = (field: unknown): string | null =>
+    typeof field === "string" && !field.startsWith("~") ? plainRelativePath(field) : null;
+  switch (v.kind) {
+    case "sessions":
+      if (!has("workspace") || !nullable(v.workspace))
+        bad("sessions pin names a workspace or null");
+      return { kind: "sessions", workspace: v.workspace as string | null };
+    case "session":
+    case "thread":
+      if (!has("id") || !isName(v.id)) bad(`${v.kind} pin names a session id`);
+      return { kind: v.kind, id: v.id as string };
+    case "file": {
+      if (!line(v.line)) bad("file pin's line is a positive number or null");
+      const ln = v.line as number | null;
+      if (v.origin === "workspace") {
+        const path = relative(v.path);
+        if (
+          !has("origin", "workspace", "worktree", "path", "line") ||
+          !isName(v.workspace) ||
+          !nullable(v.worktree) ||
+          !path
+        ) {
+          bad("workspace file pin names a path inside the checkout");
+        }
+        return {
+          kind: "file",
+          origin: "workspace",
+          workspace: v.workspace as string,
+          worktree: v.worktree as string | null,
+          path: path as string,
+          line: ln,
+        };
+      }
+      if (v.origin === "host") {
+        const path = typeof v.path === "string" ? homePath(v.path) : null;
+        if (!has("origin", "path", "line") || !path || path === "~") {
+          bad("Home file pin names a path inside ~/");
+        }
+        return { kind: "file", origin: "host", path: path as string, line: ln };
+      }
+      if (v.origin === "session") {
+        const path = relative(v.path);
+        if (!has("origin", "session", "path", "line") || !isName(v.session) || !path) {
+          bad("session file pin names a path inside the session's copy");
+        }
+        return {
+          kind: "file",
+          origin: "session",
+          session: v.session as string,
+          path: path as string,
+          line: ln,
+        };
+      }
+      return bad("file pin's origin is workspace, host, or session");
     }
-    return { origin: "session", sessionId: id };
+    case "files": {
+      if ("origin" in v) {
+        const path = v.path === null ? "~" : typeof v.path === "string" ? homePath(v.path) : null;
+        if (!has("origin", "path") || v.origin !== "host" || !path) {
+          bad("Home folder pin names ~ or a path inside ~/");
+        }
+        return { kind: "files", origin: "host", path: path === "~" ? null : (path as string) };
+      }
+      const path = v.path === null ? "" : relative(v.path);
+      if (!has("workspace", "path") || !isName(v.workspace) || path === null) {
+        bad("workspace folder pin names a path inside the workspace");
+      }
+      return { kind: "files", workspace: v.workspace as string, path: path || null };
+    }
+    case "git":
+      if (!has("workspace", "worktree") || !isName(v.workspace) || !nullable(v.worktree)) {
+        bad("git pin names a workspace and a worktree or null");
+      }
+      return {
+        kind: "git",
+        workspace: v.workspace as string,
+        worktree: v.worktree as string | null,
+      };
+    case "commit":
+      if (!has("workspace", "sha") || !isName(v.workspace) || typeof v.sha !== "string") {
+        bad("commit pin names a workspace and a commit");
+      }
+      if (!COMMIT_SHA.test((v.sha as string).toLowerCase())) bad("commit pin names a hex commit");
+      return {
+        kind: "commit",
+        workspace: v.workspace as string,
+        sha: (v.sha as string).toLowerCase(),
+      };
+    case "panel":
+      if (!has("session", "id") || !isName(v.session) || !isName(v.id)) {
+        bad("panel pin names a session and a panel id");
+      }
+      return { kind: "panel", session: v.session as string, id: v.id as string };
+    case "browser":
+      if (!has("url") || !isPinnableURL(v.url)) {
+        bad("web page pin names an http or https URL that is not loopback, at most 2 KiB");
+      }
+      return { kind: "browser", url: v.url as string };
+    case "godot":
+      if (!has("project") || typeof v.project !== "string" || !GODOT_PROJECT_ID.test(v.project)) {
+        bad("game pin names a Godot project id");
+      }
+      return { kind: "godot", project: v.project as string };
+    default:
+      return bad("pin names a pane route");
   }
-  if (!isRecord(value) || typeof value.path !== "string") {
-    throw new PinsError(400, "Expected target with origin and path");
-  }
-  if (value.origin === "host" && Object.keys(value).length === 2) {
-    if (value.path === "~" || value.path === "~/") return { origin: "host", path: "~" };
-    const rest = value.path.startsWith("~/") ? plainRelativePath(value.path.slice(2)) : null;
-    if (!rest) throw new PinsError(400, "A Home pin names a path inside ~/");
-    return { origin: "host", path: `~/${rest}` };
-  }
-  if (
-    value.origin === "workspace" &&
-    Object.keys(value).length === 3 &&
-    typeof value.workspaceId === "string" &&
-    value.workspaceId
-  ) {
-    const path = value.path.startsWith("~") ? null : plainRelativePath(value.path);
-    if (path === null)
-      throw new PinsError(400, "A workspace pin names a path inside the workspace");
-    return { origin: "workspace", workspaceId: value.workspaceId, path };
-  }
-  throw new PinsError(400, "Expected target with origin and path");
 }
 
 /** A label as it is stored: cleaned, 1–40 characters, or undefined for none. */
@@ -127,31 +254,71 @@ export function validatePinOrder(value: unknown): PinOrderEntry[] {
   return entries;
 }
 
-function sameTarget(a: PinTarget, b: PinTarget): boolean {
-  switch (a.origin) {
-    case "host":
-      return b.origin === "host" && a.path === b.path;
-    case "workspace":
-      return b.origin === "workspace" && a.workspaceId === b.workspaceId && a.path === b.path;
-    case "session":
-      return b.origin === "session" && a.sessionId === b.sessionId;
+/** One string per route, whatever order its fields were written in: two pins of one route match. */
+export function pinRouteKey(route: PinRoute): string {
+  const record = route as Record<string, unknown>;
+  return JSON.stringify(
+    Object.keys(record)
+      .sort()
+      .map((key) => [key, record[key]]),
+  );
+}
+
+/** A stored pin with a route in canonical form, or undefined. */
+function storedPin(value: Record<string, unknown>, target: unknown): Pin | undefined {
+  if (typeof value.id !== "string" || !PIN_ID.test(value.id)) return undefined;
+  if (typeof value.createdAt !== "number") return undefined;
+  try {
+    const route = validatePinRoute(target);
+    if (pinRouteKey(route) !== pinRouteKey(target as PinRoute)) return undefined;
+    const label = validatePinLabel(value.label);
+    if (label !== value.label) return undefined;
+    return {
+      id: value.id,
+      target: route,
+      ...(label === undefined ? {} : { label }),
+      createdAt: value.createdAt,
+    };
+  } catch {
+    return undefined;
   }
 }
 
-function validStoredPin(value: unknown): value is Pin {
-  if (!isRecord(value) || typeof value.id !== "string" || !PIN_ID.test(value.id)) return false;
-  if (value.kind !== "directory" && value.kind !== "file" && value.kind !== "session") return false;
-  if (typeof value.createdAt !== "number") return false;
-  try {
-    const target = validatePinTarget(value.target);
-    // A session target is a session pin, and only it is.
-    if ((target.origin === "session") !== (value.kind === "session")) return false;
-    return (
-      sameTarget(target, value.target as PinTarget) && value.label === validatePinLabel(value.label)
-    );
-  } catch {
-    return false;
+/**
+ * A version 1 pin as the route it opened: a Home or workspace folder is a `files` route, a file a
+ * `file` route in the main checkout, a session a `session` route.
+ */
+function migratedV1Pin(value: unknown): Pin | undefined {
+  if (!isRecord(value) || !isRecord(value.target)) return undefined;
+  const { target, kind } = value;
+  let route: unknown;
+  if (target.origin === "session" && kind === "session" && Object.keys(target).length === 2) {
+    route = { kind: "session", id: target.sessionId };
+  } else if (target.origin === "host" && Object.keys(target).length === 2) {
+    if (kind === "directory") {
+      route = { kind: "files", origin: "host", path: target.path === "~" ? null : target.path };
+    } else if (kind === "file") {
+      route = { kind: "file", origin: "host", path: target.path, line: null };
+    }
+  } else if (target.origin === "workspace" && Object.keys(target).length === 3) {
+    if (kind === "directory") {
+      route = {
+        kind: "files",
+        workspace: target.workspaceId,
+        path: target.path === "" ? null : target.path,
+      };
+    } else if (kind === "file") {
+      route = {
+        kind: "file",
+        origin: "workspace",
+        workspace: target.workspaceId,
+        worktree: null,
+        path: target.path,
+        line: null,
+      };
+    }
   }
+  return route === undefined ? undefined : storedPin(value, route);
 }
 
 /**
@@ -173,10 +340,11 @@ export class PinsStore {
     return { revision: record.revision, pins: record.pins };
   }
 
-  /** Saves a new pin last, or answers the saved pin with the same target. */
-  add(target: PinTarget, kind: Pin["kind"], label: string | undefined): PinsChange & { pin: Pin } {
+  /** Saves a new pin last, or answers the saved pin with the same route. */
+  add(target: PinRoute, label: string | undefined): PinsChange & { pin: Pin } {
     const record = this.read();
-    const existing = record.pins.find((pin) => sameTarget(pin.target, target));
+    const key = pinRouteKey(target);
+    const existing = record.pins.find((pin) => pinRouteKey(pin.target) === key);
     if (existing)
       return { revision: record.revision, pins: record.pins, changed: false, pin: existing };
     if (record.pins.length >= MAX_PINS) {
@@ -185,7 +353,6 @@ export class PinsStore {
     const pin: Pin = {
       id: `pin_${randomBytes(9).toString("base64url")}`,
       target,
-      kind,
       ...(label === undefined ? {} : { label }),
       createdAt: Date.now(),
     };
@@ -221,24 +388,32 @@ export class PinsStore {
   }
 
   private read(): PinsRecord {
-    if (!existsSync(this.path)) return { version: 1, revision: 0, pins: [] };
+    if (!existsSync(this.path)) return { version: 2, revision: 0, pins: [] };
     try {
       const stat = lstatSync(this.path);
       if (!stat.isFile() || stat.isSymbolicLink()) throw Error();
       const value: unknown = JSON.parse(readFileSync(this.path, "utf8"));
       if (
         !isRecord(value) ||
-        value.version !== 1 ||
+        (value.version !== 1 && value.version !== 2) ||
         typeof value.revision !== "number" ||
         !Number.isSafeInteger(value.revision) ||
         value.revision < 0 ||
         !Array.isArray(value.pins) ||
-        value.pins.length > MAX_PINS ||
-        !value.pins.every(validStoredPin)
+        value.pins.length > MAX_PINS
       ) {
         throw Error();
       }
-      return { version: 1, revision: value.revision, pins: value.pins };
+      const pins = value.pins.map((pin: unknown) =>
+        value.version === 1
+          ? migratedV1Pin(pin)
+          : isRecord(pin)
+            ? storedPin(pin, pin.target)
+            : undefined,
+      );
+      if (!pins.every((pin): pin is Pin => pin !== undefined)) throw Error();
+      if (new Set(pins.map((pin) => pinRouteKey(pin.target))).size !== pins.length) throw Error();
+      return { version: 2, revision: value.revision, pins };
     } catch {
       // Never overwrite a damaged file: rewriting it from nothing would drop every pin.
       throw new PinsError(503, "Pins unavailable; repair required");

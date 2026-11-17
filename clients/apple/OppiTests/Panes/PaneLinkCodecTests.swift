@@ -13,20 +13,6 @@ struct PaneLinkCodecTests {
     }
 
     struct Vector: Decodable {
-        struct Route: Decodable {
-            let kind: String
-            let id: String?
-            let workspace: String?
-            let worktree: String?
-            let origin: String?
-            let session: String?
-            let path: String?
-            let line: Int?
-            let sha: String?
-            let url: String?
-            let project: String?
-        }
-
         struct Failure: Decodable {
             let code: String
             let detail: String?
@@ -35,7 +21,7 @@ struct PaneLinkCodecTests {
         let name: String
         let input: String
         let server: String?
-        let route: Route?
+        let route: PaneRoute?
         let canonical: String?
         let error: Failure?
         let notPaneLink: Bool?
@@ -56,7 +42,7 @@ struct PaneLinkCodecTests {
             } else if let failure = vector.error {
                 #expect(decoded == .failure(try Self.error(failure)), "\(vector.name)")
             } else {
-                let expected = PaneLink(server: vector.server, route: try Self.route(try #require(vector.route, "\(vector.name)")))
+                let expected = PaneLink(server: vector.server, route: try #require(vector.route, "\(vector.name)"))
                 #expect(decoded == .success(expected), "\(vector.name)")
                 let canonical = try #require(vector.canonical, "\(vector.name): no canonical form")
                 #expect(PaneLinkCodec.encode(expected)?.absoluteString == canonical, "\(vector.name)")
@@ -72,33 +58,6 @@ struct PaneLinkCodecTests {
     }
 
     // MARK: Vector shapes
-
-    static func route(_ value: Vector.Route) throws -> PaneRoute {
-        func field(_ name: String, _ field: String?) throws -> String {
-            try #require(field, "route \(value.kind) needs \(name)")
-        }
-        switch value.kind {
-        case "sessions": return .sessions(workspace: value.workspace)
-        case "session": return .session(try field("id", value.id))
-        case "thread": return .thread(try field("id", value.id))
-        case "file":
-            let origin: PaneFileOrigin = switch value.origin {
-            case "workspace": .workspace(id: try field("workspace", value.workspace), worktree: value.worktree)
-            case "host": .host
-            case "session": .session(try field("session", value.session))
-            default: throw VectorError.unknown("file origin \(value.origin ?? "nil")")
-            }
-            return .file(origin, path: try field("path", value.path), line: value.line)
-        case "files" where value.origin == "host": return .hostFiles(path: value.path)
-        case "files": return .files(workspace: try field("workspace", value.workspace), path: value.path)
-        case "git": return .git(workspace: try field("workspace", value.workspace), worktree: value.worktree)
-        case "commit": return .commit(workspace: try field("workspace", value.workspace), sha: try field("sha", value.sha))
-        case "panel": return .panel(session: try field("session", value.session), id: try field("id", value.id))
-        case "browser": return .browser(try #require(URL(string: try field("url", value.url))))
-        case "godot": return .godot(project: try field("project", value.project))
-        default: throw VectorError.unknown("route kind \(value.kind)")
-        }
-    }
 
     static func error(_ value: Vector.Failure) throws -> PaneLinkError {
         let detail = value.detail ?? ""

@@ -75,6 +75,8 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
     private lazy var snapshotItem = barItem("camera.viewfinder", String(localized: "Snapshot to Chat"), "godot.snapshot") {
         $0.handOffToChat(error: nil)
     }
+    /// Pin or Unpin the game, on a server that keeps pins.
+    private let pinItem = PinBarItem(identifiers: ("godot.pin", "godot.unpin"))
     private lazy var fullScreenItem = barItem(
         "arrow.up.left.and.arrow.down.right", String(localized: "Play Full Screen"), "godot.fullScreen"
     ) { $0.playFullScreen() }
@@ -102,9 +104,9 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
         super.init(nibName: nil, bundle: nil)
         title = project
         navigationItem.largeTitleDisplayMode = .never
-        // Rightmost first: Snapshot, Reload, Mute, Play from the leading
+        // Rightmost first: Pin, Snapshot, Reload, Mute, Play from the leading
         // side, and Play Full Screen at the trailing edge.
-        navigationItem.rightBarButtonItems = [fullScreenItem, playItem, muteItem, reloadItem, snapshotItem]
+        navigationItem.rightBarButtonItems = [fullScreenItem, playItem, muteItem, reloadItem, snapshotItem, pinItem.item]
         host.paneOpened(gameSlot)
     }
 
@@ -222,6 +224,7 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
         view.backgroundColor = root?.themeStore.backgroundColor ?? .systemBackground
         for item in [playItem, reloadItem, muteItem] { item.isEnabled = false }
         snapshotItem.isHidden = true
+        pinItem.item.isHidden = true
         let palette = root?.themeStore.activeThemeID.palette ?? ThemeRuntimeState.currentPalette()
         let message = !PlatformCapabilities.godotPane
             ? String(localized: "This build of Oppi has no game engine.")
@@ -738,6 +741,11 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
         muteItem.title = muted ? String(localized: "Unmute") : String(localized: "Mute")
         muteItem.accessibilityValue = muted ? "muted" : "sound"
         muteItem.isEnabled = true
+        // A game the server no longer has can't be pinned.
+        pinItem.update(
+            route: phase == .missing ? nil : .godot(project: gameSlot.project),
+            serverId: gameSlot.serverId, root: root, view: view
+        )
     }
 
     private func updateState(_ phase: GodotPanePhase) {

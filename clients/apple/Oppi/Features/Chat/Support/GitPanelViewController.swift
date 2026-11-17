@@ -1,7 +1,7 @@
 import UIKit
 
 /// The Git panel: the workspace context bar (`WorkspaceContextBarView`),
-/// under a Git title with Close.
+/// under a Git title with Close, and Pin for the checkout's Git route.
 /// A chat's opens as a sheet in compact width and in the attached leaf in
 /// regular width, like Outline and Context; a workspace's opens as a sheet
 /// from its top bar.
@@ -18,6 +18,8 @@ final class GitPanelViewController: UIViewController {
     private let onClose: () -> Void
     private let statusLabel = UILabel()
     private var themeID: ThemeID?
+    /// Pin or Unpin this checkout's Git (`git.panel.pin`, `git.panel.unpin`).
+    private let pinItem = PinBarItem(identifiers: ("git.panel.pin", "git.panel.unpin"))
 
     init(
         context: @escaping () -> WorkspaceContextBarView.Context?,
@@ -53,6 +55,7 @@ final class GitPanelViewController: UIViewController {
         })
         close.accessibilityIdentifier = "git.panel.close"
         navigationItem.leftBarButtonItem = close
+        navigationItem.rightBarButtonItem = pinItem.item
 
         bar.presenter = self
         bar.translatesAutoresizingMaskIntoConstraints = false
@@ -97,6 +100,10 @@ final class GitPanelViewController: UIViewController {
         }
         guard let context = readContext() else { return }
         bar.context = context
+        pinItem.update(
+            route: context.workspaceId.map { .git(workspace: $0, worktree: context.worktreeId) },
+            serverId: context.serverId, root: AppRootEnvironment.near(self), view: view
+        )
         statusLabel.text = Self.statusText(context)
         statusLabel.isHidden = statusLabel.text == nil
     }

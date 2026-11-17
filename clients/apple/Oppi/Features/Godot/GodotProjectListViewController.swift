@@ -2,7 +2,9 @@ import UIKit
 
 /// The launcher's Godot choice: the Godot projects the server discovered in
 /// its workspaces (design §6, discovery first). A project with no exported
-/// pack says "No build yet". Picking one shows it in this pane.
+/// pack says "No build yet". Picking one shows it in this pane. On a server
+/// that keeps pins, a row's swipe, menu, and accessibility actions offer Pin
+/// or Unpin.
 final class GodotProjectListViewController: UIViewController, UICollectionViewDelegate {
     private let serverId: String
     private let root: AppRootEnvironment?
@@ -10,7 +12,7 @@ final class GodotProjectListViewController: UIViewController, UICollectionViewDe
     private var projects: [GodotProject] = []
     private var loadState: LoadState? = .connecting
     private var loadTask: Task<Void, Never>?
-    private lazy var collectionView = UICollectionView(frame: .zero, collectionViewLayout: Self.layout())
+    private lazy var collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout())
     private let stateView = UIContentUnavailableView(loadState: .connecting)
     private var dataSource: UICollectionViewDiffableDataSource<Int, String>?
 
@@ -52,7 +54,9 @@ final class GodotProjectListViewController: UIViewController, UICollectionViewDe
         ])
         let registration = UICollectionView.CellRegistration<GodotProjectCell, String> { [weak self] cell, _, id in
             guard let self, let project = projects.first(where: { $0.id == id }) else { return }
-            cell.configure(project) { [weak self] in self?.open(id) }
+            cell.configure(
+                project, pinToggle: { [weak self] in self?.pinToggle(id) }, activate: { [weak self] in self?.open(id) }
+            )
         }
         dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, id in
             collectionView.dequeueConfiguredReusableCell(using: registration, for: indexPath, item: id)
@@ -132,9 +136,37 @@ final class GodotProjectListViewController: UIViewController, UICollectionViewDe
         open(id)
     }
 
-    private static func layout() -> UICollectionViewLayout {
+    /// Touch and hold: Pin or Unpin, read when the menu opens.
+    func collectionView(
+        _ collectionView: UICollectionView,
+        contextMenuConfigurationForItemsAt indexPaths: [IndexPath],
+        point: CGPoint
+    ) -> UIContextMenuConfiguration? {
+        guard indexPaths.count == 1, let id = dataSource?.itemIdentifier(for: indexPaths[0]),
+              pinToggle(id) != nil else { return nil }
+        return UIContextMenuConfiguration(identifier: id as NSString, previewProvider: nil) { [weak self] _ in
+            guard let toggle = self?.pinToggle(id) else { return nil }
+            return UIMenu(children: [toggle.action])
+        }
+    }
+
+    /// The game's Pin or Unpin; nil on a server that keeps no pins.
+    private func pinToggle(_ id: String) -> PinMenu.Toggle? {
+        guard let root, let view = viewIfLoaded,
+              let (pins, api) = PaneEntries.pins(serverId, coordinator: root.coordinator) else { return nil }
+        return PinMenu.toggle(
+            route: .godot(project: id), identifiers: ("godot.projects.pin.\(id)", "godot.projects.unpin.\(id)"), pins: pins, api: api, view: view
+        )
+    }
+
+    private func layout() -> UICollectionViewLayout {
         var configuration = UICollectionLayoutListConfiguration(appearance: .plain)
         configuration.backgroundColor = .clear
+        configuration.trailingSwipeActionsConfigurationProvider = { [weak self] indexPath in
+            guard let self, let id = dataSource?.itemIdentifier(for: indexPath), let toggle = pinToggle(id) else { return nil }
+            let palette = root?.themeStore.activeThemeID.palette ?? ThemeRuntimeState.currentPalette()
+            return UISwipeActionsConfiguration(actions: [toggle.swipeAction(color: palette.ui.yellow)])
+        }
         return UICollectionViewCompositionalLayout.list(using: configuration)
     }
 
@@ -152,12 +184,14 @@ final class GodotProjectListViewController: UIViewController, UICollectionViewDe
 
 /// One project: its name, and its build with how old it is, "No build yet",
 /// or why its build won't play here. The cell is the one element; activating
-/// it opens the project, as a tap does.
+/// it opens the project, as a tap does, and its Pin or Unpin is an action.
 private final class GodotProjectCell: UICollectionViewListCell {
     private var activate: (() -> Void)?
+    private var pinToggle: (() -> PinMenu.Toggle?)?
 
-    func configure(_ project: GodotProject, activate: @escaping () -> Void) {
+    func configure(_ project: GodotProject, pinToggle: @escaping () -> PinMenu.Toggle?, activate: @escaping () -> Void) {
         self.activate = activate
+        self.pinToggle = pinToggle
         var content = defaultContentConfiguration()
         content.text = project.name
         content.image = UIImage(systemName: "gamecontroller")
@@ -197,9 +231,16 @@ private final class GodotProjectCell: UICollectionViewListCell {
         return activate != nil
     }
 
+    /// Pin or Unpin as the pins are now, the same toggle the swipe and menu run.
+    override var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
+        get { (pinToggle?()).flatMap { $0 }.map { [$0.accessibilityAction] } }
+        set {}
+    }
+
     override func prepareForReuse() {
         super.prepareForReuse()
         accessibilityIdentifier = nil
         activate = nil
+        pinToggle = nil
     }
 }

@@ -565,7 +565,7 @@ class Checker {
 }
 
 /** Loopback as a URL parser leaves it: `localhost`, `*.localhost`, 127.0.0.0/8, `[::1]`. */
-function isLoopbackHost(hostname: string): boolean {
+export function isLoopbackHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/\.$/, "");
   if (host === "localhost" || host.endsWith(".localhost")) return true;
   if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return true;

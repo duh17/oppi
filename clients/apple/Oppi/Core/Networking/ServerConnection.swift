@@ -192,11 +192,9 @@ final class ServerConnection {
     /// The server answers the schedule calendar (`capabilities.scheduleCalendar`); without it
     /// Schedules shows only its list.
     var scheduleCalendarAvailable: Bool { serverCapabilities?.scheduleCalendar?.version ?? 0 >= 1 }
-    /// The server keeps pins (`capabilities.pins`); without it no Pin item or Pinned screen shows.
-    var pinsAvailable: Bool { serverCapabilities?.pins?.version ?? 0 >= 1 }
-    /// The server's pins may name sessions (`capabilities.pins` v2); without it no session row
-    /// or chat offers Pin.
-    var sessionPinsAvailable: Bool { serverCapabilities?.pins?.version ?? 0 >= 2 }
+    /// The server keeps pins as pane routes (`capabilities.pins` v3); without it no Pin item or
+    /// Pinned screen shows. An older server's pins have another shape, which this app does not read.
+    var pinsAvailable: Bool { serverCapabilities?.pins?.version ?? 0 >= 3 }
     /// Whether this server offers `feature` (its switch in `/server/info`). Every feature reads on
     /// until capabilities load, so a pane restored at launch waits for them rather than closing.
     func offers(_ feature: ServerFeature) -> Bool {
@@ -2215,7 +2213,7 @@ final class ServerConnection {
             }
         )
         serverCapabilities = capabilities
-        serverCapabilities?.pins = pins ? ServerInfo.CapabilityVersion(version: 2) : nil
+        serverCapabilities?.pins = pins ? ServerInfo.CapabilityVersion(version: 3) : nil
         serverCapabilities?.features = features
         serverCapabilities?.pluginSidebar = pluginSidebar
         dictationStreamUnsupportedByEndpoint = false

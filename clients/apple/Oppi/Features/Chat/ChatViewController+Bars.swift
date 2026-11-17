@@ -418,9 +418,12 @@ final class ChatBarItems {
             MainActor.assumeIsolated {
                 guard let chat = self?.chat else { return completion([]) }
                 let connection = chat.connection
-                guard connection.sessionPinsAvailable, let api = connection.apiClient else { return completion([]) }
-                let toggle = PinMenu.sessionToggle(
-                    sessionId: chat.sessionId, namesSession: true, pins: connection.pins, api: api, view: chat.view
+                guard connection.pinsAvailable, let api = connection.apiClient else { return completion([]) }
+                let toggle = PinMenu.toggle(
+                    route: .session(chat.sessionId),
+                    titles: (String(localized: "Pin Session"), String(localized: "Unpin Session")),
+                    identifiers: ("chat.toolbar.menu.pin", "chat.toolbar.menu.unpin"),
+                    pins: connection.pins, api: api, view: chat.view
                 )
                 completion([UIMenu(options: .displayInline, children: [toggle.action])])
             }

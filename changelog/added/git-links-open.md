@@ -1,0 +1,1 @@
+- **Client:** `oppi://git?workspace=…` and `oppi://git/commit/<sha>?workspace=…` links open the workspace's Git or that commit, beside the chat on iPad and as their own screen on iPhone. `oppi://browser` links open in a browser pane beside the chat on iPad. See [Deep links](docs/deeplinks.md).

@@ -7,17 +7,12 @@ import { resolveContainedPath } from "../directory-listing.js";
 import { isRevision } from "../settings/revision.js";
 import { validateSetting } from "../settings/registry.js";
 import { workspaceMountRoot } from "../session-work-root.js";
-import {
-  PinsError,
-  PinsStore,
-  validatePinLabel,
-  validatePinTarget,
-} from "../storage/pins-store.js";
+import { PinsError, PinsStore, validatePinLabel, validatePinRoute } from "../storage/pins-store.js";
 import type {
   Pin,
   PinAddResponse,
+  PinRoute,
   PinStatus,
-  PinTarget,
   PinsResponse,
   PinWithStatus,
 } from "../types.js";
@@ -30,11 +25,17 @@ export interface PinRouteOptions {
   statusTimeoutMs?: number;
 }
 
-/** Where a target lives on disk, or why it has no place. */
+/** Where a folder or file lives on disk, or why it has no place. */
 type Located =
   | { kind: "path"; path: string; confineTo?: string }
   | { kind: "workspaceMissing" }
   | { kind: "missing" };
+
+/** What a list read found at a target, and a game's name. */
+interface Checked {
+  status: PinStatus;
+  name?: string;
+}
 
 function errorCode(error: unknown): string | undefined {
   return isRecord(error) && typeof error.code === "string" ? error.code : undefined;
@@ -45,8 +46,8 @@ function errorCode(error: unknown): string | undefined {
  * Opening alone is not enough: Bun's `opendir` defers the open to the first read, so a
  * locked folder would pass there and fail on Node.
  */
-async function canRead(path: string, kind: Pin["kind"]): Promise<void> {
-  if (kind === "directory") {
+async function canRead(path: string, folder: boolean): Promise<void> {
+  if (folder) {
     const dir = await opendir(path);
     try {
       await dir.read();
@@ -60,44 +61,37 @@ async function canRead(path: string, kind: Pin["kind"]): Promise<void> {
 
 /**
  * What is at `path` now, read the way the File Browser reads it: symlinks are followed (only a
- * sandbox root confines them), a folder must list and a file must read.
+ * sandbox root confines them), a folder must list and a file must read. A file where the pin
+ * names a folder, or the other way round, is `missing`.
  */
-async function probe(
-  located: Located,
-  kind: Pin["kind"] | undefined,
-): Promise<{
-  status: PinStatus;
-  kind?: Pin["kind"];
-}> {
-  if (located.kind !== "path") return { status: located.kind };
+async function probe(located: Located, folder: boolean): Promise<PinStatus> {
+  if (located.kind !== "path") return located.kind;
   try {
     // A sandbox root confines symlinks as its file routes do.
     if (
       located.confineTo &&
       !(await resolveContainedPath(located.confineTo, located.path, { confineSymlinks: true }))
     ) {
-      return { status: "missing" };
+      return "missing";
     }
     const info = await stat(located.path);
-    const found: Pin["kind"] | undefined = info.isDirectory()
-      ? "directory"
-      : info.isFile()
-        ? "file"
-        : undefined;
-    if (!found || (kind && found !== kind)) return { status: "missing" };
-    await canRead(located.path, found);
-    return { status: "ok", kind: found };
+    if (folder ? !info.isDirectory() : !info.isFile()) return "missing";
+    await canRead(located.path, folder);
+    return "ok";
   } catch (error) {
     const code = errorCode(error);
-    return { status: code === "EACCES" || code === "EPERM" ? "unreadable" : "missing" };
+    return code === "EACCES" || code === "EPERM" ? "unreadable" : "missing";
   }
 }
 
 /**
- * `GET /pins`, `POST /pins`, `PUT /pins`. A pin grants nothing: adding one checks the target the
- * way the File Browser would open it (inside the home folder or the workspace, with today's
- * symlink rules), and every open still goes through the file routes. A session pin needs only that
- * the session exists; its chat opens through the session routes. Changes send `pins_changed`.
+ * `GET /pins`, `POST /pins`, `PUT /pins`. A pin grants nothing: it is a pane route the app opens
+ * as it opens that route's link, through the same routes and locks. Adding a pin checks what the
+ * server can: a session (or a thread's or panel's session) exists; a folder or file in the home
+ * folder or a workspace's main checkout opens the way the File Browser would open it; a workspace
+ * exists; the Godot service knows a game (whatever the Godot Pane switch says). A web page, a
+ * worktree's file, a session copy's file, and a commit are kept as they are. Changes send
+ * `pins_changed`.
  */
 export function createPinRoutes(
   ctx: RouteContext,
@@ -106,13 +100,17 @@ export function createPinRoutes(
 ): RouteDispatcher {
   const timeoutMs = options.statusTimeoutMs ?? 500;
 
-  /** A place's target (a folder or file) on disk, or why it has no place. */
-  function locate(target: Exclude<PinTarget, { origin: "session" }>): Located {
-    if (target.origin === "host") {
+  const workspaceStatus = (id: string | null): PinStatus =>
+    id === null || ctx.storage.getWorkspace(id) ? "ok" : "workspaceMissing";
+  const sessionStatus = (id: string): PinStatus => (ctx.storage.getSession(id) ? "ok" : "missing");
+
+  /** A home path or a path in a workspace's main checkout on disk, or why it has no place. */
+  function locate(at: { home: string } | { workspace: string; path: string }): Located {
+    if ("home" in at) {
       const home = options.homeDir ?? homedir();
-      return { kind: "path", path: target.path === "~" ? home : join(home, target.path.slice(2)) };
+      return { kind: "path", path: at.home === "~" ? home : join(home, at.home.slice(2)) };
     }
-    const workspace = ctx.storage.getWorkspace(target.workspaceId);
+    const workspace = ctx.storage.getWorkspace(at.workspace);
     if (!workspace) return { kind: "workspaceMissing" };
     let root: string;
     try {
@@ -120,21 +118,47 @@ export function createPinRoutes(
     } catch {
       return { kind: "missing" };
     }
-    const path = target.path ? join(root, target.path) : root;
+    const path = at.path ? join(root, at.path) : root;
     return { kind: "path", path, ...(workspace.runtime === "sandbox" ? { confineTo: root } : {}) };
   }
 
-  /** What is at a pin's target now: a session is there or deleted; a place is probed on disk. */
-  async function check(
-    target: PinTarget,
-    kind: Pin["kind"] | undefined,
-  ): Promise<{ status: PinStatus; kind?: Pin["kind"] }> {
-    if (target.origin === "session") {
-      return ctx.storage.getSession(target.sessionId)
-        ? { status: "ok", kind: "session" }
-        : { status: "missing" };
+  /** What is at a pin's route now, where the server can tell; `ok` where it does not check. */
+  async function check(route: PinRoute): Promise<Checked> {
+    switch (route.kind) {
+      case "sessions":
+        return { status: workspaceStatus(route.workspace) };
+      case "session":
+      case "thread":
+        return { status: sessionStatus(route.id) };
+      case "panel":
+        return { status: sessionStatus(route.session) };
+      case "file":
+        if (route.origin === "host")
+          return { status: await probe(locate({ home: route.path }), false) };
+        if (route.origin === "session") return { status: sessionStatus(route.session) };
+        // A worktree comes and goes with its work; only the main checkout is probed.
+        if (route.worktree !== null) return { status: workspaceStatus(route.workspace) };
+        return {
+          status: await probe(locate({ workspace: route.workspace, path: route.path }), false),
+        };
+      case "files": {
+        const at =
+          "origin" in route
+            ? { home: route.path ?? "~" }
+            : { workspace: route.workspace, path: route.path ?? "" };
+        return { status: await probe(locate(at), true) };
+      }
+      case "git":
+      case "commit":
+        return { status: workspaceStatus(route.workspace) };
+      case "browser":
+        return { status: "ok" };
+      case "godot": {
+        // Right after a restart the stored game stands in until discovery has walked once.
+        const game = await ctx.godot?.detail(route.project);
+        return game ? { status: "ok", name: game.name } : { status: "missing" };
+      }
     }
-    return probe(locate(target), kind === "session" ? undefined : kind);
   }
 
   /** Each pin with its status, checked in parallel; a slow check reads `unknown`. */
@@ -142,35 +166,43 @@ export function createPinRoutes(
     const pins = await Promise.all(
       list.pins.map(async (pin): Promise<PinWithStatus> => {
         let timer: ReturnType<typeof setTimeout> | undefined;
-        const timeout = new Promise<PinStatus>((resolve) => {
-          timer = setTimeout(() => resolve("unknown"), timeoutMs);
+        const timeout = new Promise<Checked>((resolve) => {
+          timer = setTimeout(() => resolve({ status: "unknown" }), timeoutMs);
         });
-        const found = check(pin.target, pin.kind).then((result) => result.status);
-        const status = await Promise.race([found, timeout]);
+        const { status, name } = await Promise.race([check(pin.target), timeout]);
         clearTimeout(timer);
-        return { ...pin, status };
+        return name === undefined ? { ...pin, status } : { ...pin, status, name };
       }),
     );
     return { revision: list.revision, pins };
+  }
+
+  /** Why a route that is not there can't be pinned. */
+  function notFound(route: PinRoute, status: PinStatus): string {
+    if (status === "workspaceMissing") return "Workspace not found";
+    switch (route.kind) {
+      case "session":
+      case "thread":
+      case "panel":
+        return "Session not found";
+      case "godot":
+        return "Game not found";
+      case "file":
+        return route.origin === "session" ? "Session not found" : "Nothing to pin at that path";
+      default:
+        return "Nothing to pin at that path";
+    }
   }
 
   async function add(store: PinsStore, body: unknown): Promise<PinAddResponse> {
     if (!isRecord(body) || Object.keys(body).some((key) => key !== "target" && key !== "label")) {
       throw new PinsError(400, "Expected target and an optional label");
     }
-    const target = validatePinTarget(body.target);
+    const target = validatePinRoute(body.target);
     const label = validatePinLabel(body.label);
-    if (target.origin !== "session" && locate(target).kind === "workspaceMissing") {
-      throw new PinsError(404, "Workspace not found");
-    }
-    const found = await check(target, undefined);
-    if (!found.kind) {
-      throw new PinsError(
-        404,
-        target.origin === "session" ? "Session not found" : "Nothing to pin at that path",
-      );
-    }
-    const result = store.add(target, found.kind, label);
+    const { status } = await check(target);
+    if (status !== "ok") throw new PinsError(404, notFound(target, status));
+    const result = store.add(target, label);
     if (result.changed) ctx.appEvents?.emitPinsChanged(result.revision);
     return { ...(await withStatus(result)), pinId: result.pin.id };
   }

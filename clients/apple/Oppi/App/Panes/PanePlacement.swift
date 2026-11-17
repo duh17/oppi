@@ -20,11 +20,14 @@ enum PaneContentKind: Equatable, Sendable, CaseIterable {
     case terminal
     case rex
     case game
+    /// A workspace's Git or one commit.
+    case git
 
     /// The New Panes setting that picks this kind's side.
     var setting: AppPreferenceStore.NewPanes.Kind {
         switch self {
-        case .file, .folder: .files
+        // Git and commits are files' kin: they open where files do.
+        case .file, .folder, .git: .files
         case .webPage: .web
         case .sessions: .sessions
         case .terminal, .rex: .terminal
@@ -37,7 +40,7 @@ enum PaneContentKind: Equatable, Sendable, CaseIterable {
     /// never replaced, so another always gets an empty launcher or a new pane.
     var replacesItsKind: Bool {
         switch self {
-        case .file, .folder, .webPage, .sessions: true
+        case .file, .folder, .webPage, .sessions, .git: true
         case .terminal, .rex, .game: false
         }
     }
@@ -83,6 +86,7 @@ enum PanePlacement: Equatable {
         case .browser?: return .kind(.webPage)
         case .sessions?: return .kind(.sessions)
         case .godot?: return .kind(.game)
+        case .git?, .commit?: return .kind(.git)
         case .local(let token)?:
             switch PaneLocalScreen(token) {
             case .launcher?: return .launcher

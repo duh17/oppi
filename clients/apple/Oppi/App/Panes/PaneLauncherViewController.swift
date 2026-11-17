@@ -152,7 +152,7 @@ final class PaneLauncherViewController: UIViewController {
         // A server switch that changes while the launcher is up adds or takes away its choice.
         let offered = offeredChoices
         if offered != shownChoices { showChoices(offered) }
-        let choices = (pins?.store.pins ?? []).filter { $0.kind != .session }.map { PinnedChoice(pin: $0, workspaceName: workspaceName($0.target.workspaceId)) }
+        let choices = (pins?.store.pins ?? []).filter { $0.target.isBrowserPlace }.map { PinnedChoice(pin: $0, workspaceName: workspaceName($0.target.workspaceId)) }
         if choices != shownPins { showPinned(choices) }
     }
 
@@ -216,9 +216,11 @@ final class PaneLauncherViewController: UIViewController {
         let pin = choice.pin
         let gone = pin.status == .missing || pin.status == .workspaceMissing
         var configuration = UIButton.Configuration.gray()
-        configuration.title = pin.displayName(workspaceName: choice.workspaceName)
-        configuration.subtitle = pin.subtitle(workspaceName: choice.workspaceName)
-        configuration.image = UIImage(systemName: pin.kind == .directory ? "folder.fill" : FileIcon.forPath(pin.target.path).symbolName)
+        let names = PinNames(workspace: choice.workspaceName)
+        configuration.title = pin.displayName(names)
+        configuration.subtitle = pin.subtitle(names)
+        let filePath: String? = if case .file(_, let path, _) = pin.target { path } else { nil }
+        configuration.image = UIImage(systemName: filePath.map { FileIcon.forPath($0).symbolName } ?? "folder.fill")
         configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(textStyle: .body)
         configuration.imagePadding = 12
         configuration.titleAlignment = .leading
@@ -231,7 +233,7 @@ final class PaneLauncherViewController: UIViewController {
         })
         button.contentHorizontalAlignment = .leading
         button.isEnabled = !gone
-        button.accessibilityIdentifier = "pane.launcher.pin.\(pin.target.accessibilityKey)"
+        button.accessibilityIdentifier = "pane.launcher.pin.\(pin.target.pinKey)"
         return button
     }
 

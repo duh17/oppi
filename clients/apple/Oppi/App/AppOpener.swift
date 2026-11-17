@@ -56,17 +56,7 @@ enum AppOpenRequest: Equatable, Sendable {
         if let decoded = PaneLinkCodec.decode(url) {
             switch decoded {
             case .success(let link):
-                // A link that names its server opens there; else on the server
-                // it came from (an in-app link), else by lookup.
-                let serverId = link.server ?? sourceServerID
-                switch link.route {
-                case .session(let id):
-                    self = .session(SessionOpen(serverId: serverId, sessionId: id, origin: origin))
-                case .thread(let id):
-                    self = .thread(SessionOpen(serverId: serverId, sessionId: id, origin: origin))
-                default:
-                    self = .pane(link, sourceServerID: sourceServerID)
-                }
+                self = Self(link: link, origin: origin, sourceServerID: sourceServerID)
             case .failure:
                 self = .invalidLink(url)
             }
@@ -84,6 +74,22 @@ enum AppOpenRequest: Equatable, Sendable {
             self = .webLink(url)
         } else {
             self = .system(url)
+        }
+    }
+
+    /// A pane link as its URL opens: a session or thread as a session link,
+    /// anything else as a pane. A pin opens through here too.
+    init(link: PaneLink, origin: SessionNavigationSource, sourceServerID: String?) {
+        // A link that names its server opens there; else on the server it
+        // came from (an in-app link), else by lookup.
+        let serverId = link.server ?? sourceServerID
+        switch link.route {
+        case .session(let id):
+            self = .session(SessionOpen(serverId: serverId, sessionId: id, origin: origin))
+        case .thread(let id):
+            self = .thread(SessionOpen(serverId: serverId, sessionId: id, origin: origin))
+        default:
+            self = .pane(link, sourceServerID: sourceServerID)
         }
     }
 }

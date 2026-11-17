@@ -11,7 +11,7 @@ import Testing
 struct PinStoreTests {
     private nonisolated static func pin(_ id: String, _ path: String, label: String? = nil) -> String {
         let label = label.map { #","label":"\#($0)""# } ?? ""
-        return #"{"id":"\#(id)","target":{"origin":"host","path":"\#(path)"},"kind":"directory","createdAt":1,"status":"ok"\#(label)}"#
+        return #"{"id":"\#(id)","target":{"kind":"files","origin":"host","path":"\#(path)"},"createdAt":1,"status":"ok"\#(label)}"#
     }
 
     private nonisolated static func list(_ revision: Int, _ pins: [String]) -> String {

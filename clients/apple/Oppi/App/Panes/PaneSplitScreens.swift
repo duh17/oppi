@@ -93,6 +93,9 @@ enum PaneSplitScreens {
             }
         }
         guard let root else { return PaneLauncherViewController(serverId: entry.serverId, workspaceId: nil, root: nil, choose: actions.show) }
+        if let git = PaneGitScreens.screen(for: entry, root: root, inPane: true, close: actions.close) {
+            return git
+        }
         if case .sessions(nil) = entry.route {
             return SessionInboxViewController(root: root, onOpenSidebar: nil, showsSidebarToggle: false)
         }

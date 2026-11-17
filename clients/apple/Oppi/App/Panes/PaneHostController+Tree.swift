@@ -664,6 +664,23 @@ extension PaneHostController {
         return grip
     }
 
+    /// Pin or Unpin for what pane `id` shows, on any route a pin can name
+    /// (`PaneRoute.isPinnable`) and a server that keeps pins: one Pin for
+    /// every kind of pane (`pane.menu.pin`, `pane.menu.unpin`).
+    private func pinItem(for id: PaneID) -> PaneMenuItem? {
+        let entry = panes.topEntry(of: id)
+        guard entry.route.isPinnable, let root = AppRootEnvironment.near(self),
+              let (pins, api) = PaneEntries.pins(entry.serverId, coordinator: root.coordinator) else { return nil }
+        let toggle = PinMenu.toggle(
+            route: entry.route, identifiers: ("pane.menu.pin", "pane.menu.unpin"),
+            pins: pins, api: api, view: view
+        )
+        return PaneMenuItem(
+            title: toggle.title, symbol: toggle.symbol, actionName: toggle.title,
+            identifier: toggle.identifier, run: toggle.run
+        )
+    }
+
     /// The pane menu for `id`, as it is now.
     func menuItems(for id: PaneID) -> [PaneMenuItem] {
         let cells = panes.cellLayout
@@ -728,6 +745,7 @@ extension PaneHostController {
                 actionName: String(localized: "Move"), identifier: "pane.menu.move", children: moves
             ))
         }
+        if let pin = pinItem(for: id) { items.append(pin) }
         let hidden = cellPresentation?.overflow ?? []
         if !hidden.isEmpty {
             items.append(PaneMenuItem(

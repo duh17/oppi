@@ -12,11 +12,18 @@ import UIKit
 struct PinnedScreenTests {
     private nonisolated static func place(_ id: String, _ path: String, _ kind: String, _ status: String, label: String? = nil) -> String {
         let label = label.map { #","label":"\#($0)""# } ?? ""
-        return #"{"id":"\#(id)","target":{"origin":"host","path":"\#(path)"},"kind":"\#(kind)","createdAt":1,"status":"\#(status)"\#(label)}"#
+        let target = kind == "directory"
+            ? #"{"kind":"files","origin":"host","path":"\#(path)"}"#
+            : #"{"kind":"file","origin":"host","path":"\#(path)","line":null}"#
+        return route(id, target, status, extra: label)
     }
 
     private nonisolated static func session(_ id: String, _ sessionId: String, _ status: String) -> String {
-        #"{"id":"\#(id)","target":{"origin":"session","sessionId":"\#(sessionId)"},"kind":"session","createdAt":1,"status":"\#(status)"}"#
+        route(id, #"{"kind":"session","id":"\#(sessionId)"}"#, status)
+    }
+
+    private nonisolated static func route(_ id: String, _ target: String, _ status: String, extra: String = "") -> String {
+        #"{"id":"\#(id)","target":\#(target),"createdAt":1,"status":"\#(status)"\#(extra)}"#
     }
 
     /// Saved in a mixed order; the screen groups them.
@@ -28,8 +35,12 @@ struct PinnedScreenTests {
             place("pin_OldPlan00004", "~/Desktop/old-plan", "directory", "missing"),
             session("pin_OldChat00005", "sess-deleted", "missing"),
             session("pin_Review000006", "sess-review", "ok"),
+            route("pin_SwordLab0007", #"{"kind":"godot","project":"sword-lab-3fa9c2b1"}"#, "ok", extra: #","name":"Sword Lab""#),
+            route("pin_OldGame00008", #"{"kind":"godot","project":"tide-7c01d2e4"}"#, "missing"),
+            route("pin_GitOppi00009", #"{"kind":"git","workspace":"ws-oppi","worktree":null}"#, "ok"),
+            route("pin_GodotDocs010", #"{"kind":"browser","url":"https://docs.godotengine.org/en/stable/"}"#, "ok"),
         ]
-        return #"{"revision":6,"pins":[\#(pins.joined(separator: ","))]}"#
+        return #"{"revision":10,"pins":[\#(pins.joined(separator: ","))]}"#
     }()
 
     /// The shell over a server whose pins answer; everything else is a 404.
@@ -119,10 +130,12 @@ struct PinnedScreenTests {
 
     // MARK: The screen
 
-    /// Sessions, Folders, Files, each in its saved order. A session this
-    /// device has draws as its session row (its live status included); a
-    /// deleted one reads Not found.
-    @Test func theScreenGroupsSessionsFoldersAndFiles() async throws {
+    /// One group per kind, each in its saved order. A session this device
+    /// has draws as its session row (its live status included); a deleted
+    /// one reads Not found. A game shows the name the server read, and says
+    /// it is off where the server offers no Godot Pane; a web page reads as
+    /// its host and path.
+    @Test func theScreenGroupsPinsByKind() async throws {
         let shell = try await Self.makeShell(size: CGSize(width: 1133, height: 900), regular: true)
         defer { shell.end() }
         shell.root.navigation.openWorkspaceUtility(.pinned)
@@ -130,9 +143,18 @@ struct PinnedScreenTests {
 
         let screen = try #require(shell.pinned)
         let list = try #require(shell.list(in: screen))
-        #expect(list.numberOfSections == 3)
+        #expect(list.numberOfSections == 6)
         #expect(shell.items(in: .sessions) == ["pin_Release00002", "pin_OldChat00005", "pin_Review000006"])
+        #expect(shell.items(in: .games) == ["pin_SwordLab0007", "pin_OldGame00008"])
+        #expect(shell.items(in: .git) == ["pin_GitOppi00009"])
+        #expect(shell.items(in: .web) == ["pin_GodotDocs010"])
         #expect(shell.items(in: .folders) == ["pin_Notebook0001", "pin_OldPlan00004"])
+        // This server offers no Godot Pane (no `godot` capability), so no game plays here.
+        let swordLab = try #require(shell.cell("pin_SwordLab0007"))
+        #expect(swordLab.accessibilityLabel == "Sword Lab, Godot Pane is off")
+        #expect(swordLab.accessibilityIdentifier == "pinned.pin.game:sword-lab-3fa9c2b1")
+        #expect(try #require(shell.cell("pin_OldGame00008")).accessibilityLabel == "Game, Not found")
+        #expect(try #require(shell.cell("pin_GodotDocs010")).accessibilityLabel == "docs.godotengine.org, /en/stable/")
 
         let release = try #require(shell.cell("pin_Release00002"))
         #expect(release.contentConfiguration is SessionListEntryConfiguration, "a live session is its session row")
@@ -216,6 +238,30 @@ struct PinnedScreenTests {
         _ = await shell.scope.settle()
     }
 
+    /// Every pin opens as its link does: a game, a Git view, and a web page
+    /// reach the opener as their pane links (the opener puts them beside the
+    /// chat or pushes them).
+    @Test func gameGitAndWebPinsOpenAsTheirLinks() async throws {
+        let shell = try await Self.makeShell(size: CGSize(width: 402, height: 874), regular: false)
+        defer { shell.end() }
+        var opened: [AppOpenRequest] = []
+        shell.root.opener._openRequestObserverForTesting = { request in
+            opened.append(request)
+            return true
+        }
+        shell.root.navigation.openWorkspaceUtility(.pinned)
+        #expect(await shell.settles { shell.cell("pin_GodotDocs010") != nil })
+
+        for id in ["pin_SwordLab0007", "pin_GitOppi00009", "pin_GodotDocs010"] { try shell.tap(id) }
+        let docs = try #require(URL(string: "https://docs.godotengine.org/en/stable/"))
+        #expect(opened == [
+            .pane(PaneLink(server: shell.serverId, route: .godot(project: "sword-lab-3fa9c2b1")), sourceServerID: shell.serverId),
+            .pane(PaneLink(server: shell.serverId, route: .git(workspace: "ws-oppi", worktree: nil)), sourceServerID: shell.serverId),
+            .pane(PaneLink(server: shell.serverId, route: .browser(docs)), sourceServerID: shell.serverId),
+        ])
+        _ = await shell.scope.settle()
+    }
+
     /// On a wide window a pinned folder opens beside the main pane, as a pane
     /// link does, and the main pane keeps the Pinned screen.
     @Test func aTappedFolderOpensBesideTheMainPaneOnAWideWindow() async throws {
@@ -280,7 +326,7 @@ struct PinnedScreenTests {
         let post = try #require(requests.withLock { $0.first })
         #expect(post.hasPrefix("POST "))
         let body = try JSONSerialization.jsonObject(with: Data(post.dropFirst(5).utf8)) as? NSDictionary
-        #expect(body == ["target": ["origin": "session", "sessionId": "sess-other"]] as NSDictionary)
+        #expect(body == ["target": ["kind": "session", "id": "sess-other"]] as NSDictionary)
 
         let pinned = try #require(connection.sessionStore.session(id: "sess-release"))
         let unpin = try #require(Self.actions(in: SessionListRowMenus.menu(for: pinned, actions: actions, in: view))
@@ -301,9 +347,16 @@ struct PinnedScreenTests {
         let connection = try #require(shell.root.coordinator.connection(for: shell.serverId))
         let api = try #require(connection.apiClient)
         let view = shell.controller.view!
-        let pinned = PinMenu.sessionToggle(sessionId: "sess-release", namesSession: true, pins: connection.pins, api: api, view: view)
+        let titles = (pin: "Pin Session", unpin: "Unpin Session")
+        let pinned = PinMenu.toggle(
+            route: .session("sess-release"), titles: titles, identifiers: ("chat.toolbar.menu.pin", "chat.toolbar.menu.unpin"),
+            pins: connection.pins, api: api, view: view
+        )
         #expect((pinned.title, pinned.identifier) == ("Unpin Session", "chat.toolbar.menu.unpin"))
-        let other = PinMenu.sessionToggle(sessionId: "sess-other", namesSession: true, pins: connection.pins, api: api, view: view)
+        let other = PinMenu.toggle(
+            route: .session("sess-other"), titles: titles, identifiers: ("chat.toolbar.menu.pin", "chat.toolbar.menu.unpin"),
+            pins: connection.pins, api: api, view: view
+        )
         #expect((other.title, other.identifier) == ("Pin Session", "chat.toolbar.menu.pin"))
         _ = await shell.scope.settle()
     }

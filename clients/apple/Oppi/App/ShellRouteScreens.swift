@@ -69,6 +69,13 @@ enum ShellRouteScreens {
             if case .godot(let project) = entry.route {
                 return GodotPaneViewController(serverId: entry.serverId, project: project, restored: false, root: root)
             }
+            // A workspace's Git or a commit, pushed (a link on a compact window,
+            // or with no room for a pane beside); its close pops it.
+            weak var pushed: UIViewController?
+            if let git = PaneGitScreens.screen(for: entry, root: root, inPane: false, close: { if let pushed { Router.finish(pushed) } }) {
+                pushed = git
+                return git
+            }
             return PaneLeafStateViewController(entry: entry, root: root)
         }
     }

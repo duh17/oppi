@@ -10,13 +10,21 @@ import Foundation
 // behind a scoped lock) opens as the entry's leaf state
 // (`PaneLeafStateViewController`), which turns into the content when it can.
 // A panel opens beside its session's chat (`ScenePanes.openPanel`). A
-// browser link opens its page as a tapped web link does: needing no server,
-// it never switches one. A Godot link opens beside the focused pane on a wide
+// browser link opens its page beside the focused pane on a wide window, else
+// as a tapped web link does; needing no server, it never switches one. A Git
+// or commit link opens beside the focused pane on a wide window, else pushed
+// (`PaneGitScreens`). A Godot link opens beside the focused pane on a wide
 // window, else in the primary stack, and only with the Godot Pane experiment on
 // and a server that offers it (its Godot Pane switch, and games to serve).
 extension AppOpener {
     func performPane(_ link: PaneLink, sourceServerID: String?, generation: UInt64) async -> AppOpenOutcome {
         if case .browser(let url) = link.route {
+            // Beside the focused pane on a wide window; else as a tapped web
+            // link opens (the in-app browser or Safari, per Settings).
+            if let serverId = link.server ?? sourceServerID ?? windowServerId,
+               openBesideFocusedPane(PaneOpenContent(entry: PaneStackEntry(serverId: serverId, route: link.route)), kind: .webPage) {
+                return .finished
+            }
             presentWebLink(url)
             return .finished
         }
@@ -35,14 +43,6 @@ extension AppOpener {
             return .finished
         }
         let entry = PaneStackEntry(serverId: serverId, route: link.route)
-        switch link.route {
-        case .git, .commit:
-            // Git panes arrive with the per-window tree.
-            toast(String(localized: "Oppi can\u{2019}t open this kind of link yet"))
-            return .finished
-        default:
-            break
-        }
         // A locked entry asks only when its leaf is tapped, so the window's
         // server does not switch under the lock.
         guard serverStore.server(for: serverId) != nil,
@@ -80,6 +80,17 @@ extension AppOpener {
         if case .godot = link.route, let window = navigation.window,
            PaneHostController.focused(in: window)?.openGodot(entry) == true {
             return .finished
+        }
+        switch link.route {
+        case .git, .commit:
+            // A workspace's Git or a commit (`PaneGitScreens`): beside the
+            // focused pane on a wide window, else pushed.
+            if !openBesideFocusedPane(PaneOpenContent(entry: entry), kind: .git) {
+                navigation.pushPaneEntry(entry)
+            }
+            return .finished
+        default:
+            break
         }
         switch PaneEntries.element(for: entry, coordinator: coordinator) {
         case .workspace(let target)?:

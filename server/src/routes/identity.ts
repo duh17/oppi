@@ -538,9 +538,11 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         // `layout_proposal` cards to sockets that declare `pane-layouts:v1`, and Save Layout…
         // creating `.oppi/layouts/<name>.json` through the file editor.
         paneLayouts: { version: 1 },
-        // Saved places: `GET|POST|PUT /pins` and the `pins_changed` app event.
-        // v2: a pin may name a session (`{ origin: "session", sessionId }`, kind `session`).
-        pins: { version: 2 },
+        // Saved pane routes: `GET|POST|PUT /pins` and the `pins_changed` app event.
+        // v3: a pin's target is a pane route in the `protocol/links.json` route shape (any
+        // linkable pane: sessions, files, git, commits, panels, web pages, games), and a list read
+        // gives a game pin its game's `name`. v2 targets (`origin` with a `kind`) are gone.
+        pins: { version: 3 },
         // Godot pane (`types/godot.ts`): `/godot` routes and `WS /godot/{id}/link` for players that
         // declare `godot-pane:v1`.
         godot: { version: GODOT_CAPABILITY_VERSION },

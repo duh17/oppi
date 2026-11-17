@@ -44,6 +44,7 @@ struct PanePlacementTests: PaneFixtureBuilding {
         case .terminal: terminal
         case .rex: rex
         case .game: game
+        case .git: .git(workspace: "w", worktree: nil)
         }
     }
 
@@ -98,7 +99,7 @@ struct PanePlacementTests: PaneFixtureBuilding {
     }
 
     @Test func theSettingsKindsGroupTheContentKinds() {
-        #expect(PaneContentKind.allCases.map(\.setting) == [.files, .files, .web, .sessions, .terminal, .terminal, .games])
+        #expect(PaneContentKind.allCases.map(\.setting) == [.files, .files, .web, .sessions, .terminal, .terminal, .games, .files])
         #expect(AppPreferenceStore.NewPanes.Kind.allCases.map(AppPreferenceStore.NewPanes.sideDefault)
             == [.below, .automatic, .automatic, .automatic, .automatic])
     }
@@ -197,7 +198,9 @@ struct PanePlacementTests: PaneFixtureBuilding {
         #expect(PanePlacement.shown(entry(game)) == .kind(.game))
         #expect(PanePlacement.shown(entry(.local(PaneLocalScreen.godot.token))) == .kind(.game))
         #expect(PanePlacement.shown(entry(launcher)) == .launcher)
-        for other in [PaneRoute.session("s"), .git(workspace: "w", worktree: nil)] {
+        #expect(PanePlacement.shown(entry(.git(workspace: "w", worktree: nil))) == .kind(.git))
+        #expect(PanePlacement.shown(entry(.commit(workspace: "w", sha: "9f86d08"))) == .kind(.git))
+        for other in [PaneRoute.session("s")] {
             #expect(PanePlacement.shown(entry(other)) == .other, "\(other)")
         }
     }

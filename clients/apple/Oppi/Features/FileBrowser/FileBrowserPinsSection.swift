@@ -33,9 +33,10 @@ final class FileBrowserPinsSection: PinsSection {
             connection: hooks.connection,
             shows: { pin in
                 switch scope {
-                // Sessions are the Pinned screen's alone.
-                case .hostHome: pin.kind != .session
-                case .workspace(let workspaceId, nil): pin.target.workspaceId == workspaceId
+                // Home lists every folder and file pin; a workspace's root its
+                // main checkout's. Everything else is the Pinned screen's alone.
+                case .hostHome: pin.target.isBrowserPlace
+                case .workspace(let workspaceId, nil): pin.target.isBrowserPlace && pin.target.workspaceId == workspaceId
                 case .workspace: false
                 }
             },
@@ -65,16 +66,16 @@ final class FileBrowserPinsSection: PinsSection {
         openFolderHere: @MainActor (String) -> Void
     ) {
         guard let navigation else { return }
-        switch (pin.target, pin.kind) {
-        case (.host(let path), .directory):
-            let folder = FileBrowserHostHomePath.directoryPath(rawPath: path)
+        switch pin.target {
+        case .hostFiles(let path):
+            let folder = FileBrowserHostHomePath.directoryPath(rawPath: path ?? "~")
             if scope == .hostHome {
                 openFolderHere(folder)
             } else {
                 navigation.pushWorkspaceFileBrowser(FileBrowserNavTarget(serverId: serverId, scope: .hostHome, path: folder))
             }
-        case (.workspace(let workspaceId, let path), .directory):
-            let folder = path.isEmpty ? "" : path + "/"
+        case .files(let workspaceId, let path):
+            let folder = path.map { $0 + "/" } ?? ""
             let pinScope = FileBrowserScope.workspace(workspaceId: workspaceId, worktreeId: nil)
             if scope == pinScope {
                 openFolderHere(folder)
@@ -82,12 +83,12 @@ final class FileBrowserPinsSection: PinsSection {
                 // The browser's own lock cover asks for the workspace's unlock.
                 navigation.pushWorkspaceFileBrowser(FileBrowserNavTarget(serverId: serverId, scope: pinScope, path: folder))
             }
-        case (.host(let path), _):
+        case .file(.host, let path, _):
             navigation.openWorkspaceLinkedFile(.hostFile(serverId: serverId, workspaceId: "", path: path))
-        case (.workspace(let workspaceId, let path), _):
+        case .file(.workspace(let workspaceId, nil), let path, _):
             navigation.openWorkspaceLinkedFile(.workspaceFile(serverId: serverId, workspaceId: workspaceId, path: path))
-        case (.session, _):
-            // The File Browser lists no session pins (`shows`).
+        default:
+            // The File Browser lists only folder and file pins (`shows`).
             return
         }
     }
@@ -132,22 +133,31 @@ final class FileBrowserPinsSection: PinsSection {
 
     /// The target a row names, as the server stores it; nil where pins do
     /// not reach (a worktree, the chat panel's checkout).
-    private func target(forRowPath rowPath: String) -> PinTarget? {
+    private func target(forRowPath rowPath: String) -> PaneRoute? {
         let isFolder = rowPath.hasSuffix("/")
         switch scope {
         case .hostHome:
-            return .host(path: isFolder ? FileBrowserHostHomePath.rawPath(relativePath: rowPath) : rowPath)
+            guard isFolder else { return .file(.host, path: rowPath, line: nil) }
+            let path = FileBrowserHostHomePath.rawPath(relativePath: rowPath)
+            return .hostFiles(path: path == "~" ? nil : path)
         case .workspace(let workspaceId, nil):
             let path = rowPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            return .workspace(id: workspaceId, path: path)
+            guard isFolder else { return .file(.workspace(id: workspaceId, worktree: nil), path: path, line: nil) }
+            return .files(workspace: workspaceId, path: path.isEmpty ? nil : path)
         case .workspace:
             return nil
         }
     }
 
-    private func toggle(for target: PinTarget, isFolder: Bool, current: Bool) -> PinMenu.Toggle? {
+    private func toggle(for target: PaneRoute, isFolder: Bool, current: Bool) -> PinMenu.Toggle? {
         guard let (pins, api) = store, let view = presenter?.view else { return nil }
-        return PinMenu.toggle(target: target, isFolder: isFolder, current: current, pins: pins, api: api, view: view)
+        let titles = current && isFolder
+            ? (String(localized: "Pin This Folder"), String(localized: "Unpin This Folder"))
+            : (String(localized: "Pin"), String(localized: "Unpin"))
+        return PinMenu.toggle(
+            route: target, titles: titles, identifiers: ("fileBrowser.pin.add", "fileBrowser.pin.remove"),
+            pins: pins, api: api, view: view
+        )
     }
 }
 

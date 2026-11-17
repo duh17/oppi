@@ -6,9 +6,9 @@ extension APIClient {
         try JSONDecoder().decode(PinsList.self, from: try await get("/pins"))
     }
 
-    /// `POST /pins`: pins `target`; a target already pinned answers its pin.
-    func addPin(_ target: PinTarget, label: String? = nil) async throws -> PinAddResult {
-        struct Body: Encodable { let target: PinTarget; let label: String? }
+    /// `POST /pins`: pins `target`; a route already pinned answers its pin.
+    func addPin(_ target: PaneRoute, label: String? = nil) async throws -> PinAddResult {
+        struct Body: Encodable { let target: PaneRoute; let label: String? }
         let data = try await post("/pins", body: Body(target: target, label: label))
         return try JSONDecoder().decode(PinAddResult.self, from: data)
     }

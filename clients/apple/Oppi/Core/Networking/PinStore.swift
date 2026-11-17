@@ -21,7 +21,7 @@ final class PinStore {
     var pins: [Pin] { list?.pins ?? [] }
 
     /// The saved pin for `target`, if any.
-    func pin(for target: PinTarget) -> Pin? {
+    func pin(for target: PaneRoute) -> Pin? {
         pins.first { $0.target == target }
     }
 
@@ -47,7 +47,7 @@ final class PinStore {
 
     /// Pins `target` and answers its pin (the saved one when it was pinned already).
     @discardableResult
-    func add(_ target: PinTarget, api: APIClient) async throws -> Pin? {
+    func add(_ target: PaneRoute, api: APIClient) async throws -> Pin? {
         let result = try await api.addPin(target)
         accept(PinsList(revision: result.revision, pins: result.pins))
         return result.pins.first { $0.id == result.pinId }

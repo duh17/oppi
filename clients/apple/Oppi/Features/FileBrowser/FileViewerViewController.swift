@@ -823,19 +823,22 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         guard let target = pinTarget, let pins = services.pins(), let api = services.apiClient(), let view = viewIfLoaded else {
             return []
         }
-        return [PinMenu.toggle(target: target, isFolder: false, current: false, pins: pins, api: api, view: view).action]
+        return [PinMenu.toggle(
+            route: target, identifiers: ("fileBrowser.pin.add", "fileBrowser.pin.remove"),
+            pins: pins, api: api, view: view
+        ).action]
     }
 
     /// The file as a pin names it: a main-checkout workspace file, or a home
     /// file written `~/…`. Nil for anything a pin cannot name.
-    private var pinTarget: PinTarget? {
+    private var pinTarget: PaneRoute? {
         guard configuration.revision == nil else { return nil }
         let path = currentFilePath
         switch configuration.source {
         case .workspaceFile where configuration.worktreeId == nil && !path.hasPrefix("/"):
-            return .workspace(id: configuration.workspaceId, path: path)
+            return .file(.workspace(id: configuration.workspaceId, worktree: nil), path: path, line: nil)
         case .hostFile where path.hasPrefix("~/"):
-            return .host(path: path)
+            return .file(.host, path: path, line: nil)
         default:
             return nil
         }

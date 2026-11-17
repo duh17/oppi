@@ -59,11 +59,11 @@ final class PinnedScreenE2ETests: E2ETestCase {
         )
         let docs = try createLabWorkspace(named: "Oppi Docs", hostMount: (notes.hostMount as NSString).deletingLastPathComponent)
         for target: [String: Any] in [
-            ["origin": "session", "sessionId": try XCTUnwrap(sessionIds["failed"])],
-            ["origin": "workspace", "workspaceId": docs, "path": "release-notes"],
-            ["origin": "workspace", "workspaceId": docs, "path": "screenshots"],
-            ["origin": "workspace", "workspaceId": docs, "path": "release-notes/0.56.md"],
-            ["origin": "workspace", "workspaceId": docs, "path": "release-notes/app-store-checklist.md"],
+            ["kind": "session", "id": try XCTUnwrap(sessionIds["failed"])],
+            ["kind": "files", "workspace": docs, "path": "release-notes"],
+            ["kind": "files", "workspace": docs, "path": "screenshots"],
+            Self.docsFile(docs, "release-notes/0.56.md"),
+            Self.docsFile(docs, "release-notes/app-store-checklist.md"),
         ] {
             _ = try e2eLabAPIJSON(method: "POST", path: "/pins", body: ["target": target])
         }
@@ -162,14 +162,18 @@ final class PinnedScreenE2ETests: E2ETestCase {
     private func docsKey(_ path: String) throws -> String {
         let pins = try XCTUnwrap(e2eLabAPIJSON(method: "GET", path: "/pins")["pins"] as? [[String: Any]])
         let target = try XCTUnwrap(pins.compactMap { $0["target"] as? [String: Any] }.first { $0["path"] as? String == path })
-        return "\(try XCTUnwrap(target["workspaceId"] as? String)):\(path)"
+        return "\(try XCTUnwrap(target["workspace"] as? String)):\(path)"
+    }
+
+    private static func docsFile(_ workspace: String, _ path: String) -> [String: Any] {
+        ["kind": "file", "origin": "workspace", "workspace": workspace, "worktree": NSNull(), "path": path, "line": NSNull()]
     }
 
     private func waitForPin(sessionId: String, timeout: TimeInterval = 10) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             let pins = (try? e2eLabAPIJSON(method: "GET", path: "/pins")["pins"] as? [[String: Any]]) ?? []
-            if pins.contains(where: { ($0["target"] as? [String: Any])?["sessionId"] as? String == sessionId }) { return true }
+            if pins.contains(where: { ($0["target"] as? [String: Any])?["id"] as? String == sessionId }) { return true }
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
         }
         return false

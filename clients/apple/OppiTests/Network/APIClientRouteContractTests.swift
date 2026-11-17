@@ -863,7 +863,7 @@ extension APIClientEndpoint {
             )
         },
         APIClientEndpoint("listPins") { _ = try? await $0.listPins() },
-        APIClientEndpoint("addPin") { _ = try? await $0.addPin(.host(path: "~/notebook")) },
+        APIClientEndpoint("addPin") { _ = try? await $0.addPin(.hostFiles(path: "~/notebook")) },
         APIClientEndpoint("savePins") {
             _ = try? await $0.savePins(baseRevision: 1, [PinOrderEntry(id: "pin_Notebook0001", label: nil)])
         },

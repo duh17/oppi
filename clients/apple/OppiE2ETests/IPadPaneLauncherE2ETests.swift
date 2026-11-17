@@ -21,7 +21,7 @@ final class IPadPaneLauncherE2ETests: E2ETestCase {
         try XCTSkipUnless(min(app.frame.width, app.frame.height) >= 700, "Split panes need an iPad simulator")
         XCTAssertTrue(app.textViews["chat.input"].waitForExistence(timeout: 20), "the chat opened")
         // The server's home folder always exists.
-        _ = try e2eLabAPIJSON(method: "POST", path: "/pins", body: ["target": ["origin": "host", "path": "~"]])
+        _ = try e2eLabAPIJSON(method: "POST", path: "/pins", body: ["target": ["kind": "files", "origin": "host", "path": NSNull()]])
 
         app.typeKey("d", modifierFlags: .command)
         let files = app.buttons["pane.launcher.files"]

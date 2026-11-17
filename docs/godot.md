@@ -109,6 +109,10 @@ The game always draws at its pane's size, in points times the screen's scale: Go
 
 **Play Full Screen** (the arrows at the trailing end of the pane's bar) gives the game the whole window: the sidebar, the pane's bar, the status bar and the home indicator go away, the game resizes to the window, and touches, keys and controllers go to the game. To leave, tap the small button in the top corner; the panes come back exactly as they were. The button shows while the game plays in a pane beside another.
 
+## Pin a game
+
+Pin a game to play it from the **Pinned** screen with one tap: swipe left on it in the pane's **Godot** list and tap **Pin**, touch and hold it and choose **Pin**, tap the pin in the Godot pane's bar, or choose **Pin** in the pane menu on iPad. A pin names the game by its id, so it keeps working after the server restarts and shows a new name from `oppi-godot.json`. Moving or renaming the project folder makes a new game, and the old pin reads **Not found**. See [Usage](usage.md) for the **Pinned** screen.
+
 ## For agents
 
 A durable session has six tools for the games in its workspace while the workspace has a game; a session in a workspace without one does not get them or their guideline. When a workspace gets its first game during a session, the tools appear the next time that session is opened. The tools reach only the games in the session's own workspace: a game of another workspace, or one only a publish created, is not found. Each takes an optional `project`, a game's id or name. Without it, the tools use the one game of the workspace a pane is playing, else the only game in the session's checkout, else the only one in the workspace; when they cannot tell, they list the workspace's games.

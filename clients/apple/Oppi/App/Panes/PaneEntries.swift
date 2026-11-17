@@ -74,7 +74,7 @@ enum PaneEntries {
     // MARK: Entries to shell routes
 
     /// The connection an entry reads: its own server's, never the window's.
-    private static func connection(_ serverId: String, _ coordinator: ConnectionCoordinator) -> ServerConnection? {
+    static func connection(_ serverId: String, _ coordinator: ConnectionCoordinator) -> ServerConnection? {
         coordinator.connection(for: serverId)
     }
 

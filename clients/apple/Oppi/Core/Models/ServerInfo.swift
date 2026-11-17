@@ -163,8 +163,9 @@ struct ServerInfo: Codable, Sendable, Equatable {
         /// The info's `features`, set by `appCapabilities`; never on the wire. Read through
         /// `offers(_:)`.
         var features: [String: Bool]? = nil
-        /// `GET|POST|PUT /pins` and the `pins_changed` app event; v2 adds session
-        /// pins. Missing means the app offers no Pin items and no Pinned screen.
+        /// `GET|POST|PUT /pins` and the `pins_changed` app event; v3 stores pane
+        /// routes, the only shape this app reads. Below v3 the app offers no Pin
+        /// items and no Pinned screen.
         var pins: CapabilityVersion? = nil
 
         /// The relay origin, when the server pushes and names an https relay (http only on

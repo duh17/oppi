@@ -23,9 +23,13 @@ class PinsSection {
         /// A file's icon; nil for a folder.
         let icon: FileIcon?
         let isDirectory: Bool
-        /// Not there (a deleted session too), or its workspace is gone: dimmed,
-        /// and a tap offers Remove Pin.
+        /// Not there (a deleted session or game too), or its workspace is
+        /// gone: dimmed, and a tap offers Remove Pin.
         let isGone: Bool
+        /// A game while Godot Pane is off here (this build, the experiment, or
+        /// the server's switch): dimmed, it offers no Open or drag, and a tap
+        /// says why as a Godot link does.
+        let isOff: Bool
         let isLocked: Bool
         let isEditing: Bool
     }
@@ -124,25 +128,21 @@ class PinsSection {
     }
 
     private func row(for pin: Pin, connection: ServerConnection) -> Row {
-        let workspaceName = pin.target.workspaceId.flatMap { id -> String? in
-            guard let name = connection.workspaceStore.workspaces.first(where: { $0.id == id })?.name else {
-                // A workspace newer than the catalog: the name shows once it is read again.
-                connection.refreshCatalog(forUnknownWorkspace: id)
-                return nil
-            }
-            return name
-        }
+        let names = Self.names(for: pin, connection: connection)
         let locked = pin.target.workspaceId.map {
             ScopedLockService.shared.isLocked(.workspace(serverId: serverId, workspaceId: $0))
         } ?? false
+        let isOff = Self.isOff(pin, connection: connection)
+        let filePath: String? = if case .file(_, let path, _) = pin.target { path } else { nil }
         return Row(
             id: pin.id,
-            key: pin.target.accessibilityKey,
-            title: pin.displayName(workspaceName: workspaceName),
-            detail: pin.subtitle(workspaceName: workspaceName),
-            icon: pin.kind == .file ? FileIcon.forPath(pin.target.path) : nil,
-            isDirectory: pin.kind == .directory,
-            isGone: pin.status == .missing || pin.status == .workspaceMissing,
+            key: pin.target.pinKey,
+            title: pin.displayName(names),
+            detail: isOff && !pin.isGone ? String(localized: "Godot Pane is off") : pin.subtitle(names),
+            icon: filePath.map(FileIcon.forPath),
+            isDirectory: pin.kind == .folders,
+            isGone: pin.isGone,
+            isOff: isOff,
             isLocked: locked,
             isEditing: isEditing
         )
@@ -171,6 +171,27 @@ class PinsSection {
     func accessibilityLabel(_ row: Row) -> String {
         [row.title, row.detail, row.isLocked ? String(localized: "Locked") : nil]
             .compactMap { $0 }.joined(separator: ", ")
+    }
+
+    /// The workspace's and session's names a pin's row shows.
+    static func names(for pin: Pin, connection: ServerConnection) -> PinNames {
+        let workspace = pin.target.workspaceId.flatMap { id -> String? in
+            guard let name = connection.workspaceStore.workspaces.first(where: { $0.id == id })?.name else {
+                // A workspace newer than the catalog: the name shows once it is read again.
+                connection.refreshCatalog(forUnknownWorkspace: id)
+                return nil
+            }
+            return name
+        }
+        let session = pin.target.sessionId.flatMap { connection.sessionStore.session(id: $0)?.displayTitle }
+        return PinNames(workspace: workspace, session: session)
+    }
+
+    /// Whether `pin` is a game this device can't play from `connection`'s
+    /// server now, as `AppOpener` decides for a Godot link.
+    static func isOff(_ pin: Pin, connection: ServerConnection?) -> Bool {
+        guard pin.kind == .games else { return false }
+        return !GodotPaneAvailability.isOn || connection?.offers(.godotPane) == false
     }
 
     /// Rename, Unpin, and the pane items, as actions; none while editing.
@@ -240,7 +261,7 @@ class PinsSection {
     /// one that is no longer there.
     func select(_ id: String, inMainPane: Bool = false) {
         guard !isEditing, let pin = pin(id) else { return }
-        if pin.status == .missing || pin.status == .workspaceMissing {
+        if pin.isGone {
             offerRemoval(pin)
             return
         }
@@ -249,10 +270,10 @@ class PinsSection {
 
     private func offerRemoval(_ pin: Pin) {
         guard let presenter else { return }
-        let name = pin.displayName(workspaceName: nil)
-        let message = switch (pin.kind, pin.status) {
-        case (.session, _): String(localized: "The session was deleted.")
+        let name = pin.displayName()
+        let message = switch (pin.target.sessionId, pin.status) {
         case (_, .workspaceMissing): String(localized: "Its workspace was removed.")
+        case (_?, _): String(localized: "The session was deleted.")
         default: String(localized: "It may have been moved, renamed, or deleted.")
         }
         Confirmation(
@@ -272,9 +293,10 @@ class PinsSection {
         guard !isEditing, let pin = pin(pinId) else { return nil }
         let entry = pin.paneEntry(serverId: serverId)
         let prefix = identifierPrefix
+        let isOff = Self.isOff(pin, connection: hooks.connection())
         let configuration = UIContextMenuConfiguration(identifier: pinId as NSString, previewProvider: nil) { [weak self] _ in
             guard let self else { return nil }
-            let source = hooks.paneSource()
+            let source = isOff ? nil : hooks.paneSource()
             let panes = source.map { source in
                 PaneOpenMenu.items(near: source) { [weak self, weak source] placement in
                     if placement == .here {
@@ -285,7 +307,7 @@ class PinsSection {
                     PaneOpenMenu.open(placement, from: source) { PaneOpenContent(entry: entry) }
                 }
             } ?? []
-            let open = panes.isEmpty
+            let open = isOff ? [] : panes.isEmpty
                 ? [Self.action(String(localized: "Open"), "arrow.up.forward.square", "\(prefix).pin.open") { [weak self] in
                     self?.select(pinId)
                 }]
@@ -299,7 +321,7 @@ class PinsSection {
             // A session keeps its own name: it renames in its chat, not here.
             return UIMenu(children: [
                 UIMenu(options: .displayInline, children: open),
-                UIMenu(options: .displayInline, children: pin.kind == .session ? [unpin] : [rename, unpin]),
+                UIMenu(options: .displayInline, children: Self.keepsOwnName(pin) ? [unpin] : [rename, unpin]),
             ])
         }
         configuration.preferredMenuElementOrder = .fixed
@@ -317,9 +339,9 @@ class PinsSection {
     }
 
     func dragItems(pinId: String) -> [UIDragItem] {
-        guard !isEditing, let pin = pin(pinId), pin.status != .missing, pin.status != .workspaceMissing else { return [] }
+        guard !isEditing, let pin = pin(pinId), !pin.isGone, !Self.isOff(pin, connection: hooks.connection()) else { return [] }
         let provider = NSItemProvider()
-        provider.suggestedName = pin.displayName(workspaceName: nil)
+        provider.suggestedName = pin.displayName()
         let item = UIDragItem(itemProvider: provider)
         item.localObject = PaneDragPayload(entry: pin.paneEntry(serverId: serverId))
         return [item]
@@ -334,12 +356,21 @@ class PinsSection {
             self?.unpin(pinId)
             return true
         }
-        let own = pin(pinId)?.kind == .session ? [unpin] : [rename, unpin]
-        guard let pin = pin(pinId), let source = hooks.paneSource() else { return own }
+        let own = pin(pinId).map(Self.keepsOwnName) == true ? [unpin] : [rename, unpin]
+        guard let pin = pin(pinId), !Self.isOff(pin, connection: hooks.connection()),
+              let source = hooks.paneSource() else { return own }
         let entry = pin.paneEntry(serverId: serverId)
         return own + PaneOpenMenu.accessibilityActions(near: source, includesOpenHere: false) { [weak source] placement in
             guard let source else { return }
             PaneOpenMenu.open(placement, from: source) { PaneOpenContent(entry: entry) }
+        }
+    }
+
+    /// A session or thread keeps its own name: it renames in its chat, not here.
+    private static func keepsOwnName(_ pin: Pin) -> Bool {
+        switch pin.target {
+        case .session, .thread: true
+        default: false
         }
     }
 
@@ -362,11 +393,11 @@ class PinsSection {
 
     private func askRename(_ id: String) {
         guard let pin = pin(id), let presenter else { return }
-        let name = pin.displayName(workspaceName: nil)
+        let ownName = hooks.connection().map { pin.ownName(Self.names(for: pin, connection: $0)) } ?? pin.ownName()
         TextPrompt(
             title: String(localized: "Rename Pin"),
-            message: String(localized: "Leave it empty to use the name \u{201C}\(pin.target.name.isEmpty ? name : pin.target.name)\u{201D}."),
-            placeholder: pin.target.name,
+            message: String(localized: "Leave it empty to use the name \u{201C}\(ownName)\u{201D}."),
+            placeholder: ownName,
             text: pin.label ?? "",
             actionTitle: String(localized: "Rename"),
             fieldIdentifier: "\(identifierPrefix).pin.renameField",
@@ -485,72 +516,39 @@ enum PinMenu {
         }
     }
 
+    /// Pin or Unpin for any route: `titles` say what the item names
+    /// ("Pin This Folder", "Pin Session"), and `identifiers` are its
+    /// accessibility identifier as Pin and as Unpin.
     static func toggle(
-        target: PinTarget,
-        isFolder: Bool,
-        current: Bool,
+        route: PaneRoute,
+        titles: (pin: String, unpin: String) = (String(localized: "Pin"), String(localized: "Unpin")),
+        identifiers: (pin: String, unpin: String),
         pins: PinStore,
         api: APIClient,
         view: UIView
     ) -> Toggle {
-        let saved = pins.pin(for: target)
-        let title = switch (saved != nil, current && isFolder) {
-        case (false, false): String(localized: "Pin")
-        case (true, false): String(localized: "Unpin")
-        case (false, true): String(localized: "Pin This Folder")
-        case (true, true): String(localized: "Unpin This Folder")
-        }
+        let saved = pins.pin(for: route)
         return toggle(
-            target: target,
+            target: route,
             saved: saved,
-            title: title,
-            identifier: saved == nil ? "fileBrowser.pin.add" : "fileBrowser.pin.remove",
+            title: saved == nil ? titles.pin : titles.unpin,
+            identifier: saved == nil ? identifiers.pin : identifiers.unpin,
             pins: pins,
             api: api,
             view: view
         )
     }
 
-    /// Pin or Unpin for one session: "Pin" on a session row (`identifier`
-    /// `session.pin.<id>` or `session.unpin.<id>`), "Pin Session" in the
-    /// chat's … menu (`namesSession`, `chat.toolbar.menu.pin` or `.unpin`).
-    static func sessionToggle(
-        sessionId: String,
-        namesSession: Bool,
-        pins: PinStore,
-        api: APIClient,
-        view: UIView
-    ) -> Toggle {
-        let target = PinTarget.session(id: sessionId)
-        let saved = pins.pin(for: target)
-        let title = switch (saved != nil, namesSession) {
-        case (false, false): String(localized: "Pin")
-        case (true, false): String(localized: "Unpin")
-        case (false, true): String(localized: "Pin Session")
-        case (true, true): String(localized: "Unpin Session")
-        }
-        let verb = saved == nil ? "pin" : "unpin"
-        return toggle(
-            target: target,
-            saved: saved,
-            title: title,
-            identifier: namesSession ? "chat.toolbar.menu.\(verb)" : "session.\(verb).\(sessionId)",
-            pins: pins,
-            api: api,
-            view: view
-        )
-    }
-
-    /// A session row's Pin or Unpin on `connection`'s server; nil when that
-    /// server keeps no session pins.
+    /// A session row's Pin or Unpin on `connection`'s server (`session.pin.<id>`
+    /// or `session.unpin.<id>`); nil when that server keeps no pins.
     static func sessionRowToggle(_ session: Session, connection: ServerConnection?, view: UIView?) -> Toggle? {
-        guard let connection, connection.sessionPinsAvailable, let api = connection.apiClient, let view else { return nil }
-        return sessionToggle(sessionId: session.id, namesSession: false, pins: connection.pins, api: api, view: view)
+        guard let connection, connection.pinsAvailable, let api = connection.apiClient, let view else { return nil }
+        return toggle(route: .session(session.id), identifiers: ("session.pin.\(session.id)", "session.unpin.\(session.id)"), pins: connection.pins, api: api, view: view)
     }
 
     /// Unpins `saved`, or pins `target` when nothing is saved for it.
     private static func toggle(
-        target: PinTarget,
+        target: PaneRoute,
         saved: Pin?,
         title: String,
         identifier: String,
@@ -605,66 +603,5 @@ enum PinMenu {
         default:
             return String(localized: "Something went wrong. Try again.")
         }
-    }
-}
-
-extension PinTarget {
-    /// The pin row's identifier suffix: the Home path, `<workspace>:<path>`, or `session:<id>`.
-    var accessibilityKey: String {
-        switch self {
-        case .host(let path): path
-        case .workspace(let id, let path): "\(id):\(path)"
-        case .session(let id): "session:\(id)"
-        }
-    }
-}
-
-extension Pin {
-    /// The label, else the target's own name (a workspace root reads as its
-    /// workspace). A session's own name is in its record, not here: the list
-    /// that has it shows it.
-    func displayName(workspaceName: String?) -> String {
-        if let label, !label.isEmpty { return label }
-        if kind == .session { return String(localized: "Session") }
-        let name = target.name
-        return name.isEmpty ? (workspaceName ?? String(localized: "Workspace")) : name
-    }
-
-    /// A pin's second line, the same in the File Browser, the sidebar, and
-    /// the launcher: why it cannot open, else where it lives as a breadcrumb
-    /// ("Home › Books", or its workspace's name and folders). Nil for Home
-    /// itself and a workspace root, whose title already says where.
-    func subtitle(workspaceName: String?) -> String? {
-        switch status {
-        case .missing: return String(localized: "Not found")
-        case .workspaceMissing: return String(localized: "Workspace removed")
-        case .unreadable where kind == .directory: return String(localized: "Oppi can\u{2019}t read this folder")
-        case .unreadable: return String(localized: "Oppi can\u{2019}t read this file")
-        case .ok, .unknown: break
-        }
-        guard kind != .session else { return nil }
-        let folders = (target.path as NSString).deletingLastPathComponent.split(separator: "/").map(String.init)
-        switch target {
-        case .host(let path):
-            guard path != "~" else { return nil }
-            return ([String(localized: "Home")] + folders.dropFirst()).joined(separator: " \u{203A} ")
-        case .workspace(_, let path):
-            guard !path.isEmpty else { return nil }
-            return ([workspaceName ?? String(localized: "Workspace")] + folders).joined(separator: " \u{203A} ")
-        case .session:
-            return nil
-        }
-    }
-
-    /// The pane entry this pin opens as: its folder's File Browser, its file, or its session's chat.
-    func paneEntry(serverId: String) -> PaneStackEntry {
-        let route: PaneRoute = switch (target, kind) {
-        case (.host(let path), .directory): .hostFiles(path: path == "~" ? nil : path)
-        case (.host(let path), _): .file(.host, path: path, line: nil)
-        case (.workspace(let id, let path), .directory): .files(workspace: id, path: path.isEmpty ? nil : path)
-        case (.workspace(let id, let path), _): .file(.workspace(id: id, worktree: nil), path: path, line: nil)
-        case (.session(let id), _): .session(id)
-        }
-        return PaneStackEntry(serverId: serverId, route: route)
     }
 }
