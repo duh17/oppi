@@ -5,25 +5,24 @@ import Testing
 @Suite("AppEventStreamClient", .serialized)
 @MainActor
 struct AppEventStreamClientTests {
-    @Test func decodesStringAndDataFramesWhileSkippingMalformedInput() async throws {
+    // The stream is the signal: awaiting its two events needs no wall-clock deadline, which a
+    // polling wait lost on a loaded shard. `.timeLimit` is only a hang guard.
+    @Test(.timeLimit(.minutes(1)))
+    func decodesStringAndDataFramesWhileSkippingMalformedInput() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let client = makeClient(factory: factory)
         let stream = client.connect()
-        var received: [AppEventMessage] = []
-        let consumer = Task { @MainActor in
-            for await event in stream {
-                received.append(event)
-            }
-        }
 
         let socket = try #require(factory.sockets.first)
         socket.yield(.string("not-json"))
         socket.yield(.data(Data(Self.connectedJSON.utf8)))
         socket.yield(.string(#"{"type":"future_app_event"}"#))
 
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            received.count == 2
-        })
+        var received: [AppEventMessage] = []
+        for await event in stream {
+            received.append(event)
+            if received.count == 2 { break }
+        }
         #expect(received == [
             .connected(serverTime: 42, snapshotRequired: false),
             .ignored(type: "future_app_event"),
@@ -32,7 +31,6 @@ struct AppEventStreamClientTests {
         #expect(factory.requests.first?.value(forHTTPHeaderField: "Authorization") == "Bearer test-token")
 
         client.disconnect()
-        await consumer.value
     }
 
     @Test func recoverableFailureReconnectsAndContinuesOriginalStream() async throws {
