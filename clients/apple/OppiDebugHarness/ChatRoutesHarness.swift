@@ -776,9 +776,14 @@ enum ChatRoutesFixture {
            let trace = try? JSONDecoder().decode([TraceEvent].self, from: data) {
             events += trace
         }
-        // `CHAT_ROUTES_WEB_LINK=<url>`: a reply linking a page (a UI test's own server).
+        // `CHAT_ROUTES_WEB_LINK=<url>`: a reply linking a page (a UI test's own
+        // server), by name and as a bare address long enough to wrap.
         if let link = environment["CHAT_ROUTES_WEB_LINK"] {
-            events.append(traceEvent(id: "chat-routes-web-link", type: .assistant, text: "The preview is up: [Open the preview](\(link))."))
+            let bare = "\(link)?ref=magic-keyboard-with-touch-id-for-mac-models-with-apple-silicon-usb-c-us-english"
+            events.append(traceEvent(
+                id: "chat-routes-web-link", type: .assistant,
+                text: "The preview is up: [Open the preview](\(link)).\n\nThe same page:\n\(bare)"
+            ))
         }
         if environment["CHAT_ROUTES_LIVE_WORK"] == "1" {
             events += liveWorkEvents

@@ -237,7 +237,7 @@ struct PaneTreeHostTests {
         #expect(companion.frame.height > splitHeight, "the chat's cell is the whole window again")
         #expect(host.panes.screenMenuItems(for: host.screen).isEmpty, "no Split Right or Down")
         #expect(host.panes.openChoices(from: routed) == nil, "no Open in New Pane or Open in Pane")
-        #expect(!host.panes.openBrowser(try #require(URL(string: "https://example.com"))), "web links keep Safari's sheet")
+        #expect(host.panes.openBrowser(try #require(URL(string: "https://example.com"))) == nil, "web links keep Safari's sheet")
         let chat = try #require(host.panes.cellFrame(routed))
         let file = PaneDragPayload.Content.entry(PaneStackEntry(serverId: "s", route: .file(.host, path: "/tmp/a", line: nil)))
         #expect(host.panes.dropTarget(at: CGPoint(x: chat.minX + 10, y: chat.midY), payload: file) == nil, "no drop zone splits")

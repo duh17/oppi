@@ -66,6 +66,58 @@ final class BrowserPaneUITests: XCTestCase, PreviewUITestCase {
         }
     }
 
+    /// The owner's report: a link tapped after panes changed did nothing. In
+    /// portrait, each tap leaves the page open on screen below the chat:
+    /// after Close Pane and its Undo, with the page's pane folded to its
+    /// strip, and on the second line of a bare address that wraps.
+    func testEveryWebLinkTapLeavesThePageOnScreen() throws {
+        try startPages()
+        openChat(orientation: .portrait, link: pages.url("one"), colorScheme: "dark")
+        let named = app.links.matching(NSPredicate(format: "label == 'Open the preview'")).firstMatch
+        let bare = app.links.matching(NSPredicate(format: "label CONTAINS 'ref=magic-keyboard'")).firstMatch
+        let pane = app.descendants(matching: .any)["browser.pane"]
+        let composer = app.descendants(matching: .any)["chat.input"]
+        let window = app.windows.firstMatch
+        func assertPageOnScreen(_ step: String) {
+            XCTAssertTrue(app.webViews.staticTexts["First fixture page"].waitUntilExists(timeout: 15), "\(step): the page loaded")
+            XCTAssertTrue(waitFor(pane.exists && pane.frame.height > 200), "\(step): its pane is open, not a strip")
+            XCTAssertGreaterThanOrEqual(pane.frame.minY, composer.frame.maxY - 1, "\(step): below the chat")
+            XCTAssertFalse(app.descendants(matching: .any)["inAppBrowser.view"].exists, "\(step): no Safari sheet")
+        }
+        func closePagePane() {
+            let grip = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane.grip.' AND label ENDSWITH '2 of 2'")).firstMatch
+            XCTAssertTrue(grip.waitUntilExists(timeout: 5), "The page's pane has a grip")
+            grip.tap()
+            let close = app.buttons["Close Pane"]
+            XCTAssertTrue(close.waitUntilExists(timeout: 5), "The grip opens the pane menu")
+            close.tap()
+            XCTAssertTrue(waitFor(!pane.exists), "Close Pane closed the page")
+        }
+
+        XCTAssertTrue(bare.waitUntilExists(timeout: 10), "The reply shows the bare address")
+        XCTAssertGreaterThan(bare.frame.height, 30, "The bare address wraps")
+        bare.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.85)).tap()
+        assertPageOnScreen("Second line of a wrapped address")
+
+        closePagePane()
+        let undo = app.buttons["pane.undo"]
+        XCTAssertTrue(undo.waitUntilExists(timeout: 5), "The toast offers Undo")
+        undo.tap()
+        XCTAssertTrue(pane.waitUntilExists(timeout: 5), "Undo brought the page back")
+        closePagePane()
+        XCTAssertTrue(undo.waitUntilExists(timeout: 5))
+        named.tap()
+        assertPageOnScreen("After Close Pane, with Undo up")
+
+        app.descendants(matching: .any)["pane.divider.1"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.995)))
+        let strip = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'pane.strip.'")).firstMatch
+        XCTAssertTrue(strip.waitUntilExists(timeout: 5), "The page's pane folded to its strip")
+        named.tap()
+        assertPageOnScreen("With the page's pane folded")
+        attachScreenCapture("web-link-after-fold-portrait")
+    }
+
     /// The launcher's Web Page opens a typed address; Back, Forward, the
     /// address field and the grip's Close Pane work on it.
     func testTheLauncherOpensAPageAndTheBarGoesBackAndForward() throws {
@@ -313,7 +365,8 @@ final class BrowserFixtureServer: @unchecked Sendable {
     private static func answer(_ connection: NWConnection) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, _, _ in
             let request = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-            let path = request.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
+            let target = request.split(separator: " ").dropFirst().first ?? "/"
+            let path = String(target.split(separator: "?").first ?? target)
             let body = page(path)
             let status = body == nil ? "404 Not Found" : "200 OK"
             let bytes = Data((body ?? "").utf8)

@@ -172,14 +172,7 @@ extension PaneHostController {
             source: source,
             routedLeaf: panes.routedLeafID,
             isPortrait: view.bounds.height > view.bounds.width,
-            shown: { [panes] leaf in
-                guard case .local(let token)? = leaf.stack.last?.route else { return PanePlacement.shown(leaf.stack.last) }
-                switch panes.standIns[token] {
-                case .linkedFile?: return .kind(.file)
-                case .fileBrowser?: return .kind(.folder)
-                default: return PanePlacement.shown(leaf.stack.last)
-                }
-            },
+            shown: placementShown,
             fits: { [weak self] target, edge in
                 guard let self else { return false }
                 return PaneOpenChoices.fits(edge, of: target, in: cells, showing: content.entry.route) { self.presentation(of: $0) }
@@ -212,5 +205,16 @@ extension PaneHostController {
         }
         announceLayoutChange()
         return true
+    }
+
+    /// What `leaf` shows as the placement weighs it, naming the screens a
+    /// stand-in entry holds (a file or folder opened from a chat).
+    func placementShown(_ leaf: PaneLeaf) -> PanePlacement.Shown {
+        guard case .local(let token)? = leaf.stack.last?.route else { return PanePlacement.shown(leaf.stack.last) }
+        switch panes.standIns[token] {
+        case .linkedFile?: return .kind(.file)
+        case .fileBrowser?: return .kind(.folder)
+        default: return PanePlacement.shown(leaf.stack.last)
+        }
     }
 }

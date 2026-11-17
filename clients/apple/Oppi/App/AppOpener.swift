@@ -279,8 +279,8 @@ final class AppOpener {
     let scopedLock: ScopedLockService
     private let intentSessionOpenTrigger: IntentSessionOpenTrigger
     /// The browser preference's two effects. Tests record them.
-    @ObservationIgnored private let browserPresent: BrowserPresent
-    @ObservationIgnored private let systemOpen: SystemOpen
+    @ObservationIgnored let browserPresent: BrowserPresent
+    @ObservationIgnored let systemOpen: SystemOpen
 
     var serverStore: ServerStore { coordinator.serverStore }
     /// Where toasts show: the transport focus, the server last brought
@@ -365,14 +365,7 @@ final class AppOpener {
         appLock: AppLockService = .shared,
         scopedLock: ScopedLockService = .shared,
         intentSessionOpenTrigger: IntentSessionOpenTrigger = .shared,
-        browserPresent: @escaping BrowserPresent = { url, window in
-            guard let window else { return }
-            // A wide window opens the page in a pane beside the focused one;
-            // a compact window, or a link from a sheet, keeps Safari's modal.
-            if PaneHostController.focused(in: window)?.openBrowser(url) == true { return }
-            guard let screen = Router.focusedScreen(in: window) ?? window.rootViewController else { return }
-            InAppBrowserPresenter.present(url: url, from: screen)
-        },
+        browserPresent: @escaping BrowserPresent = AppOpener.presentInAppBrowser,
         systemOpen: @escaping SystemOpen = { UIApplication.shared.open($0) }
     ) {
         self.coordinator = coordinator
@@ -637,6 +630,7 @@ final class AppOpener {
     private func perform(_ request: AppOpenRequest, generation: UInt64) async {
         guard isCurrent(generation) else { return }
         guard canRunNow(request) else {
+            if case .webLink = request { Self.logWebLink(.heldByInvite) }
             park(request, afterRunning: false)
             return
         }
@@ -1390,24 +1384,27 @@ final class AppOpener {
 
     // MARK: - Web and system
 
-    /// An http(s) page, by the Browser setting: Oppi's browser (a pane beside
-    /// the focused one on a wide window), or the system's.
-    func presentWebLink(_ url: URL) {
-        guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
-            systemOpen(url)
+    /// Oppi's browser for `url`: a wide window opens the page in a pane
+    /// beside the focused one; a compact window, or a link from a sheet,
+    /// keeps Safari's sheet.
+    static func presentInAppBrowser(_ url: URL, in window: UIWindow?) {
+        guard let window else {
+            logWebLink(.noWindow)
             return
         }
-#if DEBUG
-        let mode = _browserLinkPreferenceForTesting ?? AppPreferences.Browser.linkOpeningMode
-#else
-        let mode = AppPreferences.Browser.linkOpeningMode
-#endif
-        switch mode {
-        case .inApp:
-            browserPresent(url, navigation.window)
-        case .external:
-            systemOpen(url)
+        let host = PaneHostController.focused(in: window)
+        var fields = host?.webLinkLogFields ?? ["focusedPane": "none"]
+        if let host, let branch = host.openBrowser(url) {
+            fields["pageShown"] = "\(host.focusedCellIsShown)"
+            logWebLink(branch, fields)
+            return
         }
+        guard let screen = Router.focusedScreen(in: window) ?? window.rootViewController else {
+            logWebLink(.noWindow, fields)
+            return
+        }
+        let replaced = InAppBrowserPresenter.present(url: url, from: screen)
+        logWebLink(replaced ? .modalReplaced : .modal, fields)
     }
 
     // MARK: - Toasts

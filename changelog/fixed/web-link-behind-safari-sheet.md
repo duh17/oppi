@@ -1,0 +1,1 @@
+- **Client:** A web link opened while an in-app Safari page was already up, such as from a notification or another window, now opens its page in place of the old one instead of doing nothing. Each web link also writes one diagnostic line, without the address, saying whether it opened in a pane, in Safari, or not at all, so a link that seems to do nothing can be traced.
