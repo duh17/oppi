@@ -64,28 +64,29 @@ struct AppEventStreamClientTests {
         await consumer.value
     }
 
-    @Test func withheldPingCallbackTimesOutReportsHealthAndReconnects() async throws {
+    // The health report is the signal. The watchdog only reaches it after real 1 ms and 20 ms
+    // sleeps, which a loaded shard can stretch past any fixed poll deadline. It reconnects in
+    // the same main-actor turn the report returns in, so the state is set once the await
+    // resumes. `.timeLimit` is only a hang guard.
+    @Test(.timeLimit(.minutes(1)))
+    func withheldPingCallbackTimesOutReportsHealthAndReconnects() async throws {
         let factory = ScriptedAppEventSocketFactory()
         factory.pingBehavior = .withhold
-        var healthFailures: [PersistentStreamHealthFailure] = []
+        let (healthFailures, reportHealthFailure) = AsyncStream<PersistentStreamHealthFailure>.makeStream()
         let client = makeClient(
             factory: factory,
             pingInterval: .milliseconds(1),
             pingTimeout: .milliseconds(20),
-            onTransportHealthFailure: { healthFailures.append($0) }
+            onTransportHealthFailure: { reportHealthFailure.yield($0) }
         )
         let stream = client.connect()
         let consumer = Task {
             for await _ in stream {}
         }
 
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            healthFailures == [.pingTimeout]
-        })
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            if case .reconnecting(attempt: 1) = client.status { return true }
-            return false
-        })
+        var failures = healthFailures.makeAsyncIterator()
+        #expect(await failures.next() == .pingTimeout)
+        #expect(client.status == .reconnecting(attempt: 1))
         #expect(factory.sockets.first?.isCanceling == true)
 
         client.disconnect()
