@@ -9,25 +9,30 @@ struct MessageQueueItem: Codable, Sendable, Equatable, Identifiable {
     let id: String
     var message: String
     var attachments: [ChatAttachmentRef]?
+    /// Places from panes the queued input carries, as sent: chips in the queue, and staged
+    /// comments again when Stop brings the input back to the composer.
+    var context: [PromptContextItem]?
     /// Local-only optimistic thumbnails for queued image uploads.
     /// Not encoded on the wire; server queue state carries attachment refs only.
     var optimisticImages: [ImageAttachment]? = nil
     var createdAt: Int
 
     enum CodingKeys: String, CodingKey {
-        case id, message, attachments, createdAt
+        case id, message, attachments, context, createdAt
     }
 
     init(
         id: String,
         message: String,
         attachments: [ChatAttachmentRef]? = nil,
+        context: [PromptContextItem]? = nil,
         optimisticImages: [ImageAttachment]? = nil,
         createdAt: Int
     ) {
         self.id = id
         self.message = message
         self.attachments = attachments
+        self.context = context
         self.optimisticImages = optimisticImages
         self.createdAt = createdAt
     }
@@ -62,6 +67,9 @@ struct MessageQueueState: Codable, Sendable, Equatable {
                let images = prior.optimisticImages,
                !images.isEmpty {
                 next.optimisticImages = images
+            }
+            if Self.isMissingOrEmpty(next.context), let context = prior.context, !context.isEmpty {
+                next.context = context
             }
             return next
         }

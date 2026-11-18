@@ -11,6 +11,7 @@ import {
 } from "../session-lifecycle-service.js";
 import {
   type ChatAttachmentRef,
+  type PromptContextItem,
   type ServerMessage,
   type Session,
   type Workspace,
@@ -26,6 +27,7 @@ import { WsMessageHandler } from "../ws-message-handler.js";
 import { normalizeSessionWorktreeId, resolveWorkspaceWorktree } from "../worktrees.js";
 import { admitSessionRoute } from "../session-route-scope.js";
 import { parseClientCommand } from "../session-command-parse.js";
+import { readPromptContext } from "../prompt-context.js";
 import { reservedLaunchKeyError } from "../reserved-launch-keys.js";
 import { isThinkingLevel } from "../thinking-levels.js";
 
@@ -326,8 +328,16 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       model?: unknown;
       thinking?: unknown;
       prompt?: unknown;
+      context?: unknown;
       launchIdempotencyKey?: unknown;
     }>(req);
+    let context: PromptContextItem[] | undefined;
+    try {
+      context = readPromptContext(body.context);
+    } catch (error: unknown) {
+      helpers.error(res, 400, error instanceof Error ? error.message : String(error));
+      return;
+    }
     if (
       (body.name !== undefined && typeof body.name !== "string") ||
       (body.model !== undefined && (typeof body.model !== "string" || !body.model.trim())) ||
@@ -353,6 +363,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         model: typeof body.model === "string" ? body.model.trim() : undefined,
         thinking: typeof body.thinking === "string" ? body.thinking : undefined,
         prompt: body.prompt,
+        ...(context ? { context } : {}),
         idempotencyKey:
           typeof body.launchIdempotencyKey === "string"
             ? body.launchIdempotencyKey.trim()

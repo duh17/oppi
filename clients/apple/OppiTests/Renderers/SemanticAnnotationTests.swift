@@ -545,8 +545,9 @@ struct MermaidSemanticSelectionTests {
             updatedAt: 1,
             sentAt: nil
         )
-        let block = ReviewCommentStore.reviewBlock(for: [comment])
-        #expect(block.contains("Start"))
+        let item = PromptContextItem(comment: comment)
+        #expect(item.quote?.contains("Start") == true)
+        let block = try #require(item.anchor)
         #expect(block.contains("**Diagram object:** Start · A"))
         #expect(block.contains("A[Start]"))
         #expect(block.contains("**Source context:**"))
@@ -620,16 +621,15 @@ struct MermaidSemanticSelectionTests {
             updatedAt: 1,
             sentAt: nil
         )
-        let fresh = ReviewCommentStore.reviewBlock(
-            for: [comment],
-            currentSourceRevision: { _ in target.sourceRevision }
+        let fresh = try #require(
+            PromptContextItem(comment: comment, currentSourceRevision: target.sourceRevision).anchor
         )
         #expect(fresh.contains("stale") == false)
         #expect(fresh.contains("**Diagram object:** Start · A"))
-        let stale = ReviewCommentStore.reviewBlock(
-            for: [comment],
-            currentSourceRevision: { _ in SemanticSourceRevision.hash(of: source + "\nC") }
-        )
+        let stale = try #require(PromptContextItem(
+            comment: comment,
+            currentSourceRevision: SemanticSourceRevision.hash(of: source + "\nC")
+        ).anchor)
         #expect(stale.contains("**Status:** stale"))
         #expect(stale.contains("**Diagram object:** Start · A"))
         #expect(!stale.contains(target.sourceRevision))
@@ -874,10 +874,11 @@ struct MermaidSemanticSelectionTests {
         #expect(reloaded.stagedComments[1].reference.semanticAnchor == nil)
         #expect(reloaded.stagedComments[2].reference.htmlDOMAnchor == nil)
         #expect(reloaded.stagedComments[2].reference.semanticAnchor == nil)
-        let outgoing = reloaded.appendReviewBlock(to: "")
-        #expect(outgoing.contains("**Diagram object:** Start · A"))
-        #expect(outgoing.contains("button#save"))
-        #expect(outgoing.contains("Legacy-style comment"))
+        let outgoing = reloaded.contextItems()
+        #expect(outgoing[0].anchor?.contains("**Diagram object:** Start · A") == true)
+        #expect(outgoing[1].anchor?.contains("button#save") == true)
+        #expect(outgoing[2].anchor == nil)
+        #expect(outgoing[2].note == "Legacy-style comment")
     }
 
     @Test func oldReviewCommentsDecodeWithoutSemanticAnchor() throws {

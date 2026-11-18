@@ -7,9 +7,10 @@ import Foundation
 /// returns `command_result` with the same `requestId` for forwarded commands.
 enum ClientMessage: Sendable {
     // ── Prompting ──
-    case prompt(message: String, attachments: [ChatAttachmentRef]? = nil, streamingBehavior: StreamingBehavior? = nil, requestId: String? = nil, clientTurnId: String? = nil)
-    case steer(message: String, attachments: [ChatAttachmentRef]? = nil, requestId: String? = nil, clientTurnId: String? = nil)
-    case followUp(message: String, attachments: [ChatAttachmentRef]? = nil, requestId: String? = nil, clientTurnId: String? = nil)
+    /// `context`: places from panes the server renders before `message` for the model only.
+    case prompt(message: String, attachments: [ChatAttachmentRef]? = nil, context: [PromptContextItem]? = nil, streamingBehavior: StreamingBehavior? = nil, requestId: String? = nil, clientTurnId: String? = nil)
+    case steer(message: String, attachments: [ChatAttachmentRef]? = nil, context: [PromptContextItem]? = nil, requestId: String? = nil, clientTurnId: String? = nil)
+    case followUp(message: String, attachments: [ChatAttachmentRef]? = nil, context: [PromptContextItem]? = nil, requestId: String? = nil, clientTurnId: String? = nil)
     case stop(requestId: String? = nil)       // Abort current turn only
     case abort(requestId: String? = nil)
     case stopSession(requestId: String? = nil) // Kill session process entirely
@@ -228,25 +229,28 @@ extension ClientMessage: Encodable {
             break
 
         // ── Prompting ──
-        case .prompt(let message, let attachments, let behavior, let reqId, let turnId):
+        case .prompt(let message, let attachments, let context, let behavior, let reqId, let turnId):
             try c.encode("prompt", forKey: .type)
             try c.encode(message, forKey: .message)
             try c.encodeIfPresent(attachments, forKey: .attachments)
+            try c.encodeIfPresent(context, forKey: .context)
             try c.encodeIfPresent(behavior, forKey: .streamingBehavior)
             try c.encodeIfPresent(reqId, forKey: .requestId)
             try c.encodeIfPresent(turnId, forKey: .clientTurnId)
 
-        case .steer(let message, let attachments, let reqId, let turnId):
+        case .steer(let message, let attachments, let context, let reqId, let turnId):
             try c.encode("steer", forKey: .type)
             try c.encode(message, forKey: .message)
             try c.encodeIfPresent(attachments, forKey: .attachments)
+            try c.encodeIfPresent(context, forKey: .context)
             try c.encodeIfPresent(reqId, forKey: .requestId)
             try c.encodeIfPresent(turnId, forKey: .clientTurnId)
 
-        case .followUp(let message, let attachments, let reqId, let turnId):
+        case .followUp(let message, let attachments, let context, let reqId, let turnId):
             try c.encode("follow_up", forKey: .type)
             try c.encode(message, forKey: .message)
             try c.encodeIfPresent(attachments, forKey: .attachments)
+            try c.encodeIfPresent(context, forKey: .context)
             try c.encodeIfPresent(reqId, forKey: .requestId)
             try c.encodeIfPresent(turnId, forKey: .clientTurnId)
 
@@ -427,7 +431,7 @@ extension ClientMessage: Encodable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case type, message, attachments, streamingBehavior, requestId, clientTurnId
+        case type, message, attachments, context, streamingBehavior, requestId, clientTurnId
         case id, action, redactionPolicy, value, confirmed, cancelled
         case contextualStrings
         case provider, modelId, persist, level, name

@@ -42,6 +42,10 @@ struct UserTimelineRowConfiguration: UIContentConfiguration {
     /// argument is the session the reference names, when it names one.
     var fetchSessionAttachment: ((_ attachmentId: String, _ sessionId: String?) async throws -> Data)? = nil
     var onOpenPathPill: ((UserMessagePathPill, UIView, PaneOpenPlacement) -> Void)? = nil
+    /// Places from panes the message carried, drawn as chips under the text.
+    var context: [PromptContextItem] = []
+    /// Opens a chip's place (`PromptContextItem.opensPlace`) in a pane.
+    var onOpenContextItem: ((PromptContextItem, UIView) -> Void)? = nil
     let canFork: Bool
     let onFork: (() -> Void)?
     var itemID: String? = nil
@@ -207,6 +211,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
     private var conversationNaturalTextWidth: CGFloat?
     private let attachmentBadgeRow = UIStackView()
     private let pathPillRow = UIStackView()
+    private let contextChipRow = UIStackView()
     private let textRow = UIStackView()
     private let iconLabel = UILabel()
     private let bodyStack = UIStackView()
@@ -341,6 +346,11 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         pathPillRow.alignment = .leading
         pathPillRow.spacing = 6
 
+        contextChipRow.translatesAutoresizingMaskIntoConstraints = false
+        contextChipRow.axis = .vertical
+        contextChipRow.alignment = .leading
+        contextChipRow.spacing = 6
+
         // Agent message header: sender identity, sender name, intent, fold chevron.
         // The fold control is the header's accessible element; the sender name is a
         // touch target inside it, offered to assistive tech as a custom action.
@@ -445,6 +455,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         bubbleStack.addArrangedSubview(pathPillRow)
         bubbleStack.addArrangedSubview(agentPreviewLabel)
         bubbleStack.addArrangedSubview(textRow)
+        bubbleStack.addArrangedSubview(contextChipRow)
         bubbleContainer.addSubview(bubbleStack)
         bubbleContainer.addSubview(accentBar)
         // Constants come from the chrome style in applyChromeGeometry.
@@ -527,6 +538,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         }
         updateAttachmentBadges(content.visibleBadges, palette: palette)
         updatePathPills(content.nonImagePathPills, palette: palette)
+        updateContextChips(configuration.context, palette: palette)
         applyAgentCard(palette: palette)
         textRow.isHidden = !content.showsTextRow || isFoldedAgentMessage
         // The card shows only around something it draws. Images sit in the strip
@@ -793,7 +805,8 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         conversationNaturalTextWidth = capsWidth
             ? Self.naturalTextWidth(
                 textView: messageTextView,
-                hasExtraBlocks: !extraMarkdownTextViews.isEmpty || !tableBlockViews.isEmpty,
+                hasExtraBlocks: !extraMarkdownTextViews.isEmpty || !tableBlockViews.isEmpty
+                    || !currentConfiguration.context.isEmpty,
                 content: content
             )
             : nil
@@ -1137,6 +1150,42 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         }
     }
 
+    /// One chip per place: what it is (Comment), where (`App.swift:12–14`), and the note as
+    /// its accessibility value. A chip whose place can open is a button.
+    private func updateContextChips(_ items: [PromptContextItem], palette: ThemePalette) {
+        clearArrangedSubviews(in: contextChipRow)
+        contextChipRow.isHidden = items.isEmpty
+        let scope = currentConfiguration.itemID.map { "chat.timeline.user.\($0).context" }
+        contextChipRow.accessibilityIdentifier = scope
+        let color = palette.ui.userMessageText
+        for (index, item) in items.enumerated() {
+            let opens = item.opensPlace && currentConfiguration.onOpenContextItem != nil
+            let chip = makeCapsuleView(
+                prefix: item.chipPrefix,
+                text: item.chipTitle,
+                symbolName: item.chipSymbolName,
+                tint: color,
+                background: .clear,
+                textColor: color,
+                font: AppFont.monoSmall,
+                monospaced: true,
+                tappable: opens
+            )
+            chip.isAccessibilityElement = true
+            chip.accessibilityIdentifier = scope.map { "\($0).\(index)" }
+            chip.accessibilityLabel = "\(item.chipPrefix) \(item.chipTitle)"
+            chip.accessibilityValue = item.note
+            chip.accessibilityTraits = opens ? .button : .staticText
+            if opens, let control = chip as? UIControl {
+                control.addAction(UIAction { [weak self, weak control] _ in
+                    guard let self, let control else { return }
+                    self.currentConfiguration.onOpenContextItem?(item, control)
+                }, for: .touchUpInside)
+            }
+            contextChipRow.addArrangedSubview(chip)
+        }
+    }
+
     private func clearArrangedSubviews(in stackView: UIStackView) {
         for view in stackView.arrangedSubviews {
             stackView.removeArrangedSubview(view)
@@ -1172,6 +1221,9 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         stack.axis = .horizontal
         stack.alignment = .center
         stack.spacing = 4
+        // The control itself takes the touch: a hit on the stack inside it never reached the
+        // control's tracking, so a tap on the pill did nothing.
+        stack.isUserInteractionEnabled = false
 
         let icon = UIImageView(image: UIImage(systemName: symbolName))
         icon.translatesAutoresizingMaskIntoConstraints = false

@@ -1,4 +1,5 @@
 import { asRecord } from "./json-shape.js";
+import { userInputData, userInputText } from "./prompt-context.js";
 
 export type SessionTreeFilterMode = "default" | "no-tools" | "user-only" | "labeled-only" | "all";
 
@@ -370,9 +371,14 @@ function extractTreeNodeSnapshot(
           break;
         }
 
-        default:
-          textPreview = previewText(extractDisplayTextFromMessageContent(message.content));
+        default: {
+          // A durable input with context items previews what the person typed.
+          const text = extractDisplayTextFromMessageContent(message.content);
+          const { customType, data } = entry as { customType?: string; data?: unknown };
+          const input = role === "user" ? userInputData(customType, data) : undefined;
+          textPreview = previewText(input ? userInputText(text, input) : text);
           break;
+        }
       }
 
       return {

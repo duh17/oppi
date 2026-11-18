@@ -169,7 +169,7 @@ struct TimelineReducerAskTests {
         ))
         var foundText: String?
         for item in reducer.items {
-            if case .userMessage(let id, let text, _, _) = item, id == "ask-answer-ask-evt-1" {
+            if case .userMessage(let id, let text, _, _, _) = item, id == "ask-answer-ask-evt-1" {
                 foundText = text
             }
         }

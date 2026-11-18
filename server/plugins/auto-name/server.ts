@@ -1,5 +1,5 @@
 import { AgentDoc, GenerationTask, hook } from "@earendil-works/pi-durable";
-import { defineExtension, defineFacet, Extensions, oppiHost } from "oppi/v1";
+import { defineExtension, defineFacet, Extensions, oppiHost, stripPromptContext } from "oppi/v1";
 import { autoName, userText } from "./core.js";
 
 // Durable port of `index.ts`. A hook on the generation task sees the conversation's first request,
@@ -32,7 +32,8 @@ export const DurableAutoName = defineExtension({
         const model = (await api.snapshot(AgentDoc, api.conversationId, context))?.model;
         const models = api.models;
         void autoName({
-          firstMessage: userText(users[0]?.content),
+          // Title what the person typed, not the comments block the server put before it.
+          firstMessage: stripPromptContext(userText(users[0]?.content)),
           session: model ? { provider: model.provider, id: model.modelId } : undefined,
           models: {
             find: (provider, id) => models.getModel(provider, id),

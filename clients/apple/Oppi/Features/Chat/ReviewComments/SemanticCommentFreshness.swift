@@ -11,7 +11,7 @@ enum SemanticCommentFreshness {
         }
         let text: String
         switch item {
-        case .assistantMessage(_, let message, _), .userMessage(_, let message, _, _):
+        case .assistantMessage(_, let message, _), .userMessage(_, let message, _, _, _):
             text = message
         default:
             return nil

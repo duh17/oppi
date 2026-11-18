@@ -24,7 +24,7 @@ import type { SessionHost } from "./durable-harness.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { canonicalJson } from "./turn-cache.js";
-import type { ChatAttachmentRef, MessageQueueItem } from "./types.js";
+import type { ChatAttachmentRef, MessageQueueItem, PromptContextItem } from "./types.js";
 
 const log = createLogger({ base: { component: "durable-agent-controller" } });
 
@@ -62,6 +62,9 @@ const RequestContent = defineDocFamily<{ hash: string; display?: string }, null>
 export interface RequestDisplay {
   message: string;
   attachments: ChatAttachmentRef[];
+  /** Places from panes the input carries, as sent: the queue shows them as chips, and Stop
+   *  stages them again when it brings the input back to the composer. */
+  context?: PromptContextItem[];
   createdAt: number;
   kind?: string;
 }
@@ -107,6 +110,7 @@ export async function readQueuedInput(
     id: String(item.id),
     message: display?.message ?? text,
     ...(display?.attachments?.length ? { attachments: display.attachments } : {}),
+    ...(display?.context?.length ? { context: display.context } : {}),
     createdAt: display?.createdAt ?? 0,
   };
 }
@@ -119,7 +123,7 @@ export interface PromptOptions {
   /** Place the input as this entry instead of `pi.user` (an agent message). */
   entry?: InputEntry;
   /** Queue display when it differs from the content (an expanded Skill, attachments). */
-  display?: { message: string; attachments: ChatAttachmentRef[] };
+  display?: { message: string; attachments: ChatAttachmentRef[]; context?: PromptContextItem[] };
   /** Once aborted, admission is refused. An admitted input's failure card does not depend on it. */
   signal?: AbortSignal;
   /** Runs inside admission, after a new (not duplicate) input is submitted. */

@@ -224,7 +224,7 @@ enum SessionOutlineIndex {
 
     private static func outlineSummary(for item: ChatItem, inspection: ToolInspection?) -> String {
         switch item {
-        case .userMessage(_, let text, _, _):
+        case .userMessage(_, let text, _, _, _):
             // The row's text without the composer's attachment marker and
             // file blocks, as the timeline shows it; attachment-only turns
             // keep a plain label instead of raw markup.

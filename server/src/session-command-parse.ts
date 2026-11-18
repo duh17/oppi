@@ -7,6 +7,7 @@ import type {
   ConversationStreamOlder,
 } from "./types.js";
 import { asRecord } from "./json-shape.js";
+import { readPromptContext } from "./prompt-context.js";
 
 export function readOptionalString(value: unknown): string | undefined {
   if (typeof value !== "string") {
@@ -120,6 +121,7 @@ function validateKnownCommand(type: string, command: Record<string, unknown>): v
     case "steer":
     case "follow_up":
       validateRequiredMessage(command);
+      readPromptContext(command.context);
       return;
     case "remove_queued_message":
       readRequiredString(command.itemId, "itemId");

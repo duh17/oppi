@@ -296,6 +296,10 @@ extension ChatViewController {
             currentPendingAttachments: composerDraftController.pendingAttachments
         ) else { return }
         composerDraftController.replaceMessage(text: plan.text, pendingAttachments: plan.pendingAttachments)
+        if !plan.context.isEmpty,
+           let error = reviewComments.restage(plan.context, localScopeId: reviewCommentLocalScopeId, sessionId: sessionId) {
+            connection.extensionToast = error
+        }
         model.composerTextBeforeRecording = nil
         if !model.showComposer { composer.requestFocus() }
     }
@@ -866,14 +870,20 @@ extension ChatViewController {
         let originalInputText = composerDraftController.text
         let originalPendingRepoPointers = composerDraftController.repoPointers
         let timelineItems = reducer.items
-        let reviewText = reviewComments.appendReviewBlock(
-            to: originalInputText,
+        // Staged comments travel as context items; the server renders them for the model.
+        let context = reviewComments.contextItems(
             pathFormatting: reviewCommentPathFormatting,
             currentSourceRevision: { comment in
                 SemanticCommentFreshness.currentRevision(for: comment, timelineItems: timelineItems)
             }
         )
-        let text = PendingFileReference.appendReferenceBlock(to: reviewText, files: originalPendingRepoPointers)
+        // A server that takes no context items, or comments past its limits, stops the send
+        // here: nothing is sent, and the draft and comments stay as they are.
+        if let refusal = connection.promptContextSendRefusal(context) {
+            connection.extensionToast = refusal
+            return
+        }
+        let text = PendingFileReference.appendReferenceBlock(to: originalInputText, files: originalPendingRepoPointers)
         let stagedReviewCommentIds = reviewComments.stagedCommentIds
         // Held past this chat: the ack can land after it is gone.
         let sentReviewComments = reviewComments
@@ -911,7 +921,7 @@ extension ChatViewController {
                 self.model.attachmentUploads = nil
                 self.model.uploadedAttachmentRefs = [:]
                 let optimisticDisplayText = UserMessageAttachmentPresentation.makeDisplayText(
-                    text: reviewText,
+                    text: originalInputText,
                     pendingAttachments: sourceAttachments,
                     pendingRepoPointers: originalPendingRepoPointers,
                     uploadedAttachments: attachments
@@ -927,6 +937,7 @@ extension ChatViewController {
                 let restored = self.actionHandler.sendPrompt(
                     text: text,
                     attachments: attachments,
+                    context: context,
                     optimisticDisplayText: optimisticDisplayText,
                     optimisticImages: optimisticImages,
                     isBusy: dispatchIsBusy,

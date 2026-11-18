@@ -130,13 +130,15 @@ extension ChatTimelineController {
     func userRowConfiguration(itemID: String, item: ChatItem) -> UserTimelineRowConfiguration? {
         let text: String
         let images: [ImageAttachment]
+        let context: [PromptContextItem]
         let agentMessage: AgentMessageCard?
         switch item {
-        case .userMessage(_, let userText, let userImages, _):
-            (text, images, agentMessage) = (userText, userImages, nil)
+        case .userMessage(_, let userText, let userImages, _, let userContext):
+            (text, images, context, agentMessage) = (userText, userImages, userContext, nil)
         case .agentMessage(_, let agentText, let agentOrigin, _):
-            (text, images, agentMessage) = (
+            (text, images, context, agentMessage) = (
                 agentText,
+                [],
                 [],
                 agentMessageCard(itemID: itemID, origin: agentOrigin, text: agentText)
             )
@@ -174,6 +176,10 @@ extension ChatTimelineController {
             fetchSessionAttachment: attachmentFetcher,
             onOpenPathPill: { [weak self] pill, sourceView, placement in
                 self?.openUserMessagePathPill(pill, from: sourceView, placement: placement)
+            },
+            context: context,
+            onOpenContextItem: { [weak self] item, sourceView in
+                self?.openContextItem(item, from: sourceView)
             },
             canFork: canFork,
             onFork: forkAction,
@@ -261,6 +267,15 @@ extension ChatTimelineController {
                 placement: placement
             )
         )
+    }
+
+    /// A context chip opens its place as the same link would from an assistant answer: a
+    /// `[[path#L12-L14]]` file reference beside the chat, or a web page.
+    func openContextItem(_ item: PromptContextItem, from sourceView: UIView) {
+        guard let request = item.openRequest(serverID: serverId, workspaceID: workspaceId, sessionID: sessionId) else {
+            return
+        }
+        AppRootEnvironment.near(sourceView)?.opener.open(request)
     }
 
     func thinkingRowConfiguration(itemID: String, item: ChatItem) -> ThinkingTimelineRowConfiguration? {
@@ -768,5 +783,28 @@ extension ChatTimelineController {
         }
 
         return Int(String(digits))
+    }
+}
+
+extension PromptContextItem {
+    /// What tapping the chip opens, or nil when its place cannot open (`opensPlace`). A file
+    /// opens as `[[path#L12-L14]]` would in the session's answers; a host path as a host file.
+    func openRequest(serverID: String?, workspaceID: String?, sessionID: String) -> AppOpenRequest? {
+        guard opensPlace else { return nil }
+        if let path, !path.isEmpty, [.file, .gitDiff, .image].contains(source) {
+            let hostPath = MarkdownWikiLinkRewriter.resolvedHostPath(path)
+            let lineAnchor = startLine.flatMap { SourceLineAnchor(startLine: $0, endLine: endLine ?? $0) }
+            return .resourceReference(ResourceReference(
+                target: path,
+                sourceServerID: serverID,
+                workspaceID: workspaceID,
+                sourceSessionID: sessionID,
+                fileCandidatePath: hostPath ?? path,
+                kind: hostPath == nil ? .workspaceFile : .hostFile,
+                lineAnchor: lineAnchor,
+                visibleLabel: chipTitle
+            ))
+        }
+        return url.flatMap(URL.init(string:)).map(AppOpenRequest.webLink)
     }
 }

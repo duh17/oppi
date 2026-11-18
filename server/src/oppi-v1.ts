@@ -48,6 +48,8 @@ export {
   type SidebarContribution,
 } from "./plugin-screens.js";
 export type * from "./types/screens.js";
+/** A message's typed text without the context block the server puts before it for the model. */
+export { stripPromptContext } from "./prompt-context.js";
 
 /** A durable extension with the runtimes whose sessions may select it, and the panels it restores. */
 export interface PluginExtension<

@@ -7,7 +7,14 @@ import Foundation
 /// - Full output lives in `ToolOutputStore`, keyed by item ID
 /// - Expansion state is external (`Set<String>` in reducer)
 enum ChatItem: Identifiable, Equatable {
-    case userMessage(id: String, text: String, images: [ImageAttachment] = [], timestamp: Date)
+    /// `context`: places from panes the message carried, shown as chips under the text.
+    case userMessage(
+        id: String,
+        text: String,
+        images: [ImageAttachment] = [],
+        timestamp: Date,
+        context: [PromptContextItem] = []
+    )
     /// A user-role input another agent session sent (a child's report, a parent's task or message).
     case agentMessage(id: String, text: String, origin: MessageOrigin, timestamp: Date)
     case assistantMessage(id: String, text: String, timestamp: Date)
@@ -32,7 +39,7 @@ enum ChatItem: Identifiable, Equatable {
 
     var id: String {
         switch self {
-        case .userMessage(let id, _, _, _): return id
+        case .userMessage(let id, _, _, _, _): return id
         case .agentMessage(let id, _, _, _): return id
         case .assistantMessage(let id, _, _): return id
         case .audioClip(let id, _, _, _): return id
@@ -48,8 +55,8 @@ enum ChatItem: Identifiable, Equatable {
 
     func replacingID(_ newID: String) -> ChatItem {
         switch self {
-        case .userMessage(_, let text, let images, let timestamp):
-            return .userMessage(id: newID, text: text, images: images, timestamp: timestamp)
+        case .userMessage(_, let text, let images, let timestamp, let context):
+            return .userMessage(id: newID, text: text, images: images, timestamp: timestamp, context: context)
         case .agentMessage(_, let text, let origin, let timestamp):
             return .agentMessage(id: newID, text: text, origin: origin, timestamp: timestamp)
         case .assistantMessage(_, let text, let timestamp):
@@ -101,7 +108,7 @@ extension ChatItem {
     /// Timestamp for outline display.
     var timestamp: Date? {
         switch self {
-        case .userMessage(_, _, _, let ts): return ts
+        case .userMessage(_, _, _, let ts, _): return ts
         case .agentMessage(_, _, _, let ts): return ts
         case .assistantMessage(_, _, let ts): return ts
         case .audioClip(_, _, _, let ts): return ts

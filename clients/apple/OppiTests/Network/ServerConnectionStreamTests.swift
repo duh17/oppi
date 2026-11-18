@@ -1005,7 +1005,7 @@ struct ServerConnectionStreamTests {
         var emittedBoundPaths: [String] = []
         conn._sendMessageForTesting = { message in
             emittedBoundPaths.append(conn.focusedStreamBinder.streamURL?.path ?? "none")
-            guard case .prompt(_, _, .steer?, let requestId?, _) = message else { return }
+            guard case .prompt(_, _, _, .steer?, let requestId?, _) = message else { return }
             _ = conn.commands.resolveTurnCommandResult(
                 command: "prompt",
                 requestId: requestId,
@@ -1031,7 +1031,7 @@ struct ServerConnectionStreamTests {
         var prepareCount = 0
         conn._onPrepareForSessionReentryForTesting = { _ in prepareCount += 1 }
         conn._sendMessageForTesting = { message in
-            guard case .prompt(_, _, .steer?, let requestId?, _) = message else { return }
+            guard case .prompt(_, _, _, .steer?, let requestId?, _) = message else { return }
             _ = conn.commands.resolveTurnCommandResult(
                 command: "prompt",
                 requestId: requestId,
@@ -1079,7 +1079,7 @@ struct ServerConnectionStreamTests {
             conn._sendMessageForTesting = { message in
                 emittedPath = conn.focusedStreamBinder.streamURL?.path
                 switch message {
-                case .prompt(_, _, _, let requestId, _):
+                case .prompt(_, _, _, _, let requestId, _):
                     if let requestId {
                         _ = conn.commands.resolveTurnCommandResult(
                             command: "prompt", requestId: requestId, success: true, error: nil

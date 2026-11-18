@@ -62,7 +62,7 @@ struct ChatActionHandlerRecoveryTests {
             switch message {
             case .setModel(_, _, let requestId, _):
                 modelRequestId = requestId
-            case .prompt(_, _, _, let requestId, let clientTurnId):
+            case .prompt(_, _, _, _, let requestId, let clientTurnId):
                 guard let requestId, let clientTurnId else { return }
                 promptAttempts += 1
                 promptClientTurnIds.append(clientTurnId)

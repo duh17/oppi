@@ -1,9 +1,10 @@
 import { turnRunning } from "./session-lifecycle-state.js";
 import { appendSessionMessage } from "./session-protocol.js";
 import type { SessionTurnCoordinator, TurnSessionState } from "./session-turns.js";
-import type { ChatAttachmentRef, ServerConfig, Session } from "./types.js";
+import type { ChatAttachmentRef, PromptContextItem, ServerConfig, Session } from "./types.js";
 import { createLogger } from "./logger.js";
 import { materializeChatAttachments } from "./chat-attachments.js";
+import { withPromptContext } from "./prompt-context.js";
 import {
   resolveUploadStoreConfig,
   type UploadStoreConfigResolved,
@@ -31,6 +32,7 @@ export interface SessionInputSessionState extends TurnSessionState {
       | "withModelTurnAdmission"
       | "abortClearsQueuedModelTurns"
       | "nativeMessageQueue"
+      | "placesPromptContext"
     >
   >;
 }
@@ -52,7 +54,23 @@ type EnqueueQueuedMessage = (
   idHint?: string,
   sdkMessage?: string,
   sdkImages?: SdkImageInput[],
+  context?: PromptContextItem[],
 ) => void;
+
+/**
+ * A message and its context items as the runtime takes them: the items for a backend that
+ * places them itself (Durable), else the rendered block in the message text (classic Pi,
+ * the pi-tui mirror), so the model sees the same block either way.
+ */
+function withContext(
+  active: SessionInputSessionState,
+  message: string,
+  context: PromptContextItem[] | undefined,
+): { message: string; context?: PromptContextItem[] } {
+  if (!context?.length) return { message };
+  if (active.sdkBackend?.placesPromptContext) return { message, context };
+  return { message: withPromptContext(message, context).text };
+}
 
 function requireAcceptedTurn(turn: { clientTurnId?: string; duplicate: boolean } | undefined): {
   clientTurnId?: string;
@@ -137,6 +155,7 @@ export class SessionInputCoordinator {
     message: string,
     opts?: {
       attachments?: ChatAttachmentRef[];
+      context?: PromptContextItem[];
       streamingBehavior?: "steer" | "followUp";
       clientTurnId?: string;
       requestId?: string;
@@ -157,6 +176,7 @@ export class SessionInputCoordinator {
     opts:
       | {
           attachments?: ChatAttachmentRef[];
+          context?: PromptContextItem[];
           streamingBehavior?: "steer" | "followUp";
           clientTurnId?: string;
           requestId?: string;
@@ -172,6 +192,7 @@ export class SessionInputCoordinator {
     const turnPayload = {
       message,
       attachments: opts?.attachments ?? [],
+      context: opts?.context ?? [],
       streamingBehavior: opts?.streamingBehavior,
     };
 
@@ -215,7 +236,11 @@ export class SessionInputCoordinator {
       requestId: opts?.requestId,
     });
     const dispatchImages = prepared.images;
-    const dispatchMessage = prepared.message;
+    const { message: dispatchMessage, context: dispatchContext } = withContext(
+      active,
+      prepared.message,
+      opts?.context,
+    );
     // A busy prompt with a streaming behavior is queued like a bare steer or
     // follow_up, and like them it is recorded when it starts, not here. The
     // turn may have ended during the await above, so read busy again: a prompt
@@ -244,9 +269,10 @@ export class SessionInputCoordinator {
       }
 
       if (!queueKind && shouldRecordPromptLocally(active.session)) {
+        // The session's first and last message show what was sent, not a model-only block.
         appendSessionMessage(active.session, {
           role: "user",
-          content: dispatchMessage,
+          content: prepared.message,
           timestamp: opts?.timestamp ?? Date.now(),
         });
       }
@@ -263,6 +289,7 @@ export class SessionInputCoordinator {
     const cmd: Record<string, unknown> = {
       type: "prompt",
       message: dispatchMessage,
+      ...(dispatchContext ? { context: dispatchContext } : {}),
       ...(opts?.attachments?.length || active.sdkBackend?.nativeMessageQueue
         ? {
             queueDisplay: {
@@ -294,6 +321,7 @@ export class SessionInputCoordinator {
       chars: dispatchMessage.length,
       imageCount: dispatchImages.length,
       attachmentCount: opts?.attachments?.length ?? 0,
+      contextCount: opts?.context?.length ?? 0,
       streamingBehavior: cmd.streamingBehavior as string | undefined,
       recordPromptLocally: !queueKind && shouldRecordPromptLocally(active.session),
     });
@@ -320,6 +348,7 @@ export class SessionInputCoordinator {
         dispatchedTurn.clientTurnId,
         dispatchMessage,
         dispatchImages,
+        opts?.context,
       );
     }
 
@@ -331,6 +360,7 @@ export class SessionInputCoordinator {
     message: string,
     opts?: {
       attachments?: ChatAttachmentRef[];
+      context?: PromptContextItem[];
       clientTurnId?: string;
       requestId?: string;
     },
@@ -343,6 +373,7 @@ export class SessionInputCoordinator {
     message: string,
     opts?: {
       attachments?: ChatAttachmentRef[];
+      context?: PromptContextItem[];
       clientTurnId?: string;
       requestId?: string;
     },
@@ -356,6 +387,7 @@ export class SessionInputCoordinator {
     message: string,
     opts?: {
       attachments?: ChatAttachmentRef[];
+      context?: PromptContextItem[];
       clientTurnId?: string;
       requestId?: string;
     },
@@ -375,6 +407,7 @@ export class SessionInputCoordinator {
     opts:
       | {
           attachments?: ChatAttachmentRef[];
+          context?: PromptContextItem[];
           clientTurnId?: string;
           requestId?: string;
         }
@@ -392,6 +425,7 @@ export class SessionInputCoordinator {
     const turnPayload = {
       message,
       attachments: opts?.attachments ?? [],
+      context: opts?.context ?? [],
     };
     if (
       this.deps.turnCoordinator.isDuplicateTurnIntent(active, kind, opts?.clientTurnId, turnPayload)
@@ -413,7 +447,11 @@ export class SessionInputCoordinator {
       requestId: opts?.requestId,
     });
     const dispatchImages = prepared.images;
-    const dispatchMessage = prepared.message;
+    const { message: dispatchMessage, context: dispatchContext } = withContext(
+      active,
+      prepared.message,
+      opts?.context,
+    );
     let acceptedTurn: { clientTurnId?: string; duplicate: boolean } | undefined;
     let turnDispatched = false;
     const acceptPreflight = (): void => {
@@ -443,6 +481,7 @@ export class SessionInputCoordinator {
     const cmd: Record<string, unknown> = {
       type: kind,
       message: dispatchMessage,
+      ...(dispatchContext ? { context: dispatchContext } : {}),
       ...(opts?.attachments?.length || active.sdkBackend?.nativeMessageQueue
         ? {
             queueDisplay: {
@@ -468,6 +507,7 @@ export class SessionInputCoordinator {
       chars: dispatchMessage.length,
       imageCount: dispatchImages.length,
       attachmentCount: opts?.attachments?.length ?? 0,
+      contextCount: opts?.context?.length ?? 0,
     });
 
     const data = await this.dispatchModelTurn(key, active, cmd, permit, () => {
@@ -490,6 +530,7 @@ export class SessionInputCoordinator {
         dispatchedTurn.clientTurnId,
         dispatchMessage,
         dispatchImages,
+        opts?.context,
       );
 
     return { duplicate: false };

@@ -244,6 +244,9 @@ final class MessageQueueView: UIView {
         if !chips.isEmpty {
             body.addArrangedSubview(attachmentStrip(chips))
         }
+        for (index, place) in (item.context ?? []).enumerated() {
+            body.addArrangedSubview(contextChip(place, id: "\(item.id).\(index)"))
+        }
         let well = UIView()
         well.backgroundColor = palette.ui.bg.withAlphaComponent(0.30)
         well.layer.cornerRadius = 10
@@ -363,6 +366,36 @@ final class MessageQueueView: UIView {
         row.accessibilityIdentifier = "chat.messageQueue.attachment.\(id)"
         row.accessibilityLabel = "Attachment \(name)"
         return row
+    }
+
+    /// A place the queued input carries, named as its sent message's chip names it.
+    private func contextChip(_ place: PromptContextItem, id: String) -> UIView {
+        let icon = UIImageView(image: UIImage.scaledSymbol(
+            place.chipSymbolName, style: .caption2, weight: .regular, color: palette.ui.comment
+        ))
+        icon.contentMode = .scaleAspectFit
+        let label = UILabel()
+        label.font = UIFont.scaledMonospaced(.caption2, .regular)
+        label.adjustsFontForContentSizeCategory = true
+        label.text = "\(place.chipPrefix) \(place.chipTitle)"
+        label.textColor = palette.ui.fg
+        label.lineBreakMode = .byTruncatingMiddle
+        let row = UIStackView(arrangedSubviews: [icon, label])
+        row.axis = .horizontal
+        row.alignment = .center
+        row.spacing = 4
+        row.isLayoutMarginsRelativeArrangement = true
+        row.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6)
+        row.backgroundColor = palette.ui.comment.withAlphaComponent(0.1)
+        row.layer.cornerRadius = 10
+        row.isAccessibilityElement = true
+        row.accessibilityIdentifier = "chat.messageQueue.context.\(id)"
+        row.accessibilityLabel = "\(place.chipPrefix) \(place.chipTitle)"
+        row.accessibilityValue = place.note
+        // Hug the text instead of stretching across the well.
+        let wrapper = UIStackView(arrangedSubviews: [row, UIView()])
+        wrapper.axis = .horizontal
+        return wrapper
     }
 
     /// A double tap that runs its closure; the row it sits on is rebuilt, not

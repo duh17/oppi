@@ -25,6 +25,7 @@ import type {
   ConversationStreamServerMessage,
   ExtensionUISurfaceActionMessage,
   MessageQueueState,
+  PromptContextItem,
   Session,
   ServerMessage,
   Workspace,
@@ -487,6 +488,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     message: string,
     opts?: {
       attachments?: ChatAttachmentRef[];
+      context?: PromptContextItem[];
       streamingBehavior?: "steer" | "followUp";
       clientTurnId?: string;
       requestId?: string;
@@ -524,6 +526,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     message: string,
     opts?: {
       attachments?: ChatAttachmentRef[];
+      context?: PromptContextItem[];
       clientTurnId?: string;
       requestId?: string;
     },
@@ -543,6 +546,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     message: string,
     opts?: {
       attachments?: ChatAttachmentRef[];
+      context?: PromptContextItem[];
       clientTurnId?: string;
       requestId?: string;
     },

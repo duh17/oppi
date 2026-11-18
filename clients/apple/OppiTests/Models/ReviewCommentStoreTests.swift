@@ -70,7 +70,7 @@ struct ReviewCommentStoreTests {
         #expect(store.stagedComments.first?.body == "Keep this.")
     }
 
-    @Test func appendReviewBlockIncludesLocalDraftContextForAgentSubmission() throws {
+    @Test func stagedCommentsBecomeTheContextItemsTheNextMessageSends() throws {
         let defaults = try makeDefaults()
         let store = ReviewCommentStore(defaults: defaults, keyPrefix: "test.reviewComments")
         store.load(workspaceId: "workspace-1", sessionId: "session-1")
@@ -81,13 +81,36 @@ struct ReviewCommentStoreTests {
             reference: reference(path: "Sources/App.swift", selectedText: "guard let value else { return }")
         )
 
-        let message = store.appendReviewBlock(to: "Please fix this.")
+        let items = store.contextItems()
 
-        #expect(message.contains("Please fix this."))
-        #expect(message.contains("## Review comments"))
-        #expect(message.contains("**Where:** `Sources/App.swift`:12 (file)"))
-        #expect(message.contains("guard let value else { return }"))
-        #expect(message.contains("> Check the nil path."))
+        #expect(items.count == 1)
+        let item = try #require(items.first)
+        #expect(item.id == store.stagedComments.first?.id)
+        #expect(item.source == .file)
+        #expect(item.path == "Sources/App.swift")
+        #expect(item.startLine == 12)
+        #expect(item.quote == "guard let value else { return }")
+        #expect(item.note == "Check the nil path.")
+    }
+
+    @Test func aSelectionPastTheServerLimitIsTrimmedVisiblyWhenStaged() throws {
+        let defaults = try makeDefaults()
+        let store = ReviewCommentStore(defaults: defaults, keyPrefix: "test.reviewComments")
+        let selection = String(repeating: "let value = 10 // é\n", count: 620)
+        #expect(selection.count == 12_400)
+        _ = try store.create(
+            workspaceId: "workspace-1",
+            sessionId: "session-1",
+            body: "Too long?",
+            reference: reference(path: "Sources/App.swift", selectedText: selection)
+        )
+
+        let quote = try #require(store.contextItems().first?.quote)
+        #expect(quote.utf16.count <= PromptContextItem.maxTextLength)
+        #expect(quote.hasSuffix("\n… trimmed, 12,400 characters"))
+        #expect(selection.hasPrefix(String(quote.dropLast("\n… trimmed, 12,400 characters".count))))
+        // A selection that fits is kept whole.
+        #expect(PromptContextItem.capturedQuote("short") == "short")
     }
 
     @Test func clearSentRemovesSubmittedDraftsFromLocalPersistence() throws {

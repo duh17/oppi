@@ -39,7 +39,13 @@ import { applyLifecycle } from "./session-lifecycle-state.js";
 import { resolveInitialChatModel } from "./session-model-selection.js";
 import { durableStoreId, requireDurableStoreId } from "./session-runtime-capabilities.js";
 import type { Storage } from "./storage.js";
-import type { ChatAttachmentRef, Session, SessionEngine, Workspace } from "./types.js";
+import type {
+  ChatAttachmentRef,
+  PromptContextItem,
+  Session,
+  SessionEngine,
+  Workspace,
+} from "./types.js";
 import {
   listWorkspaceWorktrees,
   workspaceHasPendingWorktreeClaim,
@@ -149,6 +155,7 @@ export interface SessionLifecycleServiceDeps {
       message: string,
       opts?: {
         attachments?: ChatAttachmentRef[];
+        context?: PromptContextItem[];
         clientTurnId?: string;
         requestId?: string;
       },
@@ -271,6 +278,8 @@ export class SessionLifecycleService {
     model?: string;
     thinking?: string;
     prompt?: string;
+    /** Places from panes, sent with the prompt (`prompt-context.ts`). */
+    context?: PromptContextItem[];
     idempotencyKey?: string;
   }): Promise<CreateWorkspaceSessionResult> {
     const now = Date.now();
@@ -278,7 +287,7 @@ export class SessionLifecycleService {
     const idempotencyKey = params.idempotencyKey?.trim() || undefined;
     if (idempotencyKey) {
       const existing = this.deps.storage.findSessionByLaunchIdempotencyKey(idempotencyKey);
-      if (existing) return this.existingControlLaunch(existing, params.prompt);
+      if (existing) return this.existingControlLaunch(existing, params.prompt, params.context);
     }
     const session = newControlSessionRow({
       now,
@@ -308,16 +317,23 @@ export class SessionLifecycleService {
       const existing = idempotencyKey
         ? this.deps.storage.findSessionByLaunchIdempotencyKey(idempotencyKey)
         : undefined;
-      if (existing) return this.existingControlLaunch(existing, params.prompt);
+      if (existing) return this.existingControlLaunch(existing, params.prompt, params.context);
       throw error;
     }
     const createdSession = this.deps.ensureSessionContextWindow({ ...session });
-    return this.finishControlLaunch(session, params.prompt, createdSession, "created");
+    return this.finishControlLaunch(
+      session,
+      params.prompt,
+      createdSession,
+      "created",
+      params.context,
+    );
   }
 
   private async existingControlLaunch(
     existing: Session,
     requestedPrompt: string | undefined,
+    context: PromptContextItem[] | undefined,
   ): Promise<CreateWorkspaceSessionResult> {
     if (!isControlConversation(existing)) {
       throw new SessionLifecycleError(
@@ -352,7 +368,13 @@ export class SessionLifecycleService {
       );
       if (!recovered) throw new SessionLifecycleError("launch_in_progress", 409);
       const createdSession = this.deps.ensureSessionContextWindow(recovered);
-      return this.finishControlLaunch(recovered, requestedPrompt, createdSession, "existing");
+      return this.finishControlLaunch(
+        recovered,
+        requestedPrompt,
+        createdSession,
+        "existing",
+        context,
+      );
     }
     const session = this.deps.ensureSessionContextWindow(existing);
     return {
@@ -370,6 +392,7 @@ export class SessionLifecycleService {
     requestedPrompt: string | undefined,
     createdSession: Session,
     launchKind: "created" | "existing",
+    context?: PromptContextItem[],
   ): Promise<CreateWorkspaceSessionResult> {
     const launch = session.launch;
     if (!launch) throw new SessionLifecycleError("Control session launch metadata is unavailable");
@@ -394,6 +417,7 @@ export class SessionLifecycleService {
     try {
       await this.deps.sessions.startSession(session.id, undefined);
       await this.deps.sessions.sendPrompt(session.id, prompt, {
+        ...(context ? { context } : {}),
         ...(turnId ? { clientTurnId: turnId, requestId: turnId } : {}),
       });
     } catch (error: unknown) {

@@ -104,7 +104,7 @@ struct TimelineReducerImageOrphanTests {
         #expect(reducer.items.count == 4, "No duplicate user message should exist")
 
         // The user message should be at index 2 (between old and new turns)
-        guard case .userMessage(_, let text, let images, _) = reducer.items[2] else {
+        guard case .userMessage(_, let text, let images, _, _) = reducer.items[2] else {
             Issue.record("Expected userMessage at index 2, got \(reducer.items[2])")
             return
         }
@@ -158,7 +158,7 @@ struct TimelineReducerImageOrphanTests {
         #expect(userMessages.count == 2, "Should have exactly 2 user messages, not a duplicate")
 
         // The new user message should be at index 2 (after initial user+assistant)
-        guard case .userMessage(_, let text, let images, _) = reducer.items[2] else {
+        guard case .userMessage(_, let text, let images, _, _) = reducer.items[2] else {
             Issue.record("Expected userMessage at index 2, got \(reducer.items[2])")
             return
         }
@@ -188,7 +188,7 @@ struct TimelineReducerImageOrphanTests {
         reducer.loadSession([userEvent, assistantEvent])
 
         #expect(reducer.items.count == 2)
-        guard case .userMessage(_, let text, let images, _) = reducer.items[0] else {
+        guard case .userMessage(_, let text, let images, _, _) = reducer.items[0] else {
             Issue.record("Expected userMessage at index 0")
             return
         }
@@ -215,7 +215,7 @@ struct TimelineReducerImageOrphanTests {
 
         reducer.loadSession([userEvent])
 
-        guard case .userMessage(_, let text, let images, _) = reducer.items[0] else {
+        guard case .userMessage(_, let text, let images, _, _) = reducer.items[0] else {
             Issue.record("Expected userMessage at index 0")
             return
         }
@@ -234,7 +234,7 @@ struct TimelineReducerImageOrphanTests {
 
         reducer.loadSession([userEvent])
 
-        guard case .userMessage(_, let text, let images, _) = reducer.items[0] else {
+        guard case .userMessage(_, let text, let images, _, _) = reducer.items[0] else {
             Issue.record("Expected userMessage at index 0")
             return
         }
@@ -260,7 +260,7 @@ struct TimelineReducerImageOrphanTests {
         let reducer = TimelineReducer()
         reducer.loadSession([userEvent])
 
-        guard case .userMessage(_, let text, let images, _) = reducer.items[0] else {
+        guard case .userMessage(_, let text, let images, _, _) = reducer.items[0] else {
             Issue.record("Expected userMessage at index 0")
             return
         }
@@ -284,7 +284,7 @@ struct TimelineReducerImageOrphanTests {
         let reducer = TimelineReducer()
         reducer.loadSession([userEvent])
 
-        guard case .userMessage(_, let text, let images, _) = reducer.items[0] else {
+        guard case .userMessage(_, let text, let images, _, _) = reducer.items[0] else {
             Issue.record("Expected userMessage at index 0")
             return
         }
@@ -320,7 +320,7 @@ struct TimelineReducerImageOrphanTests {
 
         // The local photo row is gone; the committed echo row remains, with its stored image.
         let userRows = reducer.items.compactMap { item -> (String, [ImageAttachment])? in
-            guard case .userMessage(let id, _, let images, _) = item else { return nil }
+            guard case .userMessage(let id, _, let images, _, _) = item else { return nil }
             return (id, images)
         }
         #expect(userRows.count == 2)
@@ -347,7 +347,7 @@ struct TimelineReducerImageOrphanTests {
         reducer.loadSession(trace)
 
         #expect(reducer.items.count == 2)
-        guard case .userMessage(_, let text, let images, _) = reducer.items[0] else {
+        guard case .userMessage(_, let text, let images, _, _) = reducer.items[0] else {
             Issue.record("Expected userMessage at index 0")
             return
         }

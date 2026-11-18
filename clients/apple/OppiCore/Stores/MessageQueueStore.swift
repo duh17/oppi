@@ -150,6 +150,7 @@ final class MessageQueueStore {
         kind: MessageQueueKind,
         message: String,
         attachments: [ChatAttachmentRef]?,
+        context: [PromptContextItem]? = nil,
         optimisticImages: [ImageAttachment]? = nil,
         id: String = "local-\(UUID().uuidString)"
     ) -> MessageQueueItem {
@@ -158,6 +159,7 @@ final class MessageQueueStore {
             id: id,
             message: message,
             attachments: attachments,
+            context: context,
             optimisticImages: optimisticImages,
             createdAt: Int(Date().timeIntervalSince1970 * 1_000)
         )

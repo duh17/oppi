@@ -4,8 +4,9 @@ import Foundation
 enum GuidedControlSessionInitialPrompt {
     struct PreparedPrompt: Equatable {
         let message: String
+        /// The staged comments, sent beside the message for the server to render.
+        let context: [PromptContextItem]
         let sentComments: [ReviewComment]
-
     }
 
     static func make(
@@ -19,11 +20,7 @@ enum GuidedControlSessionInitialPrompt {
         userRequest: String,
         comments: ChatReviewCommentsController?
     ) -> PreparedPrompt {
-        let completeRequest = comments?.appendReviewBlock(
-            to: userRequest,
-            pathFormatting: ChatViewController.reviewCommentPathFormattingPolicy(controlDomain: domain)
-        ) ?? userRequest
-        return PreparedPrompt(
+        PreparedPrompt(
             message: ControlSessionStarterPrompt.make(
                 domain: domain,
                 intent: intent,
@@ -32,8 +29,11 @@ enum GuidedControlSessionInitialPrompt {
                 targetPath: targetPath,
                 workspaceId: workspaceId,
                 workspaceName: workspaceName,
-                userRequest: completeRequest
+                userRequest: userRequest
             ),
+            context: comments?.contextItems(
+                pathFormatting: ChatViewController.reviewCommentPathFormattingPolicy(controlDomain: domain)
+            ) ?? [],
             sentComments: comments?.stagedComments ?? []
         )
     }
@@ -75,6 +75,7 @@ struct GuidedControlSessionAtomicLaunch {
         return Self(
             request: .init(
                 prompt: initialPrompt.message,
+                context: initialPrompt.context.isEmpty ? nil : initialPrompt.context,
                 name: sessionName,
                 model: model,
                 thinking: thinking,

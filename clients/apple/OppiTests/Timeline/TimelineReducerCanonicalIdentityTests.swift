@@ -488,7 +488,7 @@ struct TimelineReducerCanonicalIdentityTests {
         ))
 
         #expect(reducer.items.count == 5)
-        guard case .userMessage(let historicalUserID, let historicalUserText, _, _) = reducer.items[0] else {
+        guard case .userMessage(let historicalUserID, let historicalUserText, _, _, _) = reducer.items[0] else {
             Issue.record("Expected historical user row to stay first")
             return
         }
@@ -500,7 +500,7 @@ struct TimelineReducerCanonicalIdentityTests {
         }
         #expect(historicalAssistantID == "a1")
         #expect(historicalAssistantText == "Historical")
-        guard case .userMessage(_, let prompt, _, _) = reducer.items[2] else {
+        guard case .userMessage(_, let prompt, _, _, _) = reducer.items[2] else {
             Issue.record("Expected the new user prompt to stay before reconstructed thinking")
             return
         }

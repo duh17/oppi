@@ -204,7 +204,9 @@ enum ServerMessage: Sendable, Equatable {
         assistantContent: [AssistantMessageContentPart]? = nil,
         entryId: String? = nil,
         /// User role only: another agent session sent this input.
-        origin: MessageOrigin? = nil
+        origin: MessageOrigin? = nil,
+        /// User role only: places from panes the message carried; `content` is the typed text.
+        context: [PromptContextItem]? = nil
     )
     case cacheMiss(id: String, message: String)
     case notice(id: String, message: String)
@@ -440,7 +442,7 @@ extension ServerMessage: Decodable {
         // session_ended / stop lifecycle
         case reason, source
         // message_end / cache_miss / notice / text_delta / thinking_delta / audio_stream
-        case role, content, assistantContent, entryId, origin, delta, contentIndex, event, mimeType, sampleRate, channels, chunkIndex, audioBase64, durationSeconds, playbackBehavior, presentation
+        case role, content, assistantContent, entryId, origin, context, delta, contentIndex, event, mimeType, sampleRate, channels, chunkIndex, audioBase64, durationSeconds, playbackBehavior, presentation
         // tool_start / tool_update / tool_end
         case tool, args, toolCallId, parentToolCallId, details, callSegments, resultSegments, inputPresentation, nestedCalls, display, outputPresentation, outputAvailability
         // tool_output
@@ -541,7 +543,8 @@ extension ServerMessage: Decodable {
                     forKey: .assistantContent
                 ),
                 entryId: try c.decodeIfPresent(String.self, forKey: .entryId),
-                origin: try c.decodeIfPresent(MessageOrigin.self, forKey: .origin)
+                origin: try c.decodeIfPresent(MessageOrigin.self, forKey: .origin),
+                context: try c.decodeIfPresent([PromptContextItem].self, forKey: .context)
             )
 
         case "cache_miss":

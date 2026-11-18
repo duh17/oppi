@@ -127,7 +127,7 @@ struct ProtocolSnapshotTests {
 
     @Test func orderedAssistantContentContract() throws {
         let messageEnd = try decodeMessage("message_end")
-        guard case .messageEnd(_, let content, let assistantContent, let entryId, _) = messageEnd else {
+        guard case .messageEnd(_, let content, let assistantContent, let entryId, _, _) = messageEnd else {
             Issue.record("Expected structured message_end snapshot")
             return
         }
@@ -142,7 +142,7 @@ struct ProtocolSnapshotTests {
         ])
 
         let agentMessage = try decodeMessage("message_end_agent")
-        guard case .messageEnd(let role, let agentText, _, let agentEntryId, let origin) = agentMessage else {
+        guard case .messageEnd(let role, let agentText, _, let agentEntryId, let origin, _) = agentMessage else {
             Issue.record("Expected an agent message_end snapshot")
             return
         }
@@ -150,6 +150,17 @@ struct ProtocolSnapshotTests {
         #expect(agentText == "Verdict: correct.")
         #expect(agentEntryId == "42")
         #expect(origin == MessageOrigin(kind: "session", sessionId: "child-session-1", name: "Review", intent: "report"))
+
+        let withContext = try decodeMessage("message_end_context")
+        guard case .messageEnd("user", let typed, _, "43", nil, let context?) = withContext else {
+            Issue.record("Expected a user message_end with context")
+            return
+        }
+        #expect(typed == "Please fix these.")
+        #expect(context.map(\.path) == ["Sources/App.swift", "docs/field-guide.pdf"])
+        #expect(context[0].startLine == 12 && context[0].endLine == 14)
+        #expect(context[1].startPage == 2 && context[1].endPage == 3)
+        #expect(context.allSatisfy { $0.quote == nil })
 
         let textDelta = try decodeMessage("text_delta")
         guard case .textDelta(_, let deltaContentIndex) = textDelta else {

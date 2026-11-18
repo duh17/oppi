@@ -257,6 +257,30 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     entryId: "42",
     origin: { kind: "session", sessionId: "child-session-1", name: "Review", intent: "report" },
   },
+  message_end_context: {
+    type: "message_end",
+    role: "user",
+    content: "Please fix these.",
+    entryId: "43",
+    context: [
+      {
+        id: "comment-1",
+        source: "file",
+        path: "Sources/App.swift",
+        startLine: 12,
+        endLine: 14,
+        note: "Rename total.",
+      },
+      {
+        id: "comment-2",
+        source: "file",
+        path: "docs/field-guide.pdf",
+        startPage: 2,
+        endPage: 3,
+        note: "Still true?",
+      },
+    ],
+  },
   cache_miss: {
     type: "cache_miss",
     id: "cache-miss:1739750460000:anthropic/claude-sonnet-4-20250514",
@@ -462,6 +486,16 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     item: {
       id: "queue-follow-1",
       message: "Run the tests next",
+      context: [
+        {
+          id: "comment-3",
+          source: "file",
+          path: "tests/cart.test.ts",
+          startLine: 30,
+          quote: "expect(total).toBe(12)",
+          note: "This one is flaky.",
+        },
+      ],
       createdAt: 1739750480000,
     },
     queueVersion: 4,
@@ -968,6 +1002,7 @@ const SERVER_MESSAGE_ORDER = [
   "agent_settled",
   "message_end",
   "message_end_agent",
+  "message_end_context",
   "cache_miss",
   "notice",
   "custom_card",

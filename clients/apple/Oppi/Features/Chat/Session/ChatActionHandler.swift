@@ -56,6 +56,7 @@ final class ChatActionHandler {
         let command: String
         let message: String
         let attachments: [ChatAttachmentRef]?
+        let context: [PromptContextItem]?
         let clientTurnId: String
     }
 
@@ -69,6 +70,7 @@ final class ChatActionHandler {
     func sendPrompt(
         text: String,
         attachments: [ChatAttachmentRef],
+        context: [PromptContextItem] = [],
         optimisticDisplayText: String? = nil,
         optimisticImages: [ImageAttachment] = [],
         isBusy: Bool,
@@ -84,7 +86,7 @@ final class ChatActionHandler {
         onNeedsReconnect: (() -> Void)? = nil
     ) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty || !attachments.isEmpty else { return text }
+        guard !trimmed.isEmpty || !attachments.isEmpty || !context.isEmpty else { return text }
         guard !isSending else { return text }
 
         isSending = true
@@ -95,6 +97,7 @@ final class ChatActionHandler {
         let readinessStore = sessionStore ?? connection.sessionStore
         let isReadyAtTap = sessionManager?.isReadyForTurnDispatch ?? true
         let sendAttachments = attachments.isEmpty ? nil : attachments
+        let sendContext = context.isEmpty ? nil : context
 
         if isBusy {
             AppHaptics.impact(style: .soft)
@@ -106,7 +109,8 @@ final class ChatActionHandler {
                 sessionId: sessionId,
                 command: commandName,
                 message: trimmed,
-                attachments: queuedAttachments
+                attachments: queuedAttachments,
+                context: sendContext
             )
             let enqueueOptimisticItem = {
                 connection.messageQueueStore.enqueueOptimisticItem(
@@ -114,6 +118,7 @@ final class ChatActionHandler {
                     kind: queuedKind,
                     message: trimmed,
                     attachments: queuedAttachments,
+                    context: sendContext,
                     optimisticImages: optimisticImages.isEmpty ? nil : optimisticImages,
                     id: queueTurnId
                 )
@@ -158,7 +163,7 @@ final class ChatActionHandler {
                     // only when queued, and the server paints the user row (classic:
                     // `queue_item_started` when queued, `message_end` when prompted;
                     // durable: the replica's committed user entry).
-                    try await connection.sendPrompt(trimmed, attachments: queuedAttachments, streamingBehavior: busyStreamingBehavior, clientTurnId: queueTurnId, sessionIdOverride: sessionId)
+                    try await connection.sendPrompt(trimmed, attachments: queuedAttachments, context: sendContext, streamingBehavior: busyStreamingBehavior, clientTurnId: queueTurnId, sessionIdOverride: sessionId)
                     self.clearUnconfirmedTurn(clientTurnId: queueTurnId)
                     onSendSucceeded?()
                     let queueStore = connection.messageQueueStore
@@ -189,6 +194,7 @@ final class ChatActionHandler {
                         command: commandName,
                         message: trimmed,
                         attachments: queuedAttachments,
+                        context: sendContext,
                         clientTurnId: queueTurnId
                     )
                     let errorPrefix = busyStreamingBehavior == .steer ? "Steer" : "Follow-up"
@@ -214,7 +220,8 @@ final class ChatActionHandler {
                 sessionId: sessionId,
                 command: "prompt",
                 message: trimmed,
-                attachments: sendAttachments
+                attachments: sendAttachments,
+                context: sendContext
             )
 
             launchTask { @MainActor in
@@ -236,8 +243,9 @@ final class ChatActionHandler {
                 }
 
                 let optimisticText = optimisticDisplayText ?? trimmed
-                let messageId: ChatItem.ID? = if !optimisticText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty {
-                    reducer.appendUserMessage(optimisticText, images: optimisticImages)
+                let messageId: ChatItem.ID? = if !optimisticText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || !attachments.isEmpty || !context.isEmpty {
+                    reducer.appendUserMessage(optimisticText, images: optimisticImages, context: context)
                 } else {
                     nil
                 }
@@ -246,7 +254,7 @@ final class ChatActionHandler {
                 // seconds after the message is already visible.
                 onDispatchStarted?()
                 do {
-                    try await connection.sendPrompt(trimmed, attachments: sendAttachments, clientTurnId: promptTurnId, sessionIdOverride: sessionId)
+                    try await connection.sendPrompt(trimmed, attachments: sendAttachments, context: sendContext, clientTurnId: promptTurnId, sessionIdOverride: sessionId)
                     self.clearUnconfirmedTurn(clientTurnId: promptTurnId)
                     onSendSucceeded?()
                 } catch {
@@ -261,6 +269,7 @@ final class ChatActionHandler {
                         command: "prompt",
                         message: trimmed,
                         attachments: sendAttachments,
+                        context: sendContext,
                         clientTurnId: promptTurnId
                     )
                     log.error("SEND prompt FAILED: \(error.localizedDescription, privacy: .public)")
@@ -694,13 +703,15 @@ final class ChatActionHandler {
         sessionId: String,
         command: String,
         message: String,
-        attachments: [ChatAttachmentRef]?
+        attachments: [ChatAttachmentRef]?,
+        context: [PromptContextItem]?
     ) -> String {
         if let unconfirmedTurn,
            unconfirmedTurn.sessionId == sessionId,
            unconfirmedTurn.command == command,
            unconfirmedTurn.message == message,
-           unconfirmedTurn.attachments == attachments {
+           unconfirmedTurn.attachments == attachments,
+           unconfirmedTurn.context == context {
             return unconfirmedTurn.clientTurnId
         }
         return UUID().uuidString
@@ -712,6 +723,7 @@ final class ChatActionHandler {
         command: String,
         message: String,
         attachments: [ChatAttachmentRef]?,
+        context: [PromptContextItem]?,
         clientTurnId: String
     ) {
         guard error is TurnSendUnconfirmedError else { return }
@@ -720,6 +732,7 @@ final class ChatActionHandler {
             command: command,
             message: message,
             attachments: attachments,
+            context: context,
             clientTurnId: clientTurnId
         )
     }

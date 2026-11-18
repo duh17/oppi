@@ -357,6 +357,12 @@ final class GuidedControlComposerModel {
         let comments = configuration.stagedComments
         do {
             let candidateLaunch = makeLaunch(cleanRequest: cleanRequest)
+            // An older server would drop the comments; a launch past the limits would fail.
+            // Either way nothing is posted and the comments stay staged.
+            if let refusal = connection.promptContextSendRefusal(candidateLaunch.initialPrompt.context) {
+                error = refusal
+                return
+            }
             // Freeze every POST field and the exact comment snapshots before
             // the first network attempt. A lost response cannot bind revised
             // draft content to the old idempotency key.

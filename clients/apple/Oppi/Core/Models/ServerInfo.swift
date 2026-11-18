@@ -150,6 +150,9 @@ struct ServerInfo: Codable, Sendable, Equatable {
         /// `GET /schedules/calendar`: past runs with their outcomes and upcoming occurrences.
         /// Missing means Schedules shows only its list.
         var scheduleCalendar: CapabilityVersion? = nil
+        /// Turn commands and control-session launches take `context` items (staged comments).
+        /// Missing means the server would drop them, so the app does not send them.
+        var promptContext: CapabilityVersion? = nil
         /// The Godot pane's `/godot` routes and `WS /godot/{id}/link` (`protocol/godot.json`).
         /// Missing means the server lists and serves no games.
         var godot: CapabilityVersion? = nil

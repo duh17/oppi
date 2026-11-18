@@ -73,7 +73,8 @@ import {
   queueOrphanedSessionsForRestart,
   recordLiveSessionsForRestart,
 } from "../src/session-restart-resume.js";
-import type { ChatAttachmentRef, ServerMessage, Session } from "../src/types.js";
+import type { ChatAttachmentRef, PromptContextItem, ServerMessage, Session } from "../src/types.js";
+import { renderPromptContext } from "../src/prompt-context.js";
 import type { ProgramStatusSync } from "../src/program-status.js";
 import type { ServerTelemetry } from "../src/telemetry/server-telemetry.js";
 import { LayoutFiles } from "../src/layout-files.js";
@@ -3132,6 +3133,141 @@ describe("server durable managed runtime", () => {
     await end;
     expect(prompts[1]).toContain("Use spaces.");
     expect(prompts[1]).not.toContain("Use tabs.");
+    projection.unsubscribe();
+  });
+
+  it("stores pane context in the user message the model reads and shows only the typed text", async () => {
+    const users: string[] = [];
+    const f = await fixture([
+      (transcript) => {
+        const user = transcript.messages.findLast((message) => message.role === "user");
+        users.push(
+          typeof user?.content === "string" ? user.content : JSON.stringify(user?.content),
+        );
+        return fauxAssistantMessage("Renamed.");
+      },
+    ]);
+    const context: PromptContextItem[] = [
+      {
+        id: "c1",
+        source: "file",
+        path: "Sources/App.swift",
+        startLine: 12,
+        endLine: 14,
+        quote: "let total = items.count",
+        note: "Rename total.",
+      },
+      {
+        id: "c2",
+        source: "file",
+        path: "docs/field-guide.pdf",
+        startPage: 2,
+        quote: "Tents go above the tree line.",
+        note: "Still true?",
+      },
+    ];
+    const shown = context.map(({ quote: _quote, ...item }) => item);
+    await f.manager.startSession(f.session.id, f.workspace);
+    const projection = observe(f.manager, f.session.id);
+    const end = projection.next((message) => message.type === "agent_end");
+    await f.manager.sendPrompt(f.session.id, "Please fix these.", {
+      context,
+      clientTurnId: "context-turn",
+    });
+    await end;
+
+    // The model reads the block, then the typed text, in the stored user message.
+    expect(users).toEqual([`${renderPromptContext(context)}\n\nPlease fix these.`]);
+    // Live and in history, the transcript shows the typed text and the places, no quotes.
+    expect(
+      projection.messages.find(
+        (message) => message.type === "message_end" && message.role === "user",
+      ),
+    ).toMatchObject({ content: "Please fix these.", context: shown });
+    const trace = (await f.manager.getServerDurableTrace(f.session.id, "full"))!;
+    const user = trace.find((event) => event.type === "user")!;
+    expect(user).toMatchObject({ text: "Please fix these.", context: shown });
+    expect(JSON.stringify(user)).not.toContain("Tents go above");
+
+    // A resend of the same turn is the same input; other context under its id is a conflict.
+    await expect(
+      f.manager.sendPrompt(f.session.id, "Please fix these.", {
+        context,
+        clientTurnId: "context-turn",
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      f.manager.sendPrompt(f.session.id, "Please fix these.", {
+        context: context.slice(0, 1),
+        clientTurnId: "context-turn",
+      }),
+    ).rejects.toThrow("clientTurnId conflict");
+    expect(f.faux.state.callCount).toBe(1);
+    projection.unsubscribe();
+  });
+
+  it("lists, previews, and branches a message with pane context by its typed text", async () => {
+    const f = await fixture([fauxAssistantMessage("FIRST"), fauxAssistantMessage("SECOND")]);
+    await f.manager.startSession(f.session.id, f.workspace);
+    const ask = async (text: string, context?: PromptContextItem[]) => {
+      const observed = observe(f.manager, f.session.id);
+      const settled = observed.next((message) => message.type === "agent_settled");
+      await f.manager.sendPrompt(f.session.id, text, context ? { context } : undefined);
+      await settled;
+      observed.unsubscribe();
+    };
+    await ask("first question");
+    await ask("Rename it.", [
+      { source: "file", path: "a.ts", startLine: 2, quote: "let x = 1", note: "This one." },
+    ]);
+
+    // Fork points: the typed text, never the model-only block.
+    const { messages } = (await f.manager.runCommand(f.session.id, {
+      type: "get_fork_messages",
+    })) as { messages: Array<{ entryId: string; text: string }> };
+    expect(messages.map((point) => point.text)).toEqual(["first question", "Rename it."]);
+
+    // The session tree's preview of the same row.
+    const tree = (await f.manager.runCommand(f.session.id, {
+      type: "get_session_tree",
+      filterMode: "no-tools",
+    })) as { nodes: Array<{ id: string; textPreview?: string }> };
+    expect(tree.nodes.map((node) => node.textPreview)).toEqual([
+      "first question",
+      "FIRST",
+      "Rename it.",
+      "SECOND",
+    ]);
+
+    // Branching at it gives the composer back the typed text.
+    expect(
+      await f.manager.runCommand(f.session.id, {
+        type: "navigate_tree",
+        targetId: messages[1]!.entryId,
+      }),
+    ).toEqual({ cancelled: false, editorText: "Rename it." });
+  });
+
+  it("shows a queued input's pane context in the queue, quotes included, until Stop takes it back", async () => {
+    const f = await fixture([fauxAssistantMessage("A long answer that keeps the turn busy.")], {
+      slow: true,
+    });
+    await f.manager.startSession(f.session.id, f.workspace);
+    const projection = observe(f.manager, f.session.id);
+    const delta = projection.next((message) => message.type === "text_delta");
+    await f.manager.sendPrompt(f.session.id, "Stream slowly");
+    await delta;
+    const context: PromptContextItem[] = [
+      { id: "c1", source: "file", path: "a.ts", startLine: 3, quote: "x = 1", note: "Why?" },
+    ];
+    await f.manager.sendFollowUp(f.session.id, "Then this.", { context, clientTurnId: "q1" });
+    expect((await f.manager.getMessageQueue(f.session.id)).followUp).toEqual([
+      expect.objectContaining({ message: "Then this.", context }),
+    ]);
+    expect((await f.manager.takeMessageQueue(f.session.id)).followUp).toEqual([
+      expect.objectContaining({ message: "Then this.", context }),
+    ]);
+    await f.manager.sendAbort(f.session.id);
     projection.unsubscribe();
   });
 

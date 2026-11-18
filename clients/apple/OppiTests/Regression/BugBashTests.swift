@@ -19,7 +19,7 @@ struct BugBashTests {
 
         #expect(!id.isEmpty)
         #expect(reducer.items.count == 1)
-        guard case .userMessage(let itemId, let text, _, _) = reducer.items[0] else {
+        guard case .userMessage(let itemId, let text, _, _, _) = reducer.items[0] else {
             Issue.record("Expected userMessage")
             return
         }
@@ -48,7 +48,7 @@ struct BugBashTests {
         reducer.removeItem(id: id1)
 
         #expect(reducer.items.count == 1)
-        guard case .userMessage(_, let text, _, _) = reducer.items[0] else {
+        guard case .userMessage(_, let text, _, _, _) = reducer.items[0] else {
             Issue.record("Expected userMessage")
             return
         }

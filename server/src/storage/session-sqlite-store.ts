@@ -5,7 +5,7 @@ import { mintSessionId } from "../id.js";
 import { ICON_ASSET_ID_PATTERN, migrateIconChoice, validateIconChoice } from "../icon-choice.js";
 import { createLogger } from "../logger.js";
 import { safeErrorMessage } from "../log-utils.js";
-import type { ChatAttachmentRef, Session } from "../types.js";
+import type { ChatAttachmentRef, PromptContextItem, Session } from "../types.js";
 import { openDatabase, type SqliteDatabase, type SqliteStatement } from "../sqlite-compat.js";
 import {
   createSessionStateSessionsTable,
@@ -103,6 +103,7 @@ export interface HeldInput {
   sessionId: string;
   message: string;
   attachments?: ChatAttachmentRef[];
+  context?: PromptContextItem[];
   /** The sender's turn id: a resend of the same turn is held once, and Durable dedupes delivery. */
   clientTurnId?: string;
   heldAt: number;
@@ -442,13 +443,14 @@ export class SessionSqliteStore {
     const result = this.db
       .prepare(
         `INSERT OR IGNORE INTO session_held_input
-           (session_id, message, attachments_json, client_turn_id, held_at)
-         VALUES (?, ?, ?, ?, ?)`,
+           (session_id, message, attachments_json, context_json, client_turn_id, held_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.sessionId,
         input.message,
         input.attachments?.length ? JSON.stringify(input.attachments) : null,
+        input.context?.length ? JSON.stringify(input.context) : null,
         input.clientTurnId ?? null,
         input.heldAt,
       ) as { changes?: number };
@@ -468,6 +470,7 @@ export class SessionSqliteStore {
       session_id: string;
       message: string;
       attachments_json: string | null;
+      context_json: string | null;
       client_turn_id: string | null;
       held_at: number;
     }>;
@@ -478,6 +481,7 @@ export class SessionSqliteStore {
       ...(row.attachments_json
         ? { attachments: JSON.parse(row.attachments_json) as ChatAttachmentRef[] }
         : {}),
+      ...(row.context_json ? { context: JSON.parse(row.context_json) as PromptContextItem[] } : {}),
       ...(row.client_turn_id ? { clientTurnId: row.client_turn_id } : {}),
       heldAt: row.held_at,
     }));
@@ -541,6 +545,7 @@ export class SessionSqliteStore {
         session_id TEXT NOT NULL,
         message TEXT NOT NULL,
         attachments_json TEXT,
+        context_json TEXT,
         client_turn_id TEXT,
         held_at INTEGER NOT NULL
       );
@@ -557,6 +562,9 @@ export class SessionSqliteStore {
       INSERT OR REPLACE INTO session_state_schema (key, value)
       VALUES ('version', '${SCHEMA_VERSION}');
     `);
+    // A nullable column added after the table: a held input's context items.
+    if (!tableColumns(this.db, "session_held_input").has("context_json"))
+      this.db.exec("ALTER TABLE session_held_input ADD COLUMN context_json TEXT");
   }
 
   /** Normalizes historical icon values inside stored launch metadata. */

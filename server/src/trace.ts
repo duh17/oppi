@@ -23,6 +23,7 @@ import {
   agentMessageText,
   type MessageOrigin,
 } from "../plugins/subagents/agent-message.js";
+import { userInputData, userInputText } from "./prompt-context.js";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -35,6 +36,7 @@ import { normalizeAudioPresentationDetails } from "./audio-presentation.js";
 import { OPPI_LIFECYCLE_CUSTOM_TYPE } from "./lifecycle-journal-extension.js";
 import { createLogger } from "./logger.js";
 import type {
+  PromptContextItem,
   StyledSegment,
   ToolInputPresentation,
   ToolOutputPresentation,
@@ -409,6 +411,8 @@ export interface TraceEvent {
   presentation?: TraceEventPresentation;
   /** For user: another agent session sent this input; `text` is its displayed text. */
   origin?: MessageOrigin;
+  /** For user: places from panes the message carried, without quotes; `text` is the typed text. */
+  context?: PromptContextItem[];
   /**
    * For user: image attachments the server stores for this message. Their bytes are in
    * `session-attachments`, not in `text`, which lists them as data URIs only when they could
@@ -1012,12 +1016,18 @@ function emitMessageEvents(
     if (text || media.length > 0) {
       // Durable agent messages keep their kind and data on the projected entry.
       const agentMessage = agentMessageOrigin(entry.customType, entry.data);
+      const userInput = userInputData(entry.customType, entry.data);
       events.push({
         id: entry.id,
         type: "user",
         timestamp,
-        text: agentMessage ? agentMessageText(text, agentMessage) : text,
+        text: agentMessage
+          ? agentMessageText(text, agentMessage)
+          : userInput
+            ? userInputText(text, userInput)
+            : text,
         ...(agentMessage ? { origin: agentMessage.origin } : {}),
+        ...(userInput ? { context: userInput.context } : {}),
         ...(media.length > 0 ? { media } : {}),
       });
     }

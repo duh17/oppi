@@ -440,6 +440,7 @@ final class MessageSender {
     func sendPrompt(
         _ text: String,
         attachments: [ChatAttachmentRef]? = nil,
+        context: [PromptContextItem]? = nil,
         streamingBehavior: StreamingBehavior? = nil,
         clientTurnId providedClientTurnId: String? = nil,
         sessionIdOverride: String? = nil
@@ -465,6 +466,7 @@ final class MessageSender {
                 .prompt(
                     message: text,
                     attachments: attachments,
+                    context: context,
                     streamingBehavior: streamingBehavior,
                     requestId: requestId,
                     clientTurnId: clientTurnId

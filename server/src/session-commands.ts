@@ -389,42 +389,21 @@ export class SessionCommandCoordinator {
   ): void | Promise<unknown> {
     const type = command.type as string;
     switch (type) {
-      case "prompt": {
-        const options = {
-          images: command.images as Array<{ type: "image"; data: string; mimeType: string }>,
-          streamingBehavior: command.streamingBehavior as "steer" | "followUp" | undefined,
-          clientTurnId: command.clientTurnId as string | undefined,
-          queueDisplay: command.queueDisplay as NonNullable<
-            Parameters<AgentBackend["prompt"]>[1]
-          >["queueDisplay"],
-          ...(onPreflightAccepted ? { onPreflightAccepted } : {}),
-        };
-        return permit
-          ? backend.prompt(command.message as string, options, permit)
-          : backend.prompt(command.message as string, options);
-      }
-      case "steer": {
-        const options = {
-          images: command.images as Array<{ type: "image"; data: string; mimeType: string }>,
-          streamingBehavior: "steer" as const,
-          clientTurnId: command.clientTurnId as string | undefined,
-          queueDisplay: command.queueDisplay as NonNullable<
-            Parameters<AgentBackend["prompt"]>[1]
-          >["queueDisplay"],
-          ...(onPreflightAccepted ? { onPreflightAccepted } : {}),
-        };
-        return permit
-          ? backend.prompt(command.message as string, options, permit)
-          : backend.prompt(command.message as string, options);
-      }
+      case "prompt":
+      case "steer":
       case "follow_up": {
-        const options = {
-          images: command.images as Array<{ type: "image"; data: string; mimeType: string }>,
-          streamingBehavior: "followUp" as const,
+        type PromptOptions = NonNullable<Parameters<AgentBackend["prompt"]>[1]>;
+        const options: PromptOptions = {
+          images: command.images as PromptOptions["images"],
+          context: command.context as PromptOptions["context"],
+          streamingBehavior:
+            type === "steer"
+              ? "steer"
+              : type === "follow_up"
+                ? "followUp"
+                : (command.streamingBehavior as PromptOptions["streamingBehavior"]),
           clientTurnId: command.clientTurnId as string | undefined,
-          queueDisplay: command.queueDisplay as NonNullable<
-            Parameters<AgentBackend["prompt"]>[1]
-          >["queueDisplay"],
+          queueDisplay: command.queueDisplay as PromptOptions["queueDisplay"],
           ...(onPreflightAccepted ? { onPreflightAccepted } : {}),
         };
         return permit

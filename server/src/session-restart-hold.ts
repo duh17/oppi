@@ -19,7 +19,7 @@ import { canResumeAfterServerRestart } from "./session-lifecycle-service.js";
 import { turnRunning } from "./session-lifecycle-state.js";
 import { hasServerDurableBinding } from "./session-runtime-capabilities.js";
 import type { Storage } from "./storage.js";
-import type { ChatAttachmentRef, Session } from "./types.js";
+import type { ChatAttachmentRef, PromptContextItem, Session } from "./types.js";
 
 const log = createLogger({ base: { component: "sessions" } });
 
@@ -50,6 +50,7 @@ export interface SessionRestartHoldDeps {
     message: string,
     opts: {
       attachments?: ChatAttachmentRef[];
+      context?: PromptContextItem[];
       clientTurnId?: string;
       streamingBehavior: "followUp";
     },
@@ -76,6 +77,7 @@ export class SessionRestartHold {
     message: string,
     opts?: {
       attachments?: ChatAttachmentRef[];
+      context?: PromptContextItem[];
       clientTurnId?: string;
       streamingBehavior?: "steer" | "followUp";
     },
@@ -96,6 +98,7 @@ export class SessionRestartHold {
       sessionId,
       message,
       ...(opts?.attachments?.length ? { attachments: opts.attachments } : {}),
+      ...(opts?.context?.length ? { context: opts.context } : {}),
       ...(opts?.clientTurnId ? { clientTurnId: opts.clientTurnId } : {}),
       heldAt: Date.now(),
     });
@@ -182,6 +185,7 @@ export class SessionRestartHold {
       try {
         const held = await this.deps.sendPrompt(sessionId, input.message, {
           ...(input.attachments ? { attachments: input.attachments } : {}),
+          ...(input.context ? { context: input.context } : {}),
           ...(input.clientTurnId ? { clientTurnId: input.clientTurnId } : {}),
           streamingBehavior: "followUp",
         });

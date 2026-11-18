@@ -419,9 +419,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         // The message text is preserved; images show "unavailable" placeholder.
         var imagesStripped = 0
         for (index, item) in items.enumerated() {
-            if case .userMessage(let id, let text, let images, let ts) = item, !images.isEmpty {
+            if case .userMessage(let id, let text, let images, let ts, let context) = item, !images.isEmpty {
                 imagesStripped += images.count
-                items[index] = .userMessage(id: id, text: text, images: [], timestamp: ts)
+                items[index] = .userMessage(id: id, text: text, images: [], timestamp: ts, context: context)
             }
         }
 
@@ -532,7 +532,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             orphanedUserMessages = []
         } else {
             let existingUserMessages = items.filter { item in
-                guard case .userMessage(let id, _, _, _) = item else { return false }
+                guard case .userMessage(let id, _, _, _, _) = item else { return false }
                 // Receipts are rebuilt from interactive tool results, not
                 // optimistic composer messages awaiting a JSONL echo.
                 let prefix = "ask-answer-"
@@ -642,7 +642,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             return count + 1
         }
         return rows.filter { item in
-            guard case .userMessage(_, let text, let images, _) = item else { return false }
+            guard case .userMessage(_, let text, let images, _, _) = item else { return false }
             let key = Self.comparableTimelineUserText(text)
             if let count = remainingTraceTexts[key], count > 0 {
                 remainingTraceTexts[key] = count - 1
@@ -1165,7 +1165,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         localUserRowIDs.removeAll { indexForID($0) == nil }
         guard !localUserRowIDs.isEmpty else { return }
         var pending: [(id: String, text: String, hasImages: Bool)] = localUserRowIDs.compactMap { id in
-            guard let index = indexForID(id), case .userMessage(_, let text, let images, _) = items[index] else { return nil }
+            guard let index = indexForID(id), case .userMessage(_, let text, let images, _, _) = items[index] else { return nil }
             return (id, Self.comparableTimelineUserText(text), !images.isEmpty)
         }
         var taken: Set<String> = []
@@ -1210,7 +1210,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         func mayBeClientOnly(_ item: ChatItem) -> Bool {
             switch item {
             case .notice, .error, .cacheMiss, .systemEvent, .audioClip: true
-            case .userMessage(let id, _, _, _): pending.contains(id)
+            case .userMessage(let id, _, _, _, _): pending.contains(id)
             default: false
             }
         }
@@ -1265,7 +1265,8 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 id: event.id,
                 text: cleanText,
                 images: images,
-                timestamp: date
+                timestamp: date,
+                context: event.context ?? []
             ), appendOnly: appendOnly)
             return nil
 
@@ -2261,7 +2262,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     func hasOpenUserTurn(matching text: String) -> Bool {
         let comparable = UserMessageTextProjection.comparableText(text)
         guard let matchIndex = items.lastIndex(where: { item in
-            guard case .userMessage(_, let existingText, _, _) = item else { return false }
+            guard case .userMessage(_, let existingText, _, _, _) = item else { return false }
             let existing = UserMessageTextProjection.comparableText(existingText)
             return comparable.isEmpty ? existing.isEmpty : existing == comparable
         }) else {
@@ -2281,7 +2282,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// has materialized paths or rewritten prose the composer never stored.
     func hasLatestImageUserMessage(matchingEcho text: String) -> Bool {
         guard let last = items.reversed().lazy.compactMap({ item -> (String, [ImageAttachment])? in
-            guard case .userMessage(_, let existingText, let images, _) = item else { return nil }
+            guard case .userMessage(_, let existingText, let images, _, _) = item else { return nil }
             return (existingText, images)
         }).first, !last.1.isEmpty else {
             return false
@@ -2331,14 +2332,19 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     }
 
     @discardableResult
-    func appendUserMessage(_ text: String, images: [ImageAttachment] = []) -> String {
+    func appendUserMessage(
+        _ text: String,
+        images: [ImageAttachment] = [],
+        context: [PromptContextItem] = []
+    ) -> String {
         let id = UUID().uuidString
         localUserRowIDs.append(id)
         items.append(.userMessage(
             id: id,
             text: text,
             images: images,
-            timestamp: Date()
+            timestamp: Date(),
+            context: context
         ))
         bumpRenderVersion()
         timelineMatchesTrace = false

@@ -95,7 +95,7 @@ final class TestEventPipeline {
             for event in ServerMessageEffects.timelineEvents(for: message, sessionId: sessionId) {
                 coalescer.receive(event)
             }
-        case .messageEnd(let role, let content, let assistantContent, let entryId, let origin):
+        case .messageEnd(let role, let content, let assistantContent, let entryId, let origin, _):
             if role == "user", let origin, !content.isEmpty {
                 reducer.appendAgentMessage(id: entryId ?? UUID().uuidString, text: content, origin: origin)
             } else if role == "assistant" {

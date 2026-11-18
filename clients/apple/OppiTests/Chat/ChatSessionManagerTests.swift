@@ -1323,7 +1323,7 @@ struct ChatSessionManagerTests {
         let showedFirstMessage = await waitForTestCondition(timeoutMs: 500) {
             await MainActor.run {
                 manager.reducer.items.contains { item in
-                    if case .userMessage(_, let text, _, _) = item {
+                    if case .userMessage(_, let text, _, _, _) = item {
                         return text == firstMessage
                     }
                     return false
@@ -1367,7 +1367,7 @@ struct ChatSessionManagerTests {
             var user: [String] = []
             var agent: [String] = []
             for item in manager.reducer.items {
-                if case .userMessage(_, let text, _, _) = item { user.append(text) }
+                if case .userMessage(_, let text, _, _, _) = item { user.append(text) }
                 if case .agentMessage(let id, let text, let rowOrigin, _) = item, rowOrigin == origin {
                     agent.append("\(id):\(text)")
                 }
@@ -1453,7 +1453,7 @@ struct ChatSessionManagerTests {
 
         #expect(await waitForMainActorCondition {
             manager.reducer.items.contains { item in
-                if case .userMessage(_, let text, _, _) = item { return text == fullMessage }
+                if case .userMessage(_, let text, _, _, _) = item { return text == fullMessage }
                 return false
             }
         })
@@ -1462,7 +1462,7 @@ struct ChatSessionManagerTests {
         }, "Empty live history should finish without rebuilding the live timeline")
 
         let userMessages = manager.reducer.items.compactMap { item -> String? in
-            guard case .userMessage(_, let text, _, _) = item else { return nil }
+            guard case .userMessage(_, let text, _, _, _) = item else { return nil }
             return text
         }
         #expect(userMessages == [fullMessage])
@@ -2597,7 +2597,7 @@ struct ChatSessionManagerTests {
         streams.yield(index: 0, message: .messageEnd(role: "user", content: "before-pause"))
         #expect(await waitForMainActorCondition {
             manager.reducer.items.contains { item in
-                if case .userMessage(_, let text, _, _) = item { return text == "before-pause" }
+                if case .userMessage(_, let text, _, _, _) = item { return text == "before-pause" }
                 return false
             }
         })
@@ -2623,7 +2623,7 @@ struct ChatSessionManagerTests {
 
         #expect(manager.reducer.items.count == itemCountBeforePause)
         #expect(!manager.reducer.items.contains { item in
-            if case .userMessage(_, let text, _, _) = item {
+            if case .userMessage(_, let text, _, _, _) = item {
                 return text == "while-paused" || text.contains("queued-while-paused")
             }
             if case .systemEvent(_, let message) = item {
@@ -2774,7 +2774,7 @@ struct ChatSessionManagerTests {
 
     private static func userMessageTexts(_ manager: ChatSessionManager) -> [String] {
         manager.reducer.items.compactMap { item in
-            guard case .userMessage(_, let text, _, _) = item else { return nil }
+            guard case .userMessage(_, let text, _, _, _) = item else { return nil }
             return text
         }
     }

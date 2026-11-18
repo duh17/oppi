@@ -29,6 +29,12 @@ import { CodingTools } from "./coding-tools.js";
 import { getCurrentSystemPrompt } from "@earendil-works/pi-ai/utils/transcript";
 import { computeCacheWaste } from "./cache-miss.js";
 import {
+  userInputData,
+  userInputEntry,
+  userInputText,
+  withPromptContext,
+} from "./prompt-context.js";
+import {
   addUsageToModelBreakdown,
   estimateTokensFromChars,
   estimateToolDeclarationTokens,
@@ -973,6 +979,7 @@ export class DurableBackend implements AgentBackend {
               message: display.message,
               createdAt: display.createdAt,
               ...(display.attachments.length ? { attachments: display.attachments } : {}),
+              ...(display.context?.length ? { context: display.context } : {}),
             },
             queueVersion: this.inboxVersion(),
           });
@@ -1121,6 +1128,8 @@ export class DurableBackend implements AgentBackend {
   /** Durable tasks recover after a restart and report an interrupted job themselves. */
   readonly holdsWorkLostOnRestart = false;
   readonly reportsLostWork = false;
+  /** `prompt` places context items as an `oppi.user-input` entry. */
+  readonly placesPromptContext = true;
   get isStreaming(): boolean {
     return this.live.run !== undefined;
   }
@@ -1186,7 +1195,12 @@ export class DurableBackend implements AgentBackend {
       throw new Error("clientTurnId uses a reserved durable requestId namespace");
     const requestId = clientTurnId ?? `${DURABLE_QUEUE_REQUEST_ID_PREFIX}${randomUUID()}`;
     // The model sees the expanded Skill; queue display keeps what the user typed.
-    const text = await expandSkillCommand(message, this.resources, this.readSkillFile);
+    const expanded = await expandSkillCommand(message, this.resources, this.readSkillFile);
+    // Context items go first, as a block the transcript hides behind `textOffset`. They are
+    // part of the stored user message, so history and retries read what the model read.
+    const context = options?.context?.length ? options.context : undefined;
+    const placed = context ? withPromptContext(expanded, context) : undefined;
+    const text = placed?.text ?? expanded;
     const content = options?.images?.length
       ? [{ type: "text" as const, text }, ...options.images]
       : text;
@@ -1198,9 +1212,11 @@ export class DurableBackend implements AgentBackend {
     ).prompt(content, {
       requestId,
       whenBusy: options?.streamingBehavior,
+      ...(context && placed ? { entry: userInputEntry(placed.textOffset, context) } : {}),
       display: {
         message: options?.queueDisplay?.message ?? message,
         attachments: options?.queueDisplay?.attachments ?? [],
+        ...(context ? { context } : {}),
       },
       signal: this.lifetime.signal,
       onAccepted: options?.onPreflightAccepted,
@@ -1563,7 +1579,14 @@ export class DurableBackend implements AgentBackend {
       const message = entry.model?.[0];
       if (message?.role !== "user" || entry.kind === "pi.compaction" || cards.entries.has(entry.id))
         return [];
-      const text = forkMessageText(message.content);
+      // A message with context items lists by what the person typed, not the model-only block.
+      const input = userInputData(entry.kind, entry.data);
+      const full = forkMessageText(message.content);
+      // Comments alone list as a placeholder, as media alone does.
+      const text = input
+        ? userInputText(full, input) ||
+          `[${input.context.length} comment${input.context.length === 1 ? "" : "s"}]`
+        : full;
       return text ? [{ entryId: String(entry.id), text }] : [];
     });
   }

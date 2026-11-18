@@ -110,7 +110,7 @@ struct TimelineReducerBasicTests {
         reducer.appendUserMessage("Hello from user")
 
         #expect(reducer.items.count == 1)
-        guard case .userMessage(_, let text, _, _) = reducer.items[0] else {
+        guard case .userMessage(_, let text, _, _, _) = reducer.items[0] else {
             Issue.record("Expected userMessage")
             return
         }
@@ -252,7 +252,7 @@ struct TimelineReducerBasicTests {
         }
 
         #expect(reducer.items.count == 1)
-        guard case .userMessage(let id, let text, let images, _) = reducer.items[0] else {
+        guard case .userMessage(let id, let text, let images, _, _) = reducer.items[0] else {
             Issue.record("Expected the optimistic image row to remain")
             return
         }
@@ -351,7 +351,7 @@ struct TimelineReducerBasicTests {
         }
 
         #expect(reducer.items.count == 1)
-        guard case .userMessage(let id, let text, let images, _) = reducer.items[0] else {
+        guard case .userMessage(let id, let text, let images, _, _) = reducer.items[0] else {
             Issue.record("Expected the optimistic image row to remain")
             return
         }
@@ -393,7 +393,7 @@ struct TimelineReducerBasicTests {
         ])
 
         let userRows: [(id: String, text: String)] = reducer.items.compactMap { item in
-            guard case .userMessage(let id, let text, _, _) = item else { return nil }
+            guard case .userMessage(let id, let text, _, _, _) = item else { return nil }
             return (id, text)
         }
         #expect(userRows.count == 2)
@@ -446,7 +446,7 @@ struct TimelineReducerBasicTests {
         #expect(reducer.hasOpenUserTurn(matching: echo))
         #expect(reducer.hasLatestImageUserMessage(matchingEcho: echo))
         #expect(reducer.items.count == 1)
-        guard case .userMessage(let id, _, let keptImages, _) = reducer.items[0] else {
+        guard case .userMessage(let id, _, let keptImages, _, _) = reducer.items[0] else {
             Issue.record("Expected the optimistic multi-image row to remain")
             return
         }
@@ -477,7 +477,7 @@ struct TimelineReducerBasicTests {
         ])
 
         let userTexts: [String] = reducer.items.compactMap { item in
-            guard case .userMessage(_, let text, _, _) = item else { return nil }
+            guard case .userMessage(_, let text, _, _, _) = item else { return nil }
             return text
         }
         #expect(userTexts.count == 2)

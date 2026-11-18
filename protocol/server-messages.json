@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Canonical ServerMessage JSON — updated by npm run protocol:fixtures:update",
     "generated": "static",
-    "messageCount": 78
+    "messageCount": 79
   },
   "messages": {
     "connected": {
@@ -834,6 +834,30 @@
         "intent": "report"
       }
     },
+    "message_end_context": {
+      "type": "message_end",
+      "role": "user",
+      "content": "Please fix these.",
+      "entryId": "43",
+      "context": [
+        {
+          "id": "comment-1",
+          "source": "file",
+          "path": "Sources/App.swift",
+          "startLine": 12,
+          "endLine": 14,
+          "note": "Rename total."
+        },
+        {
+          "id": "comment-2",
+          "source": "file",
+          "path": "docs/field-guide.pdf",
+          "startPage": 2,
+          "endPage": 3,
+          "note": "Still true?"
+        }
+      ]
+    },
     "cache_miss": {
       "type": "cache_miss",
       "id": "cache-miss:1739750460000:anthropic/claude-sonnet-4-20250514",
@@ -1161,6 +1185,16 @@
       "item": {
         "id": "queue-follow-1",
         "message": "Run the tests next",
+        "context": [
+          {
+            "id": "comment-3",
+            "source": "file",
+            "path": "tests/cart.test.ts",
+            "startLine": 30,
+            "quote": "expect(total).toBe(12)",
+            "note": "This one is flaky."
+          }
+        ],
         "createdAt": 1739750480000
       },
       "queueVersion": 4

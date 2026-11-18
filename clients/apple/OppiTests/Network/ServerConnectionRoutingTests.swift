@@ -292,7 +292,7 @@ struct ServerConnectionRoutingTests {
         #expect(stored.followUp.isEmpty)
 
         guard let first = pipe.reducer.items.first,
-              case .userMessage(_, let text, let images, _) = first else {
+              case .userMessage(_, let text, let images, _, _) = first else {
             Issue.record("Expected queue started user message")
             return
         }
@@ -907,7 +907,7 @@ struct EventFlowAckRequest {
 }
 
 func extractEventFlowAckRequest(from message: ClientMessage) -> EventFlowAckRequest? {
-    guard case .prompt(_, _, let behavior, let requestId, let clientTurnId) = message else { return nil }
+    guard case .prompt(_, _, _, let behavior, let requestId, let clientTurnId) = message else { return nil }
     return EventFlowAckRequest(
         command: "prompt",
         requestId: requestId,

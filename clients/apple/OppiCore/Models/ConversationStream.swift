@@ -65,8 +65,10 @@ struct ConversationEntryView: Codable, Equatable, Sendable {
     var hidden: Bool?
     /// User-role input another agent session sent.
     var origin: MessageOrigin?
-    /// With `origin`: UTF-16 offset where the displayed text starts.
+    /// With `origin` or `context`: UTF-16 offset where the displayed text starts.
     var textOffset: Int?
+    /// A user input with places from panes (`oppi.user-input`): the items, without quotes.
+    var context: [PromptContextItem]?
     /// Assistant entries: the answer re-billed cached context. `id` is the live `cache_miss`
     /// frame's id.
     var cacheMiss: ConversationCacheMiss?

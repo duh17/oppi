@@ -3,6 +3,8 @@ import Foundation
 struct MessageQueueComposerContent: Sendable {
     let text: String
     let attachments: [ChatAttachmentRef]
+    /// The withdrawn inputs' places from panes, to stage again as comments.
+    let context: [PromptContextItem]
     let restoredCount: Int
 }
 
@@ -34,6 +36,11 @@ enum MessageQueueComposerRestore {
             .joined(separator: "\n\n")
         var seen = Set<String>()
         let attachments = items.flatMap { $0.attachments ?? [] }.filter { seen.insert($0.id).inserted }
-        return MessageQueueComposerContent(text: text, attachments: attachments, restoredCount: items.count)
+        return MessageQueueComposerContent(
+            text: text,
+            attachments: attachments,
+            context: items.flatMap { $0.context ?? [] },
+            restoredCount: items.count
+        )
     }
 }

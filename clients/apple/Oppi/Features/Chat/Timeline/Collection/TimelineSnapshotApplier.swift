@@ -356,7 +356,7 @@ enum TimelineSnapshotApplier {
             return !isDone
         case .systemEvent:
             return true
-        case .userMessage(_, _, let images, _):
+        case .userMessage(_, _, let images, _, _):
             return !images.isEmpty
         // Assistant messages are handled separately via
         // shouldReconfigureStreamingAssistant — only the actively streaming

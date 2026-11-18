@@ -32,6 +32,7 @@ import {
 } from "./session-protocol.js";
 import { hasToolMediaDetails, materializeAgentEventMedia } from "./session-agent-event-media.js";
 import { agentMessageText, type AgentMessageData } from "../plugins/subagents/agent-message.js";
+import { userInputText, type UserInputData } from "./prompt-context.js";
 import type { EventProcessorSessionState, SessionEventProcessor } from "./session-events.js";
 import type { AgentBackend, BackendRunState } from "./agent-backend.js";
 import type { SessionStopCoordinator } from "./session-stop.js";
@@ -502,15 +503,24 @@ export class SessionAgentEventCoordinator {
         ),
       });
     } else if (role === "user") {
-      // The durable adapter attaches an agent message's origin; classic events never carry it.
-      const agentMessage = (event as { agentMessage?: AgentMessageData }).agentMessage;
+      // The durable adapter attaches an agent message's origin and a user input's context;
+      // classic events never carry them.
+      const { agentMessage, userInput } = event as {
+        agentMessage?: AgentMessageData;
+        userInput?: UserInputData;
+      };
       const content = extractAssistantText(message);
       this.deps.broadcast(key, {
         type: "message_end",
         role,
-        content: agentMessage ? agentMessageText(content, agentMessage) : content,
+        content: agentMessage
+          ? agentMessageText(content, agentMessage)
+          : userInput
+            ? userInputText(content, userInput)
+            : content,
         ...(entryId ? { entryId } : {}),
         ...(agentMessage ? { origin: agentMessage.origin } : {}),
+        ...(userInput ? { context: userInput.context } : {}),
       });
     }
     if (cacheMissNotice) {

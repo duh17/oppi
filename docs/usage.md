@@ -143,6 +143,8 @@ Replies show no icon in any style; the session's icon is in the top bar. While a
 
 The **Context** panel's reload button reloads the session as `/reload` does, so the panel shows the AGENTS files, Skills, tools, and extensions the session has now. It asks first, because when those files changed, the next message sends the whole conversation again without the prompt cache. The result shows at the top of the panel. It is available only while the session is idle. Pull down to refresh the numbers without a reload.
 
+Staged comments go with your next message. The agent reads each one with the text you selected; your message shows what you typed and a chip per comment, such as **Comment App.swift:12–14**. Tap a chip to open its file at those lines.
+
 ## Keyboard and pointer
 
 With a hardware keyboard, these commands are in the iPad menu bar and in the list you see when you hold ⌘. A command is unavailable while the app is locked or Quick Session is open, and a chat command needs the chat in front.

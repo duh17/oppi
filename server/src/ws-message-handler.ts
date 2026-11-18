@@ -28,16 +28,19 @@ import type {
   ClientMessage,
   ExtensionUISurfaceActionMessage,
   ModelInfo,
+  PromptContextItem,
   ServerMessage,
   Session,
 } from "./types.js";
 import { asRecord } from "./json-shape.js";
+import { readPromptContext } from "./prompt-context.js";
 
 const log = createLogger({ base: { component: "ws_message_handler" } });
 
 interface TurnCommandMessage {
   message: string;
   attachments?: ChatAttachmentRef[];
+  context?: PromptContextItem[];
   clientTurnId?: string;
   requestId?: string;
 }
@@ -610,6 +613,7 @@ export class WsMessageHandler {
       message: string,
       opts: {
         attachments?: ChatAttachmentRef[];
+        context?: PromptContextItem[];
         clientTurnId?: string;
         requestId?: string;
       },
@@ -622,6 +626,8 @@ export class WsMessageHandler {
     const rawImageCount = legacyImageCount(msg);
     const attachments = msg.attachments ? [...msg.attachments] : undefined;
     const attachmentCount = attachments?.length ?? 0;
+    // Parsing checked it; reading again keeps only the known fields, in a fixed order.
+    const context = readPromptContext(msg.context);
 
     if (rawImageCount > 0) {
       const message =
@@ -653,11 +659,13 @@ export class WsMessageHandler {
       clientTurnId: msg.clientTurnId,
       chars,
       attachmentCount,
+      contextCount: context?.length ?? 0,
     });
 
     try {
       const held = await handler(session.id, msg.message, {
         attachments,
+        ...(context ? { context } : {}),
         clientTurnId: msg.clientTurnId,
         requestId,
       });

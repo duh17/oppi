@@ -80,11 +80,49 @@ export interface ChatAttachmentRef {
   workspacePath?: string;
 }
 
+/** What a context item points at: the kind of place the person selected in. */
+export type PromptContextSource =
+  "git_diff" | "file" | "timeline_text" | "tool_output" | "terminal_output" | "image";
+
+/**
+ * One place the person attached to a message from a pane: a commented selection, for now.
+ * The server renders the items into a model-only block before the typed text
+ * (`renderPromptContext`); the transcript keeps them without `quote` and `anchor`, as chips.
+ * Limits are in `prompt-context.ts`; a message over them is rejected, never cut.
+ */
+export interface PromptContextItem {
+  /** The client's id for the item (a staged comment's id). Never rendered. */
+  id?: string;
+  source: PromptContextSource;
+  /** A name for a place without a path (a thinking block, a tool's output). */
+  label?: string;
+  path?: string;
+  /** A diff side: "old" or "new". */
+  side?: string;
+  /** 1-based lines of `path`. */
+  startLine?: number;
+  endLine?: number;
+  /** 1-based PDF pages of `path`. */
+  startPage?: number;
+  endPage?: number;
+  url?: string;
+  /** Fence language of `quote`; else read from the path's extension. */
+  language?: string;
+  /** The selected text. */
+  quote?: string;
+  /** What else locates the selection (a rendered element, a diagram object), as Markdown lines. */
+  anchor?: string;
+  /** What the person wrote about it. */
+  note?: string;
+}
+
 export type MessageQueueKind = "steer" | "follow_up";
 
 export interface MessageQueuePayload {
   message: string;
   attachments?: ChatAttachmentRef[];
+  /** Places from panes the queued input carries, as sent (quotes included). */
+  context?: PromptContextItem[];
 }
 
 export interface MessageQueueItem extends MessageQueuePayload {
@@ -176,6 +214,8 @@ export type ClientMessage =
         type: "prompt";
         message: string;
         attachments?: ChatAttachmentRef[];
+        /** Places from panes, rendered before `message` for the model only. */
+        context?: PromptContextItem[];
         streamingBehavior?: "steer" | "followUp";
         requestId?: string;
         clientTurnId?: string;
@@ -184,6 +224,7 @@ export type ClientMessage =
         type: "steer";
         message: string;
         attachments?: ChatAttachmentRef[];
+        context?: PromptContextItem[];
         requestId?: string;
         clientTurnId?: string;
       }
@@ -191,6 +232,7 @@ export type ClientMessage =
         type: "follow_up";
         message: string;
         attachments?: ChatAttachmentRef[];
+        context?: PromptContextItem[];
         requestId?: string;
         clientTurnId?: string;
       }
@@ -1033,6 +1075,8 @@ export type ServerMessage =
         entryId?: string;
         /** User role only: another agent session sent this input; `content` is its displayed text. */
         origin?: MessageOrigin;
+        /** User role only: places the message carried, without quotes; `content` is the typed text. */
+        context?: PromptContextItem[];
         /** Ordered assistant structure for clients that can render split content. */
         assistantContent?: AssistantMessageContentPart[];
       }
@@ -1399,8 +1443,13 @@ export interface ConversationEntryView {
   hidden?: true;
   /** User-role input another agent session sent (`oppi.agent-message`), validated like the trace. */
   origin?: MessageOrigin;
-  /** With `origin`: UTF-16 offset where the displayed text starts; the model-only header before it is hidden. */
+  /**
+   * With `origin` or `context`: UTF-16 offset where the displayed text starts; the model-only
+   * header before it is hidden.
+   */
   textOffset?: number;
+  /** A user input with places from panes (`oppi.user-input`): the items, without quotes. */
+  context?: PromptContextItem[];
   /**
    * Assistant entries: this answer re-billed cached context, shown after it while Pi's
    * showCacheMissNotices is on. `id` is the live `cache_miss` frame's id, so a client that holds

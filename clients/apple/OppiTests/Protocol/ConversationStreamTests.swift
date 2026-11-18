@@ -238,7 +238,7 @@ struct ConversationStreamTests {
         // The reducer shows the inline image first, then the stored one.
         let reducer = TimelineReducer()
         reducer.loadSession([event])
-        guard case .userMessage(_, let text, let images, _) = reducer.items[0] else {
+        guard case .userMessage(_, let text, let images, _, _) = reducer.items[0] else {
             Issue.record("Expected a user message row")
             return
         }

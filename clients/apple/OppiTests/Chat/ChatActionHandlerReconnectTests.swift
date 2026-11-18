@@ -118,7 +118,7 @@ struct ChatActionHandlerReconnectTests {
                 return
             }
             // Third attempt (user's retry after isSending clears): succeed
-            if case .prompt(_, _, _, let requestId, let clientTurnId) = message,
+            if case .prompt(_, _, _, _, let requestId, let clientTurnId) = message,
                let requestId, let clientTurnId {
                 pipe.handle(
                     .turnAck(
@@ -170,7 +170,7 @@ struct ChatActionHandlerReconnectTests {
 
         // Should have a user message in the timeline from the successful send
         let userMessages = reducer.items.filter {
-            if case .userMessage(_, let text, _, _) = $0 { return text == "retry after reconnect" }
+            if case .userMessage(_, let text, _, _, _) = $0 { return text == "retry after reconnect" }
             return false
         }
         #expect(userMessages.count == 1, "Successful retry should produce a user message")
@@ -227,7 +227,7 @@ struct ChatActionHandlerReconnectTests {
         let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
 
         connection._sendMessageForTesting = { message in
-            if case .prompt(_, _, .steer?, let requestId?, let clientTurnId?) = message {
+            if case .prompt(_, _, _, .steer?, let requestId?, let clientTurnId?) = message {
                 pipe.handle(
                     .turnAck(
                         command: "prompt",
@@ -323,7 +323,7 @@ struct ChatActionHandlerReconnectTests {
         var promptTexts: [String] = []
 
         connection._sendMessageForTesting = { message in
-            if case .prompt(let text, _, _, let requestId, let clientTurnId) = message,
+            if case .prompt(let text, _, _, _, let requestId, let clientTurnId) = message,
                let requestId, let clientTurnId {
                 promptTexts.append(text)
                 pipe.handle(
@@ -375,7 +375,7 @@ struct ChatActionHandlerReconnectTests {
         var promptTexts: [String] = []
 
         connection._sendMessageForTesting = { message in
-            if case .prompt(let text, _, _, let requestId, let clientTurnId) = message,
+            if case .prompt(let text, _, _, _, let requestId, let clientTurnId) = message,
                let requestId, let clientTurnId {
                 promptTexts.append(text)
                 pipe.handle(

@@ -385,13 +385,13 @@ struct ReliabilityTests {
 
         #expect(reducer.items.count == 600, "All items should be preserved, got \(reducer.items.count)")
 
-        guard case .userMessage(_, let firstText, _, _) = reducer.items.first else {
+        guard case .userMessage(_, let firstText, _, _, _) = reducer.items.first else {
             Issue.record("Expected userMessage as first item")
             return
         }
         #expect(firstText == "msg-0", "First item should be msg-0")
 
-        guard case .userMessage(_, let lastText, _, _) = reducer.items.last else {
+        guard case .userMessage(_, let lastText, _, _, _) = reducer.items.last else {
             Issue.record("Expected userMessage as last item")
             return
         }

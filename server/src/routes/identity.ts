@@ -539,6 +539,10 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         // `layout_proposal` cards to sockets that declare `pane-layouts:v1`, and Save Layout…
         // creating `.oppi/layouts/<name>.json` through the file editor.
         paneLayouts: { version: 1 },
+        // `prompt`/`steer`/`follow_up` and `POST /control-sessions` take `context` items
+        // (`prompt-context.ts`). An app sends staged comments only to a server that says so:
+        // an older one would drop them and acknowledge the send.
+        promptContext: { version: 1 },
         // Saved pane routes: `GET|POST|PUT /pins` and the `pins_changed` app event.
         // v3: a pin's target is a pane route in the `protocol/links.json` route shape (a linkable
         // pane other than Git and commits: sessions, files, panels, web pages, games), and a list

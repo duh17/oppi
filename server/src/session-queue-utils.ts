@@ -76,6 +76,7 @@ export function cloneQueueItem(item: MessageQueueItem): MessageQueueItem {
     message: item.message,
     createdAt: item.createdAt,
     ...(attachments ? { attachments } : {}),
+    ...(item.context?.length ? { context: item.context.map((place) => ({ ...place })) } : {}),
   };
 }
 

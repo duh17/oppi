@@ -1578,10 +1578,10 @@ final class ChatSessionManager {
                 outputPresentation: outputPresentation, outputAvailability: outputAvailability, parentToolCallId: parent
             ))
 
-        case .messageEnd(let role, let content, _, let entryId, let origin):
+        case .messageEnd(let role, let content, _, let entryId, let origin, let context):
             if role == "user", let origin, !content.isEmpty, !suppressTimelineMutationWhilePaused() {
                 reducer.appendAgentMessage(id: entryId ?? UUID().uuidString, text: content, origin: origin)
-            } else if role == "user", !content.isEmpty,
+            } else if role == "user", !content.isEmpty || context?.isEmpty == false,
                !suppressTimelineMutationWhilePaused(),
                !(entryId.map { reducer.hasItem(id: $0) } ?? false),
                !reducer.hasOpenUserTurn(matching: content),
@@ -1591,7 +1591,7 @@ final class ChatSessionManager {
                 // optimistic prompt still waiting for its turn. An earlier message
                 // with the same words is a different message; a busy send the server
                 // prompted after its turn ended has only this echo for a row.
-                reducer.appendUserMessage(content)
+                reducer.appendUserMessage(content, context: context ?? [])
             }
 
         case .error(_, _, let fatal):

@@ -333,7 +333,7 @@ struct TimelineReducerEdgeCaseTests {
 
         #expect(stats.imagesStripped == 1)
 
-        if case .userMessage(_, let text, let imgs, _) = reducer.items.first {
+        if case .userMessage(_, let text, let imgs, _, _) = reducer.items.first {
             #expect(text == "check this image")
             #expect(imgs.isEmpty)
         } else {

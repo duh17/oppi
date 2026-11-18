@@ -1546,6 +1546,8 @@ actor APIClient: ClientLogUploading {
     /// and staged review comments; the server delivers it once per launch key.
     struct CreateControlSessionRequest: Codable, Sendable {
         let prompt: String
+        /// Staged comments the server renders before `prompt` for the model only.
+        let context: [PromptContextItem]?
         let name: String?
         let model: String?
         let thinking: ThinkingLevel?
@@ -1553,12 +1555,14 @@ actor APIClient: ClientLogUploading {
 
         init(
             prompt: String,
+            context: [PromptContextItem]? = nil,
             name: String? = nil,
             model: String? = nil,
             thinking: ThinkingLevel? = nil,
             launchIdempotencyKey: String? = nil
         ) {
             self.prompt = prompt
+            self.context = context
             self.name = name
             self.model = model
             self.thinking = thinking

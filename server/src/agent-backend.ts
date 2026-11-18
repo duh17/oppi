@@ -13,7 +13,7 @@ import type { SessionRuntimeTransactionPermit } from "./session-runtime-transact
 import type { SessionTreeManager } from "./session-tree.js";
 import type { ThinkingLevel } from "./thinking-levels.js";
 import type { LiveEntryRendererSet } from "./trace.js";
-import type { ChatAttachmentRef, MessageQueueState } from "./types.js";
+import type { ChatAttachmentRef, MessageQueueState, PromptContextItem } from "./types.js";
 
 type BackendToolDefinition = { label?: string; namespace?: { name: string } };
 
@@ -89,10 +89,17 @@ export interface AgentBackend {
    */
   readonly reportsLostWork: boolean;
 
+  /**
+   * Whether `prompt` takes `context` and places it as a model-only block the transcript hides.
+   * Without it, the input coordinator puts the rendered block into the message text.
+   */
+  readonly placesPromptContext?: boolean;
+
   prompt(
     message: string,
     options?: {
       images?: Array<{ type: "image"; data: string; mimeType: string }>;
+      context?: PromptContextItem[];
       streamingBehavior?: "steer" | "followUp";
       clientTurnId?: string;
       queueDisplay?: { message: string; attachments?: ChatAttachmentRef[] };

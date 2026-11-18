@@ -187,10 +187,9 @@ struct ReviewableControlMarkdownTests {
             ) == nil)
         }
 
-        let block = comments.appendReviewBlock(to: "", pathFormatting: .verbatim)
+        let items = comments.contextItems(pathFormatting: .verbatim)
 
-        #expect(block.contains("`\(launchPath)`:1"))
-        #expect(block.contains("`\(checklistPath)`:1"))
+        #expect(Set(items.compactMap(\.path)) == [launchPath, checklistPath])
         #expect(ChatViewController.reviewCommentPathFormattingPolicy(controlDomain: .skills) == .verbatim)
         for domain in [ControlSessionDomain.agents, .schedules, .workspaces] {
             #expect(ChatViewController.reviewCommentPathFormattingPolicy(controlDomain: domain) == .normalizedDisplay)
@@ -351,7 +350,8 @@ struct ReviewableControlMarkdownTests {
             #expect(request.thinking == .high)
             #expect(request.prompt == originalCandidate.request.prompt)
             #expect(request.prompt.contains("Original request.") == true)
-            #expect(request.prompt.contains("Original comment.") == true)
+            // The retry freezes the comments it first sent, beside the prompt.
+            #expect(request.context?.map(\.note) == ["Original comment."])
             #expect(request.prompt.contains("Revised unsent") == false)
         }
         #expect(completion.sentCommentIdsToDispose.isEmpty)
@@ -558,8 +558,10 @@ struct ReviewableControlMarkdownTests {
         ].joined(separator: "\n")
         #expect(prompt.hasPrefix(header))
         #expect(!prompt.contains("Canonical workspace"))
-        #expect(prompt.contains("User request:"))
-        #expect(prompt.contains("Tighten this."))
+        // The staged comment goes as a context item the server renders, not pasted text.
+        #expect(!prompt.contains("Tighten this."))
+        #expect(launch.request.context?.map(\.note) == ["Tighten this."])
+        #expect(launch.request.context?.first?.quote == "Loose text")
     }
 
     @Test func guidedComposerReusesTheChatReviewCommentStashWhenCommentsAreStaged() {
@@ -647,9 +649,13 @@ struct ReviewableControlMarkdownTests {
         let posted = try #require(postedRequests.first)
         #expect(posted.launchIdempotencyKey == "atomic-success")
         #expect(posted.prompt.contains("User request:\nTighten the instructions.") == true)
-        #expect(posted.prompt.contains("## Review comments") == true)
-        #expect(posted.prompt.contains("`\(path)`:8 (file)") == true)
-        #expect(posted.prompt.contains("> Keep this constraint explicit.") == true)
+        // The comment travels as a context item beside the prompt, not pasted into it.
+        #expect(posted.prompt.contains("Keep this constraint explicit.") == false)
+        let item = try #require(posted.context?.first)
+        #expect(posted.context?.count == 1)
+        #expect(item.path == path)
+        #expect(item.startLine == 8)
+        #expect(item.note == "Keep this constraint explicit.")
         #expect(completion.sentCommentIdsToDispose == comments.stagedCommentIds)
         #expect(completion.hasUnsentContentAfterDisposal == false)
         comments.clearSent(ids: completion.sentCommentIdsToDispose)

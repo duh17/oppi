@@ -857,7 +857,7 @@ struct ChatFocusOwnershipTests {
         let pipe = TestEventPipeline(sessionId: harness.sessionId, connection: harness.connection)
         var dispatched: [String] = []
         harness.connection._sendMessageForTesting = { message in
-            guard case .prompt(let text, _, _, let requestId, let clientTurnId) = message,
+            guard case .prompt(let text, _, _, _, let requestId, let clientTurnId) = message,
                   let requestId, let clientTurnId else { return }
             dispatched.append(text)
             pipe.handle(
@@ -950,7 +950,7 @@ struct ChatFocusOwnershipTests {
         connection._turnSendRetryDelayForTesting = .milliseconds(1)
         var turnIdsByText: [String: Set<String>] = [:]
         connection._sendMessageForTesting = { message in
-            if case .prompt(let text, _, _, _, let clientTurnId) = message, let clientTurnId {
+            if case .prompt(let text, _, _, _, _, let clientTurnId) = message, let clientTurnId {
                 turnIdsByText[text, default: []].insert(clientTurnId)
             }
         }
@@ -1065,7 +1065,7 @@ struct ChatFocusOwnershipTests {
 
     private static func userMessages(in reducer: TimelineReducer) -> [String] {
         reducer.items.compactMap { item in
-            if case .userMessage(_, let text, _, _) = item { return text }
+            if case .userMessage(_, let text, _, _, _) = item { return text }
             return nil
         }
     }

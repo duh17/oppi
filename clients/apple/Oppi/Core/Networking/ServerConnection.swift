@@ -192,6 +192,23 @@ final class ServerConnection {
     /// The server answers the schedule calendar (`capabilities.scheduleCalendar`); without it
     /// Schedules shows only its list.
     var scheduleCalendarAvailable: Bool { serverCapabilities?.scheduleCalendar?.version ?? 0 >= 1 }
+    /// Why staged comments cannot go with a message to this server, or nil when they can
+    /// (`capabilities.promptContext`). An older server would drop them and still acknowledge.
+    var promptContextRefusal: String? {
+        guard let capabilities = serverCapabilities else {
+            return String(localized: "This server's details are still loading. Send again in a moment; your comments stay staged.")
+        }
+        guard capabilities.promptContext?.version ?? 0 >= 1 else {
+            return String(localized: "This server can't receive comments. Update the server, then send again; your comments stay staged.")
+        }
+        return nil
+    }
+    /// Why staged comments cannot go with the next message, or nil when they can: this server
+    /// takes none, or they break a limit. The send stops and the comments stay staged.
+    func promptContextSendRefusal(_ items: [PromptContextItem]) -> String? {
+        guard !items.isEmpty else { return nil }
+        return promptContextRefusal ?? PromptContextItem.sendLimitRefusal(items)
+    }
     /// The server keeps pins as pane routes (`capabilities.pins` v3); without it no Pin item or
     /// Pinned screen shows. An older server's pins have another shape, which this app does not read.
     var pinsAvailable: Bool { serverCapabilities?.pins?.version ?? 0 >= 3 }
@@ -1852,9 +1869,9 @@ final class ServerConnection {
         }
     }
 
-    func sendPrompt(_ text: String, attachments: [ChatAttachmentRef]? = nil, streamingBehavior: StreamingBehavior? = nil, clientTurnId: String? = nil, sessionIdOverride: String? = nil) async throws {
+    func sendPrompt(_ text: String, attachments: [ChatAttachmentRef]? = nil, context: [PromptContextItem]? = nil, streamingBehavior: StreamingBehavior? = nil, clientTurnId: String? = nil, sessionIdOverride: String? = nil) async throws {
         try prepareFocusedSessionBindingForSendIfNeeded(sessionIdOverride: sessionIdOverride)
-        try await sender.sendPrompt(text, attachments: attachments, streamingBehavior: streamingBehavior, clientTurnId: clientTurnId, sessionIdOverride: sessionIdOverride)
+        try await sender.sendPrompt(text, attachments: attachments, context: context, streamingBehavior: streamingBehavior, clientTurnId: clientTurnId, sessionIdOverride: sessionIdOverride)
     }
 
     func sendStop(sessionIdOverride: String? = nil) async throws {
@@ -2211,6 +2228,7 @@ final class ServerConnection {
         extensionNativeUICapabilities: [String]? = nil,
         pins: Bool = false,
         godot: Bool = false,
+        promptContext: Bool = false,
         features: [String: Bool]? = nil,
         pluginSidebar: [PluginScreenSidebarEntry]? = nil
     ) {
@@ -2237,6 +2255,7 @@ final class ServerConnection {
         serverCapabilities?.features = features
         serverCapabilities?.pluginSidebar = pluginSidebar
         serverCapabilities?.godot = version(godot)
+        serverCapabilities?.promptContext = version(promptContext)
         dictationStreamUnsupportedByEndpoint = false
         missingRequiredSplitStreamCapabilities = capabilities.missingRequiredSplitStreamCapabilities
         streamCapabilitiesLoaded = true

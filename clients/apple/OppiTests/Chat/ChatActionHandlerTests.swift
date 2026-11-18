@@ -314,7 +314,7 @@ struct ChatActionHandlerTests {
         _ = await waitForTestCondition { await MainActor.run { !reducer.items.isEmpty } }
         #expect(reducer.items.count == 1)
 
-        guard case .userMessage(_, let text, _, _) = reducer.items[0] else {
+        guard case .userMessage(_, let text, _, _, _) = reducer.items[0] else {
             Issue.record("Expected userMessage, got \(reducer.items[0])")
             return
         }
@@ -387,7 +387,7 @@ struct ChatActionHandlerTests {
         let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
 
         connection._sendMessageForTesting = { message in
-            guard case .prompt(_, _, _, let requestId, let clientTurnId) = message,
+            guard case .prompt(_, _, _, _, let requestId, let clientTurnId) = message,
                   let requestId,
                   let clientTurnId else {
                 return
@@ -528,7 +528,7 @@ struct ChatActionHandlerTests {
 
     private static func userRowTexts(_ reducer: TimelineReducer) -> [String] {
         reducer.items.compactMap { item in
-            guard case .userMessage(_, let text, _, _) = item else { return nil }
+            guard case .userMessage(_, let text, _, _, _) = item else { return nil }
             return text
         }
     }
@@ -927,7 +927,7 @@ private final class FakeTurnServer {
 
     func receive(_ message: ClientMessage) {
         switch message {
-        case .prompt(let text, _, let behavior, let requestId?, let clientTurnId?):
+        case .prompt(let text, _, _, let behavior, let requestId?, let clientTurnId?):
             if isTurnStreaming {
                 guard let behavior else {
                     reject("prompt", requestId, "Prompt requires an idle session; use steer or follow_up while a turn is streaming")
@@ -941,14 +941,14 @@ private final class FakeTurnServer {
                 isTurnStreaming = true
                 pipe.handle(.messageEnd(role: "user", content: text), sessionId: sessionId)
             }
-        case .steer(let text, _, let requestId?, let clientTurnId?):
+        case .steer(let text, _, _, let requestId?, let clientTurnId?):
             guard isTurnStreaming else {
                 reject("steer", requestId, "Steer requires an active streaming turn")
                 return
             }
             enqueue(.steer, text, clientTurnId)
             accept("steer", requestId, clientTurnId)
-        case .followUp(let text, _, let requestId?, let clientTurnId?):
+        case .followUp(let text, _, _, let requestId?, let clientTurnId?):
             guard isTurnStreaming else {
                 reject("follow_up", requestId, "Follow-up requires an active streaming turn")
                 return

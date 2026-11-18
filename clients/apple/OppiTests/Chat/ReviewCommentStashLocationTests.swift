@@ -172,8 +172,8 @@ struct ReviewCommentStashLocationTests {
             == locationPath(ReviewCommentStashLocation.compactText(for: range, among: stash)))
     }
 
-    @Test("Complete location and outgoing review block keep the full reference")
-    func completeLocationAndOutgoingReviewBlockKeepFullReference() {
+    @Test("Complete location and the outgoing context item keep the full reference")
+    func completeLocationAndOutgoingContextItemKeepFullReference() {
         let originalPath = "clients/apple/Oppi/Features/Chat/ChatView.swift"
         let chat = comment(
             id: "outgoing",
@@ -194,10 +194,10 @@ struct ReviewCommentStashLocationTests {
                 == "clients/apple/Oppi/Features/Chat/ChatView.swift:910-918"
         )
 
-        let block = ReviewCommentStore.reviewBlock(for: [chat])
-        #expect(block.contains("**Where:** `clients/apple/Oppi/Features/Chat/ChatView.swift`:910-918 (file)"))
-        #expect(!block.contains("**Where:** `Chat/ChatView.swift`"))
-        #expect(!block.contains("**Where:** `ChatView.swift`"))
+        let item = PromptContextItem(comment: chat)
+        #expect(item.path == originalPath)
+        #expect(item.startLine == 910)
+        #expect(item.endLine == 918)
     }
 }
 

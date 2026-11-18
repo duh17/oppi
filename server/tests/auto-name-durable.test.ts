@@ -12,7 +12,7 @@ import {
 
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
-import type { ServerMessage } from "../src/types.js";
+import type { PromptContextItem, ServerMessage } from "../src/types.js";
 import { makeTempDir } from "./harness/temp-dir.js";
 
 const AUTO_NAME = join(import.meta.dirname, "../plugins/auto-name");
@@ -99,7 +99,12 @@ async function fixture(options: { sessionName?: string }) {
   };
 }
 
-async function prompt(manager: SessionManager, sessionId: string, text: string): Promise<void> {
+async function prompt(
+  manager: SessionManager,
+  sessionId: string,
+  text: string,
+  context?: PromptContextItem[],
+): Promise<void> {
   const ended = new Promise<void>((resolve) => {
     const unsubscribe = manager.subscribe(sessionId, (message: ServerMessage) => {
       if (message.type !== "agent_end") return;
@@ -107,7 +112,7 @@ async function prompt(manager: SessionManager, sessionId: string, text: string):
       resolve();
     });
   });
-  await manager.sendPrompt(sessionId, text);
+  await manager.sendPrompt(sessionId, text, context ? { context } : undefined);
   await ended;
 }
 
@@ -125,6 +130,20 @@ describe("auto-name in durable sessions", () => {
 
     await prompt(f.manager, f.session.id, "and now the heartbeat timer, please");
     expect(f.titleRequests).toHaveLength(1);
+  });
+
+  it("titles what the person typed, not the comments sent with it", async () => {
+    symlinkSync(AUTO_NAME, join(agentDir, "extensions", "auto-name"), "dir");
+    const f = await fixture({});
+    await prompt(f.manager, f.session.id, "fix the websocket reconnect state drift", [
+      { source: "file", path: "Billing.swift", startLine: 4, quote: "invoice total", note: "why?" },
+    ]);
+    await settled(() => f.titleRequests.length > 0);
+    expect(f.titleRequests).toHaveLength(1);
+    expect(f.titleRequests[0]).toContain(
+      "<first_user_message>\nfix the websocket reconnect state drift\n</first_user_message>",
+    );
+    expect(f.titleRequests[0]).not.toContain("Billing.swift");
   });
 
   it("never renames a session that has a name", async () => {

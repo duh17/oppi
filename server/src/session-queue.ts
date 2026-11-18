@@ -29,6 +29,7 @@ import type {
   MessageQueueItem,
   MessageQueueKind,
   MessageQueueState,
+  PromptContextItem,
   ServerMessage,
   Session,
 } from "./types.js";
@@ -381,11 +382,13 @@ export class SessionMessageQueueCoordinator {
     idHint?: string,
     sdkMessage?: string,
     sdkImages?: QueueImageContent[],
+    context?: PromptContextItem[],
   ): QueueStoreItem {
     return {
       id: normalizeQueueId(idHint),
       message: normalizeQueueMessage(message),
       attachments: attachments ? [...attachments] : undefined,
+      ...(context?.length ? { context } : {}),
       createdAt: Date.now(),
       sdkMessage: sdkMessage ? normalizeQueueMessage(sdkMessage) : normalizeQueueMessage(message),
       sdkImages: queueImagesFromPromptImages(sdkImages),
@@ -400,6 +403,7 @@ export class SessionMessageQueueCoordinator {
     idHint?: string,
     sdkMessage?: string,
     sdkImages?: QueueImageContent[],
+    context?: PromptContextItem[],
   ): void {
     const active = this.deps.getActiveSession(key);
     if (!active) {
@@ -407,7 +411,14 @@ export class SessionMessageQueueCoordinator {
     }
 
     const queue = this.ensureQueueStore(active);
-    const nextItem = this.makeQueuedItem(message, attachments, idHint, sdkMessage, sdkImages);
+    const nextItem = this.makeQueuedItem(
+      message,
+      attachments,
+      idHint,
+      sdkMessage,
+      sdkImages,
+      context,
+    );
 
     const version = nextQueueVersion(queue.version);
     if (kind === "steer") {

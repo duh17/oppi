@@ -80,6 +80,28 @@ struct MessageQueueComposerRestoreTests {
         #expect(plan?.text == "first steer\n\nsecond steer\n\nfirst follow-up\n\ncurrent draft")
     }
 
+    @Test("Stop brings back a queued input's comments to stage again, quotes and all")
+    func queuedCommentsComeBackToStage() throws {
+        let comment = PromptContextItem(
+            id: "c1", source: .file, path: "Sources/App.swift", startLine: 12, endLine: 14,
+            language: "swift", quote: "let total = items.count", note: "Rename total."
+        )
+        let queue = MessageQueueState(
+            version: 1,
+            steering: [MessageQueueItem(id: "s1", message: "fix these", context: [comment], createdAt: 1)],
+            followUp: []
+        )
+
+        let plan = try #require(MessageQueueComposerRestore.plan(queue: queue, currentText: ""))
+        #expect(plan.text == "fix these")
+        #expect(plan.context == [comment])
+        let reference = comment.reviewReference
+        #expect(reference.path == "Sources/App.swift")
+        #expect(reference.startLine == 12 && reference.endLine == 14)
+        #expect(reference.selectedText == "let total = items.count")
+        #expect(reference.languageHint == "swift")
+    }
+
     @Test("Given queued messages and an empty composer, when stop restores the queue, then the composer contains only queued text")
     func emptyComposerDoesNotAddTrailingSpacing() {
         let queue = MessageQueueState(

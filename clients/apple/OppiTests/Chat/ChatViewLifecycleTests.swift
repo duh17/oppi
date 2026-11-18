@@ -599,7 +599,7 @@ struct ChatViewLifecycleTests {
         let connection = ServerConnection()
         await configureTestConnection(connection, credentials: makeTestCredentials(fingerprint: "sha256:draft-lifetime"))
         connection._setActiveSessionIdForTesting(sessionId)
-        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true, promptContext: true)
         connection._sendAckTimeoutForTesting = .milliseconds(300)
         connection._turnSendRetryDelayForTesting = .milliseconds(1)
         connection.sessionStore.upsert(
@@ -612,11 +612,11 @@ struct ChatViewLifecycleTests {
         }
         // The server holds the ack: the prompt frame goes out and nothing answers it.
         var promptsSent = 0
-        var sentText: String?
+        var sentContext: [PromptContextItem]?
         connection._sendMessageForTesting = { sent in
-            if case .prompt(let text, _, _, _, _) = sent {
+            if case .prompt(_, _, let context, _, _, _) = sent {
                 promptsSent += 1
-                sentText = text
+                sentContext = context
             }
         }
 
@@ -650,7 +650,7 @@ struct ChatViewLifecycleTests {
             await waitForMainActorCondition(timeout: .seconds(3)) { promptsSent == 1 },
             "The quick session message was never sent"
         )
-        #expect(sentText?.contains(stagedComment.body) == true, "The staged review comment rides with the message")
+        #expect(sentContext?.map(\.note) == [stagedComment.body], "The staged review comment rides with the message")
         #expect(chat?.composerDraftController.text.isEmpty == true, "A dispatched send leaves the field")
         #expect(
             draftStore.record(for: key)?.payload.text == message,

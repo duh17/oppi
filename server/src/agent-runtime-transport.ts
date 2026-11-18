@@ -6,6 +6,7 @@ import type {
   ChatAttachmentRef,
   ClientMessage,
   MessageQueueState,
+  PromptContextItem,
   ServerMessage,
   Session,
 } from "./types.js";
@@ -41,6 +42,8 @@ export function toSdkCommandBag(command: RuntimeClientCommand): Record<string, u
 
 export interface RuntimePromptOptions {
   attachments?: ChatAttachmentRef[];
+  /** Places from panes, rendered before the message for the model only. */
+  context?: PromptContextItem[];
   clientTurnId?: string;
   requestId?: string;
   streamingBehavior?: "steer" | "followUp";
@@ -49,6 +52,7 @@ export interface RuntimePromptOptions {
 
 export interface RuntimeQueuedInputOptions {
   attachments?: ChatAttachmentRef[];
+  context?: PromptContextItem[];
   clientTurnId?: string;
   requestId?: string;
 }

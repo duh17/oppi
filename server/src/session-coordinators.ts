@@ -224,7 +224,16 @@ export function createSessionCoordinatorBundle(
     sendCommand: (key, command, permit, onPreflightAccepted) =>
       deps.sendCommand(key, command, permit, onPreflightAccepted),
     uploadStoreConfig,
-    enqueueQueuedMessage: (key, kind, message, attachments, idHint, sdkMessage, sdkImages) =>
+    enqueueQueuedMessage: (
+      key,
+      kind,
+      message,
+      attachments,
+      idHint,
+      sdkMessage,
+      sdkImages,
+      context,
+    ) =>
       queueCoordinator.enqueueQueuedMessage(
         key,
         kind,
@@ -233,6 +242,7 @@ export function createSessionCoordinatorBundle(
         idHint,
         sdkMessage,
         sdkImages,
+        context,
       ),
     resolveWorkspaceRoot,
     assertModelTurnAdmissionAllowed: (key) => queueCoordinator.assertModelTurnAdmissionAllowed(key),

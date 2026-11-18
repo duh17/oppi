@@ -21,6 +21,7 @@ import {
 import type { JsonValue } from "@earendil-works/chord/json";
 import { DurableUIClientDoc, sanitizeTranscriptCard } from "./durable-ui.js";
 import { agentMessageOrigin } from "../plugins/subagents/agent-message.js";
+import { userInputData } from "./prompt-context.js";
 import { normalizeAudioPresentationDetails } from "./audio-presentation.js";
 import { clientToolResult } from "./durable-tool-result-content.js";
 import { formatCacheMissNotice, type CacheMissNotice } from "./cache-miss.js";
@@ -426,11 +427,17 @@ export function projectEntry(
   }
   // Raw `data` stays on the server: it is extension bookkeeping that can hold private paths.
   // Clients get only what trace history derives from it: an agent message's validated
-  // origin, and a sanitized card.
+  // origin, a user input's validated context items, and a sanitized card.
   const agentMessage = agentMessageOrigin(entry.kind, entry.data);
   if (agentMessage) {
     view.origin = agentMessage.origin;
     if (agentMessage.textOffset) view.textOffset = agentMessage.textOffset;
+  }
+  // A user input with places from panes: the typed text starts at `textOffset`.
+  const userInput = userInputData(entry.kind, entry.data);
+  if (userInput) {
+    view.textOffset = userInput.textOffset;
+    view.context = userInput.context;
   }
   if (!entry.model?.length) {
     const data = asRecord(entry.data);

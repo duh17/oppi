@@ -209,17 +209,19 @@ struct HTMLDOMElementAnnotationTests {
         #expect(saved.reference.htmlDOMAnchor == anchor)
         #expect(!(try #require(saved.reference.selectedText)).contains("outerHTML"))
 
-        let block = store.appendReviewBlock(to: "")
-        #expect(block.contains("**Rendered element:** button \"Save\""))
+        let item = try #require(store.contextItems().first)
+        let block = try outgoingText(store)
+        #expect(item.anchor?.contains("**Rendered element:** button \"Save\"") == true)
         #expect(!block.contains("**Location in page:**"))
         #expect(!block.contains("html:0"))
         #expect(!block.contains("abc123"))
         #expect(!block.contains("finger"))
-        #expect(block.contains("**Lookup limitation:** Embedded frame"))
-        #expect(!block.contains("page.html:4"))
-        #expect(!block.contains("```html"), "DOM summary was fenced as HTML source:\n\(block)")
-        #expect(block.contains("```\nbutton \"Save\""))
-        #expect(block.contains("> Rename this control."))
+        #expect(item.anchor?.contains("**Lookup limitation:** Embedded frame") == true)
+        #expect(item.startLine == nil)
+        // A DOM summary is not HTML source: no fence language.
+        #expect(item.language == "")
+        #expect(item.quote?.hasPrefix("button \"Save\"") == true)
+        #expect(item.note == "Rename this control.")
 
         let key = ReviewCommentStore.makeStorageKey(prefix: "html-dom-tests", workspaceId: "workspace", sessionId: "session-a")
         let data = try #require(defaults.data(forKey: key))
@@ -550,7 +552,7 @@ struct HTMLDOMElementAnnotationTests {
             sessionId: "session-html"
         ) == nil)
         let saved = try #require(harness.store.stagedComments.last)
-        let outgoing = harness.store.appendReviewBlock(to: "")
+        let outgoing = try outgoingText(harness.store)
         #expect(!(saved.reference.selectedText ?? "").contains("UNDISTRIBUTED_SECRET"))
         let savedAnchorText = saved.reference.htmlDOMAnchor?.sanitizedText ?? ""
         #expect(!savedAnchorText.contains("UNDISTRIBUTED_SECRET"))
@@ -592,7 +594,7 @@ struct HTMLDOMElementAnnotationTests {
             ) == nil)
             let saved = try #require(harness.store.stagedComments.last)
             let savedText = (saved.reference.selectedText ?? "") + "\n" + (saved.reference.htmlDOMAnchor?.sanitizedText ?? "")
-            return (savedText, harness.store.appendReviewBlock(to: ""))
+            return (savedText, try outgoingText(harness.store))
         }
 
         let custom = try await cssRect(id: "closed-custom", in: fixture.view)
@@ -872,15 +874,14 @@ struct HTMLDOMElementAnnotationTests {
         #expect(anchor.locatorDescription.contains("button:"))
         #expect(anchor.readableLabel.contains("leaf") || anchor.sanitizedText.contains("Leaf") || staged.reference.selectedText?.contains("Leaf") == true)
         #expect(!anchor.sanitizedText.contains("outerHTML"))
-        let prompt = harness.store.appendReviewBlock(to: "Please review.")
-        #expect(prompt.contains("Please review."))
-        #expect(prompt.contains("**Rendered element:**"))
+        let prompt = try outgoingText(harness.store)
+        #expect(harness.store.contextItems().first?.anchor?.contains("**Rendered element:**") == true)
         #expect(!prompt.contains(hash))
         #expect(!prompt.contains("**DOM locator:**"))
         #expect(!prompt.contains("**Location in page:**"))
         #expect(!prompt.contains("**Element fingerprint:**"))
         #expect(!prompt.contains("not an original source line"))
-        #expect(prompt.contains("> Please rename this leaf."))
+        #expect(harness.store.contextItems().first?.note == "Please rename this leaf.")
         #expect(harness.dispatches.isEmpty)
         #expect(harness.saves.count == 1)
 
@@ -1808,4 +1809,10 @@ private final class StashHarness {
         self.store = store
         self.controller = controller
     }
+}
+
+/// Everything the next message sends for the staged comments, as the wire carries it.
+@MainActor
+private func outgoingText(_ store: ReviewCommentStore) throws -> String {
+    String(decoding: try JSONEncoder().encode(store.contextItems()), as: UTF8.self)
 }

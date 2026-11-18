@@ -22,6 +22,7 @@ import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { DurableInputCards } from "../src/durable-ui.js";
 import { agentMessageEntry } from "../plugins/subagents/agent-message.js";
+import { userInputEntry, withPromptContext } from "../src/prompt-context.js";
 import {
   attachConversationStream,
   readOlderConversationEntries,
@@ -154,6 +155,7 @@ export async function buildConversationStreamGolden(): Promise<string> {
       fauxAssistantMessage("The screenshot is a single pixel."),
       fauxAssistantMessage("Thanks for the job report."),
       fauxAssistantMessage("Noted the child's report."),
+      fauxAssistantMessage("Renamed total; the PDF still holds."),
       fauxAssistantMessage("Summary of the work so far: listed files, ran a failing command."),
       fauxAssistantMessage(INTERRUPTED),
     ]);
@@ -214,6 +216,32 @@ export async function buildConversationStreamGolden(): Promise<string> {
         { kind: "session", sessionId: "child-session-1", name: "Child", intent: "report" },
         header.length,
       ),
+    });
+
+    // A user input with places from panes, placed as `oppi.user-input`: the context block
+    // before `textOffset` is for the model only; the entry keeps the places without quotes.
+    const places = [
+      {
+        source: "file" as const,
+        path: "Sources/App.swift",
+        startLine: 12,
+        endLine: 14,
+        quote: "let total = items.count",
+        note: "Rename total.",
+      },
+      {
+        source: "file" as const,
+        path: "docs/field-guide.pdf",
+        startPage: 2,
+        quote: "Tents go above the tree line.",
+        note: "Still true?",
+      },
+    ];
+    const placed = withPromptContext("Please fix these.", places);
+    await turn({
+      type: "input",
+      content: placed.text,
+      entry: userInputEntry(placed.textOffset, places),
     });
 
     // A real compaction: the summary request is the next faux answer.

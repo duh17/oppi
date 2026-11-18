@@ -14,6 +14,8 @@ import {
   applyForwardedCommandResultToSession,
   type AgentRuntimeTransport,
   type RuntimeClientCommand,
+  type RuntimePromptOptions,
+  type RuntimeQueuedInputOptions,
 } from "./agent-runtime-transport.js";
 import {
   buildPendingExtensionUIRequestMessages,
@@ -86,7 +88,6 @@ import {
 import type { Storage } from "./storage.js";
 import { resolveWorkspaceWorktreeForPath } from "./worktrees.js";
 import type {
-  ChatAttachmentRef,
   MessageQueueItem,
   MessageQueueKind,
   MessageQueueState,
@@ -859,17 +860,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     return root === null ? null : normalizePath(root);
   }
 
-  async sendPrompt(
-    sessionId: string,
-    message: string,
-    opts: {
-      attachments?: ChatAttachmentRef[];
-      clientTurnId?: string;
-      requestId?: string;
-      streamingBehavior?: "steer" | "followUp";
-      timestamp: number;
-    },
-  ): Promise<void> {
+  async sendPrompt(sessionId: string, message: string, opts: RuntimePromptOptions): Promise<void> {
     if (!this.connectedBridgeForSession(sessionId)) {
       throw new Error("pi-tui is not connected");
     }
@@ -891,11 +882,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   async sendSteer(
     sessionId: string,
     message: string,
-    opts: {
-      attachments?: ChatAttachmentRef[];
-      clientTurnId?: string;
-      requestId?: string;
-    },
+    opts: RuntimeQueuedInputOptions,
   ): Promise<void> {
     if (!this.connectedBridgeForSession(sessionId)) {
       throw new Error("pi-tui is not connected");
@@ -906,11 +893,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   async sendFollowUp(
     sessionId: string,
     message: string,
-    opts: {
-      attachments?: ChatAttachmentRef[];
-      clientTurnId?: string;
-      requestId?: string;
-    },
+    opts: RuntimeQueuedInputOptions,
   ): Promise<void> {
     if (!this.connectedBridgeForSession(sessionId)) {
       throw new Error("pi-tui is not connected");

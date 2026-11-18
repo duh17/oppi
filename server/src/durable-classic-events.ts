@@ -46,6 +46,7 @@ import {
   AGENT_MESSAGE_ENTRY_KIND,
   agentMessageOrigin,
 } from "../plugins/subagents/agent-message.js";
+import { USER_INPUT_ENTRY_KIND, userInputData } from "./prompt-context.js";
 import type { BackendCompactionEnd } from "./agent-backend.js";
 import { continuesAfter } from "./durable-failure-cards.js";
 import { compactionSummary, isRecoveredPartial } from "./durable-history.js";
@@ -123,7 +124,8 @@ function emptyFrame(): ClassicFrame {
 }
 
 /**
- * Newest assistant written after the latest user input: `pi.user` or an agent message.
+ * Newest assistant written after the latest user input: `pi.user`, a user input with context,
+ * or an agent message.
  * Compaction summaries and reset handoffs are user-role but not a new turn.
  * An assistant older than that user entry belongs to a finished turn.
  */
@@ -132,7 +134,12 @@ function newestAssistantOfActiveRun(entries: readonly EntryRecord[]): AssistantM
   let newest: { id: number; message: AssistantMessage } | undefined;
   for (const entry of entries) {
     const message = entry.model?.[0];
-    if ((UserEntry.is(entry) || entry.kind === AGENT_MESSAGE_ENTRY_KIND) && entry.id > lastUserId)
+    if (
+      (UserEntry.is(entry) ||
+        entry.kind === AGENT_MESSAGE_ENTRY_KIND ||
+        entry.kind === USER_INPUT_ENTRY_KIND) &&
+      entry.id > lastUserId
+    )
       lastUserId = entry.id;
     if (message?.role === "assistant" && (!newest || entry.id > newest.id))
       newest = { id: entry.id, message };
@@ -523,12 +530,14 @@ export class DurableClassicEvents {
         frame.answer = message;
       }
       const agentMessage = agentMessageOrigin(entry.kind, entry.data);
+      const userInput = userInputData(entry.kind, entry.data);
       out.push(
         pi({
           type: "message_end",
           message,
           entryId: String(entry.id),
           ...(agentMessage ? { agentMessage } : {}),
+          ...(userInput ? { userInput } : {}),
         }),
       );
       if (

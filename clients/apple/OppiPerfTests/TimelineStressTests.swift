@@ -239,12 +239,12 @@ struct TimelineStressTests {
 
         #expect(reducer.items.count == 400, "All 400 items preserved: got \(reducer.items.count)")
 
-        guard case .userMessage(_, let first, _, _) = reducer.items.first else {
+        guard case .userMessage(_, let first, _, _, _) = reducer.items.first else {
             Issue.record("Expected first item to be userMessage"); return
         }
         #expect(first == "msg-0")
 
-        guard case .userMessage(_, let last, _, _) = reducer.items.last else {
+        guard case .userMessage(_, let last, _, _, _) = reducer.items.last else {
             Issue.record("Expected last item to be userMessage"); return
         }
         #expect(last == "msg-399")
@@ -450,7 +450,7 @@ struct TimelineStressTests {
 
         #expect(reducer.items.count == 2)
         // After removing first, the remaining items should be findable
-        guard case .userMessage(_, let text2, _, _) = reducer.items[0] else {
+        guard case .userMessage(_, let text2, _, _, _) = reducer.items[0] else {
             Issue.record("Expected userMessage at [0]")
             return
         }
@@ -459,7 +459,7 @@ struct TimelineStressTests {
         // Remove the third
         reducer.removeItem(id: id3)
         #expect(reducer.items.count == 1)
-        guard case .userMessage(_, let text, _, _) = reducer.items[0] else {
+        guard case .userMessage(_, let text, _, _, _) = reducer.items[0] else {
             Issue.record("Expected userMessage at [0]")
             return
         }
@@ -586,7 +586,7 @@ struct TimelineStressTests {
         let elapsed = ContinuousClock.now - start
 
         #expect(reducer.items.count == 1)
-        guard case .userMessage(_, let cleanText, let images, _) = reducer.items[0] else {
+        guard case .userMessage(_, let cleanText, let images, _, _) = reducer.items[0] else {
             Issue.record("Expected userMessage")
             return
         }

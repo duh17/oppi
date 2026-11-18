@@ -3,6 +3,7 @@ import Foundation
 struct MessageQueueComposerRestorePlan: Sendable {
     let text: String
     let pendingAttachments: [PendingAttachment]
+    let context: [PromptContextItem]
     let restoredCount: Int
 }
 
@@ -21,6 +22,7 @@ extension MessageQueueComposerRestore {
         return MessageQueueComposerRestorePlan(
             text: content.text,
             pendingAttachments: allAttachments,
+            context: content.context,
             restoredCount: content.restoredCount
         )
     }

@@ -26,7 +26,7 @@
             "edit",
             "bash"
           ],
-          "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-yll8Z7"
+          "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-5CGdPN"
         },
         "pi.usage": {
           "models": {},
@@ -45,7 +45,7 @@
             {
               "role": "user",
               "content": "List the files",
-              "timestamp": 1794807192283
+              "timestamp": 1794957822226
             }
           ]
         },
@@ -55,7 +55,7 @@
           "model": [
             {
               "role": "system",
-              "timestamp": 1794807192288
+              "timestamp": 1794957822233
             }
           ]
         }
@@ -108,10 +108,10 @@
                 },
                 {
                   "type": "text",
-                  "text": "Listing the file"
+                  "text": ""
                 }
               ],
-              "timestamp": 1794807192283,
+              "timestamp": 1794957822225,
               "stopReason": "pending"
             }
           ]
@@ -146,7 +146,7 @@
                   }
                 }
               ],
-              "timestamp": 1794807192283,
+              "timestamp": 1794957822225,
               "stopReason": "toolUse"
             }
           ],
@@ -196,7 +196,7 @@
                   "text": "README.md\nsrc\n"
                 }
               ],
-              "timestamp": 1794807192498,
+              "timestamp": 1794957822467,
               "toolCallId": "call-list",
               "toolName": "bash",
               "isError": false
@@ -271,7 +271,7 @@
                   "text": "There are two entries: README.md and src."
                 }
               ],
-              "timestamp": 1794807192283,
+              "timestamp": 1794957822225,
               "stopReason": "stop"
             }
           ]
@@ -364,7 +364,7 @@
                   }
                 }
               ],
-              "timestamp": 1794807192901
+              "timestamp": 1794957822881
             }
           ]
         }
@@ -417,7 +417,7 @@
                   }
                 }
               ],
-              "timestamp": 1794807192283,
+              "timestamp": 1794957822225,
               "stopReason": "toolUse"
             }
           ],
@@ -473,7 +473,7 @@
                   "text": "boom\nCommand exited with code 3"
                 }
               ],
-              "timestamp": 1794807193035,
+              "timestamp": 1794957822982,
               "toolCallId": "call-fail",
               "toolName": "bash",
               "isError": true
@@ -556,7 +556,7 @@
                   "text": "The command failed with exit code 3."
                 }
               ],
-              "timestamp": 1794807192283,
+              "timestamp": 1794957822225,
               "stopReason": "stop"
             }
           ]
@@ -628,7 +628,7 @@
             {
               "role": "user",
               "content": "Read the screenshot",
-              "timestamp": 1794807193422
+              "timestamp": 1794957823371
             }
           ]
         }
@@ -681,7 +681,7 @@
                   }
                 }
               ],
-              "timestamp": 1794807192283,
+              "timestamp": 1794957822225,
               "stopReason": "toolUse"
             }
           ],
@@ -749,7 +749,7 @@
                   }
                 }
               ],
-              "timestamp": 1794807193473,
+              "timestamp": 1794957823425,
               "toolCallId": "call-shot",
               "toolName": "read",
               "isError": false,
@@ -847,7 +847,7 @@
                   "text": "The screenshot is a single pixel."
                 }
               ],
-              "timestamp": 1794807192283,
+              "timestamp": 1794957822225,
               "stopReason": "stop"
             }
           ]
@@ -1007,7 +1007,7 @@
                   "text": "Thanks for the job report."
                 }
               ],
-              "timestamp": 1794807192283,
+              "timestamp": 1794957822225,
               "stopReason": "stop"
             }
           ]
@@ -1079,7 +1079,7 @@
             {
               "role": "user",
               "content": "[Report from session Child]\n\nChild finished: 3 files changed.",
-              "timestamp": 1794807194532
+              "timestamp": 1794957824489
             }
           ],
           "origin": {
@@ -1135,7 +1135,7 @@
                   "text": "Noted the child's report."
                 }
               ],
-              "timestamp": 1794807192283,
+              "timestamp": 1794957822225,
               "stopReason": "stop"
             }
           ]
@@ -1199,6 +1199,143 @@
     {
       "type": "update",
       "conversationId": 2,
+      "entries": [
+        {
+          "id": 43,
+          "kind": "oppi.user-input",
+          "model": [
+            {
+              "role": "user",
+              "content": "<pane-context>\nThe user attached these places from the app's panes. Their message follows the block.\n\n### Comment 1\n\n**Where:** `Sources/App.swift`:12-14 (file)\n\n**Selected text:**\n\n```swift\nlet total = items.count\n```\n\n**Comment:**\n\n> Rename total.\n\n### Comment 2\n\n**Where:** `docs/field-guide.pdf` page 2 (file)\n\n**Selected text:**\n\n```\nTents go above the tree line.\n```\n\n**Comment:**\n\n> Still true?\n</pane-context>\n\nPlease fix these.",
+              "timestamp": 1794957824857
+            }
+          ],
+          "textOffset": 419,
+          "context": [
+            {
+              "source": "file",
+              "path": "Sources/App.swift",
+              "startLine": 12,
+              "endLine": 14,
+              "note": "Rename total."
+            },
+            {
+              "source": "file",
+              "path": "docs/field-guide.pdf",
+              "startPage": 2,
+              "note": "Still true?"
+            }
+          ]
+        }
+      ],
+      "docs": {
+        "pi.live": [
+          [
+            "s",
+            [
+              "run"
+            ],
+            {
+              "taskId": 45,
+              "inputs": [
+                44
+              ],
+              "turns": 0,
+              "first": 43
+            }
+          ],
+          [
+            "s",
+            [
+              "generation"
+            ],
+            {
+              "attempt": 1
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "conversationId": 2,
+      "entries": [
+        {
+          "id": 46,
+          "kind": "pi.assistant",
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Renamed total; the PDF still holds."
+                }
+              ],
+              "timestamp": 1794957822225,
+              "stopReason": "stop"
+            }
+          ]
+        }
+      ],
+      "docs": {
+        "pi.live": [
+          [
+            "d",
+            [
+              "run"
+            ]
+          ],
+          [
+            "d",
+            [
+              "generation"
+            ]
+          ]
+        ],
+        "pi.usage": [
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "output"
+            ],
+            92
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "cacheRead"
+            ],
+            6363
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "cacheWrite"
+            ],
+            1005
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "totalTokens"
+            ],
+            7460
+          ]
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "conversationId": 2,
       "docs": {
         "pi.live": [
           [
@@ -1208,7 +1345,7 @@
             ],
             [
               {
-                "taskId": 43,
+                "taskId": 47,
                 "trigger": "manual",
                 "blocking": false,
                 "attempt": 1
@@ -1221,11 +1358,11 @@
     {
       "type": "snapshot",
       "conversationId": 2,
-      "head": 44,
+      "head": 48,
       "hasOlder": true,
       "entries": [
         {
-          "id": 44,
+          "id": 48,
           "kind": "pi.compaction",
           "model": [
             {
@@ -1236,30 +1373,39 @@
                   "text": "The conversation history before this point was compacted into the following summary:\n\n<summary>\nSummary of the work so far: listed files, ran a failing command.\n</summary>"
                 }
               ],
-              "timestamp": 1794807195042
+              "timestamp": 1794957825392
             }
           ]
         },
         {
-          "id": 39,
-          "kind": "oppi.agent-message",
+          "id": 43,
+          "kind": "oppi.user-input",
           "model": [
             {
               "role": "user",
-              "content": "[Report from session Child]\n\nChild finished: 3 files changed.",
-              "timestamp": 1794807194532
+              "content": "<pane-context>\nThe user attached these places from the app's panes. Their message follows the block.\n\n### Comment 1\n\n**Where:** `Sources/App.swift`:12-14 (file)\n\n**Selected text:**\n\n```swift\nlet total = items.count\n```\n\n**Comment:**\n\n> Rename total.\n\n### Comment 2\n\n**Where:** `docs/field-guide.pdf` page 2 (file)\n\n**Selected text:**\n\n```\nTents go above the tree line.\n```\n\n**Comment:**\n\n> Still true?\n</pane-context>\n\nPlease fix these.",
+              "timestamp": 1794957824857
             }
           ],
-          "origin": {
-            "kind": "session",
-            "sessionId": "child-session-1",
-            "name": "Child",
-            "intent": "report"
-          },
-          "textOffset": 29
+          "textOffset": 419,
+          "context": [
+            {
+              "source": "file",
+              "path": "Sources/App.swift",
+              "startLine": 12,
+              "endLine": 14,
+              "note": "Rename total."
+            },
+            {
+              "source": "file",
+              "path": "docs/field-guide.pdf",
+              "startPage": 2,
+              "note": "Still true?"
+            }
+          ]
         },
         {
-          "id": 42,
+          "id": 46,
           "kind": "pi.assistant",
           "model": [
             {
@@ -1267,10 +1413,10 @@
               "content": [
                 {
                   "type": "text",
-                  "text": "Noted the child's report."
+                  "text": "Renamed total; the PDF still holds."
                 }
               ],
-              "timestamp": 1794807192283,
+              "timestamp": 1794957822225,
               "stopReason": "stop"
             }
           ]
@@ -1293,16 +1439,16 @@
             "edit",
             "bash"
           ],
-          "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-yll8Z7"
+          "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-5CGdPN"
         },
         "pi.usage": {
           "models": {
             "faux/faux-1": {
-              "input": 516,
-              "output": 99,
-              "cacheRead": 5478,
-              "cacheWrite": 885,
-              "totalTokens": 6978,
+              "input": 544,
+              "output": 108,
+              "cacheRead": 6363,
+              "cacheWrite": 1005,
+              "totalTokens": 8020,
               "cost": {
                 "input": 0,
                 "output": 0,
@@ -1321,23 +1467,23 @@
       "conversationId": 2,
       "entries": [
         {
-          "id": 46,
+          "id": 50,
           "kind": "pi.user",
           "model": [
             {
               "role": "user",
               "content": "Explain it at length",
-              "timestamp": 1794807195345
+              "timestamp": 1794957825697
             }
           ]
         },
         {
-          "id": 49,
+          "id": 53,
           "kind": "pi.system",
           "model": [
             {
               "role": "system",
-              "timestamp": 1794807195346
+              "timestamp": 1794957825700
             }
           ]
         }
@@ -1350,12 +1496,12 @@
               "run"
             ],
             {
-              "taskId": 48,
+              "taskId": 52,
               "inputs": [
-                47
+                51
               ],
               "turns": 0,
-              "first": 46
+              "first": 50
             }
           ],
           [
@@ -1389,7 +1535,7 @@
                   "text": "partial0 partial1 partial2 parti"
                 }
               ],
-              "timestamp": 1794807192283,
+              "timestamp": 1794957822225,
               "stopReason": "pending"
             }
           ]
@@ -1406,12 +1552,12 @@
             "r",
             {
               "run": {
-                "taskId": 48,
+                "taskId": 52,
                 "inputs": [
-                  47
+                  51
                 ],
                 "turns": 0,
-                "first": 46
+                "first": 50
               },
               "generation": {
                 "attempt": 1,
@@ -1423,7 +1569,7 @@
                       "text": "partial0 partial1 partial2 parti"
                     }
                   ],
-                  "timestamp": 1794807192283,
+                  "timestamp": 1794957822225,
                   "stopReason": "pending"
                 }
               }
@@ -1453,7 +1599,7 @@
                 "edit",
                 "bash"
               ],
-              "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-yll8Z7"
+              "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-5CGdPN"
             }
           ]
         ],
@@ -1463,11 +1609,11 @@
             {
               "models": {
                 "faux/faux-1": {
-                  "input": 516,
-                  "output": 99,
-                  "cacheRead": 5478,
-                  "cacheWrite": 885,
-                  "totalTokens": 6978,
+                  "input": 544,
+                  "output": 108,
+                  "cacheRead": 6363,
+                  "cacheWrite": 1005,
+                  "totalTokens": 8020,
                   "cost": {
                     "input": 0,
                     "output": 0,
@@ -1489,7 +1635,7 @@
       "conversationId": 2,
       "entries": [
         {
-          "id": 51,
+          "id": 55,
           "kind": "pi.assistant",
           "model": [
             {
@@ -1500,7 +1646,7 @@
                   "text": "A complete answer after the restart."
                 }
               ],
-              "timestamp": 1794807195489,
+              "timestamp": 1794957825845,
               "stopReason": "stop"
             }
           ]
@@ -1529,7 +1675,7 @@
               "faux/faux-1",
               "output"
             ],
-            256
+            265
           ],
           [
             "s",
@@ -1538,7 +1684,7 @@
               "faux/faux-1",
               "cacheRead"
             ],
-            6932
+            7913
           ],
           [
             "s",
@@ -1547,7 +1693,7 @@
               "faux/faux-1",
               "cacheWrite"
             ],
-            961
+            1177
           ],
           [
             "s",
@@ -1556,7 +1702,7 @@
               "faux/faux-1",
               "totalTokens"
             ],
-            8665
+            9899
           ]
         ]
       }
@@ -1572,7 +1718,7 @@
             {
               "role": "user",
               "content": "List the files",
-              "timestamp": 1794807192283
+              "timestamp": 1794957822226
             }
           ]
         },
@@ -1582,7 +1728,7 @@
           "model": [
             {
               "role": "system",
-              "timestamp": 1794807192288
+              "timestamp": 1794957822233
             }
           ]
         },
@@ -1610,7 +1756,7 @@
                   }
                 }
               ],
-              "timestamp": 1794807192283,
+              "timestamp": 1794957822225,
               "stopReason": "toolUse"
             }
           ],
@@ -1660,7 +1806,7 @@
                   "text": "README.md\nsrc\n"
                 }
               ],
-              "timestamp": 1794807192498,
+              "timestamp": 1794957822467,
               "toolCallId": "call-list",
               "toolName": "bash",
               "isError": false
@@ -1679,7 +1825,7 @@
                   "text": "There are two entries: README.md and src."
                 }
               ],
-              "timestamp": 1794807192283,
+              "timestamp": 1794957822225,
               "stopReason": "stop"
             }
           ]
@@ -1712,7 +1858,7 @@
                   }
                 }
               ],
-              "timestamp": 1794807192901
+              "timestamp": 1794957822881
             }
           ]
         },
@@ -1732,7 +1878,7 @@
                   }
                 }
               ],
-              "timestamp": 1794807192283,
+              "timestamp": 1794957822225,
               "stopReason": "toolUse"
             }
           ],
@@ -1788,7 +1934,7 @@
                   "text": "boom\nCommand exited with code 3"
                 }
               ],
-              "timestamp": 1794807193035,
+              "timestamp": 1794957822982,
               "toolCallId": "call-fail",
               "toolName": "bash",
               "isError": true
@@ -1807,7 +1953,7 @@
                   "text": "The command failed with exit code 3."
                 }
               ],
-              "timestamp": 1794807192283,
+              "timestamp": 1794957822225,
               "stopReason": "stop"
             }
           ]
@@ -1819,7 +1965,7 @@
             {
               "role": "user",
               "content": "Read the screenshot",
-              "timestamp": 1794807193422
+              "timestamp": 1794957823371
             }
           ]
         },
@@ -1839,7 +1985,7 @@
                   }
                 }
               ],
-              "timestamp": 1794807192283,
+              "timestamp": 1794957822225,
               "stopReason": "toolUse"
             }
           ],
@@ -1907,7 +2053,7 @@
                   }
                 }
               ],
-              "timestamp": 1794807193473,
+              "timestamp": 1794957823425,
               "toolCallId": "call-shot",
               "toolName": "read",
               "isError": false,
@@ -1941,7 +2087,7 @@
                   "text": "The screenshot is a single pixel."
                 }
               ],
-              "timestamp": 1794807192283,
+              "timestamp": 1794957822225,
               "stopReason": "stop"
             }
           ]
@@ -2002,7 +2148,42 @@
                   "text": "Thanks for the job report."
                 }
               ],
-              "timestamp": 1794807192283,
+              "timestamp": 1794957822225,
+              "stopReason": "stop"
+            }
+          ]
+        },
+        {
+          "id": 39,
+          "kind": "oppi.agent-message",
+          "model": [
+            {
+              "role": "user",
+              "content": "[Report from session Child]\n\nChild finished: 3 files changed.",
+              "timestamp": 1794957824489
+            }
+          ],
+          "origin": {
+            "kind": "session",
+            "sessionId": "child-session-1",
+            "name": "Child",
+            "intent": "report"
+          },
+          "textOffset": 29
+        },
+        {
+          "id": 42,
+          "kind": "pi.assistant",
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Noted the child's report."
+                }
+              ],
+              "timestamp": 1794957822225,
               "stopReason": "stop"
             }
           ]
@@ -2015,19 +2196,19 @@
     {
       "id": "8",
       "type": "user",
-      "timestamp": "2026-11-16T05:33:12.283Z",
+      "timestamp": "2026-11-17T23:23:42.226Z",
       "text": "List the files"
     },
     {
       "id": "12-think-0",
       "type": "thinking",
-      "timestamp": "2026-11-16T05:33:12.283Z",
+      "timestamp": "2026-11-17T23:23:42.225Z",
       "thinking": "The user wants a file listing."
     },
     {
       "id": "12-text-1",
       "type": "assistant",
-      "timestamp": "2026-11-16T05:33:12.283Z",
+      "timestamp": "2026-11-17T23:23:42.225Z",
       "text": "Listing the files.",
       "contentIndex": 1,
       "runOrdinal": 0
@@ -2035,7 +2216,7 @@
     {
       "id": "call-list",
       "type": "toolCall",
-      "timestamp": "2026-11-16T05:33:12.283Z",
+      "timestamp": "2026-11-17T23:23:42.225Z",
       "tool": "bash",
       "args": {
         "command": "printf 'README.md\\nsrc\\n'"
@@ -2065,7 +2246,7 @@
     {
       "id": "result-14",
       "type": "toolResult",
-      "timestamp": "2026-11-16T05:33:12.498Z",
+      "timestamp": "2026-11-17T23:23:42.467Z",
       "toolCallId": "call-list",
       "toolName": "bash",
       "output": "README.md\nsrc\n",
@@ -2080,7 +2261,7 @@
     {
       "id": "16-text-0",
       "type": "assistant",
-      "timestamp": "2026-11-16T05:33:12.283Z",
+      "timestamp": "2026-11-17T23:23:42.225Z",
       "text": "There are two entries: README.md and src.",
       "contentIndex": 0,
       "runOrdinal": 0
@@ -2088,7 +2269,7 @@
     {
       "id": "17",
       "type": "user",
-      "timestamp": "2026-11-16T05:33:12.901Z",
+      "timestamp": "2026-11-17T23:23:42.881Z",
       "text": "Run the failing command for this image",
       "media": [
         {
@@ -2108,7 +2289,7 @@
     {
       "id": "call-fail",
       "type": "toolCall",
-      "timestamp": "2026-11-16T05:33:12.283Z",
+      "timestamp": "2026-11-17T23:23:42.225Z",
       "tool": "bash",
       "args": {
         "command": "echo boom >&2; exit 3"
@@ -2138,7 +2319,7 @@
     {
       "id": "result-22",
       "type": "toolResult",
-      "timestamp": "2026-11-16T05:33:13.035Z",
+      "timestamp": "2026-11-17T23:23:42.982Z",
       "toolCallId": "call-fail",
       "toolName": "bash",
       "output": "boom\nCommand exited with code 3",
@@ -2159,7 +2340,7 @@
     {
       "id": "24-text-0",
       "type": "assistant",
-      "timestamp": "2026-11-16T05:33:12.283Z",
+      "timestamp": "2026-11-17T23:23:42.225Z",
       "text": "The command failed with exit code 3.",
       "contentIndex": 0,
       "runOrdinal": 0
@@ -2167,13 +2348,13 @@
     {
       "id": "25",
       "type": "user",
-      "timestamp": "2026-11-16T05:33:13.422Z",
+      "timestamp": "2026-11-17T23:23:43.371Z",
       "text": "Read the screenshot"
     },
     {
       "id": "call-shot",
       "type": "toolCall",
-      "timestamp": "2026-11-16T05:33:12.283Z",
+      "timestamp": "2026-11-17T23:23:42.225Z",
       "tool": "read",
       "args": {
         "path": "shot.png"
@@ -2209,7 +2390,7 @@
     {
       "id": "result-30",
       "type": "toolResult",
-      "timestamp": "2026-11-16T05:33:13.473Z",
+      "timestamp": "2026-11-17T23:23:43.425Z",
       "toolCallId": "call-shot",
       "toolName": "read",
       "output": "",
@@ -2240,7 +2421,7 @@
     {
       "id": "32-text-0",
       "type": "assistant",
-      "timestamp": "2026-11-16T05:33:12.283Z",
+      "timestamp": "2026-11-17T23:23:42.225Z",
       "text": "The screenshot is a single pixel.",
       "contentIndex": 0,
       "runOrdinal": 0
@@ -2292,7 +2473,7 @@
     {
       "id": "38-text-0",
       "type": "assistant",
-      "timestamp": "2026-11-16T05:33:12.283Z",
+      "timestamp": "2026-11-17T23:23:42.225Z",
       "text": "Thanks for the job report.",
       "contentIndex": 0,
       "runOrdinal": 0
@@ -2300,7 +2481,7 @@
     {
       "id": "39",
       "type": "user",
-      "timestamp": "2026-11-16T05:33:14.532Z",
+      "timestamp": "2026-11-17T23:23:44.489Z",
       "text": "Child finished: 3 files changed.",
       "origin": {
         "kind": "session",
@@ -2312,27 +2493,56 @@
     {
       "id": "42-text-0",
       "type": "assistant",
-      "timestamp": "2026-11-16T05:33:12.283Z",
+      "timestamp": "2026-11-17T23:23:42.225Z",
       "text": "Noted the child's report.",
       "contentIndex": 0,
       "runOrdinal": 0
     },
     {
-      "id": "44",
+      "id": "43",
+      "type": "user",
+      "timestamp": "2026-11-17T23:23:44.857Z",
+      "text": "Please fix these.",
+      "context": [
+        {
+          "source": "file",
+          "path": "Sources/App.swift",
+          "startLine": 12,
+          "endLine": 14,
+          "note": "Rename total."
+        },
+        {
+          "source": "file",
+          "path": "docs/field-guide.pdf",
+          "startPage": 2,
+          "note": "Still true?"
+        }
+      ]
+    },
+    {
+      "id": "46-text-0",
+      "type": "assistant",
+      "timestamp": "2026-11-17T23:23:42.225Z",
+      "text": "Renamed total; the PDF still holds.",
+      "contentIndex": 0,
+      "runOrdinal": 0
+    },
+    {
+      "id": "48",
       "type": "compaction",
-      "timestamp": "2026-11-16T05:33:15.042Z",
+      "timestamp": "2026-11-17T23:23:45.392Z",
       "text": "Context compacted: Summary of the work so far: listed files, ran a failing command."
     },
     {
-      "id": "46",
+      "id": "50",
       "type": "user",
-      "timestamp": "2026-11-16T05:33:15.345Z",
+      "timestamp": "2026-11-17T23:23:45.697Z",
       "text": "Explain it at length"
     },
     {
-      "id": "51-text-0",
+      "id": "55-text-0",
       "type": "assistant",
-      "timestamp": "2026-11-16T05:33:15.489Z",
+      "timestamp": "2026-11-17T23:23:45.845Z",
       "text": "A complete answer after the restart.",
       "contentIndex": 0,
       "runOrdinal": 0

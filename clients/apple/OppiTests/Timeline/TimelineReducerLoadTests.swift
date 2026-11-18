@@ -21,7 +21,7 @@ struct TimelineReducerLoadTests {
         reducer.loadSession(events)
 
         #expect(reducer.items.count == 2)
-        guard case .userMessage(_, let userText, _, _) = reducer.items[0] else {
+        guard case .userMessage(_, let userText, _, _, _) = reducer.items[0] else {
             Issue.record("Expected userMessage")
             return
         }
@@ -653,7 +653,7 @@ struct TimelineReducerLoadTests {
         // The local user message must survive the rebuild.
         #expect(reducer.items.count == 3)
         let lastItem = reducer.items.last
-        guard case .userMessage(let id, let text, _, _) = lastItem else {
+        guard case .userMessage(let id, let text, _, _, _) = lastItem else {
             Issue.record("Expected preserved userMessage at tail")
             return
         }
@@ -683,7 +683,7 @@ struct TimelineReducerLoadTests {
 
         // No duplicate should remain: keep canonical trace version only.
         let matchingTextUserItems = reducer.items.filter {
-            if case .userMessage(_, let text, _, _) = $0 {
+            if case .userMessage(_, let text, _, _, _) = $0 {
                 return text == "New question"
             }
             return false
@@ -691,7 +691,7 @@ struct TimelineReducerLoadTests {
         #expect(matchingTextUserItems.count == 1)
 
         guard let matchingItem = matchingTextUserItems.first,
-              case .userMessage(let finalID, _, _, _) = matchingItem else {
+              case .userMessage(let finalID, _, _, _, _) = matchingItem else {
             Issue.record("Expected userMessage")
             return
         }
@@ -753,14 +753,14 @@ struct TimelineReducerLoadTests {
 
         // Orphan should be at the end (chronologically after all trace items).
         #expect(reducer.items.count == 5)
-        guard case .userMessage(_, let lastText, _, _) = reducer.items[4] else {
+        guard case .userMessage(_, let lastText, _, _, _) = reducer.items[4] else {
             Issue.record("Expected userMessage at index 4")
             return
         }
         #expect(lastText == "Third question")
 
         // Verify trace items are still in order.
-        guard case .userMessage(_, let u1Text, _, _) = reducer.items[0] else {
+        guard case .userMessage(_, let u1Text, _, _, _) = reducer.items[0] else {
             Issue.record("Expected userMessage at index 0")
             return
         }
@@ -800,7 +800,7 @@ struct TimelineReducerLoadTests {
         // All orphans should be after the trace items, in their original order.
         let texts = reducer.items.map { item -> String in
             switch item {
-            case .userMessage(_, let t, _, _): return t
+            case .userMessage(_, let t, _, _, _): return t
             case .assistantMessage(_, let t, _): return t
             default: return "?"
             }

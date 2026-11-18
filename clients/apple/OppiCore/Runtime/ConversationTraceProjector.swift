@@ -72,15 +72,16 @@ enum ConversationTraceProjector {
                 // data URI only for an image the server could not store.
                 let projected = userTextAndMedia(message["content"])
                 if !projected.text.isEmpty || !projected.media.isEmpty {
-                    var event = TraceEvent(
-                        id: String(entry.id),
-                        type: .user,
-                        timestamp: timestamp,
-                        text: entry.origin == nil
-                            ? projected.text
-                            : agentMessageText(projected.text, offset: entry.textOffset)
-                    )
+                    let text: String = if entry.origin != nil {
+                        agentMessageText(projected.text, offset: entry.textOffset)
+                    } else if entry.context != nil {
+                        userInputText(projected.text, offset: entry.textOffset)
+                    } else {
+                        projected.text
+                    }
+                    var event = TraceEvent(id: String(entry.id), type: .user, timestamp: timestamp, text: text)
                     event.origin = entry.origin
+                    event.context = entry.context
                     event.media = projected.media.isEmpty ? nil : projected.media
                     events.append(event)
                 }
@@ -115,6 +116,15 @@ enum ConversationTraceProjector {
         let tail = String(decoding: units[units.index(units.startIndex, offsetBy: offset)...], as: UTF16.self)
         let body = String(tail.drop { $0.isWhitespace })
         return body.isEmpty ? text : body
+    }
+
+    /// `userInputText` in `server/src/prompt-context.ts`: the typed text after the context
+    /// block (`offset` in UTF-16 units), which may be empty.
+    private static func userInputText(_ text: String, offset: Int?) -> String {
+        let units = text.utf16
+        guard let offset, offset >= 0, offset <= units.count else { return text }
+        let tail = String(decoding: units[units.index(units.startIndex, offsetBy: offset)...], as: UTF16.self)
+        return String(tail.drop { $0.isWhitespace })
     }
 
     private static func cardEvent(_ entry: ConversationEntryView, card: ConversationEntryCard) -> TraceEvent {

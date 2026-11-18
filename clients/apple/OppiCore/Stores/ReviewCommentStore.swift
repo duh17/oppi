@@ -79,6 +79,11 @@ final class ReviewCommentStore {
             loadComments(forKey: key)
         }
 
+        // Every capture path stages through here: a selection longer than the server takes is
+        // trimmed now, visibly, rather than failing the send that carries it.
+        var reference = reference
+        reference.selectedText = reference.selectedText.map(PromptContextItem.capturedQuote)
+
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let comment = ReviewComment(
             id: UUID().uuidString,
@@ -148,25 +153,6 @@ final class ReviewCommentStore {
         }
     }
 
-    func appendReviewBlock(
-        to text: String,
-        pathFormatting: ReviewCommentPathFormatting = .normalizedDisplay,
-        currentSourceRevision: ((ReviewComment) -> String?)? = nil
-    ) -> String {
-        let block = Self.reviewBlock(
-            for: stagedComments,
-            pathFormatting: pathFormatting,
-            currentSourceRevision: currentSourceRevision
-        )
-        guard !block.isEmpty else { return text }
-
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            return block
-        }
-        return "\(trimmed)\n\n\(block)"
-    }
-
     private func comments(
         matching predicate: (ReviewComment) -> Bool,
         sortedBy areInIncreasingOrder: (ReviewComment, ReviewComment) -> Bool
@@ -223,192 +209,5 @@ final class ReviewCommentStore {
 
     static func makeStorageKey(prefix: String, workspaceId: String, sessionId: String) -> String {
         "\(prefix).\(workspaceId).\(sessionId)"
-    }
-
-    static func reviewBlock(
-        for comments: [ReviewComment],
-        pathFormatting: ReviewCommentPathFormatting = .normalizedDisplay,
-        currentSourceRevision: ((ReviewComment) -> String?)? = nil
-    ) -> String {
-        let staged = comments
-            .filter { $0.status == .staged }
-            .sorted { $0.createdAt < $1.createdAt }
-        guard !staged.isEmpty else { return "" }
-
-        var lines: [String] = [
-            "## Review comments",
-            "",
-            "Please address these review comments.",
-            "",
-        ]
-
-        for (index, comment) in staged.enumerated() {
-            lines.append("### Comment \(index + 1)")
-            lines.append("")
-            let title = referenceTitle(
-                comment.reference,
-                pathFormatting: pathFormatting
-            )
-            lines.append("**Where:** \(title)")
-
-            if let selectedText = comment.reference.selectedText,
-               !selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                lines.append("")
-                lines.append("**Selected text:**")
-                lines.append("")
-                let language = comment.reference.htmlDOMAnchor == nil
-                    ? (comment.reference.languageHint ?? languageHint(for: comment.reference.path))
-                    : nil
-                lines.append(contentsOf: fencedContextLines(
-                    selectedText,
-                    language: language,
-                    maxLines: 12
-                ))
-            }
-
-            if let anchor = comment.reference.htmlDOMAnchor {
-                lines.append("")
-                lines.append(contentsOf: anchor.promptLines())
-            }
-
-            if let anchor = comment.reference.semanticAnchor {
-                let resolved = currentSourceRevision?(comment).map {
-                    anchor.markedStaleAgainst(currentRevision: $0)
-                } ?? anchor
-                lines.append("")
-                lines.append(contentsOf: resolved.promptLines)
-            }
-
-            lines.append("")
-            lines.append("**Comment:**")
-            lines.append("")
-            lines.append(contentsOf: quotedCommentLines(comment.body))
-
-            if index < staged.count - 1 {
-                lines.append("")
-            }
-        }
-
-        return lines.joined(separator: "\n")
-    }
-
-    private static func referenceTitle(
-        _ reference: ReviewCommentReference,
-        pathFormatting: ReviewCommentPathFormatting
-    ) -> String {
-        let source = sourceDisplayName(reference.source)
-        let path = switch pathFormatting {
-        case .normalizedDisplay: reference.displayPath
-        case .verbatim: reference.path
-        }
-        if let path, !path.isEmpty {
-            var title = "`\(path)`"
-            if let start = reference.startLine {
-                if let end = reference.endLine, end != start {
-                    title += ":\(start)-\(end)"
-                } else {
-                    title += ":\(start)"
-                }
-            }
-            if let page = reference.pageText {
-                title += " \(page)"
-            }
-            if let side = reference.side {
-                title += " (\(side), \(source))"
-            } else {
-                title += " (\(source))"
-            }
-            return title
-        }
-
-        if let label = reference.label, !label.isEmpty {
-            return "\(label) (\(source))"
-        }
-
-        return source
-    }
-
-    private static func fencedContextLines(_ text: String, language: String?, maxLines: Int) -> [String] {
-        let contextLines = text.split(separator: "\n", omittingEmptySubsequences: false)
-            .prefix(maxLines)
-            .map(String.init)
-        let fence = String(repeating: "`", count: max(3, longestBacktickRun(in: contextLines.joined(separator: "\n")) + 1))
-        let languageSuffix = language.map { $0 } ?? ""
-        return ["\(fence)\(languageSuffix)"]
-            + contextLines
-            + ["\(fence)"]
-    }
-
-    private static func longestBacktickRun(in text: String) -> Int {
-        var longest = 0
-        var current = 0
-        for character in text {
-            if character == "`" {
-                current += 1
-                longest = max(longest, current)
-            } else {
-                current = 0
-            }
-        }
-        return longest
-    }
-
-    private static func languageHint(for path: String?) -> String? {
-        guard let ext = path?.split(separator: ".").last?.lowercased() else { return nil }
-        switch ext {
-        case "swift":
-            return "swift"
-        case "ts", "tsx":
-            return "typescript"
-        case "js", "jsx", "mjs", "cjs":
-            return "javascript"
-        case "py":
-            return "python"
-        case "go":
-            return "go"
-        case "rs":
-            return "rust"
-        case "rb":
-            return "ruby"
-        case "sh", "bash", "zsh":
-            return "bash"
-        case "json":
-            return "json"
-        case "yaml", "yml":
-            return "yaml"
-        case "md", "markdown":
-            return "markdown"
-        case "html":
-            return "html"
-        case "css":
-            return "css"
-        default:
-            return nil
-        }
-    }
-
-    private static func quotedCommentLines(_ text: String) -> [String] {
-        text.split(separator: "\n", omittingEmptySubsequences: false).map { line in
-            line.isEmpty ? ">" : "> \(line)"
-        }
-    }
-
-    private static func sourceDisplayName(_ source: ReviewCommentReferenceSource) -> String {
-        switch source {
-        case .gitDiff:
-            return "git diff"
-        case .file:
-            return "file"
-        case .timelineText:
-            return "timeline text"
-        case .toolOutput:
-            return "tool output"
-        case .terminalOutput:
-            return "terminal output"
-        case .image:
-            return "image"
-        case .unknown:
-            return "unknown source"
-        }
     }
 }

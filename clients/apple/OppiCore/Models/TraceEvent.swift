@@ -90,6 +90,8 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
 
     /// User events only: another agent session sent this input.
     var origin: MessageOrigin? = nil
+    /// User events only: places from panes the message carried; `text` is the typed text.
+    var context: [PromptContextItem]? = nil
     ///
     /// User events only: images the server stores in the session attachment store. Their bytes
     /// are fetched from `/sessions/{id}/attachments/{attachmentId}`; `text` carries a data URI
@@ -129,6 +131,7 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
         nestedCalls: NestedToolCalls? = nil,
         display: ToolDisplay? = nil,
         origin: MessageOrigin? = nil,
+        context: [PromptContextItem]? = nil,
         media: [TraceMediaAttachment]? = nil,
         cacheMiss: Bool? = nil
     ) {
@@ -160,6 +163,7 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
         self.nestedCalls = nestedCalls
         self.display = display
         self.origin = origin
+        self.context = context
         self.media = media
         self.cacheMiss = cacheMiss
     }

@@ -13,6 +13,7 @@ import {
 } from "@earendil-works/pi-durable";
 import type { SessionHost } from "./durable-harness.js";
 import { readDurableSessionEntries } from "./durable-history.js";
+import { userInputData, userInputText } from "./prompt-context.js";
 import {
   sessionTreeManagerFromTree,
   type SessionTreeEntry,
@@ -146,7 +147,13 @@ export async function navigateDurableBranch(
   const message = chosen.type === "message" ? (chosen.message as UserMessage) : undefined;
   const user = message?.role === "user";
   const point = user ? (chosen.parentId ?? null) : chosen.id;
-  const editorText = user ? messageText(message.content) : undefined;
+  // The composer gets back what the person typed, not a context block only the model reads.
+  const input = userInputData(
+    (chosen as { customType?: string }).customType,
+    (chosen as { data?: unknown }).data,
+  );
+  const typed = user ? messageText(message.content) : undefined;
+  const editorText = typed !== undefined && input ? userInputText(typed, input) : typed;
   const result = (
     conversation: ConversationId,
   ): { conversation: ConversationId; editorText?: string } => ({
