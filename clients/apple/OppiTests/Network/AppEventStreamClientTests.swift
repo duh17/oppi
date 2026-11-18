@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import Testing
 @testable import Oppi
 
@@ -33,35 +34,31 @@ struct AppEventStreamClientTests {
         client.disconnect()
     }
 
-    @Test func recoverableFailureReconnectsAndContinuesOriginalStream() async throws {
+    // These tests await the events they need: a socket the fake factory opened, a frame or the
+    // end of the client's stream (the client sets `.connected` before it yields a frame and
+    // `.disconnected` as it finishes the stream), or a callback the client makes. A polling wait
+    // on a fixed deadline lost those races on loaded unit shards. `.timeLimit` is only a hang guard.
+    // A test reads its stream to the end, or drains it in a task, because dropping the stream
+    // early terminates it and the client disconnects.
+    @Test(.timeLimit(.minutes(1)))
+    func recoverableFailureReconnectsAndContinuesOriginalStream() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let client = makeClient(factory: factory, reconnectDelay: { _ in 0 })
-        let stream = client.connect()
-        var received: [AppEventMessage] = []
-        let consumer = Task { @MainActor in
-            for await event in stream {
-                received.append(event)
-            }
-        }
+        var events = client.connect().makeAsyncIterator()
 
-        let firstSocket = try #require(factory.sockets.first)
-        firstSocket.fail(URLError(.networkConnectionLost), closeCode: .abnormalClosure)
+        try await factory.socket(0).fail(URLError(.networkConnectionLost), closeCode: .abnormalClosure)
 
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            factory.sockets.count == 2
-        })
-        let secondSocket = try #require(factory.sockets.last)
+        let secondSocket = try await factory.socket(1)
         secondSocket.yield(.string(Self.connectedJSON))
         secondSocket.yield(.string(#"{"type":"after_reconnect"}"#))
 
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            received.count == 2
-        })
-        #expect(received.last == .ignored(type: "after_reconnect"))
+        #expect(await events.next() == .connected(serverTime: 42, snapshotRequired: false))
+        #expect(await events.next() == .ignored(type: "after_reconnect"))
         #expect(client.status == .connected)
+        #expect(factory.sockets.count == 2)
 
         client.disconnect()
-        await consumer.value
+        #expect(await events.next() == nil)
     }
 
     // The health report is the signal. The watchdog only reaches it after real 1 ms and 20 ms
@@ -93,89 +90,71 @@ struct AppEventStreamClientTests {
         await consumer.value
     }
 
-    @Test func repeatedRecoverableFailuresReportUnhealthyTransportAtBoundedThreshold() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func repeatedRecoverableFailuresReportUnhealthyTransportAtBoundedThreshold() async throws {
         let factory = ScriptedAppEventSocketFactory()
-        var healthFailures: [PersistentStreamHealthFailure] = []
+        let (healthFailures, reportHealthFailure) = AsyncStream<PersistentStreamHealthFailure>.makeStream()
         let client = makeClient(
             factory: factory,
             reconnectDelay: { _ in 0 },
-            onTransportHealthFailure: { healthFailures.append($0) }
+            onTransportHealthFailure: { reportHealthFailure.yield($0) }
         )
         let stream = client.connect()
         let consumer = Task {
             for await _ in stream {}
         }
 
-        for expectedSocketCount in 2...5 {
-            let socket = try #require(factory.sockets.last)
-            socket.fail(URLError(.networkConnectionLost), closeCode: .abnormalClosure)
-            #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-                factory.sockets.count == expectedSocketCount
-            })
+        for index in 0..<4 {
+            try await factory.socket(index).fail(URLError(.networkConnectionLost), closeCode: .abnormalClosure)
         }
+        _ = try await factory.socket(4)
 
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            healthFailures == [.reconnectThreshold(attempt: 4)]
-        })
+        var failures = healthFailures.makeAsyncIterator()
+        #expect(await failures.next() == .reconnectThreshold(attempt: 4))
+        #expect(factory.sockets.count == 5)
 
         client.disconnect()
         await consumer.value
     }
 
-    @Test func recoverableFailuresContinuePastFormerRetryCeiling() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func recoverableFailuresContinuePastFormerRetryCeiling() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let client = makeClient(factory: factory, reconnectDelay: { _ in 0 })
-        let stream = client.connect()
-        var received: [AppEventMessage] = []
-        let consumer = Task { @MainActor in
-            for await event in stream {
-                received.append(event)
-            }
+        var events = client.connect().makeAsyncIterator()
+
+        for index in 0..<11 {
+            try await factory.socket(index).fail(URLError(.networkConnectionLost), closeCode: .abnormalClosure)
         }
+        try await factory.socket(11).yield(.string(Self.connectedJSON))
 
-        for expectedSocketCount in 2...12 {
-            let socket = try #require(factory.sockets.last)
-            socket.fail(URLError(.networkConnectionLost), closeCode: .abnormalClosure)
-            #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-                factory.sockets.count == expectedSocketCount
-            })
-        }
-
-        let recoveredSocket = try #require(factory.sockets.last)
-        recoveredSocket.yield(.string(Self.connectedJSON))
-
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            received == [.connected(serverTime: 42, snapshotRequired: false)]
-        })
+        #expect(await events.next() == .connected(serverTime: 42, snapshotRequired: false))
         #expect(client.status == .connected)
+        #expect(factory.sockets.count == 12)
 
         client.disconnect()
-        await consumer.value
+        #expect(await events.next() == nil)
     }
 
-    @Test func nonRetryableHandshakeFailureFinishesWithoutOpeningAnotherSocket() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func nonRetryableHandshakeFailureFinishesWithoutOpeningAnotherSocket() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let client = makeClient(factory: factory, reconnectDelay: { _ in 0 })
-        let stream = client.connect()
-        let consumer = Task {
-            for await _ in stream {}
-        }
+        var events = client.connect().makeAsyncIterator()
 
-        let socket = try #require(factory.sockets.first)
-        socket.fail(
+        try await factory.socket(0).fail(
             URLError(.userAuthenticationRequired),
             responseStatusCode: 401,
             closeCode: .policyViolation
         )
 
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            client.status == .disconnected
-        })
+        #expect(await events.next() == nil)
+        #expect(client.status == .disconnected)
         #expect(factory.sockets.count == 1)
-        await consumer.value
     }
 
-    @Test func authExpiredCloseForcesOneRefreshThenOneReconnect() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func authExpiredCloseForcesOneRefreshThenOneReconnect() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let refreshCounter = RefreshCounter()
         let client = makeClient(
@@ -186,37 +165,31 @@ struct AppEventStreamClientTests {
                 return "at_fresh"
             }
         )
-        let stream = client.connect()
-        let consumer = Task { @MainActor in
-            for await _ in stream {}
-        }
+        var events = client.connect().makeAsyncIterator()
 
-        let socket = try #require(factory.sockets.first)
-        socket.fail(
+        try await factory.socket(0).fail(
             URLError(.networkConnectionLost),
             closeCode: URLSessionWebSocketTask.CloseCode(
                 rawValue: WebSocketRecoveryPolicy.authExpiredCloseCodeRawValue
             ) ?? .goingAway
         )
 
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            factory.sockets.count == 2
-        })
+        let reconnected = try await factory.socket(1)
         #expect(refreshCounter.current() == 1)
         #expect(factory.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer at_fresh")
         #expect(client.status != .disconnected)
 
-        let reconnected = try #require(factory.sockets.last)
         reconnected.yield(.string(Self.connectedJSON))
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            client.status == .connected
-        })
+        #expect(await events.next() == .connected(serverTime: 42, snapshotRequired: false))
+        #expect(client.status == .connected)
+        #expect(factory.sockets.count == 2)
 
         client.disconnect()
-        await consumer.value
+        #expect(await events.next() == nil)
     }
 
-    @Test func auth401ForcesOneRefreshThenOneReconnect() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func auth401ForcesOneRefreshThenOneReconnect() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let refreshCounter = RefreshCounter()
         let client = makeClient(
@@ -227,36 +200,30 @@ struct AppEventStreamClientTests {
                 return "at_fresh"
             }
         )
-        let stream = client.connect()
-        let consumer = Task { @MainActor in
-            for await _ in stream {}
-        }
+        var events = client.connect().makeAsyncIterator()
 
-        let socket = try #require(factory.sockets.first)
-        socket.fail(
+        try await factory.socket(0).fail(
             URLError(.userAuthenticationRequired),
             responseStatusCode: 401,
             closeCode: .policyViolation
         )
 
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            factory.sockets.count == 2
-        })
+        let reconnected = try await factory.socket(1)
         #expect(refreshCounter.current() == 1)
         #expect(factory.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer at_fresh")
 
         // The reconnected socket is live and drives status back to connected.
-        let reconnected = try #require(factory.sockets.last)
         reconnected.yield(.string(Self.connectedJSON))
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            client.status == .connected
-        })
+        #expect(await events.next() == .connected(serverTime: 42, snapshotRequired: false))
+        #expect(client.status == .connected)
+        #expect(factory.sockets.count == 2)
 
         client.disconnect()
-        await consumer.value
+        #expect(await events.next() == nil)
     }
 
-    @Test func authRefreshFailureDisconnectsTerminallyWithoutReconnect() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func authRefreshFailureDisconnectsTerminallyWithoutReconnect() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let refreshCounter = RefreshCounter()
         let client = makeClient(
@@ -267,29 +234,22 @@ struct AppEventStreamClientTests {
                 throw DeviceAuthError.refreshRejected(code: "revoked")
             }
         )
-        let stream = client.connect()
-        let consumer = Task { @MainActor in
-            for await _ in stream {}
-        }
+        var events = client.connect().makeAsyncIterator()
 
-        let socket = try #require(factory.sockets.first)
-        socket.fail(
+        try await factory.socket(0).fail(
             URLError(.userAuthenticationRequired),
             responseStatusCode: 401,
             closeCode: .policyViolation
         )
 
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            client.status == .disconnected
-        })
+        #expect(await events.next() == nil)
+        #expect(client.status == .disconnected)
         #expect(refreshCounter.current() == 1)
         #expect(factory.sockets.count == 1)
-
-        client.disconnect()
-        await consumer.value
     }
 
-    @Test func repeatedAuth401CannotRefreshOrReconnectForever() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func repeatedAuth401CannotRefreshOrReconnectForever() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let refreshCounter = RefreshCounter()
         let client = makeClient(
@@ -300,39 +260,27 @@ struct AppEventStreamClientTests {
                 return "at_still_rejected"
             }
         )
-        let stream = client.connect()
-        let consumer = Task { @MainActor in
-            for await _ in stream {}
-        }
+        var events = client.connect().makeAsyncIterator()
 
-        let first = try #require(factory.sockets.first)
-        first.fail(
+        try await factory.socket(0).fail(
             URLError(.userAuthenticationRequired),
             responseStatusCode: 401,
             closeCode: .policyViolation
         )
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            factory.sockets.count == 2
-        })
-
-        let second = try #require(factory.sockets.last)
-        second.fail(
+        try await factory.socket(1).fail(
             URLError(.userAuthenticationRequired),
             responseStatusCode: 401,
             closeCode: .policyViolation
         )
 
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            client.status == .disconnected
-        })
+        #expect(await events.next() == nil)
+        #expect(client.status == .disconnected)
         #expect(refreshCounter.current() == 1)
         #expect(factory.sockets.count == 2)
-
-        client.disconnect()
-        await consumer.value
     }
 
-    @Test func productionStyleProvidersResolveCurrentBeforeOpenAndForceRefreshAfter401() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func productionStyleProvidersResolveCurrentBeforeOpenAndForceRefreshAfter401() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let currentCounter = RefreshCounter()
         let refreshCounter = RefreshCounter()
@@ -352,22 +300,18 @@ struct AppEventStreamClientTests {
         let stream = client.connect()
         let consumer = Task { @MainActor in for await _ in stream {} }
 
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            factory.sockets.count == 1
-        })
+        let first = try await factory.socket(0)
         #expect(factory.requests.first?.value(forHTTPHeaderField: "Authorization") == "Bearer at_current")
         #expect(currentCounter.current() == 1)
         #expect(refreshCounter.current() == 0)
 
-        let first = try #require(factory.sockets.first)
         first.fail(
             URLError(.userAuthenticationRequired),
             responseStatusCode: 401,
             closeCode: .policyViolation
         )
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            factory.sockets.count == 2
-        })
+        _ = try await factory.socket(1)
+        #expect(factory.sockets.count == 2)
         #expect(factory.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer at_refreshed")
         #expect(currentCounter.current() == 2)
         #expect(refreshCounter.current() == 1)
@@ -376,7 +320,8 @@ struct AppEventStreamClientTests {
         await consumer.value
     }
 
-    @Test func siblingTokenReuseDoesNotSpendTheOneMintThen401StillRefreshes() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func siblingTokenReuseDoesNotSpendTheOneMintThen401StillRefreshes() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let currentCounter = RefreshCounter()
         let refreshCounter = RefreshCounter()
@@ -397,28 +342,23 @@ struct AppEventStreamClientTests {
         let stream = client.connect()
         let consumer = Task { @MainActor in for await _ in stream {} }
 
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            factory.sockets.count == 1
-        })
-        try #require(factory.sockets.first).fail(
+        try await factory.socket(0).fail(
             URLError(.userAuthenticationRequired),
             responseStatusCode: 401,
             closeCode: .policyViolation
         )
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            factory.sockets.count == 2
-        })
+        let second = try await factory.socket(1)
+        #expect(factory.sockets.count == 2)
         #expect(factory.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer at_sibling")
         #expect(refreshCounter.current() == 0)
 
-        try #require(factory.sockets.last).fail(
+        second.fail(
             URLError(.userAuthenticationRequired),
             responseStatusCode: 401,
             closeCode: .policyViolation
         )
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            factory.sockets.count == 3
-        })
+        _ = try await factory.socket(2)
+        #expect(factory.sockets.count == 3)
         #expect(factory.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer at_minted")
         #expect(refreshCounter.current() == 1)
         #expect(client.status != .disconnected)
@@ -427,7 +367,8 @@ struct AppEventStreamClientTests {
         await consumer.value
     }
 
-    @Test func leftoverSnapshotDoesNotHandshakeBeforeCurrentTokenResolves() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func leftoverSnapshotDoesNotHandshakeBeforeCurrentTokenResolves() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let gate = TokenGate()
         let client = makeClient(
@@ -445,16 +386,17 @@ struct AppEventStreamClientTests {
         #expect(factory.sockets.isEmpty, "Must not open leftover before currentAccessToken returns")
 
         await gate.release()
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            factory.sockets.count == 1
-        })
+        _ = try await factory.socket(0)
+        #expect(factory.sockets.count == 1)
         #expect(factory.requests.first?.value(forHTTPHeaderField: "Authorization") == "Bearer at_current")
 
         client.disconnect()
         await consumer.value
     }
 
-    @Test func emptyCurrentTokenKeepsLeftoverAndStillOpens() async throws {
+    // A regression that disconnects instead of opening fails by the time limit.
+    @Test(.timeLimit(.minutes(1)))
+    func emptyCurrentTokenKeepsLeftoverAndStillOpens() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let client = makeClient(
             factory: factory,
@@ -463,9 +405,7 @@ struct AppEventStreamClientTests {
         let stream = client.connect()
         let consumer = Task { @MainActor in for await _ in stream {} }
 
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            factory.sockets.count == 1 || client.status == .disconnected
-        })
+        _ = try await factory.socket(0)
         #expect(factory.sockets.count == 1)
         #expect(client.status != .disconnected)
         #expect(factory.requests.first?.value(forHTTPHeaderField: "Authorization") == "Bearer test-token")
@@ -474,7 +414,8 @@ struct AppEventStreamClientTests {
         await consumer.value
     }
 
-    @Test func expiredLeftoverDoesNotOpenAfterResolutionFailure() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func expiredLeftoverDoesNotOpenAfterResolutionFailure() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let expiredMs = Int64((Date().timeIntervalSince1970 - 120) * 1000)
         let client = makeClient(
@@ -485,19 +426,15 @@ struct AppEventStreamClientTests {
                 throw DeviceAuthError.refreshRejected(code: "revoked")
             }
         )
-        let stream = client.connect()
-        let consumer = Task { @MainActor in for await _ in stream {} }
+        var events = client.connect().makeAsyncIterator()
 
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            client.status == .disconnected
-        })
+        #expect(await events.next() == nil)
+        #expect(client.status == .disconnected)
         #expect(factory.sockets.isEmpty, "Known-expired leftover must not open a socket")
-
-        client.disconnect()
-        await consumer.value
     }
 
-    @Test func unexpiredLeftoverCredentialStillOpensAfterResolutionFailure() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func unexpiredLeftoverCredentialStillOpensAfterResolutionFailure() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let futureMs = Int64((Date().timeIntervalSince1970 + 600) * 1000)
         let client = makeClient(
@@ -511,9 +448,8 @@ struct AppEventStreamClientTests {
         let stream = client.connect()
         let consumer = Task { @MainActor in for await _ in stream {} }
 
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            factory.sockets.count == 1
-        })
+        _ = try await factory.socket(0)
+        #expect(factory.sockets.count == 1)
         #expect(factory.requests.first?.value(forHTTPHeaderField: "Authorization") == "Bearer at_leftover")
         #expect(client.status != .disconnected)
 
@@ -521,7 +457,9 @@ struct AppEventStreamClientTests {
         await consumer.value
     }
 
-    @Test func refreshRejectionKeepsLeftoverAppEventSnapshot() async throws {
+    // A regression that disconnects instead of opening fails by the time limit.
+    @Test(.timeLimit(.minutes(1)))
+    func refreshRejectionKeepsLeftoverAppEventSnapshot() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let client = makeClient(
             factory: factory,
@@ -532,9 +470,7 @@ struct AppEventStreamClientTests {
         let stream = client.connect()
         let consumer = Task { @MainActor in for await _ in stream {} }
 
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            factory.sockets.count == 1 || client.status == .disconnected
-        })
+        _ = try await factory.socket(0)
         #expect(factory.sockets.count == 1)
         #expect(client.status != .disconnected)
         #expect(factory.requests.first?.value(forHTTPHeaderField: "Authorization") == "Bearer test-token")
@@ -543,39 +479,39 @@ struct AppEventStreamClientTests {
         await consumer.value
     }
 
-    @Test func terminalCloseCodeWithoutHTTPResponseFinishesWithoutRetrying() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func terminalCloseCodeWithoutHTTPResponseFinishesWithoutRetrying() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let client = makeClient(factory: factory, reconnectDelay: { _ in 0 })
-        let stream = client.connect()
-        let consumer = Task {
-            for await _ in stream {}
-        }
+        var events = client.connect().makeAsyncIterator()
 
-        let socket = try #require(factory.sockets.first)
-        socket.fail(URLError(.badServerResponse), closeCode: .protocolError)
+        try await factory.socket(0).fail(URLError(.badServerResponse), closeCode: .protocolError)
 
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            client.status == .disconnected
-        })
+        #expect(await events.next() == nil)
+        #expect(client.status == .disconnected)
         #expect(factory.sockets.count == 1)
-        await consumer.value
     }
 
-    @Test func disconnectCancelsScheduledReconnectAndFinishesConsumer() async throws {
+    // The client asks for the reconnect delay right after it enters `.reconnecting`, so that
+    // call is the event the test awaits before it disconnects.
+    @Test(.timeLimit(.minutes(1)))
+    func disconnectCancelsScheduledReconnectAndFinishesConsumer() async throws {
         let factory = ScriptedAppEventSocketFactory()
-        let client = makeClient(factory: factory, reconnectDelay: { _ in 60 })
+        let (scheduledAttempts, scheduleAttempt) = AsyncStream<Int>.makeStream()
+        let client = makeClient(factory: factory, reconnectDelay: { attempt in
+            scheduleAttempt.yield(attempt)
+            return 60
+        })
         let stream = client.connect()
         let consumer = Task {
             for await _ in stream {}
         }
 
-        let socket = try #require(factory.sockets.first)
-        socket.fail(URLError(.networkConnectionLost), closeCode: .abnormalClosure)
+        try await factory.socket(0).fail(URLError(.networkConnectionLost), closeCode: .abnormalClosure)
 
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            if case .reconnecting(attempt: 1) = client.status { return true }
-            return false
-        })
+        var attempts = scheduledAttempts.makeAsyncIterator()
+        #expect(await attempts.next() == 1)
+        #expect(client.status == .reconnecting(attempt: 1))
 
         client.disconnect()
         await consumer.value
@@ -585,7 +521,8 @@ struct AppEventStreamClientTests {
         #expect(factory.sockets.count == 1)
     }
 
-    @Test func staleStreamTerminationCannotDisconnectReplacementConnection() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func staleStreamTerminationCannotDisconnectReplacementConnection() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let client = makeClient(factory: factory)
 
@@ -593,20 +530,11 @@ struct AppEventStreamClientTests {
         let firstConsumer = Task {
             for await _ in firstStream {}
         }
-        let secondStream = client.connect()
-        var secondEvents: [AppEventMessage] = []
-        let secondConsumer = Task { @MainActor in
-            for await event in secondStream {
-                secondEvents.append(event)
-            }
-        }
+        var secondEvents = client.connect().makeAsyncIterator()
 
-        let replacementSocket = try #require(factory.sockets.last)
-        replacementSocket.yield(.string(Self.connectedJSON))
+        try await factory.socket(1).yield(.string(Self.connectedJSON))
 
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            secondEvents == [.connected(serverTime: 42, snapshotRequired: false)]
-        })
+        #expect(await secondEvents.next() == .connected(serverTime: 42, snapshotRequired: false))
         await firstConsumer.value
         for _ in 0..<5 { await Task.yield() }
 
@@ -614,7 +542,7 @@ struct AppEventStreamClientTests {
         #expect(factory.sockets.count == 2)
 
         client.disconnect()
-        await secondConsumer.value
+        #expect(await secondEvents.next() == nil)
     }
 
     @Test func reconnectOpensWithTheSessionsNewestTokenWithoutSpendingA401() async throws {
@@ -720,7 +648,10 @@ struct AppEventStreamClientTests {
 @Suite("AppEventStreamCoordinator", .serialized)
 @MainActor
 struct AppEventStreamCoordinatorTests {
-    @Test func prolongedOutageReconnectSnapshotCompletesBeforeQueuedLiveEventsApply() async throws {
+    // Awaits each socket open, the snapshot starting, and the session store change instead of
+    // polling 500 ms deadlines, which a loaded unit shard missed. `.timeLimit` is only a hang guard.
+    @Test(.timeLimit(.minutes(1)))
+    func prolongedOutageReconnectSnapshotCompletesBeforeQueuedLiveEventsApply() async throws {
         let gate = AppEventSnapshotGate()
         let snapshotSession = makeTestSession(id: "s1", workspaceId: "w1", status: .ready)
         let coordinator = AppEventStreamCoordinator { connection, _ in
@@ -744,28 +675,21 @@ struct AppEventStreamCoordinatorTests {
         )
 
         coordinator.start(connection: connection, client: client, streamURL: url)
-        for expectedSocketCount in 2...12 {
-            let failedSocket = try #require(factory.sockets.last)
-            failedSocket.fail(URLError(.networkConnectionLost), closeCode: .abnormalClosure)
-            #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-                factory.sockets.count == expectedSocketCount
-            })
+        for index in 0..<11 {
+            try await factory.socket(index).fail(URLError(.networkConnectionLost), closeCode: .abnormalClosure)
         }
-
-        let recoveredSocket = try #require(factory.sockets.last)
+        let recoveredSocket = try await factory.socket(11)
+        #expect(factory.sockets.count == 12)
         recoveredSocket.yield(.string(#"{"type":"app_events_connected","serverTime":42,"snapshotRequired":true}"#))
 
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            gate.hasStarted
-        })
+        await gate.waitUntilStarted()
         recoveredSocket.yield(.string(#"{"type":"session_deleted","sessionId":"s1","workspaceId":"w1","emittedAt":43}"#))
         #expect(connection.sessionStore.session(id: "s1") != nil)
 
         gate.release()
 
-        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
-            connection.sessionStore.session(id: "s1") == nil
-        })
+        await waitForObservedCondition { connection.sessionStore.session(id: "s1") == nil }
+        #expect(connection.sessionStore.session(id: "s1") == nil)
         #expect(connection.appEventStreamTransportState == .connected)
 
         coordinator.disconnect()
@@ -1370,13 +1294,52 @@ private final class RefreshCounter: @unchecked Sendable {
     }
 }
 
+/// Wakes the tests waiting on a fake's main-actor event. A waiter re-checks its condition after
+/// each wake, so it awaits the event itself instead of polling a wall-clock deadline. A cancelled
+/// wait returns, so a test's `.timeLimit` can end one that never sees its event.
+@MainActor
+private final class TestEventSignal {
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func fire() {
+        let waiters = waiters
+        self.waiters = []
+        for waiter in waiters { waiter.resume() }
+    }
+
+    func wait(until isDone: () -> Bool) async {
+        while !isDone(), !Task.isCancelled {
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { waiters.append($0) }
+            } onCancel: {
+                Task { @MainActor in self.fire() }
+            }
+        }
+    }
+}
+
+/// Awaits an `@Observable` main-actor condition: each change it reads wakes the wait to re-check.
+@MainActor
+private func waitForObservedCondition(_ isDone: @escaping @MainActor () -> Bool) async {
+    let changed = TestEventSignal()
+    await changed.wait {
+        withObservationTracking { isDone() } onChange: { Task { @MainActor in changed.fire() } }
+    }
+}
+
 @MainActor
 private final class AppEventSnapshotGate {
-    private(set) var hasStarted = false
+    private var hasStarted = false
+    private let started = TestEventSignal()
     private var continuation: CheckedContinuation<Void, Never>?
+
+    func waitUntilStarted() async {
+        await started.wait { hasStarted }
+    }
 
     func waitUntilReleased() async {
         hasStarted = true
+        started.fire()
         await withCheckedContinuation { continuation in
             self.continuation = continuation
         }
@@ -1400,12 +1363,21 @@ private final class ScriptedAppEventSocketFactory {
     private(set) var requests: [URLRequest] = []
     private(set) var sockets: [ScriptedAppEventSocket] = []
     var pingBehavior: ScriptedPingBehavior = .succeed
+    private let socketOpened = TestEventSignal()
 
     func makeTransport(for request: URLRequest) -> PersistentWebSocketTransport {
         let socket = ScriptedAppEventSocket(pingBehavior: pingBehavior)
         requests.append(request)
         sockets.append(socket)
+        socketOpened.fire()
         return socket.transport
+    }
+
+    /// The socket the client opened at `index` (0 is the first open), once it has opened it.
+    func socket(_ index: Int) async throws -> ScriptedAppEventSocket {
+        await socketOpened.wait { sockets.count > index }
+        try Task.checkCancellation()
+        return sockets[index]
     }
 }
 
