@@ -87,7 +87,7 @@ export type PromptContextSource =
 /**
  * One place the person attached to a message from a pane: a commented selection, for now.
  * The server renders the items into a model-only block before the typed text
- * (`renderPromptContext`); the transcript keeps them without `quote` and `anchor`, as chips.
+ * (`renderPromptContext`); the transcript keeps them without `anchor`, as cards.
  * Limits are in `prompt-context.ts`; a message over them is rejected, never cut.
  */
 export interface PromptContextItem {
@@ -1075,7 +1075,7 @@ export type ServerMessage =
         entryId?: string;
         /** User role only: another agent session sent this input; `content` is its displayed text. */
         origin?: MessageOrigin;
-        /** User role only: places the message carried, without quotes; `content` is the typed text. */
+        /** User role only: places the message carried, without anchors; `content` is the typed text. */
         context?: PromptContextItem[];
         /** Ordered assistant structure for clients that can render split content. */
         assistantContent?: AssistantMessageContentPart[];
@@ -1448,7 +1448,7 @@ export interface ConversationEntryView {
    * header before it is hidden.
    */
   textOffset?: number;
-  /** A user input with places from panes (`oppi.user-input`): the items, without quotes. */
+  /** A user input with places from panes (`oppi.user-input`): the items, without anchors. */
   context?: PromptContextItem[];
   /**
    * Assistant entries: this answer re-billed cached context, shown after it while Pi's

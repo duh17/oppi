@@ -219,7 +219,7 @@ export async function buildConversationStreamGolden(): Promise<string> {
     });
 
     // A user input with places from panes, placed as `oppi.user-input`: the context block
-    // before `textOffset` is for the model only; the entry keeps the places without quotes.
+    // before `textOffset` is for the model only; the entry keeps the places and quotes, without anchors.
     const places = [
       {
         source: "file" as const,

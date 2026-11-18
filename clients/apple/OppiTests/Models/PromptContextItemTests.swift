@@ -17,7 +17,7 @@ struct PromptContextItemTests {
         )))
 
         #expect(item.path == "clients/apple/Oppi/Features/Chat/ChatView.swift")
-        #expect(item.chipTitle == "ChatView.swift:612–616")
+        #expect(item.placeTitle == "ChatView.swift:612–616")
     }
 
     @Test func workspacePathsAreShortenedUnlessVerbatimIsRequested() {
@@ -61,8 +61,30 @@ struct PromptContextItemTests {
         #expect(item.startLine == nil)
         #expect(item.quote == "Carry two litres per person")
         #expect(item.note == "Which spring?")
-        #expect(item.chipTitle == "field-guide.pdf pp. 2–3")
+        #expect(item.placeTitle == "field-guide.pdf pp. 2–3")
         #expect(item.opensPlace)
+    }
+
+    /// A comment on a chat message is placed by the message's start, read past Markdown marks
+    /// and cut at a word, so its card never reads just "Chat".
+    @Test func chatMessageCommentIsPlacedByTheMessageStart() {
+        #expect(PromptContextItem.chatMessageTitle("\n## **Results** come back\n\nMore.") == "Results come back")
+        #expect(PromptContextItem.chatMessageTitle("```swift\nlet x = 1\n```") == "let x = 1")
+        #expect(PromptContextItem.chatMessageTitle("2. `oppi` restarts\tthe server") == "oppi restarts the server")
+        #expect(PromptContextItem.chatMessageTitle(
+            "Not yet. Clef-Flash is one of the last two models still running on the mini, after LiquidAI."
+        ) == "Not yet. Clef-Flash is one of the last two models still…")
+        #expect(PromptContextItem.chatMessageTitle("---\n\n") == nil)
+
+        let labelled = PromptContextItem(comment: comment(reference: ReviewCommentReference(
+            source: .timelineText,
+            label: PromptContextItem.chatMessageTitle("Not yet. Clef-Flash is still running."),
+            selectedText: "Clef-Flash is still running"
+        )))
+        #expect(labelled.placeTitle == "Not yet. Clef-Flash is still running.")
+        #expect(labelled.quoteCodeLanguage == nil)
+        let unlabelled = PromptContextItem(comment: comment(reference: ReviewCommentReference(source: .timelineText)))
+        #expect(unlabelled.placeTitle == "Chat message")
     }
 
     private func comment(reference: ReviewCommentReference) -> ReviewComment {

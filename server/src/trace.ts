@@ -411,7 +411,7 @@ export interface TraceEvent {
   presentation?: TraceEventPresentation;
   /** For user: another agent session sent this input; `text` is its displayed text. */
   origin?: MessageOrigin;
-  /** For user: places from panes the message carried, without quotes; `text` is the typed text. */
+  /** For user: places from panes the message carried, without anchors; `text` is the typed text. */
   context?: PromptContextItem[];
   /**
    * For user: image attachments the server stores for this message. Their bytes are in

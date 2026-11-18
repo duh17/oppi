@@ -245,8 +245,11 @@ final class AssistantTimelineRowContentView: UIView, UIContentView {
         markdownView.preparedBlocks = configuration.preparedBlocks
         markdownView.imagePreparationContext = configuration.imagePreparationContext
         markdownView.hostLayoutWidth = configuration.markdownWidth
+        // A comment on the answer names it by its start: the card in the message that sends
+        // the comment shows where it points.
         let reviewCommentSourceContext = configuration.interactionContext?.sourceContext(
             surface: .assistantProse,
+            sourceLabel: PromptContextItem.chatMessageTitle(configuration.renderedMarkdownSource),
             timelineItemId: configuration.itemID
         )
         markdownView.apply(configuration: .make(

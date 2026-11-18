@@ -28,7 +28,7 @@ const SOURCE_NAMES: Record<PromptContextSource, string> = {
 /**
  * Entry kind a user input with context items is placed as, instead of `pi.user` (pi-durable
  * `InputEntry`). Its model message is the rendered block, then the typed text; the entry data
- * says where the typed text starts and keeps the items, without quotes, for the transcript.
+ * says where the typed text starts and keeps the items, without anchors, for the transcript.
  */
 export const USER_INPUT_ENTRY_KIND = "oppi.user-input";
 
@@ -292,12 +292,12 @@ export function withPromptContext(
 }
 
 /**
- * An item as the transcript keeps it: the place, not the selected text. The note stays: a chip
- * names a comment as one ("Comment", against a passive reference) and reads it as its
- * accessibility value.
+ * An item as the transcript keeps it: the place, the selected text, and the note, which the
+ * user's message shows as a card. The anchor (a rendered element's or diagram object's
+ * locating lines) is for the model only.
  */
 function shownItem(item: PromptContextItem): PromptContextItem {
-  const { quote: _quote, anchor: _anchor, ...shown } = item;
+  const { anchor: _anchor, ...shown } = item;
   return shown;
 }
 

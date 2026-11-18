@@ -143,7 +143,7 @@ Replies show no icon in any style; the session's icon is in the top bar. While a
 
 The **Context** panel's reload button reloads the session as `/reload` does, so the panel shows the AGENTS files, Skills, tools, and extensions the session has now. It asks first, because when those files changed, the next message sends the whole conversation again without the prompt cache. The result shows at the top of the panel. It is available only while the session is idle. Pull down to refresh the numbers without a reload.
 
-Staged comments go with your next message. The agent reads each one with the text you selected; your message shows what you typed and a chip per comment, such as **Comment App.swift:12–14**. Tap a chip to open its file at those lines.
+Staged comments go with your next message. The agent reads each one with the text you selected; your message shows what you typed and, under it, each comment in full: where it points (such as **App.swift:12–14**, a PDF page, or the start of the chat message you commented on), the text you selected, and your note. Tap the place to open its file at those lines. Queued messages show the same comments.
 
 ## Keyboard and pointer
 

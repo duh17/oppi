@@ -42,9 +42,9 @@ struct UserTimelineRowConfiguration: UIContentConfiguration {
     /// argument is the session the reference names, when it names one.
     var fetchSessionAttachment: ((_ attachmentId: String, _ sessionId: String?) async throws -> Data)? = nil
     var onOpenPathPill: ((UserMessagePathPill, UIView, PaneOpenPlacement) -> Void)? = nil
-    /// Places from panes the message carried, drawn as chips under the text.
+    /// Places from panes the message carried, drawn in full as cards under the text.
     var context: [PromptContextItem] = []
-    /// Opens a chip's place (`PromptContextItem.opensPlace`) in a pane.
+    /// Opens a card's place (`PromptContextItem.opensPlace`) in a pane.
     var onOpenContextItem: ((PromptContextItem, UIView) -> Void)? = nil
     let canFork: Bool
     let onFork: (() -> Void)?
@@ -211,7 +211,10 @@ final class UserTimelineRowContentView: UIView, UIContentView {
     private var conversationNaturalTextWidth: CGFloat?
     private let attachmentBadgeRow = UIStackView()
     private let pathPillRow = UIStackView()
-    private let contextChipRow = UIStackView()
+    private let contextCardStack = UIStackView()
+    /// What the context cards were last built from: UIKit re-applies an unchanged
+    /// configuration during layout, and rebuilding highlighted code each time costs.
+    private var renderedContextCards: ContextCardInputs?
     private let textRow = UIStackView()
     private let iconLabel = UILabel()
     private let bodyStack = UIStackView()
@@ -346,10 +349,10 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         pathPillRow.alignment = .leading
         pathPillRow.spacing = 6
 
-        contextChipRow.translatesAutoresizingMaskIntoConstraints = false
-        contextChipRow.axis = .vertical
-        contextChipRow.alignment = .leading
-        contextChipRow.spacing = 6
+        contextCardStack.translatesAutoresizingMaskIntoConstraints = false
+        contextCardStack.axis = .vertical
+        contextCardStack.alignment = .fill
+        contextCardStack.spacing = 8
 
         // Agent message header: sender identity, sender name, intent, fold chevron.
         // The fold control is the header's accessible element; the sender name is a
@@ -455,7 +458,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         bubbleStack.addArrangedSubview(pathPillRow)
         bubbleStack.addArrangedSubview(agentPreviewLabel)
         bubbleStack.addArrangedSubview(textRow)
-        bubbleStack.addArrangedSubview(contextChipRow)
+        bubbleStack.addArrangedSubview(contextCardStack)
         bubbleContainer.addSubview(bubbleStack)
         bubbleContainer.addSubview(accentBar)
         // Constants come from the chrome style in applyChromeGeometry.
@@ -538,7 +541,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         }
         updateAttachmentBadges(content.visibleBadges, palette: palette)
         updatePathPills(content.nonImagePathPills, palette: palette)
-        updateContextChips(configuration.context, palette: palette)
+        updateContextCards(configuration.context, palette: palette)
         applyAgentCard(palette: palette)
         textRow.isHidden = !content.showsTextRow || isFoldedAgentMessage
         // The card shows only around something it draws. Images sit in the strip
@@ -1061,6 +1064,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         }
         let tableContext = currentConfiguration.interactionContext?.sourceContext(
             surface: .userMessage,
+            sourceLabel: PromptContextItem.chatMessageTitle(currentConfiguration.text),
             timelineItemId: currentConfiguration.itemID
         )
         for table in tableBlockViews {
@@ -1150,39 +1154,40 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         }
     }
 
-    /// One chip per place: what it is (Comment), where (`App.swift:12–14`), and the note as
-    /// its accessibility value. A chip whose place can open is a button.
-    private func updateContextChips(_ items: [PromptContextItem], palette: ThemePalette) {
-        clearArrangedSubviews(in: contextChipRow)
-        contextChipRow.isHidden = items.isEmpty
+    private struct ContextCardInputs: Equatable {
+        let items: [PromptContextItem]
+        let itemID: String?
+        let themeID: ThemeID
+        let opens: Bool
+        let typographyRevision: UInt64
+    }
+
+    /// One card per place, in full: where, the selected text, and the note. Ids are
+    /// `chat.timeline.user.<itemID>.context.<comment id>` (the index for an item without one).
+    private func updateContextCards(_ items: [PromptContextItem], palette: ThemePalette) {
+        let inputs = ContextCardInputs(
+            items: items,
+            itemID: currentConfiguration.itemID,
+            themeID: ThemeRuntimeState.currentThemeID(),
+            opens: currentConfiguration.onOpenContextItem != nil,
+            typographyRevision: AppFont.revision
+        )
+        contextCardStack.isHidden = items.isEmpty
+        guard inputs != renderedContextCards else { return }
+        renderedContextCards = inputs
+        clearArrangedSubviews(in: contextCardStack)
         let scope = currentConfiguration.itemID.map { "chat.timeline.user.\($0).context" }
-        contextChipRow.accessibilityIdentifier = scope
-        let color = palette.ui.userMessageText
+        let open: PromptContextCardView.Open? = inputs.opens
+            ? { [weak self] item, sourceView in self?.currentConfiguration.onOpenContextItem?(item, sourceView) }
+            : nil
         for (index, item) in items.enumerated() {
-            let opens = item.opensPlace && currentConfiguration.onOpenContextItem != nil
-            let chip = makeCapsuleView(
-                prefix: item.chipPrefix,
-                text: item.chipTitle,
-                symbolName: item.chipSymbolName,
-                tint: color,
-                background: .clear,
-                textColor: color,
-                font: AppFont.monoSmall,
-                monospaced: true,
-                tappable: opens
-            )
-            chip.isAccessibilityElement = true
-            chip.accessibilityIdentifier = scope.map { "\($0).\(index)" }
-            chip.accessibilityLabel = "\(item.chipPrefix) \(item.chipTitle)"
-            chip.accessibilityValue = item.note
-            chip.accessibilityTraits = opens ? .button : .staticText
-            if opens, let control = chip as? UIControl {
-                control.addAction(UIAction { [weak self, weak control] _ in
-                    guard let self, let control else { return }
-                    self.currentConfiguration.onOpenContextItem?(item, control)
-                }, for: .touchUpInside)
-            }
-            contextChipRow.addArrangedSubview(chip)
+            contextCardStack.addArrangedSubview(PromptContextCardView(
+                item: item,
+                identifier: scope.map { "\($0).\(item.id ?? String(index))" },
+                textColor: palette.ui.userMessageText,
+                palette: palette,
+                onOpen: open
+            ))
         }
     }
 
@@ -1744,6 +1749,7 @@ extension UserTimelineRowContentView: UITextViewDelegate {
             router: currentConfiguration.interactionContext?.reviewCommentSelectionContext?.dispatcher,
             sourceContext: currentConfiguration.interactionContext?.sourceContext(
                 surface: .userMessage,
+                sourceLabel: PromptContextItem.chatMessageTitle(currentConfiguration.text),
                 timelineItemId: currentConfiguration.itemID
             )
         )

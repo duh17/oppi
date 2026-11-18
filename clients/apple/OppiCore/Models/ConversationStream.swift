@@ -67,7 +67,7 @@ struct ConversationEntryView: Codable, Equatable, Sendable {
     var origin: MessageOrigin?
     /// With `origin` or `context`: UTF-16 offset where the displayed text starts.
     var textOffset: Int?
-    /// A user input with places from panes (`oppi.user-input`): the items, without quotes.
+    /// A user input with places from panes (`oppi.user-input`): the items, without anchors.
     var context: [PromptContextItem]?
     /// Assistant entries: the answer re-billed cached context. `id` is the live `cache_miss`
     /// frame's id.

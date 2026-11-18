@@ -269,7 +269,7 @@ extension ChatTimelineController {
         )
     }
 
-    /// A context chip opens its place as the same link would from an assistant answer: a
+    /// A context card opens its place as the same link would from an assistant answer: a
     /// `[[path#L12-L14]]` file reference beside the chat, or a web page.
     func openContextItem(_ item: PromptContextItem, from sourceView: UIView) {
         guard let request = item.openRequest(serverID: serverId, workspaceID: workspaceId, sessionID: sessionId) else {
@@ -787,7 +787,7 @@ extension ChatTimelineController {
 }
 
 extension PromptContextItem {
-    /// What tapping the chip opens, or nil when its place cannot open (`opensPlace`). A file
+    /// What tapping the card's place line opens, or nil when its place cannot open (`opensPlace`). A file
     /// opens as `[[path#L12-L14]]` would in the session's answers; a host path as a host file.
     func openRequest(serverID: String?, workspaceID: String?, sessionID: String) -> AppOpenRequest? {
         guard opensPlace else { return nil }
@@ -802,7 +802,7 @@ extension PromptContextItem {
                 fileCandidatePath: hostPath ?? path,
                 kind: hostPath == nil ? .workspaceFile : .hostFile,
                 lineAnchor: lineAnchor,
-                visibleLabel: chipTitle
+                visibleLabel: placeTitle
             ))
         }
         return url.flatMap(URL.init(string:)).map(AppOpenRequest.webLink)

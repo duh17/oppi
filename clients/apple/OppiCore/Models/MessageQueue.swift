@@ -9,7 +9,7 @@ struct MessageQueueItem: Codable, Sendable, Equatable, Identifiable {
     let id: String
     var message: String
     var attachments: [ChatAttachmentRef]?
-    /// Places from panes the queued input carries, as sent: chips in the queue, and staged
+    /// Places from panes the queued input carries, as sent: cards in the queue, and staged
     /// comments again when Stop brings the input back to the composer.
     var context: [PromptContextItem]?
     /// Local-only optimistic thumbnails for queued image uploads.

@@ -45,7 +45,7 @@ The stream uses the trace's helpers (`projectEntries` in `durable-history.ts`), 
 | Extension-generated input | `readDurableInputCards` | `{ id, kind, card, inputCard: true }`, no input text |
 | No model messages, valid `data.card` | `sanitizeTranscriptCard` | `{ id, kind, card }` |
 | `oppi.agent-message` input | `agentMessageOrigin` | entry plus `origin` and `textOffset` |
-| `oppi.user-input` input (context items) | `userInputData` | entry plus `context` (no quotes) and `textOffset` |
+| `oppi.user-input` input (context items) | `userInputData` | entry plus `context` (no anchors) and `textOffset` |
 | Retried attempt's partial | `isRecoveredPartial` | omitted; a sent one is upserted `{ id, kind, hidden: true }` |
 | Answer that re-billed cached context | `trackDurableCacheMisses` | entry plus `cacheMiss: { id, message }` |
 

@@ -2,8 +2,8 @@ import Foundation
 
 /// One place a message carries from a pane: today a staged review comment. The server
 /// (`server/src/prompt-context.ts`) renders the items into a block the model reads before the
-/// typed text, and the transcript keeps them, without `quote` and `anchor`, for the chips
-/// under the user's message. Limits are the server's; a message over them is refused.
+/// typed text, and the transcript keeps them, without `anchor`, for the cards in the user's
+/// message. Limits are the server's; a message over them is refused.
 struct PromptContextItem: Codable, Equatable, Sendable {
     /// The staged comment's id. Never rendered.
     var id: String?
@@ -133,7 +133,7 @@ extension PromptContextItem {
         )
     }
 
-    /// Whether the chip opens a place: a file the selection came from, or a web page.
+    /// Whether the card's place line opens a place: a file the selection came from, or a web page.
     var opensPlace: Bool {
         switch source {
         case .file, .gitDiff, .image:
@@ -145,8 +145,9 @@ extension PromptContextItem {
         return scheme == "http" || scheme == "https"
     }
 
-    /// The chip's text: the place, as short as it reads ("App.swift:12–14", "guide.pdf p. 2").
-    var chipTitle: String {
+    /// The card's place line, as short as it reads ("App.swift:12–14", "guide.pdf p. 2", the
+    /// start of a commented chat message).
+    var placeTitle: String {
         if let path, !path.isEmpty {
             var title = (path as NSString).lastPathComponent
             if let startLine {
@@ -167,12 +168,60 @@ extension PromptContextItem {
         return sourceName
     }
 
-    /// The chip's leading word: what the person attached.
-    var chipPrefix: String {
-        note?.isEmpty == false ? String(localized: "Comment") : String(localized: "Reference")
+    /// How the card draws `quote`: as code in this language, or as a quote when nil. An empty
+    /// `language` is prose (a rendered element's text); nil reads the path's extension. Output
+    /// from a diff, tool or terminal is code even in no known language.
+    var quoteCodeLanguage: SyntaxLanguage? {
+        if language?.isEmpty == true { return nil }
+        let identifier = language ?? path.map { ($0 as NSString).pathExtension } ?? ""
+        let detected = identifier.isEmpty ? SyntaxLanguage.unknown : SyntaxLanguage.detect(identifier)
+        if detected != .unknown { return detected }
+        switch source {
+        case .gitDiff, .toolOutput, .terminalOutput: return .unknown
+        case .file, .timelineText, .image, .unknown: return nil
+        }
     }
 
-    var chipSymbolName: String {
+    /// The longest title `chatMessageTitle` makes, in characters, before its ellipsis.
+    static let chatMessageTitleLength = 60
+
+    /// A comment's place when it quotes a chat message: the start of that message, on one line
+    /// without its Markdown marks ("Not yet. Clef-Flash is one of the last two…"). Nil when the
+    /// message has no words. Reads only the first lines, so a long message costs nothing.
+    static func chatMessageTitle(_ text: String) -> String? {
+        var lineStart = text.startIndex
+        var linesRead = 0
+        while lineStart < text.endIndex, linesRead < 12 {
+            let lineEnd = text[lineStart...].firstIndex(where: \.isNewline) ?? text.endIndex
+            defer {
+                lineStart = lineEnd < text.endIndex ? text.index(after: lineEnd) : lineEnd
+                linesRead += 1
+            }
+            var line = Substring(text[lineStart..<lineEnd].map { character in
+                character.unicodeScalars.allSatisfy { $0.properties.generalCategory == .control } ? " " : character
+            })
+            line = line.drop { $0.isWhitespace }
+            // A fence or a table row is not a sentence that names the message.
+            if line.hasPrefix("```") || line.hasPrefix("~~~") || line.hasPrefix("|") { continue }
+            line = line.drop { "#>-*+ ".contains($0) }
+            if let marker = line.firstIndex(where: { !$0.isNumber }), marker > line.startIndex,
+               ".)".contains(line[marker]) {
+                line = line[line.index(after: marker)...].drop { $0.isWhitespace }
+            }
+            let words = String(line.filter { $0 != "*" && $0 != "`" })
+                .split(whereSeparator: \.isWhitespace)
+                .joined(separator: " ")
+            guard words.contains(where: { $0.isLetter || $0.isNumber }) else { continue }
+            guard words.count > chatMessageTitleLength else { return words }
+            let cut = words.prefix(chatMessageTitleLength)
+            var atWord = cut.lastIndex(of: " ").map { cut[..<$0] } ?? cut
+            while let last = atWord.last, last.isPunctuation || last.isWhitespace { atWord = atWord.dropLast() }
+            return atWord + "…"
+        }
+        return nil
+    }
+
+    var placeSymbolName: String {
         if startPage != nil { return "doc.richtext" }
         switch source {
         case .gitDiff: return "plusminus"
@@ -188,7 +237,7 @@ extension PromptContextItem {
         switch source {
         case .gitDiff: String(localized: "Diff")
         case .file: String(localized: "File")
-        case .timelineText: String(localized: "Chat")
+        case .timelineText: String(localized: "Chat message")
         case .toolOutput: String(localized: "Tool output")
         case .terminalOutput: String(localized: "Terminal")
         case .image: String(localized: "Image")

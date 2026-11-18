@@ -979,6 +979,7 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
         case .messageQueue:
             let queue = MessageQueueView(presentation: .drawer)
             queue.onOpenMessage = { [weak self] item in self?.openQueuedMessage(item) }
+            queue.onOpenContextItem = { [weak self] item, sourceView in self?.openQueuedPlace(item, from: sourceView) }
             messageQueue = queue
             stack.addArrangedSubview(queue)
         }
@@ -1183,6 +1184,17 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
     }
 
     /// A queued message in the reader, rendered as the Markdown it will send.
+    /// A queued message's card opens its place as the sent message's card will.
+    private func openQueuedPlace(_ item: PromptContextItem, from sourceView: UIView) {
+        let link = actions.linkContext
+        guard let request = item.openRequest(
+            serverID: link.serverID,
+            workspaceID: link.workspaceID,
+            sessionID: link.sessionID ?? ""
+        ) else { return }
+        AppRootEnvironment.near(sourceView)?.opener.open(request)
+    }
+
     private func openQueuedMessage(_ item: MessageQueueItem) {
         actions.openReader(.document(content: .markdown(
             content: item.message,

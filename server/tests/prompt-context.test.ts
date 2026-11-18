@@ -77,13 +77,13 @@ describe("pane context block", () => {
     const placed = withPromptContext("Please fix these.", [lineComment, pdfComment]);
     expect(placed.text.startsWith("<pane-context>")).toBe(true);
     expect(placed.text.endsWith("</pane-context>\n\nPlease fix these.")).toBe(true);
-    const entry = userInputEntry(placed.textOffset, [lineComment, pdfComment]);
+    const anchored = { ...pdfComment, anchor: "- Element: `<h2 id=\"tents\">`" };
+    const entry = userInputEntry(placed.textOffset, [lineComment, anchored]);
     const data = userInputData(entry.kind, entry.data)!;
     expect(userInputText(placed.text, data)).toBe("Please fix these.");
-    // The transcript keeps the places and notes, never the selected text.
-    const { quote: _line, ...shownLine } = lineComment;
-    const { quote: _pdf, ...shownPdf } = pdfComment;
-    expect(data.context).toEqual([shownLine, shownPdf]);
+    // The transcript keeps each place, its selected text, and its note for the message's
+    // cards; the anchor is for the model only.
+    expect(data.context).toEqual([lineComment, pdfComment]);
     // Comments alone are a message too; it shows no text.
     const alone = withPromptContext("", [pdfComment]);
     const aloneEntry = userInputEntry(alone.textOffset, [pdfComment]);

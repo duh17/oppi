@@ -8,6 +8,7 @@ import type {
 } from "@earendil-works/pi-ai";
 
 import { createLogger } from "./logger.js";
+import { stripPromptContext } from "./prompt-context.js";
 
 const log = createLogger({ base: { component: "e2e_faux_provider" } });
 
@@ -141,7 +142,8 @@ export async function registerE2EFauxProvider(models: ModelRuntime): Promise<boo
           calls.map((call) => fauxToolCall(call.name, call.arguments as ToolCall["arguments"])),
           { stopReason: "toolUse" },
         )
-      : fauxAssistantMessage(e2eFauxReplyText(lastUserText(context.messages)));
+      : // Echo what the person typed, not the comments' model-only block before it.
+        fauxAssistantMessage(e2eFauxReplyText(stripPromptContext(lastUserText(context.messages))));
   };
   // The faux core answers from a queue. Queue the scripted step right before each request
   // takes it, so the script never runs dry and concurrent requests cannot steal a step.

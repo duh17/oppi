@@ -4,7 +4,7 @@ import UIKit
 @testable import Oppi
 
 /// Staged comments leave as context items beside the typed text, and the user's message shows
-/// that text with a chip per comment, never a pasted block of comments.
+/// that text with each comment in full as a card, never the model's pasted block.
 @Suite("Prompt context send")
 @MainActor
 struct PromptContextSendTests {
@@ -51,7 +51,7 @@ struct PromptContextSendTests {
         sentAt: nil
     ))
 
-    @Test func commentsTravelAsContextAndTheRowShowsChipsNotTheirText() async throws {
+    @Test func commentsTravelAsContextAndTheRowShowsThemInFull() async throws {
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
         let connection = ServerConnection()
@@ -99,7 +99,8 @@ struct PromptContextSendTests {
         #expect(text == "Please fix these.")
         #expect(rowContext == context)
 
-        // Drawn: the text, then one chip per comment, each opening its place.
+        // Drawn: the text, then each comment in full — its place, quote and note — and the
+        // place opens it, by touch and by VoiceOver alike.
         var opened: [PromptContextItem] = []
         let view = UserTimelineRowContentView(configuration: UserTimelineRowConfiguration(
             text: text,
@@ -114,18 +115,37 @@ struct PromptContextSendTests {
         view.layoutIfNeeded()
 
         let scope = "chat.timeline.user.\(id).context"
-        let lineChip = try #require(subview(identified: "\(scope).0", in: view))
-        let pdfChip = try #require(subview(identified: "\(scope).1", in: view))
-        #expect(lineChip.accessibilityLabel == "Comment App.swift:12–14")
-        #expect(pdfChip.accessibilityLabel == "Comment field-guide.pdf p. 2")
-        #expect(pdfChip.accessibilityValue == "Is this still true above the tree line?")
-        #expect(lineChip.accessibilityTraits.contains(.button))
-        let shown = allLabels(in: view).joined(separator: "\n") + allText(in: view)
-        #expect(!shown.contains("let total = items.count"), "The quote is the model's, not the bubble's")
-        #expect(!shown.contains("Review comments"))
+        let linePlace = try #require(subview(identified: "\(scope).comment-line.place", in: view))
+        let pdfPlace = try #require(subview(identified: "\(scope).comment-pdf.place", in: view))
+        #expect(linePlace.accessibilityLabel == "App.swift:12–14")
+        #expect(pdfPlace.accessibilityLabel == "field-guide.pdf p. 2")
+        #expect(linePlace.accessibilityTraits.contains(.button))
+        let lineCard = try #require(subview(identified: "\(scope).comment-line", in: view))
+        let pdfCard = try #require(subview(identified: "\(scope).comment-pdf", in: view))
+        #expect(allLabels(in: lineCard).contains("let total = items.count"), "The code quote shows")
+        #expect(allLabels(in: lineCard).contains("Rename total; it shadows the property."))
+        #expect(allLabels(in: pdfCard).contains("Carry two litres per person"), "The PDF quote shows")
+        #expect(allLabels(in: pdfCard).contains("Is this still true above the tree line?"))
+        #expect(!allText(in: view).contains("pane-context"), "The model's block never shows")
 
-        (lineChip as? UIControl)?.sendActions(for: .touchUpInside)
+        #expect(linePlace.accessibilityActivate())
         #expect(opened == [Self.lineComment])
+        (linePlace as? UIControl)?.sendActions(for: .touchUpInside)
+        #expect(opened == [Self.lineComment, Self.lineComment])
+
+        // Comments alone draw only their cards: no text area above them.
+        let alone = UserTimelineRowContentView(configuration: UserTimelineRowConfiguration(
+            text: "",
+            images: [],
+            context: [Self.pdfComment],
+            canFork: false,
+            onFork: nil,
+            itemID: "alone"
+        ))
+        alone.frame = CGRect(x: 0, y: 0, width: 600, height: 300)
+        alone.layoutIfNeeded()
+        #expect(visibleTextViews(in: alone).isEmpty, "A comments-only message draws a text area")
+        #expect(subview(identified: "chat.timeline.user.alone.context.comment-pdf.note", in: alone) != nil)
         let request = Self.lineComment.openRequest(serverID: "server-1", workspaceID: "w1", sessionID: "s1")
         guard case .resourceReference(let reference) = request else {
             Issue.record("A file comment opens its file, got \(String(describing: request))")
@@ -218,6 +238,11 @@ private func subview(identified identifier: String, in root: UIView) -> UIView? 
         if let match = subview(identified: identifier, in: child) { return match }
     }
     return nil
+}
+
+private func visibleTextViews(in root: UIView) -> [UITextView] {
+    guard !root.isHidden else { return [] }
+    return ((root as? UITextView).map { [$0] } ?? []) + root.subviews.flatMap { visibleTextViews(in: $0) }
 }
 
 private func allLabels(in root: UIView) -> [String] {

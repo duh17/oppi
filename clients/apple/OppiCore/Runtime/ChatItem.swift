@@ -7,7 +7,7 @@ import Foundation
 /// - Full output lives in `ToolOutputStore`, keyed by item ID
 /// - Expansion state is external (`Set<String>` in reducer)
 enum ChatItem: Identifiable, Equatable {
-    /// `context`: places from panes the message carried, shown as chips under the text.
+    /// `context`: places from panes the message carried, shown as cards under the text.
     case userMessage(
         id: String,
         text: String,

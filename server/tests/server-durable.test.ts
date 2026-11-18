@@ -3166,7 +3166,6 @@ describe("server durable managed runtime", () => {
         note: "Still true?",
       },
     ];
-    const shown = context.map(({ quote: _quote, ...item }) => item);
     await f.manager.startSession(f.session.id, f.workspace);
     const projection = observe(f.manager, f.session.id);
     const end = projection.next((message) => message.type === "agent_end");
@@ -3178,16 +3177,17 @@ describe("server durable managed runtime", () => {
 
     // The model reads the block, then the typed text, in the stored user message.
     expect(users).toEqual([`${renderPromptContext(context)}\n\nPlease fix these.`]);
-    // Live and in history, the transcript shows the typed text and the places, no quotes.
+    // Live and in history, the transcript shows the typed text and each place with its quote
+    // and note, never the rendered block.
     expect(
       projection.messages.find(
         (message) => message.type === "message_end" && message.role === "user",
       ),
-    ).toMatchObject({ content: "Please fix these.", context: shown });
+    ).toMatchObject({ content: "Please fix these.", context });
     const trace = (await f.manager.getServerDurableTrace(f.session.id, "full"))!;
     const user = trace.find((event) => event.type === "user")!;
-    expect(user).toMatchObject({ text: "Please fix these.", context: shown });
-    expect(JSON.stringify(user)).not.toContain("Tents go above");
+    expect(user).toMatchObject({ text: "Please fix these.", context });
+    expect(JSON.stringify(user)).not.toContain("<pane-context>");
 
     // A resend of the same turn is the same input; other context under its id is a conflict.
     await expect(
