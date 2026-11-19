@@ -5,11 +5,11 @@ import UIKit
 /// MCP servers, extensions) and the session's usage and cost.
 ///
 /// The session row drives the window totals live; the breakdown comes from
-/// `get_session_stats`, loaded when the panel opens and on every refresh. The bar's
+/// `get_session_stats`, loaded when the panel opens and after each reload. The bar's
 /// Reload button asks first, then runs the session's `/reload`, prints its outcome at
 /// the top of this list, and then re-fetches those stats, so the sections show the
-/// runtime the session has now; pulling down only re-fetches the stats, which is cheap
-/// and safe to do by accident.
+/// runtime the session has now. The window card follows the live session row, so
+/// there is no pull to refresh.
 final class ContextInspectorViewController: UIViewController, UICollectionViewDelegate {
     private let readSession: () -> Session?
     private let readWorkspace: () -> Workspace?
@@ -34,7 +34,7 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
     private weak var reloadConfirmation: UIAlertController?
     /// What the last reload reported: the panel's own notice, since the composer's
     /// toast is presented from the app root behind this sheet. Cleared by the next
-    /// reload and by a pull.
+    /// reload.
     private var reloadOutcome: ReloadOutcome?
 
     /// Open groups, kept for the app run so the panel reopens the way it was left.
@@ -129,9 +129,6 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
         collectionView.translatesAutoresizingMaskIntoConstraints = false
         collectionView.delegate = self
         collectionView.accessibilityIdentifier = "chat.context.list"
-        let refreshControl = UIRefreshControl()
-        refreshControl.addAction(UIAction { [weak self] _ in self?.pullToRefreshStats() }, for: .valueChanged)
-        collectionView.refreshControl = refreshControl
         view.addSubview(collectionView)
         NSLayoutConstraint.activate([
             collectionView.topAnchor.constraint(equalTo: view.topAnchor),
@@ -163,7 +160,7 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
     /// rebuilds the system prompt and tool list from the files the host has now, so
     /// when anything changed the next message sends that whole conversation again
     /// without the provider's prompt cache: slower and dearer the longer the session
-    /// runs. Pulling down stays a stats-only refresh and needs no question.
+    /// runs.
     private func reloadFromBarButton() {
         guard !isReloading, sessionCanReload else { return }
         // The button stays enabled over its own question; a second tap must not stack
@@ -219,7 +216,7 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
 
     /// Reload runs while this sheet covers the chat, so neither the toast nor the
     /// timeline behind it is reachable: the panel shows the result itself and hands
-    /// the same words to VoiceOver. The line stays until the next reload or a pull.
+    /// the same words to VoiceOver. The line stays until the next reload.
     private func showReloadOutcome(_ outcome: ReloadOutcome) {
         reloadOutcome = outcome
         rebuild()
@@ -274,16 +271,8 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
                 statsError = error.localizedDescription
             }
             statsLoading = false
-            collectionView.refreshControl?.endRefreshing()
             rebuild()
         }
-    }
-
-    /// A pull re-reads the stats and retires the line the last reload left: the
-    /// cheapest way for a reader to say they have seen it.
-    private func pullToRefreshStats() {
-        reloadOutcome = nil
-        reloadStats()
     }
 
     // MARK: - Model

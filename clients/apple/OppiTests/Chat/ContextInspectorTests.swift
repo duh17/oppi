@@ -351,6 +351,17 @@ struct ContextInspectorReloadTests {
         var reloadStatusText: String? {
             (reloadStatusCell?.contentConfiguration as? UIListContentConfiguration)?.text
         }
+
+        /// The window card's usage line, as drawn.
+        var windowCardUsage: String? {
+            window.layoutIfNeeded()
+            guard let list else { return nil }
+            return list.indexPathsForVisibleItems
+                .compactMap { list.cellForItem(at: $0) }
+                .first { $0.accessibilityIdentifier == "chat.context.card" }
+                .flatMap { ($0 as? UICollectionViewListCell)?.contentConfiguration as? ContextWindowCardConfiguration }?
+                .usageText
+        }
     }
 
     private func mount(row: LiveRow, recorder: Recorder, gate: Gate? = nil) -> Mounted {
@@ -568,18 +579,24 @@ struct ContextInspectorReloadTests {
         #expect(recorder.reloads == 1)
     }
 
-    @Test func pullingDownOnlyReLoadsTheStats() async throws {
+    /// The panel has no pull to refresh: it follows the live session row instead.
+    @Test func theWindowCardFollowsTheLiveSession() async throws {
         let row = LiveRow()
+        row.session.contextWindow = 200_000
+        row.session.contextTokens = 1_000
         let recorder = Recorder()
         let mounted = mount(row: row, recorder: recorder)
         defer { hideTestWindow(mounted.window) }
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.statsLoads == 1 })
-        let control = try #require(mounted.list?.refreshControl)
+        #expect(mounted.windowCardUsage == "\(SessionFormatting.tokenCount(1_000)) of \(SessionFormatting.tokenCount(200_000)) tokens")
 
-        control.sendActions(for: .valueChanged)
+        row.session.contextTokens = 50_000
 
-        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.statsLoads == 2 })
-        #expect(recorder.reloads == 0, "a pull must not rebuild the runtime")
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            mounted.panel.updatePropertiesIfNeeded()
+            return mounted.windowCardUsage == "\(SessionFormatting.tokenCount(50_000)) of \(SessionFormatting.tokenCount(200_000)) tokens"
+        }, "a new usage on the session row reaches the card without a pull")
+        #expect(recorder.statsLoads == 1, "following the row reads no stats")
     }
 
     // MARK: - The reload's own result
@@ -627,26 +644,6 @@ struct ContextInspectorReloadTests {
             },
             "a failure reads as the timeline's line, not as nothing happening"
         )
-    }
-
-    @Test func pullingDownClearsTheReloadLine() async throws {
-        let row = LiveRow()
-        let recorder = Recorder()
-        let mounted = mount(row: row, recorder: recorder)
-        defer { hideTestWindow(mounted.window) }
-        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { recorder.statsLoads == 1 })
-
-        try await reloadFromBarButton(mounted)
-        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { mounted.reloadStatusText != nil })
-
-        let control = try #require(mounted.list?.refreshControl)
-        control.sendActions(for: .valueChanged)
-
-        #expect(
-            await waitForMainActorCondition(timeout: .seconds(3)) { mounted.reloadStatusCell == nil },
-            "a pull retires the line it re-read the stats for"
-        )
-        #expect(recorder.reloads == 1, "clearing the line does not reload the runtime")
     }
 
     /// The line reports one reload: the next one retires it as it starts, so a slow
