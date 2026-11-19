@@ -215,9 +215,22 @@ extension XCUIApplication {
     func requireNonCompactWindowOnPad(file: StaticString = #filePath, line: UInt = #line) {
         guard UIDevice.current.userInterfaceIdiom == .pad else { return }
         // The app's window is the largest one: on the video viewer screen
-        // `firstMatch` resolved to a 0 x 0 window, not the app's.
-        let all = windows.allElementsBoundByIndex
-        let window = all.max { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height } ?? windows.firstMatch
+        // `firstMatch` resolved to a 0 x 0 window, not the app's. One snapshot
+        // reads every window at once: an element bound by index looks itself up
+        // again on each read, so a window that goes in between (a transient one
+        // the previous test's state left, torn down after a reused launch's
+        // reset) failed the launch with "No matches found for Element at index N".
+        let all: [XCUIElementSnapshot]
+        do {
+            all = try snapshot().children.filter { $0.elementType == .window }
+        } catch {
+            XCTFail("Could not read the app's windows: \(error)", file: file, line: line)
+            return
+        }
+        guard let window = all.max(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }) else {
+            XCTFail("The app shows no window", file: file, line: line)
+            return
+        }
         XCTAssertNotEqual(
             window.horizontalSizeClass, .compact,
             "The iPad run opened the app in a compact window (\(window.frame.size) of \(all.map(\.frame))); its width-gated tests would skip or take the phone path. " +
