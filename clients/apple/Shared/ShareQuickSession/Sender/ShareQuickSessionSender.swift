@@ -289,6 +289,13 @@ actor ShareQuickSessionSender {
         let sessionID = try JSONDecoder().decode(CreateResponse.self, from: createData).session.id
 
         if !attachments.isEmpty {
+            // A session created without a prompt is not started, and the server refuses a
+            // prompt for a session that is not started. Start it first, as the app does.
+            _ = try await request(
+                server: server,
+                method: "POST",
+                path: ["workspaces", workspace.id, "sessions", sessionID, "resume"]
+            )
             var uploaded: [UploadAttachment] = []
             for attachment in attachments {
                 uploaded.append(try await upload(
@@ -306,7 +313,17 @@ actor ShareQuickSessionSender {
                 let requestId: String
                 let clientTurnId: String
             }
-            _ = try await request(
+            // The command route answers with the frames a socket would get: a refused prompt
+            // is a failed `command_result` inside a 200.
+            struct CommandResponse: Decodable {
+                struct Message: Decodable {
+                    let type: String
+                    let success: Bool?
+                    let error: String?
+                }
+                let messages: [Message]
+            }
+            let commandData = try await request(
                 server: server,
                 method: "POST",
                 path: ["workspaces", workspace.id, "sessions", sessionID, "command"],
@@ -317,6 +334,10 @@ actor ShareQuickSessionSender {
                     clientTurnId: payloadID
                 )
             )
+            let messages = try JSONDecoder().decode(CommandResponse.self, from: commandData).messages
+            if let refused = messages.first(where: { $0.type == "command_result" && $0.success == false }) {
+                throw ShareQuickSessionSendError.promptRefused(refused.error ?? "The server did not accept the message.")
+            }
         }
 
         return ShareQuickSessionSendResult(
@@ -525,6 +546,7 @@ enum ShareQuickSessionSendError: LocalizedError {
     case invalidAttachment(String)
     case invalidResponse
     case insecureServer
+    case promptRefused(String)
     case server(status: Int, message: String)
 
     var errorDescription: String? {
@@ -537,6 +559,8 @@ enum ShareQuickSessionSendError: LocalizedError {
             return "The server returned an invalid response."
         case .insecureServer:
             return "This server isn’t paired over HTTPS."
+        case .promptRefused(let message):
+            return message
         case .server(_, let message):
             return message
         }

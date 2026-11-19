@@ -108,16 +108,19 @@ struct ShareQuickSessionSenderTests {
         #expect(json["launchIdempotencyKey"] as? String == "share-123")
     }
 
-    @Test func uploadsAttachmentsBeforeDispatchingPrompt() async throws {
+    /// A session created without a prompt is not started, and the server refuses a prompt for
+    /// it, so a share with attachments starts the session before it uploads and prompts.
+    @Test func startsTheSessionBeforeUploadingAndPrompting() async throws {
         let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try Data("shared file".utf8).write(to: fileURL)
         defer { try? FileManager.default.removeItem(at: fileURL) }
 
         let transport = ShareSenderStubTransport(responses: [
             .json(201, #"{"session":{"id":"session-2"}}"#),
+            .json(200, #"{"session":{"id":"session-2"}}"#),
             .json(201, #"{"uploadId":"upload-1","contentUrl":"/content","maxFileBytes":1000,"expiresAt":0}"#),
             .json(200, #"{"attachment":{"type":"file","id":"upload-1","source":"upload","name":"notes.txt","mimeType":"text/plain","sizeBytes":11,"sha256":null,"kind":"text","workspacePath":null}}"#),
-            .json(200, #"{"messages":[]}"#),
+            .json(200, #"{"messages":[{"type":"command_result","command":"prompt","requestId":"share-with-file","success":true}]}"#),
         ])
         let sender = ShareQuickSessionSender(transport: transport)
         let server = try #require(PairedServer(
@@ -145,16 +148,59 @@ struct ShareQuickSessionSenderTests {
         )
 
         let requests = await transport.requests
-        #expect(requests.map(\.httpMethod) == ["POST", "POST", "PUT", "POST"])
-        #expect(requests[1].url?.path == "/workspaces/ws-1/sessions/session-2/attachments")
-        #expect(requests[2].httpBody == nil)
+        #expect(requests.map(\.url?.path) == [
+            "/workspaces/ws-1/sessions",
+            "/workspaces/ws-1/sessions/session-2/resume",
+            "/workspaces/ws-1/sessions/session-2/attachments",
+            "/workspaces/ws-1/sessions/session-2/attachments/upload-1/content",
+            "/workspaces/ws-1/sessions/session-2/command",
+        ])
+        #expect(requests[3].httpBody == nil)
         #expect(await transport.uploadedFileURLs == [fileURL])
-        let commandBody = try #require(requests[3].httpBody)
+        let commandBody = try #require(requests[4].httpBody)
         let command = try #require(JSONSerialization.jsonObject(with: commandBody) as? [String: Any])
         #expect(command["type"] as? String == "prompt")
         #expect(command["message"] as? String == "Summarize")
         #expect(command["clientTurnId"] as? String == "share-with-file")
         #expect((command["attachments"] as? [[String: Any]])?.first?["id"] as? String == "upload-1")
+    }
+
+    /// The command route answers 200 with the socket frames; a refused prompt is a failed
+    /// `command_result` there, and the share must fail rather than close as sent.
+    @Test func aRefusedPromptFailsTheShare() async throws {
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data("shared file".utf8).write(to: fileURL)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        let transport = ShareSenderStubTransport(responses: [
+            .json(201, #"{"session":{"id":"session-4"}}"#),
+            .json(200, #"{"session":{"id":"session-4"}}"#),
+            .json(201, #"{"uploadId":"upload-4","contentUrl":"/content","maxFileBytes":1000,"expiresAt":0}"#),
+            .json(200, #"{"attachment":{"type":"file","id":"upload-4","source":"upload","name":"notes.txt","mimeType":"text/plain","sizeBytes":11,"sha256":null,"kind":"text","workspacePath":null}}"#),
+            .json(200, #"{"messages":[{"type":"command_result","command":"prompt","requestId":"share-refused","success":false,"error":"Session not active: session-4"}]}"#),
+        ])
+        let sender = ShareQuickSessionSender(transport: transport)
+        let server = try #require(PairedServer(
+            from: ServerCredentials(
+                host: "mac.example",
+                port: 7749,
+                token: "device-token",
+                name: "Mac",
+                serverFingerprint: "server-1"
+            ),
+            sortOrder: 0
+        ))
+
+        do {
+            _ = try await sender.send(
+                payloadID: "share-refused",
+                text: "Summarize",
+                attachments: [ShareQuickSessionDraftAttachment(name: "notes.txt", mimeType: "text/plain", fileURL: fileURL)],
+                workspace: ShareQuickSessionWorkspace(id: "ws-1", name: "Oppi", server: server)
+            )
+            Issue.record("A refused prompt must fail the share")
+        } catch ShareQuickSessionSendError.promptRefused(let message) {
+            #expect(message == "Session not active: session-4")
+        }
     }
 
     @Test func mapsServerSizeRejectionWithoutUploadingBytes() async throws {
@@ -163,6 +209,7 @@ struct ShareQuickSessionSenderTests {
         defer { try? FileManager.default.removeItem(at: fileURL) }
         let transport = ShareSenderStubTransport(responses: [
             .json(201, #"{"session":{"id":"session-3"}}"#),
+            .json(200, #"{"session":{"id":"session-3"}}"#),
             .json(413, #"{"error":"Upload exceeds this server's 1.0 KB file size limit (uploadStore.maxFileBytes)"}"#),
         ])
         let sender = ShareQuickSessionSender(transport: transport)
@@ -195,7 +242,7 @@ struct ShareQuickSessionSenderTests {
             #expect(message == "Upload exceeds this server's 1.0 KB file size limit (uploadStore.maxFileBytes)")
         }
         #expect(await transport.uploadedFileURLs.isEmpty)
-        #expect(await transport.requests.map(\.httpMethod) == ["POST", "POST"])
+        #expect(await transport.requests.map(\.httpMethod) == ["POST", "POST", "POST"])
     }
 
     @Test func deviceKeyShareRefreshesOnceAndPersistsAcrossAttachments() async throws {
@@ -243,6 +290,7 @@ struct ShareQuickSessionSenderTests {
             .json(200, #"{"nonce":"nonce-1","audience":"oppi:refresh:v1","expiresAt":\#(future)}"#),
             .json(200, #"{"accessToken":"at_fresh","expiresAt":\#(future),"refreshChallenge":{"nonce":"nonce-2","audience":"oppi:refresh:v1","expiresAt":\#(future)}}"#),
             .json(201, #"{"session":{"id":"session-2"}}"#),
+            .json(200, #"{"session":{"id":"session-2"}}"#),
             .json(201, #"{"uploadId":"upload-1","contentUrl":"/content","maxFileBytes":1000,"expiresAt":0}"#),
             .json(200, #"{"attachment":{"type":"file","id":"upload-1","source":"upload","name":"notes.txt","mimeType":"text/plain","sizeBytes":11,"sha256":null,"kind":"text","workspacePath":null}}"#),
             .json(200, #"{"messages":[]}"#),
@@ -273,7 +321,7 @@ struct ShareQuickSessionSenderTests {
 
         // Every non-auth request carries the single refreshed bearer.
         let authed = requests.filter { $0.url?.path.hasPrefix("/auth/") == false }
-        #expect(authed.count == 4)
+        #expect(authed.count == 5)
         for request in authed {
             #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer at_fresh")
         }
