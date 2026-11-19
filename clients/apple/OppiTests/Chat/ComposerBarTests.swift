@@ -2449,7 +2449,14 @@ struct ComposerDictatedCommentRowTests {
         content.alwaysShowActionRow = false
         content.appliesOuterPadding = true
         content.reduceMotion = false
-        content.voiceInputManager = VoiceInputManager()
+        // Mock speech: a real manager checks real speech assets, and on some pool simulators its
+        // setup stuck in preparingModel and kept the shared audio capture claim from later suites.
+        let voiceProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
+        voiceProvider.makeSessionHandler = { _, _ in MockVoiceSession() }
+        content.voiceInputManager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [voiceProvider]),
+            systemAccess: MockVoiceInputSystemAccess()
+        )
         let toolbar = ComposerActionRow.sessionToolbar(
             modelTitle: "opus-5-5",
             modelProvider: "anthropic",
