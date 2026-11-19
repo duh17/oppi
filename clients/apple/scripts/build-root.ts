@@ -9,7 +9,9 @@
 // of silently going cold on disk. The shared compilation cache lives at `<root>/xcode-cache` then
 // (sim-pool-build.ts `compilationCache`).
 //
-//   bun build-root.ts [<apple dir>]   link the checkout's .build; prints nothing, never fails
+//   bun build-root.ts [<apple dir>]           link the checkout's .build; prints nothing, never fails
+//   bun build-root.ts --check [<apple dir>]   link it, then print buildVolumeMissing's line and exit 1 if it
+//                                             applies (for shell entry points that run xcodegen themselves)
 import { createHash } from "node:crypto";
 import { accessSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -223,5 +225,12 @@ export function ensureBuildLink(appleDir: string, env: NodeJS.ProcessEnv = proce
 }
 
 if (import.meta.main) {
-  ensureBuildLink(resolve(process.argv[2] ?? join(dirname(fileURLToPath(import.meta.url)), "..")));
+  const check = process.argv[2] === "--check";
+  const appleDir = resolve(process.argv[check ? 3 : 2] ?? join(dirname(fileURLToPath(import.meta.url)), ".."));
+  ensureBuildLink(appleDir);
+  const missing = check ? buildVolumeMissing(appleDir) : undefined;
+  if (missing) {
+    console.error(missing);
+    process.exit(1);
+  }
 }

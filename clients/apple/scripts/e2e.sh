@@ -395,6 +395,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# xcodegen (step 6) writes into clients/apple/.build. A link there into a build root whose folder is
+# gone (a recreated RAM disk) makes it fail with a raw I/O error, so relink first, and stop now with
+# build-root's reason when the volume itself is missing.
+bun "$IOS_DIR/scripts/build-root.ts" --check "$IOS_DIR" || exit 1
+
 # ── 1. Prepare the DeepSeek model lane ──
 
 # A fresh worktree has no server/node_modules; this is a no-op once they match package-lock.json.
