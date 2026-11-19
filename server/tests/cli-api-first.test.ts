@@ -551,6 +551,33 @@ describe("CLI app-state API boundary", () => {
     );
   });
 
+  it("reads schedule prompts from stdin when --prompt is @-", async () => {
+    await withOrchApi(
+      (res, ctx) => {
+        if (ctx.path === "/workspaces/ws-1") {
+          sendJson(res, { workspace: { id: "ws-1", name: "Oppi" } });
+          return;
+        }
+        if (ctx.path === "/schedules") {
+          sendJson(res, { schedule: { id: "sch-stdin", status: "active" } });
+          return;
+        }
+        sendJson(res, { error: "unexpected route" }, 404);
+      },
+      async ({ dataDir, requests }) => {
+        const { code } = await runCliResult(
+          ["schedule", "create", "--workspace", "ws-1", "--prompt", "@-", "--every", "1h"],
+          dataDir,
+          "scheduled prompt from stdin\n",
+        );
+        expect(code).toBe(0);
+        expect(requests.find((request) => request.path === "/schedules")?.body).toMatchObject({
+          action: { prompt: "scheduled prompt from stdin\n" },
+        });
+      },
+    );
+  });
+
   it("resolves create stdin before the saved-Agent launch boundary", async () => {
     await withOrchApi(
       (res, ctx) => {

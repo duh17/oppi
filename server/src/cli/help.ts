@@ -1110,6 +1110,7 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "--json", summary: "write the standard JSON envelope" },
     ],
     notes: [
+      "Pass @- to --prompt to read the prompt from stdin.",
       "Choose exactly one trigger flag: --at, --every, or --cron.",
       "Choose exactly one target flag: --workspace or --session.",
       "Use --agent only with --workspace; existing-session schedules send prompts to the selected session.",

@@ -16,6 +16,7 @@ import { resolveModelFlagForCli } from "../model-resolution.js";
 import { resolveWorkspaceIdForCli } from "../resources.js";
 import { resolveSessionIdTargets } from "../session-id-target.js";
 import { isRecord } from "../../json-shape.js";
+import { resolvePromptInput } from "./session.js";
 
 function parseDurationMs(value: string): number {
   const match = value.trim().match(/^(\d+)(ms|s|m|h|d)$/);
@@ -183,8 +184,7 @@ export async function cmdSchedule(
     }
 
     if (mode === "create") {
-      const prompt = flags.prompt;
-      if (!prompt?.trim()) throw new Error("--prompt is required");
+      const prompt = resolvePromptInput(flags.prompt, "--prompt");
       const idempotencyKey = flags["idempotency-key"];
       // The default name carries the time, so a retry of a keyed create would be a different request.
       if (idempotencyKey && !flags.name)
