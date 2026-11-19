@@ -88,6 +88,10 @@ struct GodotEngineLog: Hashable, Sendable {
     let scriptFile: String
     let scriptLine: Int
     let backtrace: String
+    /// The game and release that were running when the engine logged it
+    /// (`GodotEngineHost.record`): a pane sends only its own game's lines.
+    var game: GodotSlot?
+    var release: Int?
 
     /// The game's own location for this entry: the script frame, else the
     /// raised-at location when it is the game's file.
@@ -107,7 +111,7 @@ struct GodotEngineLog: Hashable, Sendable {
         }
         let source = location.map { GodotSourceLocation(file: $0.file, line: $0.line, function: function.isEmpty ? nil : function) }
         let frames = Self.frames(in: backtrace)
-        return GodotLogInput(level: level, message: message, source: source, backtrace: frames.isEmpty ? nil : frames)
+        return GodotLogInput(level: level, message: message, source: source, backtrace: frames.isEmpty ? nil : frames, release: release)
     }
 
     /// Godot formats a script backtrace one frame a line, innermost first:

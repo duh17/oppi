@@ -263,7 +263,8 @@
         "origin": "player",
         "playerId": "p-3k9x",
         "level": "info",
-        "message": "level 1 ready"
+        "message": "level 1 ready",
+        "release": 7
       },
       {
         "seq": 411,
@@ -272,6 +273,7 @@
         "playerId": "p-3k9x",
         "level": "error",
         "message": "Invalid access to property or key 'velocity' on a base object of type 'Nil'.",
+        "release": 7,
         "source": {
           "file": "res://player.gd",
           "line": 42,
@@ -703,7 +705,8 @@
         "entries": [
           {
             "level": "info",
-            "message": "level 1 ready"
+            "message": "level 1 ready",
+            "release": 7
           },
           {
             "level": "error",
@@ -724,7 +727,8 @@
                 "line": 12,
                 "function": "_ready"
               }
-            ]
+            ],
+            "release": 7
           }
         ]
       },
@@ -1109,7 +1113,8 @@
             "origin": "player",
             "playerId": "p-3k9x",
             "level": "info",
-            "message": "level 1 ready"
+            "message": "level 1 ready",
+            "release": 7
           },
           {
             "seq": 411,
@@ -1118,6 +1123,7 @@
             "playerId": "p-3k9x",
             "level": "error",
             "message": "Invalid access to property or key 'velocity' on a base object of type 'Nil'.",
+            "release": 7,
             "source": {
               "file": "res://player.gd",
               "line": 42,

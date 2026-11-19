@@ -50,7 +50,6 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
     private var player: GodotPlayerLink?
     private var commandTasks: [String: Task<Void, Never>] = [:]
     private var reportedState: GodotPlayerState?
-    private var forwardedLogCount = 0
     private var fetching = false
     private var failure: String?
     private var followTask: Task<Void, Never>?
@@ -398,7 +397,7 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
                 let packs = try await GodotPackCache.packs(of: release, slot: slot, link: link)
                 guard let self, !Task.isCancelled else { return }
                 let build = GodotBuild(
-                    slot: slot, packs: packs.map(\.url), indexes: packs.map(\.index),
+                    slot: slot, release: release.seq, packs: packs.map(\.url), indexes: packs.map(\.index),
                     hint: release.reload,
                     scene: release.entry?.scene, arguments: release.entry?.args ?? []
                 )
@@ -522,12 +521,12 @@ final class GodotPaneViewController: UIViewController, GodotSurfaceOwner, PaneVi
         )
     }
 
-    /// Sends the game's log lines recorded since the last send.
+    /// Sends this game's log lines no pane has sent yet. Lines another game
+    /// logged belong to that game's link, never this one.
     private func forwardLog() {
-        let fresh = min(host.logCount - forwardedLogCount, host.log.count)
-        forwardedLogCount = host.logCount
-        guard let player, fresh > 0 else { return }
-        player.send(.log(host.log.suffix(fresh).map(\.linkEntry)))
+        let fresh = host.takeUnforwardedLog().filter { $0.game == gameSlot }
+        guard let player, !fresh.isEmpty else { return }
+        player.send(.log(fresh.map(\.linkEntry)))
     }
 
     /// One command from a controller (`GodotCommand`). The server sends it to

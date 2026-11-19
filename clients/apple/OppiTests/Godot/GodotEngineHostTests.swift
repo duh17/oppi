@@ -192,7 +192,7 @@ struct GodotEngineHostTests {
         runtime.onLog?(scriptError)
         #expect(host.gameError == nil, "Lines reach the pane in batches")
         host.flushLog()
-        #expect(host.gameError == scriptError)
+        #expect(host.gameError?.message == scriptError.message)
         #expect(scriptError.location?.file == "res://probe.gd" && scriptError.location?.line == 41)
         #expect(host.log.count == 2)
     }
@@ -301,6 +301,34 @@ struct GodotEngineHostTests {
         #expect(runtime.events == [.start("games~tide"), .stop])
     }
 
+    /// A pane that attaches later never sends the device's earlier lines
+    /// again, and each line names the game and release that logged it, so a
+    /// pane on another game or a later release can tell it is not its own.
+    @Test func eachLogLineIsHandedOutOnceWithTheGameAndReleaseThatLoggedIt() async {
+        let runtime = FakeGodotRuntime()
+        let host = GodotEngineHost(runtime: runtime)
+        let line = { (message: String) in
+            runtime.onLog?(GodotEngineLog(kind: .print, message: message, file: "", line: 0, function: "", scriptFile: "", scriptLine: 0, backtrace: ""))
+            host.flushLog()
+        }
+        await host.play(build(tide, ["project.binary": 1, "main.gd": 2], release: 15), in: FakeGodotPane(tide))
+        line("wave 10")
+        let first = host.takeUnforwardedLog()
+        #expect(first.map(\.message) == ["wave 10"])
+        #expect(first.first?.game == tide && first.first?.release == 15)
+        #expect(first.first?.linkEntry.release == 15)
+        #expect(host.takeUnforwardedLog().isEmpty, "A line is handed out once")
+
+        await host.play(build(tide, ["project.binary": 1, "main.gd": 3], hint: .scripts, release: 18), in: FakeGodotPane(tide))
+        line("wave 11")
+        await host.play(build(reef, ["project.binary": 7], release: 1), in: FakeGodotPane(reef))
+        line("reef ready")
+        let next = host.takeUnforwardedLog()
+        #expect(next.map(\.message) == ["wave 11", "reef ready"])
+        #expect(next.map(\.game) == [tide, reef])
+        #expect(next.map(\.release) == [18, 1])
+    }
+
     @Test func aScriptErrorGoesToTheLinkWithItsSourceAndFrames() {
         let entry = GodotEngineLog(
             kind: .script, message: "Invalid call.", file: "core/variant.cpp", line: 3, function: "_runtime_error",
@@ -320,13 +348,13 @@ struct GodotEngineHostTests {
 
     // MARK: Helpers
 
-    private func build(_ slot: GodotSlot, _ files: [String: UInt8], hint: GodotReloadTier = .scene) -> GodotBuild {
+    private func build(_ slot: GodotSlot, _ files: [String: UInt8], hint: GodotReloadTier = .scene, release: Int = 1) -> GodotBuild {
         let index = GodotPackIndex(
             format: .pck, files: files.mapValues { Data(repeating: $0, count: 16) },
             engineVersion: GodotEngineVersion(major: 4, minor: 7)
         )
         return GodotBuild(
-            slot: slot, packs: [URL(filePath: "/tmp/\(slot.project).pck")], indexes: [index],
+            slot: slot, release: release, packs: [URL(filePath: "/tmp/\(slot.project).pck")], indexes: [index],
             hint: hint, scene: nil, arguments: []
         )
     }

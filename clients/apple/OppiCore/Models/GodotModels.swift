@@ -203,6 +203,8 @@ struct GodotLogInput: Codable, Sendable, Hashable {
     var source: GodotSourceLocation?
     /// Innermost first.
     var backtrace: [GodotSourceLocation]?
+    /// The release the game ran when it logged the line.
+    var release: Int?
 }
 
 /// One entry of a project's log ring.
@@ -216,6 +218,7 @@ struct GodotLogEntry: Codable, Sendable, Hashable {
     var message: String
     var source: GodotSourceLocation?
     var backtrace: [GodotSourceLocation]?
+    var release: Int?
 }
 
 /// `GET /godot/{projectId}/logs?since=`.

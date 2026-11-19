@@ -18,6 +18,8 @@ protocol GodotSurfaceOwner: AnyObject {
 /// A release on disk, ready for the engine.
 struct GodotBuild {
     let slot: GodotSlot
+    /// The server release it was made from (`GodotRelease.seq`).
+    let release: Int
     /// Base first, patches after.
     let packs: [URL]
     let indexes: [GodotPackIndex]
@@ -82,6 +84,10 @@ final class GodotEngineHost {
     private(set) var log: [GodotEngineLog] = []
     /// Lines published since launch, so a reader knows which in `log` are new.
     private(set) var logCount = 0
+    /// `logCount` when `takeUnforwardedLog` last handed lines out.
+    @ObservationIgnored private var forwardedLogCount = 0
+    /// The build whose game and release new lines are stamped with.
+    @ObservationIgnored private var logging: GodotBuild?
     static let logBatchInterval: Duration = .milliseconds(250)
     @ObservationIgnored private var pendingLog: [GodotEngineLog] = []
     @ObservationIgnored private var logFlush: Task<Void, Never>?
@@ -180,8 +186,10 @@ final class GodotEngineHost {
             await start(build, in: owner, runtime: runtime)
         case .unchanged:
             take(for: owner)
+            logging = build
         case .scripts(let resources):
             take(for: owner)
+            logging = build
             gameError = nil
             GodotPackCache.pin(build.packs)
             for pack in build.packs where !runtime.mount(pack) {
@@ -194,6 +202,7 @@ final class GodotEngineHost {
             logger.info("Reloaded \(reloaded) scripts")
         case .scene:
             take(for: owner)
+            logging = build
             gameError = nil
             loading = .starting
             GodotPackCache.pin(build.packs)
@@ -238,6 +247,7 @@ final class GodotEngineHost {
         gameError = nil
         loading = .starting
         if case .running = ending { stopEngine(runtime) }
+        logging = build
         // The pane draws "Starting…" before setup blocks the main thread.
         await Self.nextFrame()
         runtime.attach(to: surface.layer)
@@ -487,6 +497,9 @@ final class GodotEngineHost {
     // MARK: Log and system
 
     private func record(_ entry: GodotEngineLog) {
+        var entry = entry
+        entry.game = logging?.slot
+        entry.release = logging?.release
         pendingLog.append(entry)
         guard logFlush == nil else { return }
         logFlush = Task { [weak self] in
@@ -509,6 +522,15 @@ final class GodotEngineHost {
         log.append(contentsOf: batch)
         if log.count > Self.logLimit { log.removeFirst(log.count - Self.logLimit) }
         if let error = batch.last(where: \.isGameError) { gameError = error }
+    }
+
+    /// The lines published since the last call, oldest first. Each line is
+    /// handed out once, whichever pane asks, so a pane that attaches later
+    /// never sends the device's earlier lines again.
+    func takeUnforwardedLog() -> ArraySlice<GodotEngineLog> {
+        let fresh = min(logCount - forwardedLogCount, log.count)
+        forwardedLogCount = logCount
+        return log.suffix(fresh)
     }
 
     private func observeSystem() {

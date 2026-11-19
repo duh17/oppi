@@ -120,7 +120,7 @@ A durable session has six tools for the games in its workspace while the workspa
 | Tool | Use |
 | --- | --- |
 | `godot_status` | The current release, the devices playing it with their state (`running`, `paused`, `error`) and frame rate, and the latest errors. Without a game to choose, it lists the workspace's games. |
-| `godot_logs` | The game's log as the device reports it. Errors carry file, line, function, and a backtrace. Pass `since` (the `next` of the last read) to read only new lines, and `level: "error"` for errors only. |
+| `godot_logs` | The game's log as the device reports it, each line once and marked with the release that logged it. Errors carry file, line, function, and a backtrace. Pass `since` (the `next` of the last read) to read only new lines, and `level: "error"` for errors only. |
 | `godot_capture` | A screenshot of the game on the device, returned as an image you can see. It also shows in the tool row. |
 | `godot_input` | Taps, drags, keys, and input actions, run in order. Points are fractions of the game view from its top-left: `{ "x": 0.5, "y": 0.5 }` is the middle. Set `capture: true` to see the screen after the last step. |
 | `godot_reload` | Applies the current release again. Exports reload by themselves; use this after a failed reload, or with `tier: "scene"` to restart the scene. |

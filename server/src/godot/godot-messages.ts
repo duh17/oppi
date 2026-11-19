@@ -165,6 +165,8 @@ export function parseLogInputs(value: unknown): GodotLogInput[] {
         .filter((f): f is GodotSourceLocation => f !== undefined);
       if (frames.length > 0) entry.backtrace = frames;
     }
+    if (typeof raw.release === "number" && Number.isSafeInteger(raw.release) && raw.release > 0)
+      entry.release = raw.release;
     entries.push(entry);
   }
   return entries;

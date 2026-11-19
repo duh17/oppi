@@ -1,0 +1,1 @@
+- **Client/Server:** A Godot pane no longer sends the device's earlier log again each time it opens, so `godot_logs` and `godot_status` stop showing errors that a later release already fixed, or that another game raised. Each line is marked with the release that logged it.

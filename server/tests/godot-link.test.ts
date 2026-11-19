@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { formatLogEntry } from "../plugins/godot/contract.js";
 import { GodotLinkBroker, type GodotLinkPeer } from "../src/godot/godot-link.js";
 import { GODOT_LOG_RING_SIZE, GODOT_PANE_CLIENT_CAPABILITY } from "../src/godot/godot-protocol.js";
 import type { GodotLinkServerMessage, GodotProject, GodotRelease } from "../src/types.js";
@@ -167,6 +168,29 @@ describe("game link broker", () => {
     // Nothing new: an empty page whose cursor stays.
     const end = b.logNext(PROJECT);
     expect(b.logs(PROJECT, { since: end })).toEqual({ entries: [], next: end, dropped: 0 });
+  });
+
+  it("keeps the release a player's line came from, so an old release's error reads as old", () => {
+    const b = broker();
+    const { handle } = attach(b);
+    handle.receive({
+      type: "log",
+      entries: [
+        {
+          level: "error",
+          message: "Nil",
+          release: 15,
+          source: { file: "res://waves.gd", line: 300 },
+        },
+        { level: "info", message: "wave 11", release: 18 },
+        { level: "info", message: "no release", release: "18" },
+      ],
+    });
+    const [error, wave, bare] = b.logs(PROJECT, { since: b.logNext(PROJECT) - 3 }).entries;
+    expect([error?.release, wave?.release, bare?.release]).toEqual([15, 18, undefined]);
+    expect(formatLogEntry(error!)).toMatch(
+      /^#\d+ \[error\] \[release 15\] Nil \(res:\/\/waves.gd:300\)$/,
+    );
   });
 
   it("tells followers about releases, players, and logs, and waits for a first frame", async () => {

@@ -157,6 +157,7 @@ const logPage: GodotLogPage = {
       playerId: "p-3k9x",
       level: "info",
       message: "level 1 ready",
+      release: 7,
     },
     {
       seq: 411,
@@ -165,6 +166,7 @@ const logPage: GodotLogPage = {
       playerId: "p-3k9x",
       level: "error",
       message: "Invalid access to property or key 'velocity' on a base object of type 'Nil'.",
+      release: 7,
       source: { file: "res://player.gd", line: 42, function: "_physics_process" },
       backtrace: [
         { file: "res://player.gd", line: 42, function: "_physics_process" },
@@ -367,11 +369,12 @@ const playerMessages: GodotLinkPlayerMessage[] = [
   },
   {
     type: "log",
-    entries: logPage.entries.slice(1).map(({ level, message, source, backtrace }) => ({
+    entries: logPage.entries.slice(1).map(({ level, message, source, backtrace, release }) => ({
       level,
       message,
       ...(source ? { source } : {}),
       ...(backtrace ? { backtrace } : {}),
+      ...(release !== undefined ? { release } : {}),
     })),
   },
   {

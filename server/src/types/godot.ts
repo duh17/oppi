@@ -177,6 +177,8 @@ export interface GodotLogInput {
   source?: GodotSourceLocation;
   /** Script frames, innermost first. */
   backtrace?: GodotSourceLocation[];
+  /** The release the game was running when it logged the line. */
+  release?: number;
 }
 
 /** One entry of a project's log ring (2,000 entries). */

@@ -78,6 +78,7 @@ struct GodotProtocolContractTests {
         #expect(error.level == .error)
         #expect(error.source == GodotSourceLocation(file: "res://player.gd", line: 42, function: "_physics_process"))
         #expect(error.backtrace?.count == 2)
+        #expect(error.release == 7, "A player's line names the release it came from")
         #expect(fixture.logPage.entries.first?.origin == "server")
 
         #expect(fixture.capture.mimeType == "image/png")

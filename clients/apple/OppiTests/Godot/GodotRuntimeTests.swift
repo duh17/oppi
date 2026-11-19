@@ -136,7 +136,7 @@ struct GodotRuntimeTests {
         )
         let slot = GodotSlot(serverId: "sha256:fit", project: "games~fit-\(UUID().uuidString)")
         let build = GodotBuild(
-            slot: slot, packs: [pack], indexes: [try GodotPackIndex(contentsOf: pack)], hint: .scene, scene: nil, arguments: []
+            slot: slot, release: 1, packs: [pack], indexes: [try GodotPackIndex(contentsOf: pack)], hint: .scene, scene: nil, arguments: []
         )
         let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 1000, height: 1000))
         window.isHidden = false
@@ -189,7 +189,7 @@ struct GodotRuntimeTests {
         )
         let slot = GodotSlot(serverId: "sha256:resize", project: "games~resize-\(UUID().uuidString)")
         let build = GodotBuild(
-            slot: slot, packs: [pack], indexes: [try GodotPackIndex(contentsOf: pack)], hint: .scene, scene: nil,
+            slot: slot, release: 1, packs: [pack], indexes: [try GodotPackIndex(contentsOf: pack)], hint: .scene, scene: nil,
             arguments: keepsAspect ? ["--keep"] : []
         )
         let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 1200, height: 1200))
@@ -303,7 +303,7 @@ struct GodotRuntimeTests {
             try FileManager.default.copyItem(
                 at: try #require(TestFixtures.bundle.url(forResource: "godot-sample", withExtension: "pck")), to: pack
             )
-            let build = GodotBuild(slot: slot, packs: [pack], indexes: [try GodotPackIndex(contentsOf: pack)], hint: .scene, scene: nil, arguments: [])
+            let build = GodotBuild(slot: slot, release: 1, packs: [pack], indexes: [try GodotPackIndex(contentsOf: pack)], hint: .scene, scene: nil, arguments: [])
             #expect(await engine.play(build, in: game) == .start)
         } else {
             engine.take(for: game)

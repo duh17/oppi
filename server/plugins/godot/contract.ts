@@ -179,7 +179,8 @@ export function formatLogEntry(entry: GodotLogEntry): string {
       `${entry.source.function ? ` in ${entry.source.function}` : ""})`
     : "";
   const from = entry.origin === "server" ? "oppi" : entry.level;
-  const head = `#${entry.seq} [${from}] ${entry.message}${at}`;
+  const release = entry.release !== undefined ? ` [release ${entry.release}]` : "";
+  const head = `#${entry.seq} [${from}]${release} ${entry.message}${at}`;
   const frames = (entry.backtrace ?? [])
     .slice(entry.source ? 1 : 0)
     .map(
