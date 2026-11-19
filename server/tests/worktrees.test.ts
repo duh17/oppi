@@ -96,23 +96,39 @@ exec ${JSON.stringify(realGit)} "$@"
  * another add to become active too, and logs how many were active. Two adds of one repository that
  * share that window are the ones that can read each other's half-written `commondir`.
  */
-function installAddWindowGit(bin: string, stateDir: string): void {
+/**
+ * A git whose `worktree add` runs a post-checkout hook that logs how many adds are inside it.
+ *
+ * `window`: each add stays 0.3 s, then logs who else is inside. Adds the code serializes always
+ * log 1; a broken lock would let adds started together overlap and log more. One sleep, not a
+ * polling loop: a loop's dozens of process spawns per add took seconds each on a loaded machine.
+ * `barrier`: each add waits, with no deadline, until two adds have arrived. Adds that run
+ * together both log 2 however slow the machine; adds the code serializes never meet and the
+ * test times out.
+ */
+function installAddWindowGit(bin: string, stateDir: string, wait: "window" | "barrier"): void {
   const realGit = execFileSync("/bin/sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
   const hooks = join(stateDir, "hooks");
   mkdirSync(join(stateDir, "active"), { recursive: true });
   mkdirSync(hooks);
   const active = JSON.stringify(join(stateDir, "active"));
+  const log = JSON.stringify(join(stateDir, "active-log"));
   writeFileSync(
     join(hooks, "post-checkout"),
-    `#!/bin/sh
+    wait === "window"
+      ? `#!/bin/sh
 mkdir ${active}/$$
-i=0
-while [ "$(ls ${active} | wc -l)" -lt 2 ] && [ "$i" -lt 50 ]; do
-  sleep 0.02
-  i=$((i + 1))
-done
-ls ${active} | wc -l | tr -d ' ' >> ${JSON.stringify(join(stateDir, "active-log"))}
+sleep 0.3
+ls ${active} | wc -l | tr -d ' ' >> ${log}
 rmdir ${active}/$$
+`
+      : // Arrivals stay recorded: the first add to see both must not leave before the second looks.
+        `#!/bin/sh
+mkdir ${active}/$$
+while [ "$(ls ${active} | wc -l)" -lt 2 ]; do
+  sleep 0.02
+done
+ls ${active} | wc -l | tr -d ' ' >> ${log}
 `,
   );
   chmodSync(join(hooks, "post-checkout"), 0o755);
@@ -704,8 +720,8 @@ describe("workspace worktrees", async () => {
     const twoRepos = mkdtempSync(join(tmpdir(), "oppi-worktrees-add-lock-two-"));
     roots.push(twoRepos);
     // Both shims find the real git before either is on PATH.
-    installAddWindowGit(sameRepo, sameRepo);
-    installAddWindowGit(twoRepos, twoRepos);
+    installAddWindowGit(sameRepo, sameRepo, "window");
+    installAddWindowGit(twoRepos, twoRepos, "barrier");
     const previousPath = process.env.PATH;
     process.env.PATH = `${sameRepo}${delimiter}${previousPath ?? ""}`;
     try {

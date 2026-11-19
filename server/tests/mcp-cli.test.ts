@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { McpCli, type McpCliProcess } from "../src/mcp-cli.js";
 import { makeTempDir } from "./harness/temp-dir.js";
 
@@ -56,21 +56,24 @@ describe("MCP CLI subprocess supervision", () => {
         pid = Number(readFileSync(pidFile, "utf8"));
         expect(Number.isSafeInteger(pid) && pid > 1).toBe(true);
         expect(alive(pid)).toBe(true);
-        const stoppingAt = performance.now();
+        // A shutdown interrupts the SIGTERM grace period. Its timer is faked and never
+        // advanced, so a shutdown that waited the grace out would never settle.
+        if (reason === "shutdown") vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
         if (reason === "cancel" || reason === "shutdown") {
           command.stop();
           command.stop(); // Repeated cancellation must not abandon the original snapshot.
           if (reason === "shutdown") command.stop(true);
         }
         const settled = await result;
+        vi.useRealTimers();
         if (reason === "timeout")
           expect(settled).toMatchObject({ status: 504, message: "Pi MCP command timed out" });
         else expect(settled).toMatchObject({ code: 1 });
-        if (reason === "shutdown") expect(performance.now() - stoppingAt).toBeLessThan(1500);
         // Child close alone is not proof: Pi launches the server in a detached group.
         const fixturePid = pid;
         await expect.poll(() => alive(fixturePid), { timeout: 3000 }).toBe(false);
       } finally {
+        vi.useRealTimers();
         command?.stop();
         // Only this test's PID, even on a red run. Keep its temp config as evidence.
         if (pid && alive(pid)) process.kill(pid, "SIGKILL");

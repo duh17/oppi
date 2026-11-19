@@ -1,10 +1,10 @@
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, type FSWatcher, mkdirSync, watch, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
@@ -23,6 +23,7 @@ class FakeBridgeWebSocket extends EventEmitter {
   closeCode?: number;
   closeReason?: string;
   private sendWaiters: Array<() => void> = [];
+  private closeWaiters: Array<() => void> = [];
 
   send(data: string): void {
     this.sent.push(JSON.parse(data) as Record<string, unknown>);
@@ -49,10 +50,40 @@ class FakeBridgeWebSocket extends EventEmitter {
     this.readyState = WebSocket.CLOSED;
     this.closeCode = code;
     this.closeReason = reason;
+    for (const resolve of this.closeWaiters.splice(0)) resolve();
+  }
+
+  /** Resolves once the server closes this socket; the test's own timeout bounds the wait. */
+  closed(): Promise<void> {
+    if (this.readyState === WebSocket.CLOSED) return Promise.resolve();
+    return new Promise((resolve) => this.closeWaiters.push(resolve));
+  }
+
+  /** Resolves once the server sends a matching message; the test's own timeout bounds the wait. */
+  async sentMessage(type: string): Promise<void> {
+    while (!this.sent.some((message) => message.type === type)) {
+      await new Promise<void>((resolve) => this.sendWaiters.push(resolve));
+    }
   }
 
   receive(message: Record<string, unknown>): void {
     this.emit("message", Buffer.from(JSON.stringify(message)), false);
+  }
+}
+
+/** Resolves once `path` exists: a watch on its folder, not a deadline a slow subprocess can miss. */
+async function fileAppears(path: string): Promise<void> {
+  // The watch starts before the first look, so a file made in between still wakes it.
+  let watcher: FSWatcher | undefined;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      watcher = watch(dirname(path), () => {
+        if (existsSync(path)) resolve();
+      }).on("error", reject);
+      if (existsSync(path)) resolve();
+    });
+  } finally {
+    watcher?.close();
   }
 }
 
@@ -742,18 +773,19 @@ describe("PiTuiMirrorRuntime resilience", () => {
       process.env.PATH = `${bin}${delimiter}${previousPath ?? ""}`;
       const { mirror, runtimes } = makeHarness(root);
       const older = sendOverlappingHello(mirror, "bridge-older", root);
-      await vi.waitFor(() => expect(existsSync(join(stateDir, "started-1"))).toBe(true));
+      await fileAppears(join(stateDir, "started-1"));
       const newer = sendOverlappingHello(mirror, "bridge-newer", root);
-      await vi.waitFor(() => expect(existsSync(join(stateDir, "started-2"))).toBe(true));
+      await fileAppears(join(stateDir, "started-2"));
 
       await releaseLookup(stateDir, 2);
-      await vi.waitFor(() => expect(acked(newer)).toBe(true));
+      await newer.sentMessage("hello_ack");
       const sessionId = String(
         newer.sent.find((message) => message.type === "hello_ack")?.sessionId,
       );
 
       await releaseLookup(stateDir, 1);
-      await vi.waitFor(() => expect(older.closeCode).toBe(4000));
+      await older.closed();
+      expect(older.closeCode).toBe(4000);
 
       expect(older.closeReason).toBe(
         "Mirror bridge hello superseded by a newer terminal connection",
@@ -794,19 +826,20 @@ describe("PiTuiMirrorRuntime resilience", () => {
       process.env.PATH = `${bin}${delimiter}${previousPath ?? ""}`;
       const { mirror, runtimes } = makeHarness(root);
       const older = sendOverlappingHello(mirror, "bridge-older-empty", root);
-      await vi.waitFor(() => expect(existsSync(join(stateDir, "started-1"))).toBe(true));
+      await fileAppears(join(stateDir, "started-1"));
       const newer = sendOverlappingHello(mirror, "bridge-newer-empty", root);
-      await vi.waitFor(() => expect(existsSync(join(stateDir, "started-2"))).toBe(true));
+      await fileAppears(join(stateDir, "started-2"));
 
       await releaseLookup(stateDir, 1);
-      await vi.waitFor(() => expect(older.closeCode).toBe(4000));
+      await older.closed();
+      expect(older.closeCode).toBe(4000);
       expect(acked(older)).toBe(false);
       expect(newer.closeCode).toBeUndefined();
       expect(acked(newer)).toBe(false);
       expect(mirror.getActiveSessionIds()).toEqual(new Set());
 
       await releaseLookup(stateDir, 2);
-      await vi.waitFor(() => expect(acked(newer)).toBe(true));
+      await newer.sentMessage("hello_ack");
       const sessionId = String(
         newer.sent.find((message) => message.type === "hello_ack")?.sessionId,
       );

@@ -779,7 +779,8 @@ struct StickyRefreshReconciliationTests {
         #expect(connection.sessionStore.lastSyncFailed == false)
     }
 
-    @Test func snapshotRequiredRefreshesBothProjectionsBeforeQueuedEvent() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func snapshotRequiredRefreshesBothProjectionsBeforeQueuedEvent() async throws {
         let connection = await makeReconciliationConnection()
         defer { cleanup(connection) }
         makeCatalogStale(connection)
@@ -797,7 +798,7 @@ struct StickyRefreshReconciliationTests {
         }
 
         let factory = try await connectAppEventStream(for: connection, snapshotRequired: true)
-        #expect(await waitForTestCondition(timeout: .seconds(1)) { workspaceGate.isStarted })
+        await workspaceGate.started()
 
         let socket = try #require(factory.sockets.first)
         socket.yield(.string(#"{"type":"session_deleted","sessionId":"s1","workspaceId":"w1","emittedAt":43}"#))
@@ -814,7 +815,8 @@ struct StickyRefreshReconciliationTests {
         #expect(applied)
     }
 
-    @Test func lateRefreshFailureAfterAppEventConnectionGetsOneFullFollowUp() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func lateRefreshFailureAfterAppEventConnectionGetsOneFullFollowUp() async throws {
         let connection = await makeReconciliationConnection()
         defer { cleanup(connection) }
         makeCatalogStale(connection)
@@ -834,7 +836,7 @@ struct StickyRefreshReconciliationTests {
         let initialRefresh = Task { @MainActor in
             await connection.refreshSessionList(force: true)
         }
-        #expect(await waitForTestCondition(timeout: .seconds(1)) { requestGate.isStarted })
+        await requestGate.started()
         _ = try await connectAppEventStream(
             for: connection,
             snapshotRequired: false
@@ -856,7 +858,8 @@ struct StickyRefreshReconciliationTests {
         #expect(connection.workspaceStore.lastSyncFailed == false)
     }
 
-    @Test func failedLateRepairIsBoundedWithoutNetworkFanOut() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func failedLateRepairIsBoundedWithoutNetworkFanOut() async throws {
         let connection = await makeReconciliationConnection()
         defer { cleanup(connection) }
         makeCatalogStale(connection)
@@ -875,7 +878,7 @@ struct StickyRefreshReconciliationTests {
         let initialRefresh = Task { @MainActor in
             await connection.refreshSessionList(force: true)
         }
-        #expect(await waitForTestCondition(timeout: .seconds(1)) { requestGate.isStarted })
+        await requestGate.started()
         _ = try await connectAppEventStream(
             for: connection,
             snapshotRequired: false
@@ -912,7 +915,8 @@ struct StickyRefreshReconciliationTests {
         #expect(connection.appEventListRepair.task == nil)
     }
 
-    @Test func staleWorkspaceRefreshCannotCommitAfterAPIReplacement() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func staleWorkspaceRefreshCannotCommitAfterAPIReplacement() async throws {
         let connection = await makeReconciliationConnection()
         defer { cleanup(connection) }
         connection.workspaceStore.workspaces = [
@@ -940,7 +944,7 @@ struct StickyRefreshReconciliationTests {
         let refresh = Task { @MainActor in
             await connection.refreshWorkspaceCatalog(force: true)
         }
-        #expect(await waitForTestCondition(timeout: .seconds(1)) { requestGate.isStarted })
+        await requestGate.started()
         connection.setAPIClientForTesting(makeReconciliationAPIClient())
         requestGate.release()
         await refresh.value
@@ -949,7 +953,8 @@ struct StickyRefreshReconciliationTests {
         #expect(!connection.workspaceStore.isSyncing)
     }
 
-    @Test func staleSessionRefreshBalancesSyncingAfterAPIReplacement() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func staleSessionRefreshBalancesSyncingAfterAPIReplacement() async throws {
         let connection = await makeReconciliationConnection()
         defer { cleanup(connection) }
         connection.sessionStore.upsert(makeTestSession(id: "kept", workspaceId: "w1"))
@@ -966,7 +971,7 @@ struct StickyRefreshReconciliationTests {
         let refresh = Task { @MainActor in
             await connection.refreshSessionList(force: true)
         }
-        #expect(await waitForTestCondition(timeout: .seconds(1)) { requestGate.isStarted })
+        await requestGate.started()
         #expect(await waitForMainActorCondition { connection.sessionStore.isSyncing })
         connection.setAPIClientForTesting(makeReconciliationAPIClient())
         requestGate.release()
@@ -976,7 +981,8 @@ struct StickyRefreshReconciliationTests {
         #expect(!connection.sessionStore.isSyncing)
     }
 
-    @Test func cancelingRepairPreventsStartingTheNextListLeg() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func cancelingRepairPreventsStartingTheNextListLeg() async throws {
         let connection = await makeReconciliationConnection()
         defer { cleanup(connection) }
         makeCatalogStale(connection)
@@ -996,7 +1002,7 @@ struct StickyRefreshReconciliationTests {
         let repair = Task { @MainActor in
             await connection.reconcileListSnapshotsAfterAppEventConnection(snapshotRequired: true)
         }
-        #expect(await waitForTestCondition(timeout: .seconds(1)) { workspaceGate.isStarted })
+        await workspaceGate.started()
 
         connection.disconnectAppEventStream()
         workspaceGate.release()
@@ -1204,21 +1210,35 @@ struct StickyRefreshReconciliationTests {
     }
 }
 
+/// Holds a request on URLProtocol's thread until the test releases it. The test awaits
+/// `started()`, the request reaching the gate, rather than polling for it on a deadline a
+/// loaded unit shard can miss; each test's `.timeLimit` is the hang guard.
 private final class BlockingReconciliationRequestGate: @unchecked Sendable {
     private let lock = NSLock()
-    private var started = false
+    private var isStarted = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
     private let releaseSemaphore = DispatchSemaphore(value: 0)
 
-    var isStarted: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return started
+    func started() async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if isStarted {
+                lock.unlock()
+                continuation.resume()
+            } else {
+                startWaiters.append(continuation)
+                lock.unlock()
+            }
+        }
     }
 
     func blockUntilReleased() {
         lock.lock()
-        started = true
+        isStarted = true
+        let waiters = startWaiters
+        startWaiters = []
         lock.unlock()
+        for waiter in waiters { waiter.resume() }
         releaseSemaphore.wait()
     }
 

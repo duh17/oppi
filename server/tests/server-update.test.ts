@@ -103,8 +103,16 @@ if [ "$1" = "run" ]; then
   exit 0
 fi
 if [ "$1" = "root" ] && [ "$2" = "-g" ]; then
-  if [ -n "\${FAKE_NPM_ROOT_PID_FILE:-}" ]; then echo $$ > "\${FAKE_NPM_ROOT_PID_FILE}"; fi
-  if [ -n "\${FAKE_NPM_ROOT_SLEEP:-}" ]; then sleep "\${FAKE_NPM_ROOT_SLEEP}"; fi
+  # Renamed into place whole: a test that sees the pid file never reads it empty.
+  if [ -n "\${FAKE_NPM_ROOT_PID_FILE:-}" ]; then
+    echo $$ > "\${FAKE_NPM_ROOT_PID_FILE}.tmp" && mv "\${FAKE_NPM_ROOT_PID_FILE}.tmp" "\${FAKE_NPM_ROOT_PID_FILE}"
+  fi
+  # A TERM ends the sleep too: left running, it would hold npm's output pipe open until it ends.
+  if [ -n "\${FAKE_NPM_ROOT_SLEEP:-}" ]; then
+    trap 'kill $! 2>/dev/null; exit 143' TERM
+    sleep "\${FAKE_NPM_ROOT_SLEEP}" &
+    wait $!
+  fi
   printf '%s\\n' "\${FAKE_NPM_ROOT}"
   exit 0
 fi
