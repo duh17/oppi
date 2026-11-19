@@ -36,7 +36,8 @@ import type { ConversationStreamServerMessage } from "../src/types.js";
 // client received for a real Harness conversation, and the trace the same conversation
 // reads as through the mobile trace route (`view=full`, presentation segments). The Apple
 // test replays the frames and must project exactly that trace. Written only by
-// `npm run protocol:fixtures:update`; the conversation's ids and times change each run.
+// `npm run protocol:fixtures:update`. The temp folder and the clock times the run produced are
+// written as fixed stand-ins, so regenerating only changes the file when the stream changed.
 
 export const CONVERSATION_STREAM_GOLDEN_FILE = fileURLToPath(
   new URL("../../protocol/conversation-stream-golden.json", import.meta.url),
@@ -48,7 +49,43 @@ const INTERRUPTED = Array.from({ length: 60 }, (_, index) => `partial${index}`).
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Stand-ins for the run's temp folder and for every clock time the run produced. */
+const GOLDEN_DIR = "/tmp/oppi-conversation-golden";
+const GOLDEN_TIME = 1_800_000_000_000;
+
+/**
+ * Rewrites the temp folder to `GOLDEN_DIR` and each `timestamp` taken during the run (epoch ms or
+ * its ISO form) to `GOLDEN_TIME`. Fixed times the script sets itself fall outside the run and stay.
+ */
+function pinRunValues(
+  value: unknown,
+  dir: string,
+  start: number,
+  end: number,
+  key?: string,
+): unknown {
+  if (key === "timestamp") {
+    if (typeof value === "number" && value >= start && value <= end) return GOLDEN_TIME;
+    if (typeof value === "string") {
+      const ms = Date.parse(value);
+      if (ms >= start && ms <= end) return new Date(GOLDEN_TIME).toISOString();
+    }
+  }
+  if (typeof value === "string") return value.split(dir).join(GOLDEN_DIR);
+  if (Array.isArray(value)) return value.map((item) => pinRunValues(item, dir, start, end));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([name, inner]) => [
+        name,
+        pinRunValues(inner, dir, start, end, name),
+      ]),
+    );
+  }
+  return value;
+}
+
 export async function buildConversationStreamGolden(): Promise<string> {
+  const start = Date.now();
   const dir = mkdtempSync(join(tmpdir(), "oppi-conversation-golden-"));
   const models = await ModelRuntime.create({
     authPath: join(dir, "auth.json"),
@@ -298,14 +335,19 @@ export async function buildConversationStreamGolden(): Promise<string> {
       true,
       [],
     );
+    const recorded = pinRunValues(
+      { frames, trace: JSON.parse(JSON.stringify(trace)) as unknown },
+      dir,
+      start,
+      Date.now(),
+    );
     return `${JSON.stringify(
       {
         _meta: {
           description:
             "Durable conversation stream golden: frames one client received, and the mobile trace of the same conversation. Updated by npm run protocol:fixtures:update",
         },
-        frames,
-        trace: JSON.parse(JSON.stringify(trace)) as unknown,
+        ...(recorded as object),
       },
       null,
       2,
