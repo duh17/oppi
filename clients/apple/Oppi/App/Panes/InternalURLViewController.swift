@@ -17,7 +17,7 @@ struct InternalURLViewerSource {
 /// wide window, full screen pushed on a narrow one. The header is what the
 /// scheme says of it, top to bottom: the status with its time and Stop, the
 /// facts, and the command; the body is the terminal reader over its output,
-/// with the reader's own Find, Copy and Share in the bar.
+/// with the reader's buttons in the bar.
 ///
 /// It reads only while it is on screen: once a second while the view is live,
 /// asking only for the output after what it holds, and once more when it comes
@@ -191,13 +191,8 @@ final class InternalURLViewController: UIViewController {
             content: .terminal(content: snapshot.output, command: nil, trace: trace),
             presentationMode: .contentOnly()
         )
-        // Without a bar of its own, the reader's Find, Copy and Share join this one.
+        // Without a bar of its own, the reader's buttons (`barOffers`) join this one.
         reader.onBarOffersChange = { [weak self] in self?.updateBar() }
-        reader.hostBarShows = { [weak self] item in
-            sequence(first: self as UIViewController?, next: { $0?.parent }).contains { screen in
-                screen?.navigationItem.rightBarButtonItems?.contains { $0 === item } == true
-            }
-        }
         addChild(reader)
         reader.view.translatesAutoresizingMaskIntoConstraints = false
         body.addSubview(reader.view)
@@ -212,23 +207,11 @@ final class InternalURLViewController: UIViewController {
         updateBar()
     }
 
-    /// Find, for a reader that draws no bar of its own; it stays on a narrow bar.
-    private lazy var findItem: UIBarButtonItem = {
-        let item = UIBarButtonItem(
-            image: UIImage(systemName: "magnifyingglass"),
-            primaryAction: UIAction { [weak self] _ in self?.reader?.presentFind() }
-        )
-        item.title = String(localized: "Find")
-        item.accessibilityLabel = String(localized: "Find")
-        item.accessibilityIdentifier = "internalURL.find"
-        if #available(iOS 27.0, *) { item.visibilityPriority = .high }
-        return item
-    }()
-
     private func updateBar() {
         bar.reader.presenter = self
-        var offers = reader?.barOffers ?? [:]
-        if reader?.supportsFind == true { offers[.find] = [findItem] }
+        let offers = reader?.barOffers ?? [:]
+        // The job view's Find keeps an identifier of its own.
+        offers[.find]?.forEach { $0.accessibilityIdentifier = "internalURL.find" }
         bar.show(
             offers: offers,
             documentActions: [UIDeferredMenuElement.uncached { [weak self] completion in

@@ -3,18 +3,18 @@ import UIKit
 /// Find and Outline: the bar items a file reader shows, and what they do. The
 /// body owns both (`ReaderBody`); the reader only places the buttons.
 extension FullScreenCodeViewController {
-    /// Find and Outline for the reader's own bar. Outline joins only while the
-    /// open file has headings.
+    /// Find and Outline for the reader's bar, or the embedding screen's
+    /// (`barOffers`). Outline joins only while the open file has headings.
     func makeReaderNavigationItems(palette: ThemePalette) -> [ReaderBarAction: [UIBarButtonItem]] {
         var items: [ReaderBarAction: [UIBarButtonItem]] = [:]
-        if supportsFind {
+        if installedBodyView?.supportsFind == true {
             let find = railItem(symbol: "magnifyingglass", title: String(localized: "Find"), action: #selector(showFind))
             find.accessibilityIdentifier = "fileViewer.find.button"
             find.tintColor = palette.ui.fgDim
             items[.find] = [find]
         }
         outlineBarItem = nil
-        if hasOutline {
+        if installedBodyView?.hasOutline == true {
             let outline = railItem(symbol: "list.bullet.indent", title: String(localized: "Outline"), action: #selector(showOutline))
             outline.accessibilityIdentifier = "fileViewer.outline.button"
             outline.tintColor = palette.ui.fgDim
@@ -40,26 +40,12 @@ extension FullScreenCodeViewController {
         return item
     }
 
-    /// Whether the open file offers Find.
-    var supportsFind: Bool { installedBodyView?.supportsFind == true }
-
-    /// Whether the open file has headings to list.
-    var hasOutline: Bool { installedBodyView?.hasOutline == true }
-
-    func presentFind() {
-        installedBodyView?.presentFind()
-    }
-
-    func presentOutline(sourceItem: UIBarButtonItem) {
-        installedBodyView?.presentOutline(from: contentHostController ?? self, sourceItem: sourceItem)
-    }
-
     @objc private func showFind() {
-        presentFind()
+        installedBodyView?.presentFind()
     }
 
     @objc private func showOutline() {
         guard let item = outlineBarItem else { return }
-        presentOutline(sourceItem: item)
+        installedBodyView?.presentOutline(from: contentHostController ?? self, sourceItem: item)
     }
 }

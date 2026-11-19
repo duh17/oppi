@@ -8,7 +8,7 @@ protocol BarLayoutAction: RawRepresentable, CaseIterable, Hashable, Sendable whe
 }
 
 /// Which buttons a customizable bar shows, and in what order (Chat's top bar,
-/// the SSH terminal's bottom bar).
+/// the SSH terminal's bottom bar, the file reader's bar).
 ///
 /// Every action is in `order`; the ones in `shown` are drawn in the bar in that
 /// order, and the rest are offered in the … menu, also in that order. Showing

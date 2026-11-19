@@ -71,8 +71,6 @@ final class FullScreenCodeViewController: UIViewController {
     private var pendingMarkdownViewportIntent: FullScreenMarkdownViewportIntent?
     private let onMarkdownViewportIntentChange: ((FullScreenMarkdownViewportIntent) -> Void)?
     private let lineAnchor: SourceLineAnchor?
-    /// Tells an owner that draws the bar (a tree pane) that Outline came or went.
-    private let onOutlineChange: (@MainActor () -> Void)?
     /// The heading the reader opens at, until a restored reading position outranks it.
     private let headingAnchor: ReaderHeadingAnchor?
     /// Set when the reader's owner can save the document.
@@ -105,14 +103,12 @@ final class FullScreenCodeViewController: UIViewController {
     private weak var viewingOptionsController: FullScreenViewingOptionsController?
     private(set) weak var contentHostController: UIViewController?
     private var viewingOptionsBarItem: UIBarButtonItem?
-    /// `.contentOnly` draws no bar: Copy, the source toggle, and Viewing
-    /// Options go to the embedding screen's bar instead (`onBarOffersChange`).
+    /// `.contentOnly` draws no bar: Find, Outline, Copy, the source toggle,
+    /// and Viewing Options go to the embedding screen's bar instead
+    /// (`onBarOffersChange`).
     private(set) var barOffers: [ReaderBarAction: [UIBarButtonItem]] = [:]
     /// Runs when `barOffers` change, so the embedding screen lays out its bar.
     var onBarOffersChange: (() -> Void)?
-    /// Whether the embedding screen's bar shows `item` now, so Viewing Options
-    /// points at it; else (in its … menu) the panel opens as a sheet.
-    var hostBarShows: (UIBarButtonItem) -> Bool = { _ in false }
     private var annotateBarItem: UIBarButtonItem?
     private var stashBarItem: UIBarButtonItem?
     private var backSwipeDismissHandler: HorizontalBackSwipeGestureInstaller?
@@ -150,7 +146,6 @@ final class FullScreenCodeViewController: UIViewController {
         reviewCommentSourceLabel: String? = nil,
         lineAnchor: SourceLineAnchor? = nil,
         lineAnchorNotice: (@MainActor @Sendable (String) -> Void)? = nil,
-        onOutlineChange: (@MainActor () -> Void)? = nil,
         headingAnchor: ReaderHeadingAnchor? = nil,
         hostOffers: [ReaderBarAction: [UIBarButtonItem]] = [:],
         hostMenu: [UIMenuElement] = [],
@@ -173,7 +168,6 @@ final class FullScreenCodeViewController: UIViewController {
                 sourceLabel: reviewCommentSourceLabel
             )
         self.lineAnchor = lineAnchor
-        self.onOutlineChange = onOutlineChange
         self.headingAnchor = headingAnchor
         self.lineAnchorNotice = lineAnchorNotice
         self.hostOffers = hostOffers
@@ -480,9 +474,7 @@ final class FullScreenCodeViewController: UIViewController {
         contentSurface = bodyView.contentSurface
         bodyView.onContentSurfaceChange = { [weak self] surface in self?.setContentSurface(surface) }
         bodyView.onOutlineChange = { [weak self] in
-            guard let self else { return }
-            self.onOutlineChange?()
-            guard let host = self.contentHostController else { return }
+            guard let self, let host = self.contentHostController else { return }
             self.installRightBarItems(on: host, palette: self.bodyThemeID.palette)
         }
         applyContentSurface()
@@ -760,7 +752,7 @@ final class FullScreenCodeViewController: UIViewController {
         if case .contentOnly = presentationMode {
             // The embedding screen's bar shows these, in its own tint; an item
             // is in one bar only, so the hidden one here stays empty.
-            let exported = offers.filter { [.copy, .sourceToggle, .viewingOptions].contains($0.key) }
+            let exported = offers.filter { [.find, .outline, .copy, .sourceToggle, .viewingOptions].contains($0.key) }
             exported.values.joined().forEach { $0.tintColor = nil }
             barOffers = exported
             onBarOffersChange?()
@@ -1124,7 +1116,10 @@ final class FullScreenCodeViewController: UIViewController {
         // Turned off, the item runs from the … menu and has no place to point
         // at, so the options open as a sheet.
         let onBar: Bool = if case .contentOnly = presentationMode {
-            viewingOptionsBarItem.map(hostBarShows) ?? false
+            // The embedding screen, or a screen over it, shows the exported item.
+            sequence(first: self as UIViewController, next: \.parent).contains { screen in
+                screen.navigationItem.rightBarButtonItems?.contains { $0 === viewingOptionsBarItem } == true
+            }
         } else {
             readerBar.trailingItems.contains { $0 === viewingOptionsBarItem }
         }
