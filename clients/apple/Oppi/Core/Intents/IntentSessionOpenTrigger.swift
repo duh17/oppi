@@ -32,10 +32,6 @@ final class IntentSessionOpenTrigger {
         var queuedAt: Date?
     }
 
-    private struct LegacyPrompt: Decodable {
-        var unsentPrompt: String?
-    }
-
     private let defaults: UserDefaults
     private let issuedRequestIDKey: String
     private let lastAcceptedRequestIDKey: String
@@ -60,35 +56,12 @@ final class IntentSessionOpenTrigger {
         lastAcceptedRequestID = defaults.integer(forKey: lastAcceptedRequestIDKey)
         if let data = defaults.data(forKey: pendingKey),
            let persisted = try? JSONDecoder().decode(PersistedReceipt.self, from: data) {
-            let legacy = try? JSONDecoder().decode(LegacyPrompt.self, from: data)
-            var migrated = legacy != nil
-            if let text = legacy?.unsentPrompt {
-                if let workspaceId = persisted.workspaceId,
-                   let key = ComposerDraftKey(
-                       serverID: persisted.serverId,
-                       workspaceID: workspaceId,
-                       sessionID: persisted.sessionId
-                   ) {
-                    do {
-                        try ComposerDraftStore.saveIntentSessionPrompt(
-                            text, requestID: persisted.requestID, for: key, at: promptFileURL
-                        )
-                    } catch {
-                        migrated = false
-                        logger.error("Could not protect legacy start-session prompt: \(error.localizedDescription, privacy: .public)")
-                    }
-                } else {
-                    migrated = false
-                }
-            }
-            var prompt = legacy?.unsentPrompt
-            if prompt == nil {
-                do {
-                    prompt = try Self.loadPrompt(for: persisted, at: promptFileURL)
-                } catch {
-                    pendingPromptUnreadable = true
-                    logger.error("Could not read start-session prompt yet: \(error.localizedDescription, privacy: .public)")
-                }
+            var prompt: String?
+            do {
+                prompt = try Self.loadPrompt(for: persisted, at: promptFileURL)
+            } catch {
+                pendingPromptUnreadable = true
+                logger.error("Could not read start-session prompt yet: \(error.localizedDescription, privacy: .public)")
             }
             pending = Receipt(
                 requestID: persisted.requestID,
@@ -102,10 +75,6 @@ final class IntentSessionOpenTrigger {
             lastAcceptedRequestID = max(lastAcceptedRequestID, persisted.requestID)
             if persisted.requestID > defaults.integer(forKey: issuedRequestIDKey) {
                 defaults.set(persisted.requestID, forKey: issuedRequestIDKey)
-            }
-            // Do not discard the only durable prompt copy if the protected write failed.
-            if migrated, let data = try? JSONEncoder().encode(persisted) {
-                defaults.set(data, forKey: pendingKey)
             }
         }
     }

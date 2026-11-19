@@ -371,55 +371,6 @@ struct IntentSessionOpenTriggerTests {
         #expect(second.take(requestID: requestID) == nil)
     }
 
-    @Test func legacyPendingPromptMovesOutOfPreferencesBeforeConsume() throws {
-        let fixture = Fixture()
-        defer { fixture.remove() }
-        let oldReceipt: [String: Any] = [
-            "requestID": 7,
-            "serverId": "server-a",
-            "sessionId": "session-1",
-            "workspaceId": "ws-1",
-            "unsentPrompt": "Legacy unsent text",
-        ]
-        let key = "\(AppIdentifiers.subsystem).intentSessionOpen.pending"
-        fixture.defaults.set(try JSONSerialization.data(withJSONObject: oldReceipt), forKey: key)
-
-        let trigger = fixture.makeTrigger()
-        let stored = try #require(fixture.defaults.data(forKey: key))
-        #expect(!String(decoding: stored, as: UTF8.self).contains("Legacy unsent text"))
-        #expect(!String(decoding: stored, as: UTF8.self).contains("unsentPrompt"))
-        let consumed = trigger.take(requestID: 7)
-        #expect(consumed?.serverId == "server-a")
-        #expect(consumed?.sessionId == "session-1")
-        #expect(consumed?.unsentPrompt == "Legacy unsent text")
-    }
-
-    @Test func failedLegacyPromptMoveLeavesPreferencesIntact() throws {
-        let fixture = Fixture()
-        defer { fixture.remove() }
-        let key = "\(AppIdentifiers.subsystem).intentSessionOpen.pending"
-        let legacyData = try JSONSerialization.data(withJSONObject: [
-            "requestID": 8,
-            "serverId": "server-a",
-            "sessionId": "session-1",
-            "workspaceId": "ws-1",
-            "unsentPrompt": "Keep on failure",
-        ] as [String: Any])
-        fixture.defaults.set(legacyData, forKey: key)
-        try FileManager.default.createDirectory(at: fixture.directory, withIntermediateDirectories: true)
-        let blocker = fixture.directory.appending(path: "blocker")
-        try Data().write(to: blocker)
-
-        let trigger = IntentSessionOpenTrigger(
-            defaults: fixture.defaults,
-            promptFileURL: blocker.appending(path: "prompt.json")
-        )
-        #expect(fixture.defaults.data(forKey: key) == legacyData)
-        // The in-memory receipt carries the only copy of the prompt.
-        #expect(trigger.peek()?.unsentPrompt == "Keep on failure")
-        #expect(trigger.take(requestID: 8)?.unsentPrompt == "Keep on failure")
-    }
-
     @Test func unreadablePromptFileIsRetriedAtConsumeAndNeverDeleted() throws {
         let fixture = Fixture()
         defer { fixture.remove() }
