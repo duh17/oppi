@@ -87,7 +87,7 @@ final class PinnedScreenE2ETests: E2ETestCase {
 
         // Pin from the row: swipe left, then Pin.
         let workingRow = app.buttons["session.nav.\(working)"]
-        XCTAssertTrue(scrollToElement(workingRow, in: list), "the working session's row")
+        XCTAssertTrue(revealSessionRow(workingRow, in: list), "the working session's row")
         workingRow.swipeLeft()
         tap(app.buttons["Pin"], named: "swipe Pin", timeout: 5)
         XCTAssertTrue(waitForPin(sessionId: working), "the server keeps the row's pin")
@@ -95,7 +95,7 @@ final class PinnedScreenE2ETests: E2ETestCase {
 
         // Pin from the chat's … menu.
         let doneRow = app.buttons["session.nav.\(done)"]
-        XCTAssertTrue(scrollToElement(doneRow, in: list), "the finished session's row")
+        XCTAssertTrue(revealSessionRow(doneRow, in: list), "the finished session's row")
         tap(doneRow, named: "finished session")
         tap(app.buttons["chat.toolbar.more"], named: "chat …", timeout: 15)
         beat(0.8)

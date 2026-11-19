@@ -187,14 +187,19 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
 
         // UIKit swipe actions have no accessibility identifier; the open
         // swipe exposes them by their visible titles. The open row's frame
-        // follows its content left, so `swipeRight()` would start inside the
-        // workspace drawer's leading-edge zone; close from the visible part.
+        // follows its content left by the width of its actions (Pin, Stop or
+        // Resume, Delete), so a point taken from the row's own frame can land
+        // inside the workspace drawer's leading-edge zone and open the drawer
+        // instead. Close from a fixed point of the list on the row's line,
+        // clear of the edge and of the actions.
         let closeSwipe = { (element: XCUIElement) in
-            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-                .press(
-                    forDuration: 0.05,
-                    thenDragTo: element.coordinate(withNormalizedOffset: CGVector(dx: 1.0, dy: 0.5))
-                )
+            let listFrame = sessionList.frame
+            let start = sessionList.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0))
+                .withOffset(CGVector(dx: 0, dy: element.frame.midY - listFrame.minY))
+            start.press(
+                forDuration: 0.05,
+                thenDragTo: start.withOffset(CGVector(dx: listFrame.width * 0.65, dy: 0))
+            )
         }
         row.swipeLeft()
         XCTAssertTrue(
