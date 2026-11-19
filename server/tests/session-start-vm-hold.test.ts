@@ -2,12 +2,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { DurableBackend } from "../src/durable-backend.js";
 import { SdkBackend } from "../src/sdk-backend.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
+import { bootDurablePlugins, DURABLE_BOOT_TIMEOUT_MS } from "./harness/durable-boot.js";
 
 /**
  * A sandbox workspace's VM stays up while any session holds it (`noteWorkspaceBusy`) and idles
@@ -17,6 +18,7 @@ import { Storage } from "../src/storage.js";
 const dirs: string[] = [];
 const managers: SessionManager[] = [];
 const agentDirBefore = process.env.PI_CODING_AGENT_DIR;
+beforeAll(bootDurablePlugins, DURABLE_BOOT_TIMEOUT_MS);
 afterEach(async () => {
   vi.restoreAllMocks();
   await Promise.all(managers.splice(0).map((manager) => manager.close()));

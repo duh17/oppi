@@ -438,6 +438,20 @@ describe("ServerUpdateService", () => {
         (restartMode) => restartUpdatedProcess(restartMode, () => false),
       ).catch(rejectRestore);
     };
+    // Each server's start() looks up npm's latest version and the install kind in the
+    // background. The test awaits those lookups themselves, not a deadline a loaded host's
+    // process spawns can outlast.
+    const latestLookups = vi.spyOn(ServerUpdateService.prototype, "refreshLatest");
+    const installLookups = vi.spyOn(
+      ServerUpdateService.prototype as unknown as { resolveInstall(): Promise<unknown> },
+      "resolveInstall",
+    );
+    const lookupsSettled = () =>
+      Promise.allSettled(
+        [...latestLookups.mock.results, ...installLookups.mock.results].map(
+          (result) => result.value as Promise<unknown>,
+        ),
+      );
     try {
       Object.defineProperty(process, "execve", {
         configurable: true,
@@ -448,11 +462,10 @@ describe("ServerUpdateService", () => {
       updatePackageDir = useFakeNpm(dir, { global: "npm", latest: "9.9.9" });
       server = new Server(storage, { onRestartAfterUpdate, updatePackageDir });
       await server.start();
-      await vi.waitFor(async () => {
-        const info = await localApiRequest<{ update?: ServerUpdateInfo }>(storage, "/server/info");
-        expect(info.update?.latestVersion).toBe("9.9.9");
-        expect(info.update?.installKind).toBe("npm-global");
-      }, SUBPROCESS_WAIT);
+      await lookupsSettled();
+      const before = await localApiRequest<{ update?: ServerUpdateInfo }>(storage, "/server/info");
+      expect(before.update?.latestVersion).toBe("9.9.9");
+      expect(before.update?.installKind).toBe("npm-global");
       const started = await localApiRequest<ServerUpdateInfo>(storage, "/server/update", {
         method: "POST",
         body: { version: "9.9.9" },
@@ -466,18 +479,22 @@ describe("ServerUpdateService", () => {
           body: { version: "9.9.9" },
         }),
       ).rejects.toMatchObject({ status: 409, code: SERVER_UPDATE_ERROR.updateInProgress });
-      await vi.waitFor(async () => {
-        const info = await localApiRequest<{ version: string; update?: ServerUpdateInfo }>(
-          storage,
-          "/server/info",
-        );
-        expect(info.version).toBe(getPackageInfo().version);
-        expect(info.update).toMatchObject({ status: "restart-needed", targetVersion: "9.9.9" });
-        // The restored server's start() also looks up npm; let that finish before the
-        // finally block removes the fake npm directory and restores PATH.
-        expect(info.update?.latestVersion).toBe("9.9.9");
-      }, SUBPROCESS_WAIT);
+      // The restored server's start() also looks up npm; those lookups finish before the
+      // finally block removes the fake npm directory and restores PATH.
+      await lookupsSettled();
+      const info = await localApiRequest<{ version: string; update?: ServerUpdateInfo }>(
+        storage,
+        "/server/info",
+      );
+      expect(info.version).toBe(getPackageInfo().version);
+      expect(info.update).toMatchObject({
+        status: "restart-needed",
+        targetVersion: "9.9.9",
+        latestVersion: "9.9.9",
+      });
     } finally {
+      latestLookups.mockRestore();
+      installLookups.mockRestore();
       if (updateStarted) await restored.catch(() => {});
       await server?.stop().catch(() => {});
       Object.defineProperty(process, "execve", { configurable: true, value: execve });
