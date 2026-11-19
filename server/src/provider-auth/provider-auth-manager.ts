@@ -49,7 +49,6 @@ export interface ProviderAuthManagerOptions {
   getDeviceId?: () => string;
   flowTtlMs?: number;
   terminalFlowRetentionMs?: number;
-  now?: () => number;
 }
 
 function prettifyProviderName(providerId: string): string {
@@ -105,7 +104,6 @@ export class ProviderAuthManager {
     this.flowStore = new ProviderAuthFlowStore({
       ttlMs: options.flowTtlMs,
       terminalRetentionMs: options.terminalFlowRetentionMs,
-      now: options.now,
     });
   }
 

@@ -66,7 +66,6 @@ export interface ProviderAuthFlowRecord {
 export interface ProviderAuthFlowStoreOptions {
   ttlMs?: number;
   terminalRetentionMs?: number;
-  now?: () => number;
 }
 
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
@@ -81,7 +80,6 @@ function cloneSnapshot(snapshot: ProviderAuthFlowSnapshot): ProviderAuthFlowSnap
 }
 
 export class ProviderAuthFlowStore {
-  private readonly now: () => number;
   private readonly ttlMs: number;
   private readonly terminalRetentionMs: number;
   private readonly flows = new Map<string, ProviderAuthFlowRecord>();
@@ -89,7 +87,6 @@ export class ProviderAuthFlowStore {
   constructor(options: ProviderAuthFlowStoreOptions = {}) {
     this.ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
     this.terminalRetentionMs = options.terminalRetentionMs ?? DEFAULT_TERMINAL_RETENTION_MS;
-    this.now = options.now ?? (() => Date.now());
   }
 
   create(
@@ -99,7 +96,7 @@ export class ProviderAuthFlowStore {
   ): ProviderAuthFlowRecord {
     this.prune();
 
-    const now = this.now();
+    const now = Date.now();
     const flowId = `pa_${randomUUID().replace(/-/g, "")}`;
 
     const snapshot: ProviderAuthFlowSnapshot = {
@@ -159,7 +156,7 @@ export class ProviderAuthFlowStore {
     if (!record) return undefined;
 
     updater(record);
-    record.snapshot.updatedAt = this.now();
+    record.snapshot.updatedAt = Date.now();
     return cloneSnapshot(record.snapshot);
   }
 
@@ -235,26 +232,19 @@ export class ProviderAuthFlowStore {
     return this.markTerminal(flowId, "cancelled", reason);
   }
 
+  /**
+   * Deletes terminal records past their retention. Expiry is the creation
+   * timer's alone, so a read never settles a flow the timer has not.
+   */
   prune(): void {
-    const now = this.now();
+    const now = Date.now();
 
     for (const [flowId, record] of this.flows.entries()) {
-      const ageMs = now - record.snapshot.updatedAt;
       if (
         isTerminalProviderAuthStatus(record.snapshot.status) &&
-        ageMs > this.terminalRetentionMs
+        now - record.snapshot.updatedAt > this.terminalRetentionMs
       ) {
         this.flows.delete(flowId);
-        continue;
-      }
-
-      if (
-        !isTerminalProviderAuthStatus(record.snapshot.status) &&
-        record.snapshot.expiresAt <= now
-      ) {
-        // Mutate the record directly. Going through get()/update() would call
-        // prune() again before the status is terminal and recurse forever.
-        this.settleTerminal(record, "expired", "Flow expired");
       }
     }
   }
@@ -290,7 +280,7 @@ export class ProviderAuthFlowStore {
     record.snapshot.error = error;
     record.snapshot.prompt = undefined;
     record.snapshot.lastProgress = undefined;
-    record.snapshot.updatedAt = this.now();
+    record.snapshot.updatedAt = Date.now();
 
     this.rejectWaiters(record, error ?? "Flow terminated");
     if (status !== "completed") {

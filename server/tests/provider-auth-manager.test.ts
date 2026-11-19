@@ -371,32 +371,32 @@ describe("ProviderAuthManager", () => {
     }
   });
 
-  it("expires a stale flow on read without breaking later provider-auth calls", async () => {
-    let now = 1_000_000;
-    const providers = [makeProvider("openai-codex", "ChatGPT (Codex)")];
-    const runtime = new FakeModelRuntime(providers, {
-      "openai-codex": async (_type, interaction) => {
-        await interaction.prompt({ type: "manual_code", message: "Paste code" });
-        return oauthCredential();
-      },
-    });
-    const manager = new ProviderAuthManager({
-      modelRuntime: runtime,
-      flowTtlMs: 60_000,
-      now: () => now,
-    });
+  it("keeps an expired flow expired without breaking later provider-auth calls", async () => {
+    vi.useFakeTimers();
+    try {
+      const providers = [makeProvider("openai-codex", "ChatGPT (Codex)")];
+      const runtime = new FakeModelRuntime(providers, {
+        "openai-codex": async (_type, interaction) => {
+          await interaction.prompt({ type: "manual_code", message: "Paste code" });
+          return oauthCredential();
+        },
+      });
+      const manager = new ProviderAuthManager({ modelRuntime: runtime, flowTtlMs: 60_000 });
 
-    const started = manager.startFlow("openai-codex", "none");
-    await waitFor(() => manager.getFlow(started.flowId).status === "awaiting_manual_code");
+      const started = manager.startFlow("openai-codex", "none");
+      await waitFor(() => manager.getFlow(started.flowId).status === "awaiting_manual_code");
 
-    now += 60_001;
-    expect(manager.getFlow(started.flowId)).toMatchObject({
-      status: "expired",
-      error: "Flow expired",
-    });
-    expect(manager.getFlow(started.flowId).status).toBe("expired");
-    expect(() => manager.submitManualCode(started.flowId, "late")).toThrowError(ProviderAuthError);
-    expect(manager.listProviders().map((provider) => provider.id)).toEqual(["openai-codex"]);
+      await vi.advanceTimersByTimeAsync(60_001);
+      expect(manager.getFlow(started.flowId)).toMatchObject({
+        status: "expired",
+        error: "Flow expired",
+      });
+      expect(manager.getFlow(started.flowId).status).toBe("expired");
+      expect(() => manager.submitManualCode(started.flowId, "late")).toThrowError(ProviderAuthError);
+      expect(manager.listProviders().map((provider) => provider.id)).toEqual(["openai-codex"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it.each([
