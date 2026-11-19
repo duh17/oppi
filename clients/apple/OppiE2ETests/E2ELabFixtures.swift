@@ -158,7 +158,7 @@ extension E2ETestCase {
             tree.name = "app-hierarchy-at-failure"
             tree.lifetime = .keepAlways
             add(tree)
-            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            let screenshot = XCTAttachment(uprightScreenshot: app.screenshot())
             screenshot.name = "screen-at-failure"
             screenshot.lifetime = .keepAlways
             add(screenshot)
@@ -494,7 +494,7 @@ extension E2ETestCase {
     @discardableResult
     func saveLabScreenshot(name: String) throws -> URL {
         let screenshot = app.screenshot()
-        let attachment = XCTAttachment(screenshot: screenshot)
+        let attachment = XCTAttachment(uprightScreenshot: screenshot)
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
@@ -502,7 +502,7 @@ extension E2ETestCase {
         let directory = URL(fileURLWithPath: "/tmp/oppi-screenshots", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let outputURL = directory.appendingPathComponent("\(name).png")
-        try screenshot.pngRepresentation.write(to: outputURL, options: .atomic)
+        try screenshot.uprightPNG.write(to: outputURL, options: .atomic)
         return outputURL
     }
 

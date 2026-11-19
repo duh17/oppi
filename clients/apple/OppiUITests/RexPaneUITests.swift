@@ -152,7 +152,7 @@ final class RexPaneUITests: XCTestCase, PreviewUITestCase {
     /// capture is upright.
     private func capture(_ name: String) {
         let screenshot = XCUIScreen.main.screenshot()
-        let attachment = XCTAttachment(screenshot: screenshot)
+        let attachment = XCTAttachment(uprightScreenshot: screenshot)
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)

@@ -306,7 +306,7 @@ final class BrowserPaneUITests: XCTestCase, PreviewUITestCase {
     /// sideways into a portrait canvas.
     private func attachScreenCapture(_ name: String) {
         let screenshot = XCUIScreen.main.screenshot()
-        let attachment = XCTAttachment(screenshot: screenshot)
+        let attachment = XCTAttachment(uprightScreenshot: screenshot)
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)

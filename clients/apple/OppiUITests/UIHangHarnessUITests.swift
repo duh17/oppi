@@ -190,7 +190,7 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         )
         RunLoop.current.run(until: Date().addingTimeInterval(0.5))
         let screenshot = XCUIScreen.main.screenshot()
-        let attachment = XCTAttachment(screenshot: screenshot)
+        let attachment = XCTAttachment(uprightScreenshot: screenshot)
         attachment.name = "assistant-streaming-wrapped-table-after-reflow"
         attachment.lifetime = .keepAlways
         add(attachment)
@@ -491,7 +491,7 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         add(geometry)
 
         let screenshot = XCUIScreen.main.screenshot()
-        let attachment = XCTAttachment(screenshot: screenshot)
+        let attachment = XCTAttachment(uprightScreenshot: screenshot)
         attachment.name = "image-preview-detached-row-preserved"
         attachment.lifetime = .keepAlways
         add(attachment)

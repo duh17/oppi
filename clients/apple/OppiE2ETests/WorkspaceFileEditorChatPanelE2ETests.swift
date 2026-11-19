@@ -51,7 +51,7 @@ final class WorkspaceFileEditorChatPanelE2ETests: E2ETestCase {
         let done = app.buttons["workspace-file-editor.done"]
         XCTAssertTrue(done.waitForExistence(timeout: 5), "editing in the chat Files panel has no Done")
         XCTAssertTrue(app.buttons["workspace-file-editor.preview-toggle"].exists, "editing in the chat Files panel has no Preview")
-        let shot = XCTAttachment(screenshot: app.screenshot())
+        let shot = XCTAttachment(uprightScreenshot: app.screenshot())
         shot.name = "chat-files-editor-bar"
         shot.lifetime = .keepAlways
         add(shot)

@@ -128,7 +128,7 @@ final class PaneRestoreUITests: XCTestCase, PreviewUITestCase {
     /// The screen's capture, not the app's: in landscape `app.screenshot()`
     /// draws the iPad's interface sideways into a clipped portrait canvas.
     private func attachScreenCapture(_ name: String) {
-        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        let attachment = XCTAttachment(uprightScreenshot: XCUIScreen.main.screenshot())
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)

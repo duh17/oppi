@@ -180,7 +180,7 @@ final class QAVerificationExecutor {
             let treeURL = directory.appendingPathComponent("\(self.receipt.journeyId)-\(name).txt")
             let screenshot = self.app.screenshot()
             do {
-                try screenshot.pngRepresentation.write(to: pngURL, options: .atomic)
+                try screenshot.uprightPNG.write(to: pngURL, options: .atomic)
                 try self.app.debugDescription.write(to: treeURL, atomically: true, encoding: .utf8)
             } catch {
                 self.receipt.collectorHealth = "failed"
@@ -188,7 +188,7 @@ final class QAVerificationExecutor {
             }
             self.receipt.artifacts.append(pngURL.path)
             self.receipt.artifacts.append(treeURL.path)
-            let attachment = XCTAttachment(screenshot: screenshot)
+            let attachment = XCTAttachment(uprightScreenshot: screenshot)
             attachment.name = name
             attachment.lifetime = .keepAlways
             XCTContext.runActivity(named: "evidence \(name)") { activity in

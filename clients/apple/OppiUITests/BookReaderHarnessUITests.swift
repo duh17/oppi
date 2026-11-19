@@ -524,7 +524,7 @@ final class BookReaderHarnessUITests: XCTestCase {
     private func capture(_ name: String) {
         waitUntilThePageIsStill()
         let screenshot = app.screenshot()
-        let attachment = XCTAttachment(screenshot: screenshot)
+        let attachment = XCTAttachment(uprightScreenshot: screenshot)
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
@@ -533,7 +533,7 @@ final class BookReaderHarnessUITests: XCTestCase {
             ?? environment["OPPI_BOOK_SHOTS"],
             !directory.isEmpty else { return }
         try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
-        try? screenshot.pngRepresentation.write(
+        try? screenshot.uprightPNG.write(
             to: URL(fileURLWithPath: directory).appendingPathComponent("\(name).png"),
             options: .atomic
         )

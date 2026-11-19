@@ -112,7 +112,7 @@ final class PaneResizeSmoothnessUITests: XCTestCase {
         for dx in [-width * 0.12, width * 0.12, -width * 0.08] {
             drags.append(drag(by: dx))
         }
-        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        let screenshot = XCTAttachment(uprightScreenshot: app.screenshot())
         screenshot.name = "after-drags"
         screenshot.lifetime = .keepAlways
         add(screenshot)
@@ -182,7 +182,7 @@ final class PaneResizeSmoothnessUITests: XCTestCase {
             "detached-reader",
             "rows_before=\(before.count) rows_kept=\(moved.count) least_moved=\(moved.min() ?? .nan) reflows=\(measured.number("reflows"))"
         )
-        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        let screenshot = XCTAttachment(uprightScreenshot: app.screenshot())
         screenshot.name = "detached-reader-after-drag"
         screenshot.lifetime = .keepAlways
         add(screenshot)

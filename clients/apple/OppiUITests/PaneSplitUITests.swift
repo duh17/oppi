@@ -924,7 +924,7 @@ final class PaneSplitUITests: XCTestCase, PreviewUITestCase {
     /// The screen's capture: in landscape `app.screenshot()` draws the iPad
     /// sideways into a portrait canvas.
     private func attachScreenCapture(_ name: String) {
-        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        let attachment = XCTAttachment(uprightScreenshot: XCUIScreen.main.screenshot())
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)

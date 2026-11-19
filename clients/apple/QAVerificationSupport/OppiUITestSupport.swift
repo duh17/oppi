@@ -110,7 +110,7 @@ extension PreviewUITestCase where Self: XCTestCase {
 
     /// Keeps a screenshot of the app's current state in the result bundle.
     func attachScreenshot(_ name: String) {
-        let attachment = XCTAttachment(screenshot: app.screenshot())
+        let attachment = XCTAttachment(uprightScreenshot: app.screenshot())
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)

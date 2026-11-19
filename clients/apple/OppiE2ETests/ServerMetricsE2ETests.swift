@@ -55,13 +55,13 @@ final class ServerMetricsE2ETests: E2ETestCase {
         )
 
         let screenshot = app.screenshot()
-        let attachment = XCTAttachment(screenshot: screenshot)
+        let attachment = XCTAttachment(uprightScreenshot: screenshot)
         attachment.name = "server-metrics"
         attachment.lifetime = .keepAlways
         add(attachment)
         let directory = URL(fileURLWithPath: "/tmp/oppi-screenshots", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try? screenshot.pngRepresentation.write(
+        try? screenshot.uprightPNG.write(
             to: directory.appendingPathComponent("server-metrics.png"),
             options: .atomic
         )

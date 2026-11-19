@@ -246,13 +246,13 @@ final class ReaderHeadingNavigationUITests: XCTestCase, PreviewUITestCase {
     private func saveScreenshot(name: String) {
         let device = UIDevice.current.userInterfaceIdiom == .pad ? "ipad" : "iphone"
         let screenshot = app.screenshot()
-        let attachment = XCTAttachment(screenshot: screenshot)
+        let attachment = XCTAttachment(uprightScreenshot: screenshot)
         attachment.name = "\(device)-\(name)"
         attachment.lifetime = .keepAlways
         add(attachment)
         // Each suite writes only to its own folder in the shared screenshot directory.
         let directory = URL(fileURLWithPath: "/tmp/oppi-screenshots/reader-headings", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try? screenshot.pngRepresentation.write(to: directory.appendingPathComponent("\(device)-\(name).png"), options: .atomic)
+        try? screenshot.uprightPNG.write(to: directory.appendingPathComponent("\(device)-\(name).png"), options: .atomic)
     }
 }

@@ -99,12 +99,12 @@ final class FileBrowserPanesUITests: XCTestCase, PreviewUITestCase {
     /// draws the iPad's interface sideways into a clipped canvas.
     private func save(_ name: String) {
         let screenshot = XCUIScreen.main.screenshot()
-        let attachment = XCTAttachment(screenshot: screenshot)
+        let attachment = XCTAttachment(uprightScreenshot: screenshot)
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
         try? FileManager.default.createDirectory(atPath: Self.screenshotDirectory, withIntermediateDirectories: true)
-        try? screenshot.pngRepresentation.write(
+        try? screenshot.uprightPNG.write(
             to: URL(fileURLWithPath: "\(Self.screenshotDirectory)/\(name).png"),
             options: .atomic
         )

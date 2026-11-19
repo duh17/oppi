@@ -36,13 +36,13 @@ final class SSHTerminalRexLivePanesUITests: XCTestCase {
 
     private func attachScreenshot(_ name: String) {
         let shot = app.screenshot()
-        let attachment = XCTAttachment(screenshot: shot)
+        let attachment = XCTAttachment(uprightScreenshot: shot)
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
         if let directory = ProcessInfo.processInfo.environment["OPPI_BAR_SHOTS"] {
             try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
-            try? shot.pngRepresentation.write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(name).png"))
+            try? shot.uprightPNG.write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(name).png"))
         }
     }
 

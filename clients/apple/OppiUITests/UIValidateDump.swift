@@ -68,7 +68,7 @@ enum UIValidateDump {
             // A directory reused from an audited run must not keep a stale audit.md.
             try? FileManager.default.removeItem(at: auditURL)
         }
-        try screenshot.pngRepresentation.write(to: directory.appendingPathComponent("screen.png"))
+        try screenshot.uprightPNG.write(to: directory.appendingPathComponent("screen.png"))
 
         let files = (["tree.md"] + (audit == nil ? [] : ["audit.md"]) + ["screen.png"])
             .map(jsonString).joined(separator: ", ")

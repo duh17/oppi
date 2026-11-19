@@ -563,7 +563,7 @@ final class GodotPaneUITests: XCTestCase, PreviewUITestCase {
         let environment = ProcessInfo.processInfo.environment
         let suffix = environment["OPPI_GODOT_PANE_SHOTS_SUFFIX"].map { "-\($0)" } ?? ""
         let screenshot = XCUIScreen.main.screenshot()
-        let attachment = XCTAttachment(screenshot: screenshot)
+        let attachment = XCTAttachment(uprightScreenshot: screenshot)
         attachment.name = name + suffix
         attachment.lifetime = .keepAlways
         add(attachment)

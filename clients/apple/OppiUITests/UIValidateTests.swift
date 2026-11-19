@@ -79,7 +79,7 @@ final class UIValidateTests: XCTestCase {
             .split(separator: ",").map(String.init) ?? []
         if !taps.isEmpty {
             try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
-            try XCUIScreen.main.screenshot().pngRepresentation.write(to: outputDir.appendingPathComponent("step-0.png"))
+            try XCUIScreen.main.screenshot().uprightPNG.write(to: outputDir.appendingPathComponent("step-0.png"))
         }
         for (index, identifier) in taps.enumerated() {
             let point = identifier.split(separator: ":").compactMap { Double($0) }
@@ -125,7 +125,7 @@ final class UIValidateTests: XCTestCase {
                 }
             }
             _ = try app.snapshot() // Wait for the resulting UI state to settle.
-            try XCUIScreen.main.screenshot().pngRepresentation.write(to: outputDir.appendingPathComponent("step-\(index + 1).png"))
+            try XCUIScreen.main.screenshot().uprightPNG.write(to: outputDir.appendingPathComponent("step-\(index + 1).png"))
         }
 
         let snapshot = try app.snapshot()

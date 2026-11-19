@@ -1161,7 +1161,7 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         }
         // The screen, not the app's own screenshot, which comes out cut and turned in landscape.
         func shoot(_ name: String) {
-            let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            let attachment = XCTAttachment(uprightScreenshot: XCUIScreen.main.screenshot())
             attachment.name = name
             attachment.lifetime = .keepAlways
             add(attachment)

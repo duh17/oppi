@@ -291,7 +291,7 @@ final class AskCardIntentUITests: XCTestCase, PreviewUITestCase {
     }
 
     private func saveScreenshot(name: String) {
-        let attachment = XCTAttachment(screenshot: app.screenshot())
+        let attachment = XCTAttachment(uprightScreenshot: app.screenshot())
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
@@ -299,6 +299,6 @@ final class AskCardIntentUITests: XCTestCase, PreviewUITestCase {
         let dir = "/tmp/oppi-screenshots"
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         let path = "\(dir)/\(name).png"
-        try? app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: path))
+        try? app.screenshot().uprightPNG.write(to: URL(fileURLWithPath: path))
     }
 }

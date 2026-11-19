@@ -532,7 +532,7 @@ final class ReaderTaskEditUITests: XCTestCase, PreviewUITestCase {
 
     private func saveScreenshot(name: String) {
         let screenshot = app.screenshot()
-        let attachment = XCTAttachment(screenshot: screenshot)
+        let attachment = XCTAttachment(uprightScreenshot: screenshot)
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
@@ -540,6 +540,6 @@ final class ReaderTaskEditUITests: XCTestCase, PreviewUITestCase {
         // The shared screenshot directory also holds other sessions' captures: write only to this suite's own folder.
         let directory = URL(fileURLWithPath: "/tmp/oppi-screenshots/reader-interactive", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try? screenshot.pngRepresentation.write(to: directory.appendingPathComponent("\(name).png"), options: .atomic)
+        try? screenshot.uprightPNG.write(to: directory.appendingPathComponent("\(name).png"), options: .atomic)
     }
 }

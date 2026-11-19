@@ -310,7 +310,7 @@ final class ScheduleCalendarUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(pastRun(named: "Weekday job hunt").waitUntilExists(timeout: 5), "The morning's runs show in landscape")
         // The whole screen: an app screenshot of a landscape iPad comes out on a portrait
         // canvas, half of it black.
-        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        let attachment = XCTAttachment(uprightScreenshot: XCUIScreen.main.screenshot())
         attachment.name = "landscape"
         attachment.lifetime = .keepAlways
         add(attachment)
@@ -443,7 +443,7 @@ final class ScheduleCalendarUITests: XCTestCase, PreviewUITestCase {
     /// The whole screen, so a landscape iPad comes out the right way up (an app screenshot
     /// of a landscape iPad lands on a portrait canvas).
     private func capture(_ name: String) {
-        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        let attachment = XCTAttachment(uprightScreenshot: XCUIScreen.main.screenshot())
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)

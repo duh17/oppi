@@ -328,14 +328,14 @@ final class ChatTimelineE2ETests: E2ETestCase {
 
     private func attachQuietTimelineEvidence(name: String) {
         let screenshot = app.screenshot()
-        let attachment = XCTAttachment(screenshot: screenshot)
+        let attachment = XCTAttachment(uprightScreenshot: screenshot)
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
 
         let directory = URL(fileURLWithPath: "/tmp/oppi-screenshots", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try? screenshot.pngRepresentation.write(
+        try? screenshot.uprightPNG.write(
             to: directory.appendingPathComponent("\(name).png"),
             options: .atomic
         )

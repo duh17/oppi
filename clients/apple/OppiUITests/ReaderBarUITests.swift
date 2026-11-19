@@ -193,11 +193,11 @@ final class ReaderBarUITests: XCTestCase, PreviewUITestCase {
         let screenshot = XCUIScreen.main.screenshot()
         let model = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] ?? "device"
         let file = "\(model)-\(name)"
-        let attachment = XCTAttachment(screenshot: screenshot)
+        let attachment = XCTAttachment(uprightScreenshot: screenshot)
         attachment.name = file
         attachment.lifetime = .keepAlways
         add(attachment)
         try? FileManager.default.createDirectory(atPath: Self.screenshotDirectory, withIntermediateDirectories: true)
-        try? screenshot.pngRepresentation.write(to: URL(fileURLWithPath: "\(Self.screenshotDirectory)/\(file).png"), options: .atomic)
+        try? screenshot.uprightPNG.write(to: URL(fileURLWithPath: "\(Self.screenshotDirectory)/\(file).png"), options: .atomic)
     }
 }

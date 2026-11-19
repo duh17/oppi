@@ -1519,7 +1519,7 @@ class E2ETestCase: XCTestCase {
 
     func recordLifecycleCycleFailure(scenario: String, cycle: Int, message: String) {
         XCTContext.runActivity(named: "\(scenario) lifecycle cycle \(cycle) failure") { activity in
-            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            let screenshot = XCTAttachment(uprightScreenshot: app.screenshot())
             screenshot.name = "\(scenario)-cycle-\(cycle)"
             screenshot.lifetime = .keepAlways
             activity.add(screenshot)
