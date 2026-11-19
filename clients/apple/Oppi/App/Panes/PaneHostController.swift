@@ -633,7 +633,9 @@ final class PaneHostController: UIViewController {
         animateWidth(to: 0, initialVelocity: 0, completion: finish)
     }
 
-    private func removeChild(_ controller: UIViewController) {
+    /// Unmounts a leaf and forgets what its screens were told, so a later
+    /// leaf at the same address starts with nothing heard.
+    func removeChild(_ controller: UIViewController) {
         reported[ObjectIdentifier(controller)] = nil
         guard controller.parent === self else { return }
         controller.willMove(toParent: nil)

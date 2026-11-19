@@ -336,9 +336,7 @@ extension PaneHostController {
         for id in splitLeaves.keys where !ids.contains(id) {
             guard let leaf = splitLeaves.removeValue(forKey: id) else { continue }
             Router.endSearch(in: leaf.controller) {}
-            leaf.controller.willMove(toParent: nil)
-            leaf.controller.view.removeFromSuperview()
-            leaf.controller.removeFromParent()
+            removeChild(leaf.controller)
             grips.removeValue(forKey: id)?.removeFromSuperview()
         }
         for leaf in leaves {
