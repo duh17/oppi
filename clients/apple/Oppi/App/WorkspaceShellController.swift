@@ -365,6 +365,11 @@ final class WorkspaceSplitController: UISplitViewController, UISplitViewControll
         }
         guard preferredDisplayMode != mode else { return }
         if animated {
+            // Only the columns move. What the same update put in the detail
+            // column (opening a chat replaces its root) takes its frames
+            // first; laid out inside the animation, a new screen would grow
+            // out of its first frame, from a corner, along with the columns.
+            view.layoutIfNeeded()
             UIView.animate(withDuration: 0.3) { self.preferredDisplayMode = mode }
         } else {
             preferredDisplayMode = mode
