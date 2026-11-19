@@ -1670,6 +1670,11 @@ final class ChatSessionManager {
                 sessionId: sessionId
             )
             if !consumed, let row = TimelineClientRow.commandResult(command: command, success: success, error: error) {
+                // A durable /compact that fails reports no compaction, so nothing else ends the
+                // "Compacting context..." row the Compact action showed; its error replaces it.
+                if command == "compact", !success {
+                    reducer.process(.compactionAbandoned(sessionId: sessionId))
+                }
                 showConversationClientRow(row)
             }
         default:

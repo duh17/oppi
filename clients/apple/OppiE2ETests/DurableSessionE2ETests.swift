@@ -150,7 +150,8 @@ final class DurableSessionE2ETests: E2ETestCase {
         selectBusyMode("followUp")
         sendWhileBusy(followUp)
         let queue = queuePill
-        XCTAssertTrue(waitForValue(queue, containing: "0 steering \u{2022} 1 follow-up", timeout: 15), "The follow-up did not queue")
+        // The pill counts only what is queued: no steering part when nothing steers.
+        XCTAssertTrue(waitForValue(queue, containing: "1 follow-up", timeout: 15), "The follow-up did not queue")
 
         // The route answers once the dropped sockets closed and released their subscriptions,
         // so the subscriber that follows is the app's new socket.

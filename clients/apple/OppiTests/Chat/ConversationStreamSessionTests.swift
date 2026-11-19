@@ -88,6 +88,33 @@ struct ConversationStreamSessionTests {
         await harness.finish()
     }
 
+    @Test func failedCompactReplacesTheCompactingRowWithItsError() async throws {
+        let harness = Harness()
+        await harness.connect()
+        let attach = try await harness.attach(1)
+        harness.yield(.commandResult(command: "attach", requestId: attach.requestId, success: true, data: nil, error: nil))
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [Wire.user(1, "hi")], docs: [:])))
+        #expect(await harness.waitForRows(["1"]))
+
+        // The Compact action shows its row at once; the durable compaction then fails.
+        let reducer = harness.manager.reducer
+        reducer.process(.compactionStart(sessionId: harness.sessionId, reason: "manual"))
+        harness.yield(.commandResult(
+            command: "compact", requestId: nil, success: false, data: nil,
+            error: "Server durable compaction did not produce a summary"
+        ))
+        await harness.sync()
+
+        let messages = reducer.items.compactMap { item -> String? in
+            switch item {
+            case .systemEvent(_, let message), .error(_, let message): message
+            default: nil
+            }
+        }
+        #expect(messages == ["compact failed: Server durable compaction did not produce a summary"])
+        await harness.finish()
+    }
+
     @Test func appendOnlyUpdateLoadsIncrementallyAndLiveFramesLeaveCommittedRowsAlone() async throws {
         let harness = Harness()
         await harness.connect()
