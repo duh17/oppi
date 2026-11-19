@@ -1183,7 +1183,11 @@ describe("durable-native threads", () => {
     await harness.abortTask(retired!, context);
     await f.manager.stopSession(f.parent.id);
     await f.manager.startSession(f.parent.id, f.workspace);
-    await until(async () => (await widgetTask()) !== retired, "a new watcher");
+    // A watcher, not merely none: an aborted task reads as no watcher for a moment.
+    await until(async () => {
+      const current = await widgetTask();
+      return current !== undefined && current !== retired;
+    }, "a new watcher");
     await ask("Spawn kept", 2);
     // Gone's Session is deleted: its conversation id comes from the children list.
     const children = (await harness.snapshot(Subagents, parentConversation, context))!.children;
