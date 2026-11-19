@@ -1473,19 +1473,30 @@ sleep 30
     expect(result.summary.elapsed_seconds).toBeLessThan(15);
   });
 
-  test("a lingering passed XCTest run collects no diagnostics, so it keeps the plain completion wait", () => {
+  // A passing UI run collects no diagnostics, but xcodebuild still writes the bundle after the
+  // summary, longer than the completion wait on a loaded host. Stopping it then left gate shards
+  // with an unreadable xcresult and no counts.
+  test("a lingering passed XCTest run is stopped only after it finishes writing its result bundle", () => {
     const result = runCompletionFixture(xctestE2E(0), {
       args: e2eArgs,
       listed: { "ChatE2ETests/testSend()": "Passed" },
       unfinishedBundle: true,
-      afterLog: "exec /bin/sleep 120",
-      env: { OPPI_SIM_POOL_RESULT_TIMEOUT: "60" },
-      timeoutMs: 90_000,
+      // Ten completion waits; the run's 2-second silence window passes too while it writes.
+      afterLog: `/bin/sleep 10; : > "$bundle/Info.plist"; exec /bin/sleep 30`,
+      env: { OPPI_SIM_POOL_RESULT_TIMEOUT: "60", OPPI_SIM_POOL_SILENCE_TIMEOUT: "2" },
+      timeoutMs: 60_000,
     });
-    expect(result.run.stderr).not.toContain("xcodebuild is still writing");
-    expect(result.run.stderr).toMatch(/completion hang: .* xcodebuild still alive after [12]s/);
-    expect(result.summary).toMatchObject({ completion_hang_detected: true, test_completion: { outcome: "passed", tests: 1 } });
-    expect(result.summary.elapsed_seconds).toBeLessThan(15);
+    expect(result.run.status).toBe(0);
+    expect(result.summary).toMatchObject({
+      exit_code: 0, attempt_count: 1, completion_hang_detected: true,
+      test_completion: { outcome: "passed", tests: 1 },
+      test_results: { result: "Passed", total: 1, passed: 1, failed: 0, bundle: expect.stringMatching(/Run\.xcresult$/) },
+    });
+    expect(result.run.stdout).toContain("Tests: 1 (1 passed, 0 failed, 0 skipped); xcresult Passed");
+    expect(result.run.stderr).toContain("xcodebuild is still writing");
+    // Stopped once the bundle was written, well before the result wait ran out.
+    expect(result.summary.elapsed_seconds).toBeGreaterThanOrEqual(10);
+    expect(result.summary.elapsed_seconds).toBeLessThan(40);
   });
 
   test("silent build that keeps the CPU busy is progress, not a hang", () => {

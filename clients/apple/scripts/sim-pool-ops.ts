@@ -1508,13 +1508,13 @@ function attemptBundle(argv: string[], derivedData: string, startedMs: number): 
 export const RESULT_TIMEOUT_SECONDS = 660;
 
 /**
- * This attempt's result bundle while xcodebuild is still writing it (no Info.plist yet), when it
- * collects diagnostics: always, or by default (on-failure) after a failed run. A passing run collects
- * none, so a lingering one keeps the plain completion wait.
+ * This attempt's result bundle while xcodebuild is still writing it (no Info.plist yet), whatever
+ * the outcome. A passing UI run collects no diagnostics, but xcodebuild still writes the bundle
+ * after the summary: about 1-16 s on an idle host, and gate shards stopped at the 30 s completion
+ * wait were left with no Info.plist. The bundle being written is the signal, so it is waited for
+ * rather than a longer fixed wait; a bundle that is written ends the wait at once.
  */
-function bundleStillWriting(argv: string[], outcome: TestCompletion["outcome"], derivedData: string, startedMs: number): string | undefined {
-  const diagnostics = extractFlagValue("-collect-test-diagnostics", argv) ?? "on-failure";
-  if (diagnostics !== "always" && !(diagnostics === "on-failure" && outcome === "failed")) return undefined;
+function bundleStillWriting(argv: string[], derivedData: string, startedMs: number): string | undefined {
   const bundle = attemptBundle(argv, derivedData, startedMs);
   return "path" in bundle && !existsSync(join(bundle.path, "Info.plist")) ? bundle.path : undefined;
 }
@@ -1788,7 +1788,7 @@ async function runXcodebuildAttempt(input: {
     if (completion && nowMs - completionSince >= completionWait * 1000) {
       const waited = Math.round((nowMs - completionSince) / 1000);
       const writing = nowMs - completionSince < input.config.resultTimeout * 1000
-        ? bundleStillWriting(input.argv, completion.outcome, input.derivedData, attemptStartedMs) : undefined;
+        ? bundleStillWriting(input.argv, input.derivedData, attemptStartedMs) : undefined;
       if (writing === undefined) {
         log(`[sim-pool] completion hang: ${completion.summary} — xcodebuild still alive after ${waited}s; stopping owned group without retry (pid ${spawned.owned.pid})`);
         hung = true;
