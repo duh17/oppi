@@ -219,6 +219,71 @@ final class DurableSubagentE2ETests: E2ETestCase {
         try shot("dark-whole")
     }
 
+    /// A long task brief opened on a working child's tail is read from its top: the card stays where
+    /// the reader opened it while the child's bash output and reply arrive below.
+    func testOpenedTaskCardHoldsWhileTheChildWorks() throws {
+        guard E2ELabServerContext.durableSessions else {
+            throw XCTSkip("Needs e2e.sh --native --durable --faux-model")
+        }
+
+        createSession()
+        waitForWebSocketConnected()
+        let parentId = waitForFocusedSessionId(timeout: 20)
+        waitForAckedSubscription(sessionId: parentId, level: "full")
+        let brief = (1...10).map { step in
+            "\(step). Step \(step) of the brief: verify the finding before acting, keep the data rules, "
+                + "never read the real database, and report what ran with the exact command and its result."
+        }.joined(separator: "\\n\\n")
+        let ticks = "faux:bash for i in $(seq 1 14); do echo tick $i; sleep 1; done"
+        sendMessage("faux:subagent brief-reader You are working in your own git worktree.\\n\\n\(brief)\\n\(ticks)")
+
+        // The faux model streams the spawn call's long task at its token rate before the child exists.
+        expandNativeSurface(title: "Subagents", timeout: 120)
+        let openChild = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", Self.activityRowPrefix, ".link")
+        ).firstMatch
+        XCTAssertTrue(openChild.waitForExistence(timeout: 15), "The pill did not list the child")
+        let childId = String(openChild.identifier.dropFirst(Self.activityRowPrefix.count).dropLast(".link".count))
+        tap(openChild, named: "open button of the child row in the subagent pill")
+        XCTAssertEqual(waitForFocusedSessionId(childId, timeout: 20), childId, "The child did not open")
+        waitForAckedSubscription(sessionId: childId, level: "full")
+
+        let timeline = app.collectionViews["chat.timeline"]
+        let header = timeline.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "chat.agent-message.", ".header")
+        ).firstMatch
+        XCTAssertTrue(waitForElementToExist(header, timeout: 15), "The child's task card did not show")
+        // The chevron end: the sender's name in the middle opens the parent.
+        header.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        XCTAssertTrue(waitForValue(of: header, containing: "Expanded", timeout: 5), "The task card did not open")
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
+
+        // The chat landed on its tail, so the reader opened the brief there. Its top stays put while
+        // the child's bash finishes and its reply streams below.
+        XCTAssertTrue(app.buttons["chat.stop"].exists, "The child stopped before the reader opened the brief")
+        let readingY = header.frame.minY
+        XCTAssertTrue(
+            readingY >= timeline.frame.minY && readingY < timeline.frame.midY,
+            "The opened brief's top is not near the top of the chat: \(readingY)"
+        )
+        try saveLabScreenshot(name: "task-card-hold-top")
+        let deadline = Date().addingTimeInterval(30)
+        while Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+            XCTAssertEqual(
+                header.exists ? header.frame.minY : .nan, readingY, accuracy: 2,
+                "The task card moved while the child worked"
+            )
+        }
+        XCTAssertTrue(app.buttons["chat.stop"].exists, "The child stopped before the check ended")
+        try saveLabScreenshot(name: "task-card-hold-after")
+
+        // Below the brief, the child's work kept arriving.
+        for _ in 0..<4 { timeline.swipeUp(velocity: .fast) }
+        XCTAssertTrue(timelineShows(timeline, Self.replyStart, timeout: 10), "The child's reply did not arrive below the brief")
+        try saveLabScreenshot(name: "task-card-hold-tail")
+    }
+
     private func elementValue(_ element: XCUIElement) -> String {
         element.exists ? (element.value as? String) ?? "" : ""
     }

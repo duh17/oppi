@@ -59,6 +59,19 @@ extension ChatTimelineController {
     /// it. It is still an explicit ask for the top; keep going past it.
     func scrollViewDidScrollToTop(_ scrollView: UIScrollView) {
         earlierRowsRequestMark = nil
+        // The reader asked for the top, so they left the live tail as an
+        // upward drag does. Busy follow skipped this animated scroll; without
+        // the detach the next update pulled the viewport back to the bottom.
+        if let collectionView = scrollView as? UICollectionView {
+            updateLastDistanceFromBottom(collectionView)
+            if lastDistanceFromBottom > nearBottomExitThreshold {
+                scrollController?.detachFromBottomForUserScroll()
+                updateScrollState(collectionView, preserveDetachedState: true)
+                (collectionView as? AnchoredCollectionView)?.isDetachedFromBottom = true
+                (collectionView as? AnchoredCollectionView)?.captureDetachedAnchor()
+            }
+            updateDetachedStreamingHintVisibility()
+        }
         requestEarlierRowsIfNearTop(scrollView)
     }
 

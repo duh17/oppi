@@ -2219,6 +2219,24 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             )
         }
 
+        // Opening a row is reading it. When the opened row is so tall that
+        // following the live tail would carry its top above the viewport (a
+        // long task brief opened right after the chat lands on its tail), the
+        // reader has left the tail: detach as an upward drag does, so the next
+        // update holds the row instead of pulling the viewport to the bottom.
+        // A row whose top stays on screen at the tail keeps follow.
+        if scrollController?.isCurrentlyNearBottom == true,
+           let attrs = collectionView.layoutAttributesForItem(at: anchorIndexPath) {
+            let insets = collectionView.adjustedContentInset
+            let tailVisibleTopY = collectionView.contentSize.height
+                - collectionView.bounds.height + insets.bottom + insets.top
+            if attrs.frame.minY < tailVisibleTopY {
+                scrollController?.detachFromBottomForUserScroll()
+                updateLastDistanceFromBottom(collectionView)
+                updateDetachedStreamingHintVisibility()
+            }
+        }
+
         // Sync the detached flag on the AnchoredCollectionView so the
         // detached anchor system provides ongoing protection after the
         // expand/collapse anchor clears.

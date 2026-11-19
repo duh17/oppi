@@ -1,0 +1,1 @@
+- **Client:** Opening a long message card in a working chat, such as a subagent's task brief, or jumping to the top with a status-bar tap, now keeps your place while new tool calls and replies arrive, instead of pulling the chat back to the bottom.

@@ -108,6 +108,16 @@ describe("E2E faux provider", () => {
       { type: "toolCall", name: "bash", arguments: { command: "echo tick" } },
     ]);
 
+    // A one-line prompt hands over a multi-line brief whose last line the child acts on.
+    expect(
+      e2eFauxToolCalls(prompt("faux:subagent kid Read the brief.\\n\\nfaux:bash echo tick").messages),
+    ).toEqual([
+      {
+        name: "subagent",
+        arguments: { action: "spawn", name: "kid", task: "Read the brief.\n\nfaux:bash echo tick" },
+      },
+    ]);
+
     // A one-line prompt carries a multi-line script.
     expect(e2eFauxToolCalls(prompt("faux:codemode const a = 1;\\nreturn a;").messages)).toEqual([
       { name: "codemode", arguments: { code: "const a = 1;\nreturn a;" } },

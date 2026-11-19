@@ -46,7 +46,8 @@ export function e2eFauxReplyText(prompt: string): string {
  *
  * - `faux:bash <command>` calls `bash` with the command.
  * - `faux:subagent <name> <task>` spawns a background subagent with the task; a task that is
- *   itself a directive makes the child call that tool.
+ *   itself a directive makes the child call that tool. A literal `\n` in the task is a line
+ *   break, so a one-line prompt can hand over a long brief whose last line is the directive.
  * - `faux:subagent-wait <name> <task>` spawns it in the foreground: the call waits for its answer.
  * - `faux:subagents <name> <task> || <name> <task> ...` spawns several background subagents in
  *   one answer, as a model does when it delegates in parallel.
@@ -83,7 +84,12 @@ function directiveCall(line: string): FauxCall[] {
   }
   const [, mode, name, task] = /^faux:subagent(-wait)?\s+(\S+)\s+(.+)$/.exec(line) ?? [];
   if (!name || !task) return [];
-  const args = { action: "spawn", name, task, ...(mode ? { wait: true } : {}) };
+  const args = {
+    action: "spawn",
+    name,
+    task: task.replaceAll("\\n", "\n"),
+    ...(mode ? { wait: true } : {}),
+  };
   return [{ name: "subagent", arguments: args }];
 }
 
