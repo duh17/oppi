@@ -22,6 +22,7 @@ Part of [Oppi server architecture](../architecture-server.md). The convention fo
 
 - `surface()` (`durable-surface.ts`) keeps a panel's state per Session loop, so one module-level panel serves every chat.
 - `SessionHost.surfacesFor` is `oppiHost().surfaces(env)`: the loop plus the conversation's reads and commits, one object per loop.
+- Owner: `SessionSurfaces` (`session-surfaces.ts`), one per live Session, stopped with it; its `ExtensionSurfaceRuntime` runs publish, act, and patch. Clients draw the shape their `client_capabilities` declare. Neither names a plugin.
 - Surfaces are memory only; never persist them. On attach, `DurableBackend.restoreSurfaces` syncs the panels selected extensions list in `surfaces`.
 - `tsconfig.v1-types.json` emits `oppi/v1`'s declarations; exported types must be nameable from public exports (`tests/plugin-types.test.ts`).
 
@@ -39,10 +40,10 @@ An entry with no `model` and a `data.card` (`TranscriptCard`, `sanitizeTranscrip
 
 - The native extension replaces CodingTools bash (durable later-wins rule) and offers `background_job start/cancel`.
 - Each execution is a conversation-owned task; a memo claims it before the shell starts, so after a restart or shutdown a claimed, unfinished execution reports `interrupted` and never reruns (the report warns the old process may still run; SIGKILL cannot run cleanup).
-- Reporting persists the result, then submits a follow-up under the stable `background-job:<id>` request id and finishes once admitted (pi-durable's `23-subagent-background` pattern). Stop can discard a queued report; it is never resubmitted under another id. Clients cannot use the reporter namespace for `clientTurnId`.
+- Reporting persists the result, then submits a follow-up under the stable `background-job:<id>` request id and finishes once admitted (pattern cited in `server.ts`). Stop can discard a queued report; it is never resubmitted under another id. Clients cannot use the reporter namespace for `clientTurnId`.
 - A card in `oppi.input-cards` (generic display metadata, keyed by request id) marks the report as generated input: outside the editable queue and `get_messages`, kept by queue replacement, drawn as a card in history.
 - Output (the last 64,000 characters) is saved at completion in the task-scoped `oppi.background-job-output` document, retired when the runner settles, so output stays only in the transcript. The panel's live tail (`liveTails`) is memory only. Ordinary Stop preserves background jobs.
-- `background-jobs/panel.ts` owns the job panel: `load` reads `DurableJobs`; Stop commits `cancelRequested`. `server.ts` syncs it after each job change, on runner resume, and from each running job's one-second check (at most every 2 s, `LIVE_REDRAW_MS`). With no job to show it always dismisses: after `/reload` the panel object is new and never drew what it must clear. The classic `index.ts` keeps its v1 widget.
+- `background-jobs/panel.ts` owns the job panel: `load` reads `DurableJobs`; Stop commits `cancelRequested`. `server.ts` syncs it; its redraw pace and unconditional dismissal are commented at `LIVE_REDRAW_MS` and `loadPanel`. The classic `index.ts` keeps its v1 widget.
 
 ## Input-card output
 
