@@ -702,6 +702,16 @@ extension ChatTimelineController {
         )
     }
 
+    /// Every row whose cell kind changed (`cellKindChanged`), whether or not
+    /// an apply counted it as changed. A cell UIKit kept for a row that just
+    /// scrolled off screen comes back without the data source, or through the
+    /// cell provider as a reconfigure when a redraw is pending, which throws
+    /// for a changed kind; reloading the row drops that cell. A full apply
+    /// reloads these rows once, then forgets the ones left without a cell.
+    func cellKindChangedIDs() -> [String] {
+        dequeuedCellKindByID.keys.filter(cellKindChanged)
+    }
+
     // MARK: - Cell Configuration Helpers
 
     private func configureNativeCell(

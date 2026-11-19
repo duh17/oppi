@@ -1489,6 +1489,13 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         currentItemByID = applyPlan.nextItemByID
 
         var forceReconfigureIDs = Array(toolArgsChangedIDs)
+        // While streaming, the change scan compares only rows expected to
+        // change, so a row that changes kind (a card gaining terminal output)
+        // can go uncounted. Its kept off-screen cell would then come back as
+        // the old kind, or throw if a redraw was pending. Reloaded once:
+        // cleared below when the reload leaves the row without a cell.
+        let kindChangedIDs = cellKindChangedIDs()
+        forceReconfigureIDs += kindChangedIDs
         // A line that starts or stops being the working row keeps its ID; redraw it.
         if currentWorkingRowLineID != applyPlan.workingRowLineID {
             forceReconfigureIDs += [currentWorkingRowLineID, applyPlan.workingRowLineID]
@@ -1566,6 +1573,13 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             cellKindChanged: cellKindChanged,
             willReconfigure: { (collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout)?.contentDidChange(for: $0) }
         )
+        // The reload dropped each row's cell. A row UIKit did not dequeue
+        // again still holds its old kind and has no cell to reload, so forget
+        // it. Only after the apply: a cleared entry before it would turn the
+        // reload into a reconfigure.
+        for id in kindChangedIDs where cellKindChanged(id) {
+            dequeuedCellKindByID[id] = nil
+        }
 
         previousItemByID = applyPlan.nextItemByID
         previousWorkLineByID = applyPlan.nextWorkLineByID

@@ -424,7 +424,8 @@ func makeTimelineHarness(sessionId: String) -> TimelineTestHarness {
 func makeWindowedTimelineHarness(
     sessionId: String,
     frame: CGRect = CGRect(x: 0, y: 0, width: 390, height: 844),
-    useAnchoredCollectionView: Bool = true
+    useAnchoredCollectionView: Bool = true,
+    window sceneWindow: UIWindow? = nil
 ) -> WindowedTimelineHarness {
     // Tool rows grow a one-time tip banner while the app's persisted tip state says the tip was never shown
     // (UserDefaults `oppi.featureEducationTips.shownTipIDs.v1`). On an app freshly installed on the
@@ -442,7 +443,7 @@ func makeWindowedTimelineHarness(
     for descriptor in [FeatureEducationTips.openToolDetails, FeatureEducationTips.toolOutputShortcuts] {
         FeatureEducationTipPresentationStore.standard.markShown(id: descriptor.id)
     }
-    let window = makeTestWindow(frame: frame)
+    let window = sceneWindow ?? makeTestWindow(frame: frame)
     let layout = ChatTimelineController.makeTestLayout()
     let collectionView: UICollectionView
 

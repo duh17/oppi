@@ -1,1 +1,1 @@
-- **Client:** The app no longer crashes when a chat row changes kind while it stays on screen or just below it, for example a note that turns into a compaction marker. The row redraws as its new kind.
+- **Client:** The app no longer crashes when a chat row changes kind while it is on screen or just off it, above or below, for example a note that turns into a compaction marker or a card that gains terminal output while a reply streams. The row redraws as its new kind.
