@@ -871,11 +871,16 @@ extension ChatViewController {
         let originalPendingRepoPointers = composerDraftController.repoPointers
         let timelineItems = reducer.items
         // Staged comments travel as context items; the server renders them for the model.
-        let context = reviewComments.contextItems(
-            pathFormatting: reviewCommentPathFormatting,
-            currentSourceRevision: { comment in
-                SemanticCommentFreshness.currentRevision(for: comment, timelineItems: timelineItems)
-            }
+        // TEMPORARY older-server fallback: see `ReviewCommentsTextFallback`, removed next release.
+        let (promptText, context) = ReviewCommentsTextFallback.prompt(
+            text: originalInputText,
+            context: reviewComments.contextItems(
+                pathFormatting: reviewCommentPathFormatting,
+                currentSourceRevision: { comment in
+                    SemanticCommentFreshness.currentRevision(for: comment, timelineItems: timelineItems)
+                }
+            ),
+            capabilities: connection.serverCapabilities
         )
         // A server that takes no context items, or comments past its limits, stops the send
         // here: nothing is sent, and the draft and comments stay as they are.
@@ -883,7 +888,7 @@ extension ChatViewController {
             connection.extensionToast = refusal
             return
         }
-        let text = PendingFileReference.appendReferenceBlock(to: originalInputText, files: originalPendingRepoPointers)
+        let text = PendingFileReference.appendReferenceBlock(to: promptText, files: originalPendingRepoPointers)
         let stagedReviewCommentIds = reviewComments.stagedCommentIds
         // Held past this chat: the ack can land after it is gone.
         let sentReviewComments = reviewComments
@@ -921,7 +926,7 @@ extension ChatViewController {
                 self.model.attachmentUploads = nil
                 self.model.uploadedAttachmentRefs = [:]
                 let optimisticDisplayText = UserMessageAttachmentPresentation.makeDisplayText(
-                    text: originalInputText,
+                    text: promptText,
                     pendingAttachments: sourceAttachments,
                     pendingRepoPointers: originalPendingRepoPointers,
                     uploadedAttachments: attachments
