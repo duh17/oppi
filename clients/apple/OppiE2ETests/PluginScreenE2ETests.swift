@@ -144,7 +144,16 @@ final class PluginScreenE2ETests: E2ETestCase {
         XCTAssertTrue(app.staticTexts["screen.\(entry).list.state"].waitForExistence(timeout: 10), "No empty search state")
         // Clear the query (an iPad's bar search has no Cancel).
         tap(search.buttons["Clear text"], named: "Clear search")
-        XCTAssertTrue(row.waitForExistence(timeout: 10), "Ending the search did not bring the rows back")
+        XCTAssertTrue(
+            app.staticTexts["screen.\(entry).list.state"].waitForNonExistence(timeout: 10),
+            "Ending the search left the empty search state"
+        )
+        // An iPhone's field keeps focus and its keyboard stays up, so the Skill's row can sit
+        // below the fold, unbuilt until the list scrolls to it.
+        XCTAssertTrue(
+            scrollToElement(row, in: app.collectionViews["screen.\(entry).list.list"], timeout: 30),
+            "Ending the search did not bring the rows back"
+        )
 
         // The Skill's switch writes Pi's settings and the page follows.
         tap(row, named: "release-checklist")
