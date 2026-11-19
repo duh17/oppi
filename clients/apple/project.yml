@@ -582,6 +582,10 @@ targets:
         type: file
       - path: OppiCore/Client/CrossProcessFileLock.swift
         type: file
+      - path: OppiCore/Client/PairedServer.swift
+        type: file
+      - path: OppiCore/Client/TLSPinning.swift
+        type: file
       - path: Oppi/Core/Services/DeviceKeyStore.swift
         type: file
       - path: Oppi/Core/Services/DeviceKeyProvider.swift

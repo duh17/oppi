@@ -9,12 +9,14 @@ struct ShareQuickSessionSenderTests {
     /// writes that index.
     @Test func loadsOnlyIndexedServersAndNeverWritesTheIndex() throws {
         let serverID = "share-unindexed-\(UUID().uuidString)"
-        let server = try #require(ShareQuickSessionServer(
-            id: serverID,
-            name: "Unindexed Mac",
-            baseURL: URL(string: "https://mac.example:7749"),
-            token: "device-token",
-            tlsCertFingerprint: nil,
+        let server = try #require(PairedServer(
+            from: ServerCredentials(
+                host: "mac.example",
+                port: 7749,
+                token: "device-token",
+                name: "Unindexed Mac",
+                serverFingerprint: serverID
+            ),
             sortOrder: 7
         ))
         let account = "\(SharedConstants.serverAccountPrefix)\(serverID)"
@@ -54,12 +56,14 @@ struct ShareQuickSessionSenderTests {
             .json(200, #"{"workspaces":[{"id":"ws-1","name":"Oppi"}]}"#),
         ])
         let sender = ShareQuickSessionSender(transport: transport)
-        let server = try #require(ShareQuickSessionServer(
-            id: "server-1",
-            name: "Mac",
-            baseURL: URL(string: "https://mac.example:7749"),
-            token: "device-token",
-            tlsCertFingerprint: nil,
+        let server = try #require(PairedServer(
+            from: ServerCredentials(
+                host: "mac.example",
+                port: 7749,
+                token: "device-token",
+                name: "Mac",
+                serverFingerprint: "server-1"
+            ),
             sortOrder: 0
         ))
 
@@ -77,12 +81,14 @@ struct ShareQuickSessionSenderTests {
             .json(201, #"{"session":{"id":"session-1"},"prompted":true}"#),
         ])
         let sender = ShareQuickSessionSender(transport: transport)
-        let server = try #require(ShareQuickSessionServer(
-            id: "server-1",
-            name: "Mac",
-            baseURL: URL(string: "https://mac.example:7749"),
-            token: "device-token",
-            tlsCertFingerprint: nil,
+        let server = try #require(PairedServer(
+            from: ServerCredentials(
+                host: "mac.example",
+                port: 7749,
+                token: "device-token",
+                name: "Mac",
+                serverFingerprint: "server-1"
+            ),
             sortOrder: 0
         ))
         let workspace = ShareQuickSessionWorkspace(id: "ws-1", name: "Oppi", server: server)
@@ -114,12 +120,14 @@ struct ShareQuickSessionSenderTests {
             .json(200, #"{"messages":[]}"#),
         ])
         let sender = ShareQuickSessionSender(transport: transport)
-        let server = try #require(ShareQuickSessionServer(
-            id: "server-1",
-            name: "Mac",
-            baseURL: URL(string: "https://mac.example:7749"),
-            token: "device-token",
-            tlsCertFingerprint: nil,
+        let server = try #require(PairedServer(
+            from: ServerCredentials(
+                host: "mac.example",
+                port: 7749,
+                token: "device-token",
+                name: "Mac",
+                serverFingerprint: "server-1"
+            ),
             sortOrder: 0
         ))
         let workspace = ShareQuickSessionWorkspace(id: "ws-1", name: "Oppi", server: server)
@@ -158,12 +166,14 @@ struct ShareQuickSessionSenderTests {
             .json(413, #"{"error":"Upload exceeds this server's 1.0 KB file size limit (uploadStore.maxFileBytes)"}"#),
         ])
         let sender = ShareQuickSessionSender(transport: transport)
-        let server = try #require(ShareQuickSessionServer(
-            id: "server-1",
-            name: "Mac",
-            baseURL: URL(string: "https://mac.example:7749"),
-            token: "device-token",
-            tlsCertFingerprint: nil,
+        let server = try #require(PairedServer(
+            from: ServerCredentials(
+                host: "mac.example",
+                port: 7749,
+                token: "device-token",
+                name: "Mac",
+                serverFingerprint: "server-1"
+            ),
             sortOrder: 0
         ))
         let workspace = ShareQuickSessionWorkspace(id: "ws-1", name: "Oppi", server: server)
@@ -200,13 +210,15 @@ struct ShareQuickSessionSenderTests {
             expiresAt: Int64(Date().timeIntervalSince1970 * 1000) - 10_000, // already expired
             refreshChallenge: nil
         )
-        let server = try #require(ShareQuickSessionServer(
-            id: "server-1",
-            name: "Mac",
-            baseURL: URL(string: "https://mac.example:7749"),
-            token: "",
-            deviceCredential: credential,
-            tlsCertFingerprint: nil,
+        let server = try #require(PairedServer(
+            from: ServerCredentials(
+                host: "mac.example",
+                port: 7749,
+                token: "",
+                name: "Mac",
+                serverFingerprint: "server-1",
+                deviceCredential: credential
+            ),
             sortOrder: 0
         ))
 
@@ -275,13 +287,15 @@ struct ShareQuickSessionSenderTests {
             expiresAt: Int64(Date().timeIntervalSince1970 * 1000) + 3_600_000,
             refreshChallenge: nil
         )
-        let server = try #require(ShareQuickSessionServer(
-            id: "server-1",
-            name: "Mac",
-            baseURL: URL(string: "https://mac.example:7749"),
-            token: "dt_leftover",
-            deviceCredential: credential,
-            tlsCertFingerprint: nil,
+        let server = try #require(PairedServer(
+            from: ServerCredentials(
+                host: "mac.example",
+                port: 7749,
+                token: "dt_leftover",
+                name: "Mac",
+                serverFingerprint: "server-1",
+                deviceCredential: credential
+            ),
             sortOrder: 0
         ))
         let transport = ShareSenderStubTransport(responses: [
@@ -306,13 +320,15 @@ struct ShareQuickSessionSenderTests {
             expiresAt: Int64(Date().timeIntervalSince1970 * 1000) - 10_000,
             refreshChallenge: nil
         )
-        let server = try #require(ShareQuickSessionServer(
-            id: "server-1",
-            name: "Mac",
-            baseURL: URL(string: "https://mac.example:7749"),
-            token: "dt_leftover",
-            deviceCredential: credential,
-            tlsCertFingerprint: nil,
+        let server = try #require(PairedServer(
+            from: ServerCredentials(
+                host: "mac.example",
+                port: 7749,
+                token: "dt_leftover",
+                name: "Mac",
+                serverFingerprint: "server-1",
+                deviceCredential: credential
+            ),
             sortOrder: 0
         ))
         let transport = ShareSenderStubTransport(responses: [
@@ -344,13 +360,15 @@ struct ShareQuickSessionSenderTests {
             expiresAt: Int64(Date().timeIntervalSince1970 * 1000) - 10_000,
             refreshChallenge: nil
         )
-        let server = try #require(ShareQuickSessionServer(
-            id: "server-1",
-            name: "Mac",
-            baseURL: URL(string: "https://mac.example:7749"),
-            token: "dt_leftover",
-            deviceCredential: credential,
-            tlsCertFingerprint: nil,
+        let server = try #require(PairedServer(
+            from: ServerCredentials(
+                host: "mac.example",
+                port: 7749,
+                token: "dt_leftover",
+                name: "Mac",
+                serverFingerprint: "server-1",
+                deviceCredential: credential
+            ),
             sortOrder: 0
         ))
         let transport = ShareSenderStubTransport(responses: [

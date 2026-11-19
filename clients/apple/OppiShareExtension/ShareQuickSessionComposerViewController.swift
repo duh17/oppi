@@ -227,7 +227,7 @@ final class ShareQuickSessionComposerViewController: UIViewController, UITextVie
         workspaceButton.isEnabled = false
         workspaceButton.configuration?.title = "Loading workspaces…"
         updateSendEnabled()
-        let servers: [ShareQuickSessionServer]
+        let servers: [PairedServer]
         do {
             servers = try ShareQuickSessionCredentialStore.loadServers()
         } catch {
@@ -401,7 +401,7 @@ final class ShareQuickSessionComposerViewController: UIViewController, UITextVie
     /// The message refusing this share, or nil when this device allowed the provider of the
     /// server's default model. A catalog that does not load leaves the provider unnamed, which
     /// is refused too.
-    private static func sharingRefusal(sender: ShareQuickSessionSender, server: ShareQuickSessionServer) async -> String? {
+    private static func sharingRefusal(sender: ShareQuickSessionSender, server: PairedServer) async -> String? {
         let catalog = (try? await sender.fetchModelCatalog(server: server)) ?? []
         let recipient = AISharingConsent.Recipient.modelProvider(modelId: nil, catalog: catalog)
         if case .refuse(let message) = AISharingConsent.device.decide([recipient], serverId: server.id, canAsk: false) {

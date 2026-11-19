@@ -8,20 +8,6 @@ struct User: Codable, Sendable, Equatable {
     let name: String
 }
 
-enum ServerScheme: String, Codable, Sendable {
-    case http
-    case https
-
-    var websocketScheme: String {
-        switch self {
-        case .http:
-            "ws"
-        case .https:
-            "wss"
-        }
-    }
-}
-
 /// Connection credentials from QR code scan or deep link.
 ///
 /// Invite payload is decoded by `decodeInvitePayload(_:)`.

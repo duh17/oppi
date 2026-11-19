@@ -1,105 +1,10 @@
 import Foundation
 import os
-import Security
-
-struct ShareQuickSessionServer: Codable, Equatable, Identifiable, Sendable {
-    let id: String
-    let name: String
-    let baseURL: URL
-    let token: String
-    let deviceCredential: DeviceCredential?
-    let tlsCertFingerprint: String?
-    let sortOrder: Int
-
-    init?(
-        id: String,
-        name: String,
-        baseURL: URL?,
-        token: String,
-        deviceCredential: DeviceCredential? = nil,
-        tlsCertFingerprint: String?,
-        sortOrder: Int
-    ) {
-        guard let baseURL, ServerTLSTrustPolicy.requiresHTTPS(scheme: baseURL.scheme) else { return nil }
-        self.id = id
-        self.name = name
-        self.baseURL = baseURL
-        self.token = token
-        self.deviceCredential = deviceCredential
-        self.tlsCertFingerprint = tlsCertFingerprint
-        self.sortOrder = sortOrder
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case id, name, host, port, scheme, token, deviceCredential, tlsCertFingerprint, sortOrder
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(String.self, forKey: .id)
-        name = try container.decode(String.self, forKey: .name)
-        token = try container.decode(String.self, forKey: .token)
-        deviceCredential = try container.decodeIfPresent(DeviceCredential.self, forKey: .deviceCredential)
-        tlsCertFingerprint = try container.decodeIfPresent(String.self, forKey: .tlsCertFingerprint)
-        sortOrder = try container.decodeIfPresent(Int.self, forKey: .sortOrder) ?? 0
-
-        let host = try container.decode(String.self, forKey: .host)
-        let port = try container.decode(Int.self, forKey: .port)
-        let scheme = try container.decodeIfPresent(String.self, forKey: .scheme) ?? "https"
-        guard ServerTLSTrustPolicy.requiresHTTPS(scheme: scheme) else {
-            throw DecodingError.dataCorruptedError(
-                forKey: .scheme,
-                in: container,
-                debugDescription: "Share transport requires HTTPS"
-            )
-        }
-        guard let url = URL(string: "\(scheme)://\(host):\(port)") else {
-            throw DecodingError.dataCorruptedError(
-                forKey: .host,
-                in: container,
-                debugDescription: "Paired server has an invalid endpoint"
-            )
-        }
-        baseURL = url
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(id, forKey: .id)
-        try container.encode(name, forKey: .name)
-        try container.encode(token, forKey: .token)
-        try container.encodeIfPresent(deviceCredential, forKey: .deviceCredential)
-        try container.encodeIfPresent(tlsCertFingerprint, forKey: .tlsCertFingerprint)
-        try container.encode(sortOrder, forKey: .sortOrder)
-        try container.encode(baseURL.host, forKey: .host)
-        try container.encode(baseURL.port, forKey: .port)
-        try container.encode(baseURL.scheme, forKey: .scheme)
-    }
-
-    /// Replace the device credential, clearing the static token so it is never
-    /// used after the short-lived access token has been issued.
-    func withDeviceCredential(_ credential: DeviceCredential) -> Self {
-        guard let updated = Self(
-            id: id,
-            name: name,
-            baseURL: baseURL,
-            token: "",
-            deviceCredential: credential,
-            tlsCertFingerprint: tlsCertFingerprint,
-            sortOrder: sortOrder
-        ) else {
-            // The failable init only fails on a nil baseURL; this instance's
-            // baseURL is a stored non-optional URL.
-            return self
-        }
-        return updated
-    }
-}
 
 struct ShareQuickSessionWorkspace: Equatable, Identifiable, Sendable {
     let id: String
     let name: String
-    let server: ShareQuickSessionServer
+    let server: PairedServer
 }
 
 struct ShareQuickSessionDraftAttachment: Equatable, Sendable {
@@ -127,18 +32,27 @@ enum ShareQuickSessionCredentialStore {
     ///
     /// Throws `PairedServerKeychain.ReadFailed` when the device is locked or no
     /// record can be read, which is not "no paired servers". One unreadable
-    /// record only drops that server.
-    static func loadServers() throws -> [ShareQuickSessionServer] {
+    /// record only drops that server, and so does one without an HTTPS endpoint.
+    static func loadServers() throws -> [PairedServer] {
         let ids = SharedConstants.sharedDefaults.stringArray(forKey: SharedConstants.pairedServerIdsKey) ?? []
-        return try PairedServerKeychain.records(ShareQuickSessionServer.self, ids: ids)
+        return try PairedServerKeychain.records(PairedServer.self, ids: ids)
+            .filter { endpoint(of: $0) != nil }
             .sorted { $0.sortOrder < $1.sortOrder }
+    }
+
+    /// The server's base URL when it is HTTPS. Sharing never sends over plain HTTP.
+    static func endpoint(of server: PairedServer) -> URL? {
+        guard let url = server.baseURL, ServerTLSTrustPolicy.requiresHTTPS(scheme: url.scheme) else {
+            return nil
+        }
+        return url
     }
 
     /// Persist a refreshed device credential back to the shared keychain so a
     /// later share or relaunch starts from the replacement token, not the
     /// expired one. Merges the HTTP-scoped field against the LATEST stored
     /// record so a concurrent process cannot roll back or drop record fields.
-    static func save(server: ShareQuickSessionServer, deviceCredential: DeviceCredential) {
+    static func save(server: PairedServer, deviceCredential: DeviceCredential) {
         do {
             _ = try KeychainDeviceCredentialMerger.mergeRefresh(
                 serverId: server.id,
@@ -228,7 +142,7 @@ private struct ShareQuickSessionDeviceAuthTransport: DeviceAuthTransport {
 actor ShareQuickSessionSender {
     private let transport: any ShareQuickSessionHTTPTransport
     private let deviceKeyProvider: () throws -> any DeviceKey
-    private let persistCredential: @Sendable (ShareQuickSessionServer, DeviceCredential) -> Void
+    private let persistCredential: @Sendable (PairedServer, DeviceCredential) -> Void
     /// One device-auth session per server, retained for the whole operation
     /// (including every attachment), so the refresh nonce/token are never
     /// recreated from a stale persisted snapshot.
@@ -239,23 +153,21 @@ actor ShareQuickSessionSender {
         deviceKeyProvider: @escaping () throws -> any DeviceKey = {
             try DeviceKeyProvider.shared.loadOrCreate()
         },
-        persistCredential: @escaping @Sendable (ShareQuickSessionServer, DeviceCredential) -> Void = { _, _ in }
+        persistCredential: @escaping @Sendable (PairedServer, DeviceCredential) -> Void = { _, _ in }
     ) {
         self.transport = transport
         self.deviceKeyProvider = deviceKeyProvider
         self.persistCredential = persistCredential
     }
 
-    static func live(server: ShareQuickSessionServer) -> ShareQuickSessionSender {
+    static func live(server: PairedServer) -> ShareQuickSessionSender {
         let configuration = URLSessionConfiguration.ephemeral
         // Idle-only: a shared screen recording can take minutes to send, and a
         // total-duration limit cut every upload over 30 seconds short.
         configuration.timeoutIntervalForRequest = 60
         configuration.timeoutIntervalForResource = 7 * 24 * 60 * 60
         configuration.waitsForConnectivity = false
-        let delegate = ShareQuickSessionTrustDelegate(
-            pinnedLeafFingerprint: server.tlsCertFingerprint
-        )
+        let delegate = PinnedServerTrustDelegate(pinnedLeafFingerprint: server.tlsCertFingerprint)
         let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
         return ShareQuickSessionSender(
             transport: session,
@@ -268,7 +180,7 @@ actor ShareQuickSessionSender {
     /// Build (once) and return the device-key auth session for a server, or nil
     /// for legacy/static-token servers. The device key load fails closed: it is
     /// never silently replaced by an empty static bearer.
-    private func deviceSession(for server: ShareQuickSessionServer) throws -> DeviceAuthSession? {
+    private func deviceSession(for server: PairedServer) throws -> DeviceAuthSession? {
         guard let credential = server.deviceCredential else { return nil }
         if let existing = sessions[server.id] { return existing }
         let key = try deviceKeyProvider()
@@ -276,7 +188,7 @@ actor ShareQuickSessionSender {
             credential: credential,
             key: key,
             transport: ShareQuickSessionDeviceAuthTransport(
-                baseURL: server.baseURL,
+                baseURL: try Self.baseURL(of: server),
                 transport: transport
             ),
             onRefresh: { [persistCredential, server, credential] result in
@@ -295,7 +207,7 @@ actor ShareQuickSessionSender {
     /// Resolve the bearer token for a server: the device-key access token when
     /// a device credential exists, otherwise the legacy/static token.
     private func resolveBearer(
-        server: ShareQuickSessionServer,
+        server: PairedServer,
         forceRefresh: Bool = false
     ) async throws -> String {
         guard let session = try deviceSession(for: server) else { return server.token }
@@ -320,7 +232,7 @@ actor ShareQuickSessionSender {
         }
     }
 
-    func fetchWorkspaces(server: ShareQuickSessionServer) async throws -> [ShareQuickSessionWorkspace] {
+    func fetchWorkspaces(server: PairedServer) async throws -> [ShareQuickSessionWorkspace] {
         struct Response: Decodable {
             struct Workspace: Decodable {
                 let id: String
@@ -337,7 +249,7 @@ actor ShareQuickSessionSender {
 
     /// The server's model catalog (`GET /models`): a share starts a session on the server's
     /// default model, whose provider this device must have allowed (`AISharingConsent`).
-    func fetchModelCatalog(server: ShareQuickSessionServer) async throws -> [AISharingConsent.CatalogModel] {
+    func fetchModelCatalog(server: PairedServer) async throws -> [AISharingConsent.CatalogModel] {
         struct Response: Decodable { let models: [AISharingConsent.CatalogModel] }
         let data = try await request(server: server, method: "GET", path: ["models"])
         return try JSONDecoder().decode(Response.self, from: data).models
@@ -430,7 +342,7 @@ actor ShareQuickSessionSender {
         _ attachment: ShareQuickSessionDraftAttachment,
         workspaceID: String,
         sessionID: String,
-        server: ShareQuickSessionServer
+        server: PairedServer
     ) async throws -> UploadAttachment {
         let values = try attachment.fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
         guard values.isRegularFile == true, let sizeBytes = values.fileSize, sizeBytes >= 0 else {
@@ -475,7 +387,7 @@ actor ShareQuickSessionSender {
     }
 
     private func request<Body: Encodable>(
-        server: ShareQuickSessionServer,
+        server: PairedServer,
         method: String,
         path: [String],
         jsonBody: Body
@@ -490,13 +402,13 @@ actor ShareQuickSessionSender {
     }
 
     private func request(
-        server: ShareQuickSessionServer,
+        server: PairedServer,
         method: String,
         path: [String],
         dataBody: Data? = nil,
         contentType: String? = nil
     ) async throws -> Data {
-        var url = server.baseURL
+        var url = try Self.baseURL(of: server)
         for component in path {
             url.append(path: component)
         }
@@ -521,6 +433,13 @@ actor ShareQuickSessionSender {
         return try validatedData(result)
     }
 
+    private static func baseURL(of server: PairedServer) throws -> URL {
+        guard let url = ShareQuickSessionCredentialStore.endpoint(of: server) else {
+            throw ShareQuickSessionSendError.insecureServer
+        }
+        return url
+    }
+
     private func performRequest(
         url: URL,
         method: String,
@@ -540,13 +459,13 @@ actor ShareQuickSessionSender {
     }
 
     private func uploadFile(
-        server: ShareQuickSessionServer,
+        server: PairedServer,
         method: String,
         path: [String],
         fileURL: URL,
         contentType: String
     ) async throws -> Data {
-        var url = server.baseURL
+        var url = try Self.baseURL(of: server)
         for component in path {
             url.append(path: component)
         }
@@ -605,6 +524,7 @@ enum ShareQuickSessionSendError: LocalizedError {
     case emptyDraft
     case invalidAttachment(String)
     case invalidResponse
+    case insecureServer
     case server(status: Int, message: String)
 
     var errorDescription: String? {
@@ -615,69 +535,10 @@ enum ShareQuickSessionSendError: LocalizedError {
             return "\(name) is not a readable file."
         case .invalidResponse:
             return "The server returned an invalid response."
+        case .insecureServer:
+            return "This server isn’t paired over HTTPS."
         case .server(_, let message):
             return message
-        }
-    }
-}
-
-private final class ShareQuickSessionTrustDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate, @unchecked Sendable {
-    private let pinnedLeafFingerprint: String?
-
-    init(pinnedLeafFingerprint: String?) {
-        self.pinnedLeafFingerprint = pinnedLeafFingerprint?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        super.init()
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        didReceive challenge: URLAuthenticationChallenge,
-        completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
-    ) {
-        handle(challenge, completionHandler: completionHandler)
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        task: URLSessionTask,
-        didReceive challenge: URLAuthenticationChallenge,
-        completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
-    ) {
-        handle(challenge, completionHandler: completionHandler)
-    }
-
-    private func handle(
-        _ challenge: URLAuthenticationChallenge,
-        completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
-    ) {
-        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust else {
-            completionHandler(.performDefaultHandling, nil)
-            return
-        }
-        guard let pinnedLeafFingerprint, !pinnedLeafFingerprint.isEmpty else {
-            completionHandler(.performDefaultHandling, nil)
-            return
-        }
-        guard let trust = challenge.protectionSpace.serverTrust,
-              let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate],
-              let leaf = chain.first else {
-            completionHandler(.cancelAuthenticationChallenge, nil)
-            return
-        }
-
-        let fingerprint = (SecCertificateCopyData(leaf) as Data).sha256Fingerprint
-        switch ServerTLSTrustPolicy.decision(
-            pinnedLeafFingerprint: pinnedLeafFingerprint,
-            presentedFingerprint: fingerprint,
-            host: challenge.protectionSpace.host
-        ) {
-        case .pinMatch:
-            completionHandler(.useCredential, URLCredential(trust: trust))
-        case .publicCAFallback:
-            completionHandler(.performDefaultHandling, nil)
-        case .reject:
-            completionHandler(.cancelAuthenticationChallenge, nil)
         }
     }
 }
