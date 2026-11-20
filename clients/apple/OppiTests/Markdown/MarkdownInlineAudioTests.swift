@@ -344,11 +344,10 @@ struct MarkdownInlineAudioTests {
         #expect(!MarkdownInlineAudioLayout.autoplay)
     }
 
-    @Test("file browser explicitly delegates the audio title to host navigation")
+    @Test("only the player-owned title presentation shows the internal title")
     func internalTitlePresentationIsExplicit() {
         #expect(AudioLyricsPlayerTitlePresentation.playerShowsTitle.showsInternalTitle)
         #expect(!AudioLyricsPlayerTitlePresentation.hostOwnsTitle.showsInternalTitle)
-        #expect(FileBrowserContentRenderingPolicy.audioPlayerTitlePresentation == .hostOwnsTitle)
     }
 
     @MainActor

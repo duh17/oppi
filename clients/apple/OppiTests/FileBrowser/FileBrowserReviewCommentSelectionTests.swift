@@ -617,21 +617,6 @@ struct FileBrowserReviewCommentSelectionTests {
         }
     }
 
-    @Test func fileBrowserBackSwipePolicyYieldsOwnershipToModalHost() {
-        #expect(
-            FileBrowserContentRenderingPolicy.shouldInstallHorizontalBackSwipe(
-                allowsHorizontalBackSwipe: false,
-                parentOwnsBackSwipe: true
-            ) == false
-        )
-        #expect(
-            FileBrowserContentRenderingPolicy.shouldInstallHorizontalBackSwipe(
-                allowsHorizontalBackSwipe: true,
-                parentOwnsBackSwipe: true
-            ) == true
-        )
-    }
-
     @Test func fileBrowserFileTargetUsesLinkedFileDestinationForHistoryBack() {
         let target = WorkspaceLinkedFileNavTarget.workspaceFile(
             serverId: "server-1",

@@ -544,13 +544,10 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             mounted = renderer.mount(in: self)
         }
         mountedView = mounted
-        if FileBrowserContentRenderingPolicy.shouldInstallHorizontalBackSwipe(
-            allowsHorizontalBackSwipe: configuration.allowsHorizontalBackSwipe,
-            parentOwnsBackSwipe: parentOwnsBackSwipe
-        ) {
-            let installer = HorizontalBackSwipeGestureInstaller { [weak self] in self?.navigateBack() }
-            installer.install(on: backSwipeTarget(in: mounted))
-            mountedBackSwipe = installer
+        // The viewer's own swipe back is for content that has none: text, PDF,
+        // and 3D scenes handle the swipe themselves.
+        if parentOwnsBackSwipe {
+            installOwnBackSwipe(on: backSwipeTarget(in: mounted))
         }
 #if DEBUG
         if FileMotionDebugMarker.isEnabled {

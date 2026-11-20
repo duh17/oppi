@@ -101,7 +101,8 @@ final class AudioFileRenderer: FileRenderer {
             autoplayOnAppear: false,
             showsCloseButton: false,
             usesNavigationBackButton: false,
-            titlePresentation: FileBrowserContentRenderingPolicy.audioPlayerTitlePresentation,
+            // The file viewer already owns the filename in navigation chrome.
+            titlePresentation: .hostOwnsTitle,
             timedText: playbackTimedText,
             sidecarLoader: nil,
             dismiss: { [weak host] in host?.navigateBack() }

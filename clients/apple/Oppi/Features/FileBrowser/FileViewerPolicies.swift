@@ -59,9 +59,6 @@ enum FileBrowserContentRenderingPolicy {
         }
     }
 
-    /// The file viewer already owns the filename in navigation chrome.
-    static let audioPlayerTitlePresentation: AudioLyricsPlayerTitlePresentation = .hostOwnsTitle
-
     /// Which checkout an edit writes to. A worktree is always named; main is
     /// named only when the owning chat session runs on a worktree, so the
     /// difference is visible before typing.
@@ -78,15 +75,6 @@ enum FileBrowserContentRenderingPolicy {
             return String(localized: "Main checkout")
         }
         return nil
-    }
-
-    /// The viewer's own swipe back is for content that has none: text, PDF,
-    /// and 3D scenes handle the swipe themselves.
-    static func shouldInstallHorizontalBackSwipe(
-        allowsHorizontalBackSwipe: Bool,
-        parentOwnsBackSwipe: Bool
-    ) -> Bool {
-        allowsHorizontalBackSwipe && parentOwnsBackSwipe
     }
 }
 

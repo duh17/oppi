@@ -74,9 +74,67 @@ struct FileViewerFileCardTests {
         #expect((retry != nil) == offersRetry)
     }
 
+    /// The viewer installs its own back swipe on a page with no swipe of its
+    /// own (here the load error) only when its host allows the swipe.
+    @Test(arguments: [true, false])
+    func viewerInstallsItsBackSwipeOnlyWhenTheHostAllowsIt(allowed: Bool) async throws {
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { request in
+            guard request.url?.path == "/files/current" else { return nil }
+            return try mockJSONResponse(status: 500, json: #"{"error":"Refused"}"#, for: request)
+        })
+        defer { routes.end() }
+
+        let (viewer, window) = try showViewer(path: "notes/plan.md", size: nil, allowsHorizontalBackSwipe: allowed)
+        defer { window.isHidden = true }
+
+        let failed = await waitForMainActorCondition(timeout: .seconds(5)) {
+            window.layoutIfNeeded()
+            return allLabels(in: viewer.view).contains { $0.text == "Unable to Load" }
+        }
+        #expect(failed)
+        #expect(!backSwipeHosts(in: viewer.view).isEmpty == allowed)
+    }
+
+    /// A PDF owns its back swipe: the viewer puts it on the PDF view itself.
+    @Test func pdfPageCarriesTheBackSwipeOnItsPDFView() async throws {
+        let pdf = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 200, height: 200)).pdfData { context in
+            context.beginPage()
+        }
+        let routes = TestURLProtocol.routeScope(mockPageRoutes { request in
+            guard request.url?.path == "/files/current" else { return nil }
+            if request.httpMethod == "HEAD" {
+                return try headResponse(byteCount: pdf.count, for: request)
+            }
+            let response = try #require(HTTPURLResponse(
+                url: request.url ?? URL(fileURLWithPath: "/"),
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/pdf", "Content-Length": "\(pdf.count)"]
+            ))
+            return (pdf, response)
+        })
+        defer { routes.end() }
+
+        let (viewer, window) = try showViewer(path: "docs/guide.pdf", size: pdf.count)
+        defer { window.isHidden = true }
+
+        let mounted = await waitForMainActorCondition(timeout: .seconds(5)) {
+            window.layoutIfNeeded()
+            return find(ReviewCommentPDFView.self, in: viewer.view) != nil
+        }
+        #expect(mounted, "The PDF must mount")
+        let hosts = backSwipeHosts(in: viewer.view)
+        #expect(hosts.count == 1)
+        #expect(hosts.first is ReviewCommentPDFView, "The swipe belongs on the PDF view")
+    }
+
     // MARK: Helpers
 
-    private func showViewer(path: String, size: Int?) throws -> (FileViewerViewController, UIWindow) {
+    private func showViewer(
+        path: String,
+        size: Int?,
+        allowsHorizontalBackSwipe: Bool = true
+    ) throws -> (FileViewerViewController, UIWindow) {
         let client = makeTestURLProtocolClient(host: "file-viewer-card.test")
         let viewer = FileViewerViewController(
             configuration: .init(
@@ -85,7 +143,8 @@ struct FileViewerFileCardTests {
                 filePath: path,
                 fileName: (path as NSString).lastPathComponent,
                 fileSize: size,
-                chromeMode: .pushed
+                chromeMode: .pushed,
+                allowsHorizontalBackSwipe: allowsHorizontalBackSwipe
             ),
             services: .init(apiClient: client)
         )
@@ -140,6 +199,14 @@ private func find<View: UIView>(_ type: View.Type, in root: UIView) -> View? {
 @MainActor
 private func all<View: UIView>(_ type: View.Type, in root: UIView) -> [View] {
     ((root as? View).map { [$0] } ?? []) + root.subviews.flatMap { all(type, in: $0) }
+}
+
+/// Views carrying a horizontal back swipe pan, found by its installer delegate.
+@MainActor
+private func backSwipeHosts(in root: UIView) -> [UIView] {
+    all(UIView.self, in: root).filter { view in
+        view.gestureRecognizers?.contains { $0.delegate is HorizontalBackSwipeGestureInstaller } == true
+    }
 }
 
 @MainActor
