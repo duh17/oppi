@@ -159,6 +159,43 @@ final class RexHostTransport: RexTransport {
         return (RexHostTransport(link: link, control: control, connection: nil, signIn: signIn), control)
     }
 
+    /// How a Rex terminal of a saved host opens Rex again after its connection
+    /// is lost (`RexSessionConnection.Reopen`), with a fresh `makePlan()` per
+    /// try. Over Tailscale when the host's Rex serves there; else, for a
+    /// terminal that was opened with an SSH sign-in, signed in over SSH again
+    /// with the saved credential (Face ID or the passcode once its approval has
+    /// lapsed, as Reconnect asks).
+    ///
+    /// A terminal opened over Tailscale with no sign-in reopens there only
+    /// (`RexRoutePlan.tailscaleOnly`): a lost connection comes back with nobody
+    /// asking, so it must not raise Face ID on its own. It keeps trying, as Rex's
+    /// own apps do; Disconnect and opening the pane again is the person's way
+    /// to SSH.
+    static func reopen(
+        plan makePlan: @escaping @Sendable () -> RexRoutePlan,
+        signIn: @escaping SignIn,
+        onWritable: @escaping @Sendable (Bool) -> Void
+    ) -> RexSessionConnection.Reopen {
+        { token in
+            let plan = makePlan()
+            if let direct = try await openOverTailnet(
+                plan: plan, signIn: signIn, reconnectToken: token, onWritable: onWritable
+            ) {
+                return direct
+            }
+            if plan.tailscaleOnly { throw RexClientError.timedOut }
+            let connection = try await signIn()
+            do {
+                return try await open(
+                    connection: connection, plan: plan, signIn: signIn, reconnectToken: token, onWritable: onWritable
+                )
+            } catch {
+                connection.close()
+                throw error
+            }
+        }
+    }
+
     /// Keeps `connection` probed, and decides what its end means: Rex's end
     /// over the bridge, else only that the next side command signs in again.
     private func adopt(_ connection: SSHConnection) {

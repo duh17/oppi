@@ -125,6 +125,17 @@ struct RexDirectTests {
         #expect(RexRoutePlan.choose(remembered: url, tailnetUsable: true, failedThisOpen: false, heldUntil: now + .seconds(1), now: now) == nil)
         #expect(RexRoutePlan.choose(remembered: url, tailnetUsable: true, failedThisOpen: false, heldUntil: now - .seconds(1), now: now) == url)
 
+        // With no SSH to fall back to, a held host is still tried over Tailscale.
+        let heldStore = Self.store()
+        let heldHost = RexDirectHost(profile: Self.profile())
+        heldStore.apply(.available(url: url, hostID: Self.rexHostID), for: heldHost)
+        RexRoutePlan(host: heldHost, store: heldStore, tailnetUsable: { true }, isCurrent: { true }).directFailed()
+        #expect(RexRoutePlan(host: heldHost, store: heldStore, tailnetUsable: { true }, isCurrent: { true }).directCandidate() == nil)
+        let only = RexRoutePlan(host: heldHost, store: heldStore, tailnetUsable: { true }, isCurrent: { true }, tailscaleOnly: true)
+        only.directFailed()
+        #expect(only.directCandidate() == url)
+        #expect(RexRoutePlan(host: heldHost, store: heldStore, tailnetUsable: { false }, isCurrent: { true }, tailscaleOnly: true).directCandidate() == nil)
+
         // A host edited after the screen opened does not reach the old Rex.
         let store = Self.store()
         let host = RexDirectHost(profile: Self.profile())
@@ -268,6 +279,52 @@ struct RexDirectTests {
         againControl.close()
         // Another open of the same host while the failure is held does too.
         #expect(RexRoutePlan(host: host, store: store, tailnetUsable: { true }, isCurrent: { true }).directCandidate() == nil)
+    }
+
+    /// A saved host's Rex terminal opened over Tailscale with no SSH sign-in
+    /// comes back over Tailscale only: a lost connection never signs in to SSH
+    /// (which could ask for Face ID), and a failed try does not hold the next
+    /// one off Tailscale. A terminal opened with a sign-in may sign in again
+    /// when Tailscale does not answer.
+    @Test func aTerminalOpenedOverTailscaleNeverSignsInToComeBack() async throws {
+        let store = Self.store()
+        let host = RexDirectHost(profile: Self.profile())
+        store.apply(.available(url: Self.rexURL, hostID: Self.rexHostID), for: host)
+        let direct = FakeRex()
+        let answers = Mutex(false)
+        let attempts = Mutex(0)
+        let signIns = Mutex(0)
+        func plan(tailscaleOnly: Bool) -> @Sendable () -> RexRoutePlan {
+            {
+                RexRoutePlan(
+                    host: host, store: store, tailnetUsable: { true }, isCurrent: { true }, tailscaleOnly: tailscaleOnly,
+                    openDirect: { _, _, _, sink in
+                        attempts.withLock { $0 += 1 }
+                        guard answers.withLock({ $0 }) else { throw RexClientError.lost("offline") }
+                        return direct.open(sink)
+                    }
+                )
+            }
+        }
+        let signIn: RexHostTransport.SignIn = {
+            signIns.withLock { $0 += 1 }
+            throw SSHConnectionError.notConnected
+        }
+
+        let reopen = RexHostTransport.reopen(plan: plan(tailscaleOnly: true), signIn: signIn, onWritable: { _ in })
+        await #expect(throws: RexClientError.timedOut) { _ = try await reopen(nil) }
+        await #expect(throws: RexClientError.timedOut) { _ = try await reopen(nil) }
+        #expect(attempts.withLock { $0 } == 2, "each try goes to Tailscale, held or not")
+        answers.withLock { $0 = true }
+        let (transport, control) = try await reopen(nil)
+        #expect((transport as? RexHostTransport)?.route == .tailscale(Self.rexURL))
+        #expect(signIns.withLock { $0 } == 0)
+        control.close()
+
+        answers.withLock { $0 = false }
+        let signedIn = RexHostTransport.reopen(plan: plan(tailscaleOnly: false), signIn: signIn, onWritable: { _ in })
+        await #expect(throws: SSHConnectionError.self) { _ = try await signedIn(nil) }
+        #expect(signIns.withLock { $0 } == 1)
     }
 
     /// A host whose bridge cannot run (no `nc` that speaks Unix sockets)

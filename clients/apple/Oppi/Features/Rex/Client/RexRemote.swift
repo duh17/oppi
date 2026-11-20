@@ -565,12 +565,20 @@ private final class RexEventInbox: Sendable {
 @MainActor
 protocol RexStreamHost {
     var isConnected: Bool { get }
+    /// A stream or command here would sign in to SSH first, which may ask for
+    /// Face ID: a saved host's Rex terminal reached over Tailscale with no SSH
+    /// connection yet (`RexHostTransport.sideCommandsSignInPending`).
+    var sideCommandsSignInPending: Bool { get }
     func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream
     func run(_ command: String, input: Data) async throws -> SSHExecResult
 }
 
 extension SSHTerminalChannel: RexStreamHost {
     var isConnected: Bool { connected }
+}
+
+extension RexStreamHost {
+    var sideCommandsSignInPending: Bool { false }
 }
 
 extension SSHConnection: RexStreamHost {
@@ -792,10 +800,21 @@ final class RexMonitor {
 
     /// Subscribes until the task is cancelled, the connection goes, or the
     /// host turns out to have no `nc` or no Rex.
+    ///
+    /// While `host` would have to sign in to SSH first (a Rex terminal reached
+    /// over Tailscale with no sign-in), Rex is read over Tailscale only
+    /// (`RexRoutePlan.tailscaleOnly`): a background read never asks for Face ID.
     func run(over host: any RexStreamHost) async {
         // One open: a direct route that fails is not tried again by this run.
         let plan = directHost.map { RexRoutePlan(host: $0) }
+        let tailscaleOnly = directHost.map { RexRoutePlan(host: $0, tailscaleOnly: true) }
         await follow(while: { host.isConnected }, connect: { [self] in
+            if host.sideCommandsSignInPending {
+                guard let direct = try await tailscaleOnly?.attemptDirect(openStream: RexTailnetTransport.noBridge, onWritable: nil) else {
+                    throw RexClientError.timedOut
+                }
+                return direct
+            }
             // One stream starts Rex per ask; the ones after it only read.
             let autostart = startsRex
             startsRex = false

@@ -1642,15 +1642,47 @@ struct SSHTerminalTests {
         #expect(monitor.available, "the last list stays")
     }
 
+    /// A Rex terminal reached over Tailscale with no SSH signed in reads its
+    /// Rex over Tailscale only: the bridge would sign in to SSH first, which
+    /// may ask for Face ID, so a background read never opens it (here the host
+    /// has no Tailscale address, so the read waits and retries). Once SSH is
+    /// signed in for something the person asked, the bridge serves again.
+    @Test func rexReadsNeverSignInToSSHBehindATerminalOverTailscale() async throws {
+        let host = RexWorld().host()
+        let stream = FakeStreamHost(host)
+        stream.sideCommandsSignInPending = true
+        let monitor = RexMonitor(
+            directHost: RexDirectHost(profile: SSHTerminalProfile(host: "mac-studio", username: "alex")),
+            publishDelay: .milliseconds(20), retryDelay: { _, _ in .milliseconds(10) }
+        )
+        let task = Task { await monitor.run(over: stream) }
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { monitor.failure != nil })
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(stream.streams == 0 && stream.commands == 0 && !monitor.available)
+
+        stream.sideCommandsSignInPending = false
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { monitor.available })
+        #expect(stream.streams == 1)
+
+        stream.isConnected = false
+        host.end(status: 255)
+        await task.value
+    }
+
     @MainActor private final class FakeStreamHost: RexStreamHost {
         var isConnected = true
+        var sideCommandsSignInPending = false
+        private(set) var streams = 0
+        private(set) var commands = 0
         private let host: RexFakeHost
         init(_ host: RexFakeHost) { self.host = host }
         func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
-            host.open(sink: sink)
+            streams += 1
+            return host.open(sink: sink)
         }
 
         func run(_ command: String, input: Data) async throws -> SSHExecResult {
+            commands += 1
             throw SSHConnectionError.commandRequestRejected
         }
     }

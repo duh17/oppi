@@ -242,7 +242,7 @@ final class SSHTerminalConnectSession {
                         }
                         pane = try await RexSessionConnection.open(
                             transport: transport, control: control, target: rexPane, queue: queue,
-                            reopen: rexReopen(for: value, queue: queue)
+                            reopen: rexReopen(for: value, queue: queue, tailscaleOnly: false)
                         )
                     } catch { queue.finish(); connection.close(); throw error }
                     guard !Task.isCancelled, runID == self.runID else { queue.finish(); await pane.cancel(); return }
@@ -486,7 +486,8 @@ final class SSHTerminalConnectSession {
                 do {
                     pane = try await RexSessionConnection.open(
                         transport: transport, control: control, target: rexPane, queue: queue,
-                        reopen: rexReopen(for: value, queue: queue)
+                        // Opened over Tailscale with no sign-in: it comes back the same way.
+                        reopen: rexReopen(for: value, queue: queue, tailscaleOnly: true)
                     )
                 } catch { queue.finish(); transport.close(); throw error }
                 guard !Task.isCancelled, runID == self.runID else { queue.finish(); await pane.cancel(); return }
@@ -521,7 +522,7 @@ final class SSHTerminalConnectSession {
 
     /// Makes a fresh route plan for `value` from any task: one per open, so
     /// a reconnect tries Tailscale again.
-    private func planMaker(for value: SSHTerminalProfile) -> @Sendable () -> RexRoutePlan {
+    private func planMaker(for value: SSHTerminalProfile, tailscaleOnly: Bool = false) -> @Sendable () -> RexRoutePlan {
         let makeStore = profileStore
         let host = RexDirectHost(profile: value)
         let tailnetUsable = rexTailnetUsable
@@ -530,37 +531,22 @@ final class SSHTerminalConnectSession {
             RexRoutePlan(
                 host: host, store: makeStore().rexDirect, tailnetUsable: tailnetUsable,
                 isCurrent: { makeStore().profile(id: host.id).map { RexDirectHost(profile: $0) == host } ?? false },
-                openDirect: openDirect
+                tailscaleOnly: tailscaleOnly, openDirect: openDirect
             )
         }
     }
 
     /// How a Rex terminal of saved host `value` opens Rex again after its
-    /// connection is lost (`RexSessionConnection.Reopen`): over Tailscale with
-    /// no sign-in when the host's Rex serves there, else signed in over SSH
-    /// again with the saved credential (Face ID or the passcode once its
-    /// approval has lapsed, as Reconnect asks).
-    private func rexReopen(for value: SSHTerminalProfile, queue: SSHTerminalEventQueue) -> RexSessionConnection.Reopen {
-        let makePlan = planMaker(for: value)
-        let signIn = Self.signIn(value, store: profileStore)
-        let onWritable: @Sendable (Bool) -> Void = { writable in queue.push(.writabilityChanged(writable)) }
-        return { token in
-            let plan = makePlan()
-            if let direct = try await RexHostTransport.openOverTailnet(
-                plan: plan, signIn: signIn, reconnectToken: token, onWritable: onWritable
-            ) {
-                return direct
-            }
-            let connection = try await signIn()
-            do {
-                return try await RexHostTransport.open(
-                    connection: connection, plan: plan, signIn: signIn, reconnectToken: token, onWritable: onWritable
-                )
-            } catch {
-                connection.close()
-                throw error
-            }
-        }
+    /// connection is lost (`RexHostTransport.reopen`). `tailscaleOnly`: it was
+    /// opened over Tailscale with no SSH sign-in, and never signs in to come back.
+    private func rexReopen(
+        for value: SSHTerminalProfile, queue: SSHTerminalEventQueue, tailscaleOnly: Bool
+    ) -> RexSessionConnection.Reopen {
+        RexHostTransport.reopen(
+            plan: planMaker(for: value, tailscaleOnly: tailscaleOnly),
+            signIn: Self.signIn(value, store: profileStore),
+            onWritable: { writable in queue.push(.writabilityChanged(writable)) }
+        )
     }
 
     /// The credential a sign-in to `value` offers: the password just typed,

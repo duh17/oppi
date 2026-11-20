@@ -77,6 +77,14 @@ final class RexRoutePlan: Sendable {
     let openDirect: RexLink.OpenDirect
     /// This plan's `directTimeout`: from the socket's open to Rex's welcome.
     let directDeadline: Duration
+    /// Tailscale is this open's only way to Rex: it runs on its own (a lost
+    /// connection coming back, a terminal's background read), with nobody's
+    /// tap behind it, so it never signs in to SSH, which could ask for Face ID.
+    /// Rex admits this device by its Tailscale identity, as Rex's own apps are
+    /// admitted, and App Lock still covers Oppi itself. With no bridge to fall
+    /// back to, a failure (this open's, or another open's hold) does not keep
+    /// it off Tailscale: the next try goes straight there again.
+    let tailscaleOnly: Bool
     private let store: RexDirectStore
     private let tailnetUsable: @Sendable () -> Bool
     private let isCurrent: @Sendable () -> Bool
@@ -91,10 +99,12 @@ final class RexRoutePlan: Sendable {
         tailnetUsable: @escaping @Sendable () -> Bool = { RexTailnetPath.usable() },
         isCurrent: (@Sendable () -> Bool)? = nil,
         directDeadline: Duration = RexRoutePlan.directTimeout,
+        tailscaleOnly: Bool = false,
         openDirect: @escaping RexLink.OpenDirect = RexTLSStream.open
     ) {
         self.host = host
         self.directDeadline = directDeadline
+        self.tailscaleOnly = tailscaleOnly
         self.store = store
         self.tailnetUsable = tailnetUsable
         self.isCurrent = isCurrent ?? {
@@ -109,8 +119,8 @@ final class RexRoutePlan: Sendable {
         return Self.choose(
             remembered: remembered,
             tailnetUsable: tailnetUsable(),
-            failedThisOpen: failedHere.withLock { $0 },
-            heldUntil: Self.held.withLock { $0[host.id] },
+            failedThisOpen: !tailscaleOnly && failedHere.withLock { $0 },
+            heldUntil: tailscaleOnly ? nil : Self.held.withLock { $0[host.id] },
             now: now
         )
     }
