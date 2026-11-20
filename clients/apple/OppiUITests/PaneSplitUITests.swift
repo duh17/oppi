@@ -743,18 +743,15 @@ final class PaneSplitUITests: XCTestCase, PreviewUITestCase {
         attachScreenCapture("terminal-below-chat-portrait")
     }
 
-    /// New Panes (Settings → Experiments): Terminal reads
-    /// Below until changed, and set to Right the chat bar's next terminal
-    /// opens to the chat's right.
+    /// New Panes (Settings → Panes): Terminal reads Below until changed, and
+    /// set to Right the chat bar's next terminal opens to the chat's right.
     func testNewPanesPutsTheChatBarsTerminalWhereItIsSet() throws {
         try openChat(in: .landscapeLeft, colorScheme: "dark")
-        openExperiments()
-        let list = app.collectionViews["settings.experiments.list"]
-        let terminalSide = app.buttons["settings.experiments.newPanes.terminal"]
-        for _ in 0..<6 where !(terminalSide.exists && terminalSide.isHittable) { list.swipeUp() }
-        XCTAssertTrue(terminalSide.waitUntilExists(timeout: 5), "Experiments lists New Panes")
+        openPanesSettings()
+        let terminalSide = app.buttons["settings.panes.terminal"]
+        XCTAssertTrue(terminalSide.waitUntilExists(timeout: 5), "Panes lists New Panes")
         XCTAssertEqual(terminalSide.value as? String, "Below")
-        XCTAssertEqual(app.buttons["settings.experiments.newPanes.files"].value as? String, "Automatic")
+        XCTAssertEqual(app.buttons["settings.panes.files"].value as? String, "Automatic")
         hold()
         attachScreenCapture("settings-new-panes")
         terminalSide.tap()
@@ -818,8 +815,8 @@ final class PaneSplitUITests: XCTestCase, PreviewUITestCase {
         attachScreenCapture("undo-restored")
     }
 
-    /// Opens Settings → Experiments from the sidebar.
-    private func openExperiments() {
+    /// Opens Settings → Panes from the sidebar.
+    private func openPanesSettings() {
         let toggleSidebar = app.buttons["workspace.split.sidebarToggle"]
         if toggleSidebar.waitUntilExists(timeout: 5), toggleSidebar.label.localizedCaseInsensitiveContains("show") {
             toggleSidebar.tap()
@@ -829,10 +826,10 @@ final class PaneSplitUITests: XCTestCase, PreviewUITestCase {
         appSettings.tap()
         let list = app.collectionViews["settings.list"]
         XCTAssertTrue(list.waitUntilExists(timeout: 10), "App Settings opened Settings")
-        let experiments = app.descendants(matching: .any)["settings.row.experiments"]
-        for _ in 0..<8 where !(experiments.exists && experiments.isHittable) { list.swipeUp() }
-        XCTAssertTrue(experiments.waitUntilExists(timeout: 5), "Settings lists Experiments")
-        experiments.tap()
+        let panes = app.descendants(matching: .any)["settings.row.panes"]
+        for _ in 0..<8 where !(panes.exists && panes.isHittable) { list.swipeUp() }
+        XCTAssertTrue(panes.waitUntilExists(timeout: 5), "Settings lists Panes")
+        panes.tap()
     }
 
     /// A session opened from Pinned in landscape, with the sidebar showing,

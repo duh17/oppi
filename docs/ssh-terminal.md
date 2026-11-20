@@ -42,7 +42,7 @@ A workspace's **Terminal** button (top right, beside **Config**) and a chat's **
 - from a workspace: its root folder;
 - from a chat: the session's own worktree when it has one, else the workspace root. If the chat's worktree cannot be looked up (the server is disconnected or no longer lists it), the chat shows **Cannot Open Terminal** with the reason instead of opening a folder it never ran in.
 
-On a wide iPad window, a chat's terminal opens in a pane below the chat; **Settings → Experiments → New Panes → Terminal** can put it to the right instead ([Split panes](usage.md#the-ipad-side-column)).
+On a wide iPad window, a chat's terminal opens in a pane below the chat; **Settings → Panes → Terminal** can put it to the right instead ([Split panes](usage.md#the-ipad-side-column)).
 
 The host's Run on Connect command decides where the folder opens, by its first word (a path such as `/Users/you/.local/bin/herdr` counts):
 

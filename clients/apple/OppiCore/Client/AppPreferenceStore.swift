@@ -349,7 +349,7 @@ enum AppPreferenceStore {
     // MARK: - New Panes
 
     /// Which side of the pane it comes from a new pane opens on, per kind of
-    /// content, when nothing says (Settings › Experiments › New Panes, wide
+    /// content, when nothing says (Settings › Panes › New Panes, wide
     /// windows). `PanePlacement` reads it; an explicit
     /// choice (Open in New Pane Below, a drop on an edge, Split Right) wins.
     enum NewPanes {

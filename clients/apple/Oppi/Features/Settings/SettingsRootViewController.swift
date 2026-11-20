@@ -24,14 +24,15 @@ final class SettingsRootViewController: ListScreenController<SettingsRootViewCon
     enum Item: Hashable, Sendable {
         case server(String)
         case addServer
-        case general, appearance, text, editor, chat, sessions, voice, tailscale
+        case general, appearance, text, editor, chat, sessions, panes, voice, tailscale
         case sshTerminal, privacy, experiments, storage
     }
 
     /// The rows of the pages section, in the order Settings shows them.
-    /// Tailscale is Oppi's own node, which the Mac does not have.
+    /// Tailscale is Oppi's own node, which the Mac does not have. Panes is
+    /// dropped per pass where panes do not split (`showsPanes`).
     private static let pages: [Item] = [
-        .general, .appearance, .text, .editor, .chat, .sessions,
+        .general, .appearance, .text, .editor, .chat, .sessions, .panes,
         .voice, .tailscale, .sshTerminal, .privacy, .experiments, .storage,
     ].filter { $0 != .tailscale || PlatformCapabilities.inAppTailnet }
 
@@ -95,9 +96,15 @@ final class SettingsRootViewController: ListScreenController<SettingsRootViewCon
                 header: String(localized: "Servers"),
                 items: serverStore.servers.map { .server($0.id) } + [.addServer]
             ),
-            ListSection(.pages, items: Self.pages),
+            ListSection(.pages, items: Self.pages.filter { $0 != .panes || showsPanes }),
         ]
     }
+
+    /// Panes holds where new panes open, which only matters where the window
+    /// splits. A compact window (iPhone, a narrow iPad window) opens everything
+    /// in place, so the row is not listed there. Reading the traits in
+    /// `sections()` redraws the index as the window turns wide or compact.
+    private var showsPanes: Bool { AdaptiveWidth.isWide(traitCollection) }
 
     /// The values a row is drawn from.
     override func inputs(of item: Item) -> AnyHashable {
@@ -115,7 +122,7 @@ final class SettingsRootViewController: ListScreenController<SettingsRootViewCon
                 AnyHashable(tint),
                 AnyHashable(lockWord(ScopedLockService.shared.badge(.server(id)))),
             ])
-        case .addServer, .general, .chat, .sshTerminal:
+        case .addServer, .general, .chat, .panes, .sshTerminal:
             return AnyHashable(0)
         case .sessions:
             return AnyHashable(AppPreferences.SessionRows.display.density)
@@ -211,6 +218,7 @@ final class SettingsRootViewController: ListScreenController<SettingsRootViewCon
         case .editor: String(localized: "Editor")
         case .chat: String(localized: "Chat")
         case .sessions: String(localized: "Session Rows")
+        case .panes: String(localized: "Panes")
         case .voice: String(localized: "Voice & Dictation")
         case .tailscale: String(localized: "Tailscale")
         case .sshTerminal: String(localized: "Terminal")
@@ -230,6 +238,7 @@ final class SettingsRootViewController: ListScreenController<SettingsRootViewCon
         case .editor: "chevron.left.forwardslash.chevron.right"
         case .chat: "bubble.left.and.text.bubble.right"
         case .sessions: "rectangle.stack"
+        case .panes: "rectangle.split.2x1"
         case .voice: "mic"
         case .tailscale: "network"
         case .sshTerminal: "terminal"
@@ -266,6 +275,7 @@ final class SettingsRootViewController: ListScreenController<SettingsRootViewCon
         case .editor: "settings.row.editor"
         case .chat: "settings.row.chat"
         case .sessions: "settings.row.sessions"
+        case .panes: "settings.row.panes"
         case .voice: "settings.row.voice"
         case .tailscale: "settings.tailscale"
         case .sshTerminal: "settings.sshTerminal"
@@ -317,6 +327,8 @@ final class SettingsRootViewController: ListScreenController<SettingsRootViewCon
             Router.push(SettingsChatViewController(root: root), from: self)
         case .sessions:
             Router.push(SessionRowDisplayEditorViewController(root: root), from: self)
+        case .panes:
+            Router.push(SettingsPanesViewController(settings: root.settings), from: self)
         case .voice:
             Router.push(SettingsVoiceViewController(root: root), from: self)
         case .tailscale:

@@ -1,9 +1,8 @@
 import UIKit
 
 /// Settings > Experiments: features on trial, saved on this device, each off by
-/// default. On a wide window (a compact one never splits), New Panes sets the
-/// side each kind of new pane opens on (`SettingsCatalog.newPaneSide`, read by
-/// `PanePlacement`). Rex, Herdr, Calendar Events, Game Pane and Live Activity
+/// default; where new panes open is Settings > Panes
+/// (`SettingsPanesViewController`). Rex, Herdr, Calendar Events, Game Pane and Live Activity
 /// are declared in `SettingsCatalog` (`experimentRex`, `experimentHerdr`,
 /// `experimentCalendarEvents`, `experimentGodotPane`,
 /// `experimentLiveActivity`) and read and
@@ -17,11 +16,9 @@ import UIKit
 /// access, its section offers Calendars (which ones Schedules shows); refused, it
 /// offers the system Settings page where access is given back.
 final class SettingsExperimentsViewController: ListScreenController<SettingsExperimentsViewController.Section, SettingsExperimentsViewController.Item> {
-    enum Section: Hashable, Sendable { case newPanes, liveVoice, rex, herdr, calendarEvents, godotPane, liveActivity }
+    enum Section: Hashable, Sendable { case liveVoice, rex, herdr, calendarEvents, godotPane, liveActivity }
     enum Item: Hashable, Sendable {
         case liveVoice, rex, herdr, calendarEvents, godotPane, liveActivity
-        /// Where a new pane of this kind opens: Automatic, Right or Below.
-        case newPaneSide(AppPreferenceStore.NewPanes.Kind)
         /// Which calendars Schedules shows; with access only.
         case calendars
         /// Access was refused: opens Oppi's page in the system Settings.
@@ -96,8 +93,6 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
         let rex = SettingsCatalog.experimentRex
         let herdr = SettingsCatalog.experimentHerdr
         let calendarEvents = SettingsCatalog.experimentCalendarEvents
-        // Reading the traits here redraws the page as the window turns wide or compact.
-        let newPanes = AdaptiveWidth.isWide(traitCollection) ? newPanesSection : []
         let godotPane = SettingsCatalog.experimentGodotPane
         // Builds without the game engine, and the Mac, have no Godot pane (`PlatformCapabilities.godotPane`).
         let godotPaneSection: [ListSection<Section, Item>] = PlatformCapabilities.godotPane ? [ListSection(
@@ -105,7 +100,7 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
             footer: godotPane.copy.footer,
             items: settingRows(godotPane, .godotPane) { .failure($0) }
         )] : []
-        return newPanes + [
+        return [
             ListSection(
                 .liveVoice,
                 footer: String(localized: "Adds Live Voice to the composer's mic menu and Quick Session, to talk to a session hands-free. Needs a server with a voice backend."),
@@ -128,20 +123,6 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
             ),
         ] + godotPaneSection + liveActivitySection
     }
-
-    /// One side per kind of new pane. Games only where this build plays them
-    /// (`PlatformCapabilities.godotPane`).
-    private var newPanesSection: [ListSection<Section, Item>] {
-        let kinds = AppPreferenceStore.NewPanes.Kind.allCases.filter { $0 != .games || PlatformCapabilities.godotPane }
-        return [ListSection(
-            .newPanes,
-            header: String(localized: "New Panes"),
-            footer: SettingsCatalog.newPaneSide(.terminal).copy.footer,
-            items: kinds.flatMap { kind in settingRows(SettingsCatalog.newPaneSide(kind), .newPaneSide(kind)) { .failure($0) } }
-        )]
-    }
-
-    override func showsHeader(for section: Section) -> Bool { section == .newPanes }
 
     /// The Mac has no Live Activities (`PlatformCapabilities.liveActivities`).
     private var liveActivitySection: [ListSection<Section, Item>] {
@@ -178,7 +159,6 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
         case .calendarEvents: settingInputs(SettingsCatalog.experimentCalendarEvents)
         case .godotPane: settingInputs(SettingsCatalog.experimentGodotPane)
         case .liveActivity: settingInputs(SettingsCatalog.experimentLiveActivity)
-        case .newPaneSide(let kind): settingInputs(SettingsCatalog.newPaneSide(kind))
         case .calendars: AnyHashable([
             settingInputs(SettingsCatalog.calendarEventsHiddenCalendars), AnyHashable(deviceCalendar.calendars().map(\.id)),
         ])
@@ -198,13 +178,6 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
             guard let self, let settings else { return }
             Router.push(SettingsCalendarsViewController(settings: settings, deviceCalendar: deviceCalendar), from: self)
         }
-    }
-
-    private lazy var newPaneSideRow = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, item in
-        guard let self, case .newPaneSide(let kind) = item else { return }
-        settingChoiceRow(cell, SettingsCatalog.newPaneSide(kind), choices: AppPreferenceStore.NewPanes.Side.allCases.map {
-            SettingChoice(value: $0, title: $0.title)
-        })
     }
 
     private lazy var calendarAccessRow = UICollectionView.CellRegistration<SettingsActionRowCell, Item> { [weak self] cell, _, _ in
@@ -228,14 +201,13 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
     }
 
     override func prepareRegistrations() {
-        _ = (calendarsRow, calendarAccessRow, newPaneSideRow)
+        _ = (calendarsRow, calendarAccessRow)
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
         switch item {
         case .liveVoice, .rex, .herdr, .calendarEvents, .godotPane, .liveActivity:
             super.dequeue(item, at: indexPath)
-        case .newPaneSide: collectionView.dequeueConfiguredReusableCell(using: newPaneSideRow, for: indexPath, item: item)
         case .calendars: collectionView.dequeueConfiguredReusableCell(using: calendarsRow, for: indexPath, item: item)
         case .calendarAccess: collectionView.dequeueConfiguredReusableCell(using: calendarAccessRow, for: indexPath, item: item)
         case .failure(let id): dequeueSettingFailure(id, at: indexPath)
@@ -268,7 +240,7 @@ final class SettingsExperimentsViewController: ListScreenController<SettingsExpe
             toggleRow(cell, title: String(localized: "Live Voice"), isOn: isOn(AppPreferences.Experiments.liveVoiceKey), identifier: "settings.experiments.liveVoice") { [weak self] in
                 self?.set(AppPreferences.Experiments.liveVoiceKey, $0)
             }
-        case .newPaneSide, .calendars, .calendarAccess, .failure:
+        case .calendars, .calendarAccess, .failure:
             break
         }
     }
