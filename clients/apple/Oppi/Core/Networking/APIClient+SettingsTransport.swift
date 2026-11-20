@@ -11,8 +11,7 @@ extension APIClient: SettingsServerTransport {
         case .mobileOutputGuide:
             return try await getMobileOutputGuideConfiguration().settingsDocument
         case .oppiDocsPrompt, .oppiCliPrompt:
-            let data = try await get(endpoint.rawValue)
-            return try JSONDecoder().decode(RevisionedEnabled.self, from: data).settingsDocument
+            return try await get(endpoint.rawValue, as: RevisionedEnabled.self).settingsDocument
         case .durableSessions:
             return try await durableSessionsSettings().settingsDocument
         case .features:
@@ -53,11 +52,11 @@ extension APIClient: SettingsServerTransport {
                 throw SettingsError.invalidStoredValue(String(localized: "A prompt hint needs an on or off value."))
             }
             do {
-                let data = try await put(
+                return try await put(
                     endpoint.rawValue,
-                    body: EnabledSettingWrite(enabled: enabled, baseRevision: baseRevision)
-                )
-                return try JSONDecoder().decode(RevisionedEnabled.self, from: data).settingsDocument
+                    body: EnabledSettingWrite(enabled: enabled, baseRevision: baseRevision),
+                    as: RevisionedEnabled.self
+                ).settingsDocument
             } catch let APIError.codedServer(status, _, code) where status == 409 && code == "revision_conflict" {
                 throw SettingsError.revisionConflict
             }
@@ -84,15 +83,13 @@ extension APIClient: SettingsServerTransport {
 
     /// Every feature switch of the server (`GET /server/features`), by `ServerFeature` raw value.
     func serverFeatures() async throws -> [String: Bool] {
-        let data = try await get(SettingEndpoint.features.rawValue)
-        return try JSONDecoder().decode([String: Bool].self, from: data)
+        try await get(SettingEndpoint.features.rawValue, as: [String: Bool].self)
     }
 
     /// Saves the named switches; the server answers every switch and tells apps
     /// (`features_changed`).
     func saveServerFeatures(_ switches: [String: Bool]) async throws -> [String: Bool] {
-        let data = try await put(SettingEndpoint.features.rawValue, body: switches)
-        return try JSONDecoder().decode([String: Bool].self, from: data)
+        try await put(SettingEndpoint.features.rawValue, body: switches, as: [String: Bool].self)
     }
 
     /// `experimental.serverDurable` as the running server applies it, and the revision that saved it.
@@ -102,18 +99,17 @@ extension APIClient: SettingsServerTransport {
     }
 
     func durableSessionsSettings() async throws -> DurableSessionsSettings {
-        let data = try await get(SettingEndpoint.durableSessions.rawValue)
-        return try JSONDecoder().decode(DurableSessionsSettings.self, from: data)
+        try await get(SettingEndpoint.durableSessions.rawValue, as: DurableSessionsSettings.self)
     }
 
     /// Saves Durable Sessions; the server applies it to new sessions at once. A stale
     /// `baseRevision` is refused with 409 `revision_conflict`.
     func saveDurableSessionsSettings(enabled: Bool, baseRevision: Int?) async throws -> DurableSessionsSettings {
-        let data = try await put(
+        try await put(
             SettingEndpoint.durableSessions.rawValue,
-            body: EnabledSettingWrite(enabled: enabled, baseRevision: baseRevision)
+            body: EnabledSettingWrite(enabled: enabled, baseRevision: baseRevision),
+            as: DurableSessionsSettings.self
         )
-        return try JSONDecoder().decode(DurableSessionsSettings.self, from: data)
     }
 }
 

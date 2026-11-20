@@ -22,7 +22,6 @@ A document renderer does not touch session runtime, transport, the reducer, or t
 
 ## Cleanup targets
 
-- `APIClient.swift`: split by route domain, keeping one actor and the request helpers.
 - `ServerConnection.swift` stays the composition root; capability, reconnect, and extension-UI policy move into small coordinators as they grow.
 - `SessionInboxViewController.swift`, `WorkspaceDetailViewController.swift`: shared list behaviour belongs in `SessionListCollection.swift`; refresh, worktree, archive, and import state move to a small owner as the detail screen grows.
 - `ChatViewController.swift` (and its extensions): screen structure only; lifecycle and timeline policy go to `ChatSessionManager`, composer state to `ChatComposerOwner`.

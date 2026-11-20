@@ -3,14 +3,13 @@ import Foundation
 extension APIClient {
     /// `GET /pins`: every pin with what the server finds at its target now.
     func listPins() async throws -> PinsList {
-        try JSONDecoder().decode(PinsList.self, from: try await get("/pins"))
+        try await get("/pins", as: PinsList.self)
     }
 
     /// `POST /pins`: pins `target`; a route already pinned answers its pin.
     func addPin(_ target: PaneRoute, label: String? = nil) async throws -> PinAddResult {
         struct Body: Encodable { let target: PaneRoute; let label: String? }
-        let data = try await post("/pins", body: Body(target: target, label: label))
-        return try JSONDecoder().decode(PinAddResult.self, from: data)
+        return try await post("/pins", body: Body(target: target, label: label), as: PinAddResult.self)
     }
 
     /// `PUT /pins`: the pins in this order with these labels; the rest are

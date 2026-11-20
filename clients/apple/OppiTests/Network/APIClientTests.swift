@@ -722,7 +722,7 @@ struct APIClientTests {
         }
 
         let upload = try await client.createSessionAttachmentUpload(
-            workspaceId: "w1",
+            scope: .workspace("w1"),
             sessionId: "s1",
             name: "note.txt",
             mimeType: "text/plain",
@@ -731,7 +731,7 @@ struct APIClientTests {
         #expect(upload.uploadId == "upl_123")
 
         let attachment = try await client.uploadSessionAttachmentContent(
-            workspaceId: "w1",
+            scope: .workspace("w1"),
             sessionId: "s1",
             attachmentId: upload.uploadId,
             data: Data("hello".utf8),
@@ -766,7 +766,7 @@ struct APIClientTests {
         }
 
         let attachment = try await client.uploadSessionAttachmentContent(
-            workspaceId: "w1",
+            scope: .workspace("w1"),
             sessionId: "s1",
             attachmentId: "upl_video",
             fileURL: fileURL,
@@ -1005,8 +1005,8 @@ struct APIClientTests {
             """)
         }
 
-        let response = try await client.getWorkspaceSessionTracePage(
-            workspaceId: "w1",
+        let response = try await client.getSessionTracePage(
+            scope: .workspace("w1"),
             sessionId: "s1",
             cursor: "older-1",
             previewBytes: 4096
@@ -1045,8 +1045,8 @@ struct APIClientTests {
             """)
         }
 
-        let response = try await client.getWorkspaceSessionTracePage(
-            workspaceId: "w1",
+        let response = try await client.getSessionTracePage(
+            scope: .workspace("w1"),
             sessionId: "s1",
             previewBytes: 4096
         )
@@ -1075,8 +1075,8 @@ struct APIClientTests {
             """)
         }
 
-        let response = try await client.getWorkspaceSessionTracePage(
-            workspaceId: "w1",
+        let response = try await client.getSessionTracePage(
+            scope: .workspace("w1"),
             sessionId: "s1",
             cursor: "c1",
             targetEvents: 1_000,
@@ -1109,7 +1109,7 @@ struct APIClientTests {
             """)
         }
 
-        let response = try await client.getSessionEvents(workspaceId: "w1", id: "s1", since: 5)
+        let response = try await client.getSessionEvents(scope: .workspace("w1"), id: "s1", since: 5)
         #expect(response.currentSeq == 8)
         #expect(response.catchUpComplete)
         #expect(response.live)
@@ -1161,7 +1161,7 @@ struct APIClientTests {
             """)
         }
 
-        let session = try await client.stopWorkspaceSession(workspaceId: "w1", sessionId: "s1")
+        let session = try await client.stopSession(scope: .workspace("w1"), sessionId: "s1")
         #expect(session.status == .stopped)
     }
 
@@ -1175,7 +1175,7 @@ struct APIClientTests {
             return self.mockResponse(json: "{}")
         }
 
-        try await client.deleteWorkspaceSession(workspaceId: "w1", sessionId: "s1")
+        try await client.deleteSession(scope: .workspace("w1"), sessionId: "s1")
     }
 
     @Test func deleteSessionRefusedByTheServerThrows() async throws {
@@ -1187,7 +1187,7 @@ struct APIClientTests {
         }
 
         do {
-            try await client.deleteWorkspaceSession(workspaceId: "w1", sessionId: "s1")
+            try await client.deleteSession(scope: .workspace("w1"), sessionId: "s1")
             Issue.record("A 500 must not read as a deleted session")
         } catch APIError.server(let status, let message) {
             #expect(status == 500)
@@ -2079,6 +2079,7 @@ struct APIClientTests {
     @Test func sessionAttachmentMediaSourceUsesEncodedPathSegmentsAndBearerAuth() async throws {
         let client = makeClient()
         let source = try await client.makeSessionAttachmentMediaSource(
+            scope: nil,
             sessionId: "s1",
             attachmentId: "att_space +?#%& 日本語",
             contentTypeHint: "audio/wav",
@@ -2143,6 +2144,7 @@ struct APIClientTests {
 
         do {
             _ = try await client.fetchSessionAttachment(
+                scope: nil,
                 sessionId: "s1",
                 attachmentId: "att-image"
             )

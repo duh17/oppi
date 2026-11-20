@@ -267,10 +267,7 @@ extension QuickSessionModel {
                     }
 
                     let scope = SessionRouteScope.workspace(workspace.id)
-                    session = try await api.resumeWorkspaceSession(
-                        workspaceId: workspace.id,
-                        sessionId: launchedSessionId
-                    )
+                    session = try await api.resumeSession(scope: scope, sessionId: launchedSessionId)
                     let uploaded: [ChatAttachmentRef]
                     if let pendingUploads = attempt.uploadedAttachments {
                         uploaded = pendingUploads
@@ -287,8 +284,8 @@ extension QuickSessionModel {
                     // An Agent started into a Live Voice call may have nothing typed: the
                     // caller's first words are its first message.
                     if !plan.prompt.isEmpty || !uploaded.isEmpty {
-                        try await api.sendWorkspaceSessionCommand(
-                            workspaceId: workspace.id,
+                        try await api.sendSessionCommand(
+                            scope: scope,
                             sessionId: launchedSessionId,
                             message: .prompt(
                                 message: plan.prompt,

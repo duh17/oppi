@@ -2,8 +2,7 @@ import Foundation
 
 extension APIClient {
     func fetchServerMetrics(range: ServerMetricsRange) async throws -> ServerMetricsSnapshot {
-        let data = try await get("/server/metrics?range=\(range.rawValue)")
-        return try JSONDecoder().decode(ServerMetricsSnapshot.self, from: data)
+        try await get("/server/metrics?range=\(range.rawValue)", as: ServerMetricsSnapshot.self)
     }
 
     /// `serverMetrics.enabled` and the revision that saved it.
@@ -14,8 +13,7 @@ extension APIClient {
     }
 
     func serverMetricsSettings() async throws -> ServerMetricsSettings {
-        let data = try await get("/server/metrics/settings")
-        return try JSONDecoder().decode(ServerMetricsSettings.self, from: data)
+        try await get("/server/metrics/settings", as: ServerMetricsSettings.self)
     }
 
     func serverMetricsEnabled() async throws -> Bool {
@@ -26,11 +24,11 @@ extension APIClient {
     /// `baseRevision`, the server refuses the save (409 `revision_conflict`) when the setting
     /// changed since that revision.
     func saveServerMetricsSettings(enabled: Bool, baseRevision: Int? = nil) async throws -> ServerMetricsSettings {
-        let data = try await put(
+        try await put(
             "/server/metrics/settings",
-            body: ServerMetricsWriteRequest(enabled: enabled, baseRevision: baseRevision)
+            body: ServerMetricsWriteRequest(enabled: enabled, baseRevision: baseRevision),
+            as: ServerMetricsSettings.self
         )
-        return try JSONDecoder().decode(ServerMetricsSettings.self, from: data)
     }
 }
 

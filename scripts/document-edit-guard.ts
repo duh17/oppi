@@ -45,9 +45,9 @@ const O = "clients/apple/Oppi/";
  * cap and a reason. The cap is that file's count; an entry nobody needs goes.
  */
 const allowed: [file: string, rule: string, count: number, reason: string][] = [
-  [O + "Core/Networking/APIClient.swift", "fileEditingCapability(", 3,
+  [O + "Core/Networking/APIClient+Files.swift", "fileEditingCapability(", 3,
     "The transport implements and checks the capability."],
-  [O + "Core/Networking/APIClient.swift", "readFileForEditing(", 2,
+  [O + "Core/Networking/APIClient+Files.swift", "readFileForEditing(", 2,
     "The transport's own editor read, which the owner reaches through its backend."],
   [O + "Features/Agents/AgentDetailViewController.swift", "edit pencil", 1,
     "The Agent form's Edit button opens the editing form, not a document."],

@@ -13,12 +13,13 @@ import Testing
 ///
 /// Not driven here, and why:
 /// - `makeHostFileMediaSource`, `makeWorkspaceMediaSource`, `makeSessionFileMediaSource`,
-///   `makeGitBlobMediaSource`, `makeSessionAttachmentMediaSource` (two overloads): they return an `AuthenticatedMediaSource`
+///   `makeGitBlobMediaSource`, `makeSessionAttachmentMediaSource`: they return an `AuthenticatedMediaSource`
 ///   and send nothing, so no request reaches the protocol double.
 /// - `fileEditingCapability(for:)`: a synchronous read of the capabilities `/server/info` recorded.
 /// - `uploadMetricKitPayload`, `uploadClientLogs`: both return before building a request unless
 ///   `TelemetrySettings.allowsRemoteDiagnosticsUpload` is on, which it is not under test.
-/// - `get`, `get(url:)`, `post`, `put`, `request` (four overloads), `makeURL` (three),
+/// - `get`, `post`, `put`, `patch`, `delete` and their `as:` forms, `request` (five overloads),
+///   `performAuthorized`, `performData`, `putAttachmentContent`, `makeURL` (three),
 ///   `percentEncodePathSegment`, `checkStatus`, `attachAuthSession`, `setResponseFailureObserver`:
 ///   transport mechanics and URL building, exercised through every row above.
 struct APIClientRouteContractTests {
@@ -296,10 +297,10 @@ extension APIClientEndpoint {
 
     private static let sessions: [APIClientEndpoint] = [
         APIClientEndpoint("searchSessions") { _ = try? await $0.searchSessions(query: "looking") },
-        APIClientEndpoint("getSessionEvents(workspaceId:)") {
-            _ = try? await $0.getSessionEvents(workspaceId: Placeholder.workspace, id: Placeholder.session, since: 0)
+        APIClientEndpoint("getSessionEvents(workspace)") {
+            _ = try? await $0.getSessionEvents(scope: .workspace(Placeholder.workspace), id: Placeholder.session, since: 0)
         },
-        APIClientEndpoint("getSessionEvents(scope:)") {
+        APIClientEndpoint("getSessionEvents(control)") {
             _ = try? await $0.getSessionEvents(scope: .control, id: Placeholder.session, since: 0)
         },
         APIClientEndpoint("getSession(scope:workspace)") {
@@ -314,46 +315,44 @@ extension APIClientEndpoint {
         APIClientEndpoint("getSessionDialogs") {
             _ = try? await $0.getSessionDialogs(sessionId: Placeholder.session)
         },
-        APIClientEndpoint("getWorkspaceSessionTracePage") {
-            _ = try? await $0.getWorkspaceSessionTracePage(
-                workspaceId: Placeholder.workspace, sessionId: Placeholder.session
-            )
+        APIClientEndpoint("getSessionTracePage(workspace)") {
+            _ = try? await $0.getSessionTracePage(scope: .workspace(Placeholder.workspace), sessionId: Placeholder.session)
         },
-        APIClientEndpoint("getSessionTracePage") {
+        APIClientEndpoint("getSessionTracePage(control)") {
             _ = try? await $0.getSessionTracePage(scope: .control, sessionId: Placeholder.session)
         },
         APIClientEndpoint("getSessionTraceOutline") {
             _ = try? await $0.getSessionTraceOutline(scope: .control, sessionId: Placeholder.session)
         },
-        APIClientEndpoint("stopWorkspaceSession") {
-            _ = try? await $0.stopWorkspaceSession(workspaceId: Placeholder.workspace, sessionId: Placeholder.session)
+        APIClientEndpoint("stopSession(workspace)") {
+            _ = try? await $0.stopSession(scope: .workspace(Placeholder.workspace), sessionId: Placeholder.session)
         },
-        APIClientEndpoint("stopSession") {
+        APIClientEndpoint("stopSession(control)") {
             _ = try? await $0.stopSession(scope: .control, sessionId: Placeholder.session)
         },
-        APIClientEndpoint("deleteWorkspaceSession") {
-            try? await $0.deleteWorkspaceSession(workspaceId: Placeholder.workspace, sessionId: Placeholder.session)
+        APIClientEndpoint("deleteSession(workspace)") {
+            try? await $0.deleteSession(scope: .workspace(Placeholder.workspace), sessionId: Placeholder.session)
         },
-        APIClientEndpoint("deleteSession") {
+        APIClientEndpoint("deleteSession(control)") {
             try? await $0.deleteSession(scope: .control, sessionId: Placeholder.session)
         },
-        APIClientEndpoint("sendWorkspaceSessionCommand") {
-            try? await $0.sendWorkspaceSessionCommand(
-                workspaceId: Placeholder.workspace, sessionId: Placeholder.session, message: .stop()
+        APIClientEndpoint("sendSessionCommand(workspace)") {
+            try? await $0.sendSessionCommand(
+                scope: .workspace(Placeholder.workspace), sessionId: Placeholder.session, message: .stop()
             )
         },
-        APIClientEndpoint("sendSessionCommand") {
+        APIClientEndpoint("sendSessionCommand(control)") {
             try? await $0.sendSessionCommand(scope: .control, sessionId: Placeholder.session, message: .stop())
         },
-        APIClientEndpoint("sendExtensionUIResponse(workspaceId:)") {
+        APIClientEndpoint("sendExtensionUIResponse(workspace)") {
             try? await $0.sendExtensionUIResponse(
-                workspaceId: Placeholder.workspace,
+                scope: .workspace(Placeholder.workspace),
                 sessionId: Placeholder.session,
                 id: "ui1",
                 payload: ExtensionUIResponsePayload(value: "v")
             )
         },
-        APIClientEndpoint("sendExtensionUIResponse(scope:)") {
+        APIClientEndpoint("sendExtensionUIResponse(control)") {
             try? await $0.sendExtensionUIResponse(
                 scope: .control,
                 sessionId: Placeholder.session,
@@ -457,16 +456,16 @@ extension APIClientEndpoint {
         APIClientEndpoint("createControlSession") {
             _ = try? await $0.createControlSession(APIClient.CreateControlSessionRequest(prompt: "hi"))
         },
-        APIClientEndpoint("createSessionAttachmentUpload(workspaceId:)") {
+        APIClientEndpoint("createSessionAttachmentUpload(workspace)") {
             _ = try? await $0.createSessionAttachmentUpload(
-                workspaceId: Placeholder.workspace,
+                scope: .workspace(Placeholder.workspace),
                 sessionId: Placeholder.session,
                 name: "a.png",
                 mimeType: "image/png",
                 sizeBytes: 8
             )
         },
-        APIClientEndpoint("createSessionAttachmentUpload(scope:)") {
+        APIClientEndpoint("createSessionAttachmentUpload(control)") {
             _ = try? await $0.createSessionAttachmentUpload(
                 scope: .control,
                 sessionId: Placeholder.session,
@@ -475,15 +474,15 @@ extension APIClientEndpoint {
                 sizeBytes: 8
             )
         },
-        APIClientEndpoint("uploadSessionAttachmentContent(workspaceId:data:)") {
+        APIClientEndpoint("uploadSessionAttachmentContent(workspace,data:)") {
             _ = try? await $0.uploadSessionAttachmentContent(
-                workspaceId: Placeholder.workspace,
+                scope: .workspace(Placeholder.workspace),
                 sessionId: Placeholder.session,
                 attachmentId: Placeholder.attachment,
                 data: Data("body".utf8)
             )
         },
-        APIClientEndpoint("uploadSessionAttachmentContent(scope:data:)") {
+        APIClientEndpoint("uploadSessionAttachmentContent(control,data:)") {
             _ = try? await $0.uploadSessionAttachmentContent(
                 scope: .control,
                 sessionId: Placeholder.session,
@@ -491,16 +490,16 @@ extension APIClientEndpoint {
                 data: Data("body".utf8)
             )
         },
-        APIClientEndpoint("uploadSessionAttachmentContent(workspaceId:fileURL:)") {
+        APIClientEndpoint("uploadSessionAttachmentContent(workspace,fileURL:)") {
             Placeholder.writeUploadFile()
             _ = try? await $0.uploadSessionAttachmentContent(
-                workspaceId: Placeholder.workspace,
+                scope: .workspace(Placeholder.workspace),
                 sessionId: Placeholder.session,
                 attachmentId: Placeholder.attachment,
                 fileURL: Placeholder.upload
             )
         },
-        APIClientEndpoint("uploadSessionAttachmentContent(scope:fileURL:)") {
+        APIClientEndpoint("uploadSessionAttachmentContent(control,fileURL:)") {
             Placeholder.writeUploadFile()
             _ = try? await $0.uploadSessionAttachmentContent(
                 scope: .control,
@@ -514,12 +513,10 @@ extension APIClientEndpoint {
                 workspaceId: Placeholder.workspace, piSessionFile: "/tmp/session.jsonl"
             )
         },
-        APIClientEndpoint("resumeWorkspaceSession") {
-            _ = try? await $0.resumeWorkspaceSession(
-                workspaceId: Placeholder.workspace, sessionId: Placeholder.session
-            )
+        APIClientEndpoint("resumeSession(workspace)") {
+            _ = try? await $0.resumeSession(scope: .workspace(Placeholder.workspace), sessionId: Placeholder.session)
         },
-        APIClientEndpoint("resumeSession") {
+        APIClientEndpoint("resumeSession(control)") {
             _ = try? await $0.resumeSession(scope: .control, sessionId: Placeholder.session)
         },
         APIClientEndpoint("forkWorkspaceSession") {
@@ -550,22 +547,22 @@ extension APIClientEndpoint {
         APIClientEndpoint("stopInternalURL(control)") {
             try? await $0.stopInternalURL(scope: .control, sessionId: Placeholder.session, url: "proc://bash-1")
         },
-        APIClientEndpoint("getNonEmptyToolOutput(workspaceId:)") {
+        APIClientEndpoint("getNonEmptyToolOutput(workspace)") {
             _ = try? await $0.getNonEmptyToolOutput(
-                workspaceId: Placeholder.workspace, sessionId: Placeholder.session, toolCallId: Placeholder.toolCall
+                scope: .workspace(Placeholder.workspace), sessionId: Placeholder.session, toolCallId: Placeholder.toolCall
             )
         },
-        APIClientEndpoint("getNonEmptyToolOutput(scope:)") {
+        APIClientEndpoint("getNonEmptyToolOutput(control)") {
             _ = try? await $0.getNonEmptyToolOutput(
                 scope: .control, sessionId: Placeholder.session, toolCallId: Placeholder.toolCall
             )
         },
-        APIClientEndpoint("getNonEmptyFullToolOutput(workspaceId:)") {
+        APIClientEndpoint("getNonEmptyFullToolOutput(workspace)") {
             _ = try? await $0.getNonEmptyFullToolOutput(
-                workspaceId: Placeholder.workspace, sessionId: Placeholder.session, toolCallId: Placeholder.toolCall
+                scope: .workspace(Placeholder.workspace), sessionId: Placeholder.session, toolCallId: Placeholder.toolCall
             )
         },
-        APIClientEndpoint("getNonEmptyFullToolOutput(scope:)") {
+        APIClientEndpoint("getNonEmptyFullToolOutput(control)") {
             _ = try? await $0.getNonEmptyFullToolOutput(
                 scope: .control, sessionId: Placeholder.session, toolCallId: Placeholder.toolCall
             )
@@ -590,12 +587,12 @@ extension APIClientEndpoint {
                 scope: .control, sessionId: Placeholder.session, toolCallId: Placeholder.toolCall
             )
         },
-        APIClientEndpoint("fetchSessionAttachment(sessionId:)") {
+        APIClientEndpoint("fetchSessionAttachment(session)") {
             _ = try? await $0.fetchSessionAttachment(
-                sessionId: Placeholder.session, attachmentId: Placeholder.attachment
+                scope: nil, sessionId: Placeholder.session, attachmentId: Placeholder.attachment
             )
         },
-        APIClientEndpoint("fetchSessionAttachment(scope:)") {
+        APIClientEndpoint("fetchSessionAttachment(control)") {
             _ = try? await $0.fetchSessionAttachment(
                 scope: .control, sessionId: Placeholder.session, attachmentId: Placeholder.attachment
             )

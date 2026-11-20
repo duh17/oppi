@@ -3,21 +3,19 @@ import Foundation
 extension APIClient {
     /// Lists the Pi skills configured at server scope. This route never carries a workspace cwd.
     func listServerSkills() async throws -> [ServerSkillSummary] {
-        let data = try await get(url: serverResourceURL(pathSegments: ["skills"]))
-        return try JSONDecoder().decode(ServerSkillsCatalog.self, from: data).skills
+        try await get(url: serverResourceURL(pathSegments: ["skills"]), as: ServerSkillsCatalog.self).skills
     }
 
     func getServerSkill(id: String) async throws -> ServerSkillDetail {
-        let data = try await get(url: serverResourceURL(pathSegments: ["skills", id]))
-        return try JSONDecoder().decode(ServerSkillDetail.self, from: data)
+        try await get(url: serverResourceURL(pathSegments: ["skills", id]), as: ServerSkillDetail.self)
     }
 
     func setServerSkillEnabled(id: String, enabled: Bool) async throws -> ServerSkillSummary {
-        let data = try await put(
+        try await put(
             url: serverResourceURL(pathSegments: ["skills", id, "enabled"]),
-            body: ResourceEnabledRequest(enabled: enabled)
+            body: ResourceEnabledRequest(enabled: enabled),
+            as: ServerSkillSummary.self
         )
-        return try JSONDecoder().decode(ServerSkillSummary.self, from: data)
     }
 
     /// Lists server-global Pi extensions and their contributed tools. `plugins` adds the rows
@@ -25,58 +23,57 @@ extension APIClient {
     /// caller that reads only the tool catalogs leaves it off. An Agent's selection offers only
     /// the Pi extensions (`ServerExtensionSummary.isPiExtension`).
     func listServerExtensions(plugins: Bool) async throws -> ServerExtensionCatalog {
-        let data = try await get(url: serverResourceURL(
-            pathSegments: ["extensions"],
-            queryItems: plugins ? [URLQueryItem(name: "plugins", value: "true")] : []
-        ))
-        return try JSONDecoder().decode(ServerExtensionCatalog.self, from: data)
+        try await get(
+            url: serverResourceURL(
+                pathSegments: ["extensions"],
+                queryItems: plugins ? [URLQueryItem(name: "plugins", value: "true")] : []
+            ),
+            as: ServerExtensionCatalog.self
+        )
     }
 
     func getServerExtension(id: String) async throws -> ServerExtensionDetail {
-        let data = try await get(url: serverResourceURL(pathSegments: ["extensions", id]))
-        return try JSONDecoder().decode(ServerExtensionDetail.self, from: data)
+        try await get(url: serverResourceURL(pathSegments: ["extensions", id]), as: ServerExtensionDetail.self)
     }
 
     /// Executes one explicitly selected user Extension only to inspect its Agent tools.
     func inspectAgentExtensionTools(id: String) async throws -> ServerExtensionDetail {
-        let data = try await get(url: serverResourceURL(
-            pathSegments: ["extensions", id],
-            queryItems: [URLQueryItem(name: "agentTools", value: "true")]
-        ))
-        return try JSONDecoder().decode(ServerExtensionDetail.self, from: data)
+        try await get(
+            url: serverResourceURL(
+                pathSegments: ["extensions", id],
+                queryItems: [URLQueryItem(name: "agentTools", value: "true")]
+            ),
+            as: ServerExtensionDetail.self
+        )
     }
 
     func setServerExtensionEnabled(id: String, enabled: Bool) async throws -> ServerExtensionSummary {
-        let data = try await put(
+        try await put(
             url: serverResourceURL(pathSegments: ["extensions", id, "enabled"]),
-            body: ResourceEnabledRequest(enabled: enabled)
+            body: ResourceEnabledRequest(enabled: enabled),
+            as: ServerExtensionSummary.self
         )
-        return try JSONDecoder().decode(ServerExtensionSummary.self, from: data)
     }
 
     /// Discovers and loads every plugin again in the running server, without a restart.
     func reloadServerExtensions() async throws -> ServerPluginReloadReport {
-        struct Request: Encodable {}
-        let data = try await post("/server/resources/extensions/reload", body: Request())
-        return try JSONDecoder().decode(ServerPluginReloadReport.self, from: data)
+        try await post("/server/resources/extensions/reload", body: EmptyBody(), as: ServerPluginReloadReport.self)
     }
 
     func getPiSystemPrompt() async throws -> PiSystemPromptSnapshot {
-        let data = try await get(url: serverResourceURL(pathSegments: ["pi", "system-prompt"]))
-        return try JSONDecoder().decode(PiSystemPromptSnapshot.self, from: data)
+        try await get(url: serverResourceURL(pathSegments: ["pi", "system-prompt"]), as: PiSystemPromptSnapshot.self)
     }
 
     func getPiDefaultTools() async throws -> PiDefaultToolsSnapshot {
-        let data = try await get(url: serverResourceURL(pathSegments: ["pi", "default-tools"]))
-        return try JSONDecoder().decode(PiDefaultToolsSnapshot.self, from: data)
+        try await get(url: serverResourceURL(pathSegments: ["pi", "default-tools"]), as: PiDefaultToolsSnapshot.self)
     }
 
     func setPiDefaultTools(_ defaultTools: [String]?) async throws -> PiDefaultToolsSnapshot {
-        let data = try await put(
+        try await put(
             url: serverResourceURL(pathSegments: ["pi", "default-tools"]),
-            body: PiDefaultToolsRequest(defaultTools: defaultTools)
+            body: PiDefaultToolsRequest(defaultTools: defaultTools),
+            as: PiDefaultToolsSnapshot.self
         )
-        return try JSONDecoder().decode(PiDefaultToolsSnapshot.self, from: data)
     }
 
     func setPiDefaultModel(_ model: String) async throws {
@@ -98,19 +95,18 @@ extension APIClient {
     }
 
     func getMobileOutputGuideConfiguration() async throws -> MobileOutputGuideConfiguration {
-        let data = try await get(url: mobileOutputGuideURL())
-        return try JSONDecoder().decode(MobileOutputGuideConfiguration.self, from: data)
+        try await get(url: mobileOutputGuideURL(), as: MobileOutputGuideConfiguration.self)
     }
 
     func setMobileOutputGuideConfiguration(
         enabled: Bool,
         baseRevision: Int
     ) async throws -> MobileOutputGuideConfiguration {
-        let data = try await put(
+        try await put(
             url: mobileOutputGuideURL(),
-            body: MobileOutputGuideRequest(enabled: enabled, baseRevision: baseRevision)
+            body: MobileOutputGuideRequest(enabled: enabled, baseRevision: baseRevision),
+            as: MobileOutputGuideConfiguration.self
         )
-        return try JSONDecoder().decode(MobileOutputGuideConfiguration.self, from: data)
     }
 
     private func mobileOutputGuideURL() throws -> URL {

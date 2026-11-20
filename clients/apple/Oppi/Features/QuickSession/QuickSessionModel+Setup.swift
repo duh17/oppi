@@ -202,10 +202,7 @@ extension QuickSessionModel {
         }
 
         do {
-            try await api.deleteWorkspaceSession(
-                workspaceId: cleanup.workspaceId,
-                sessionId: cleanup.sessionId
-            )
+            try await api.deleteSession(scope: .workspace(cleanup.workspaceId), sessionId: cleanup.sessionId)
             connection.removeSession(cleanup.sessionId)
             await TimelineCache.shared.removeTrace(cleanup.sessionId, serverId: cleanup.serverId)
             AppPreferences.QuickSession.removePendingDictationCleanup(cleanup)

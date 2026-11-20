@@ -1,10 +1,5 @@
 {
   "files": {
-    "clients/apple/Oppi/Core/Networking/APIClient.swift": {
-      "budget": 3200,
-      "owner": "API1-API3 transport and endpoint split",
-      "reason": "Endpoint families and transport mechanics in one actor; the transport split follows the route contract."
-    },
     "clients/apple/Oppi/Core/Networking/ServerConnection.swift": {
       "budget": 2300,
       "owner": "SC1-SC3 ServerConnection state owners",

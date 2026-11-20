@@ -21,19 +21,16 @@ extension APIClient {
 
     func listAgents(includeArchived: Bool = false) async throws -> [AgentDefinitionSummary] {
         let suffix = includeArchived ? "?includeArchived=true" : ""
-        let data = try await get("/agents\(suffix)")
-        return try JSONDecoder().decode(AgentListResponse.self, from: data).agents
+        return try await get("/agents\(suffix)", as: AgentListResponse.self).agents
     }
 
     func getAgent(_ agentId: String) async throws -> StoredAgentDefinition {
         let encodedAgentId = try percentEncodePathSegment(agentId)
-        let data = try await get("/agents/\(encodedAgentId)")
-        return try JSONDecoder().decode(AgentResponse.self, from: data).agent
+        return try await get("/agents/\(encodedAgentId)", as: AgentResponse.self).agent
     }
 
     func createAgent(_ definition: AgentDefinition) async throws -> StoredAgentDefinition {
-        let data = try await post("/agents", body: definition)
-        return try JSONDecoder().decode(AgentResponse.self, from: data).agent
+        try await post("/agents", body: definition, as: AgentResponse.self).agent
     }
 
     func updateAgent(
@@ -53,38 +50,26 @@ extension APIClient {
                 var c = encoder.container(keyedBy: CodingKeys.self)
                 try c.encode(definition.name, forKey: .name)
                 try c.encode(definition.icon, forKey: .icon)
-                try encodeNullable(definition.description, to: &c, forKey: .description)
-                try encodeNullable(definition.instructions, to: &c, forKey: .instructions)
-                try encodeNullable(definition.resources, to: &c, forKey: .resources)
-                try encodeNullable(definition.sessionDefaults, to: &c, forKey: .sessionDefaults)
+                try c.encodeNullable(definition.description, forKey: .description)
+                try c.encodeNullable(definition.instructions, forKey: .instructions)
+                try c.encodeNullable(definition.resources, forKey: .resources)
+                try c.encodeNullable(definition.sessionDefaults, forKey: .sessionDefaults)
                 if includesLaunchConstraints {
-                    try encodeNullable(definition.launchConstraints, to: &c, forKey: .launchConstraints)
-                }
-            }
-
-            func encodeNullable<T: Encodable>(
-                _ value: T?,
-                to container: inout KeyedEncodingContainer<CodingKeys>,
-                forKey key: CodingKeys
-            ) throws {
-                if let value {
-                    try container.encode(value, forKey: key)
-                } else {
-                    try container.encodeNil(forKey: key)
+                    try c.encodeNullable(definition.launchConstraints, forKey: .launchConstraints)
                 }
             }
         }
 
         let encodedAgentId = try percentEncodePathSegment(agentId)
-        let data = try await patch(
+        return try await patch(
             "/agents/\(encodedAgentId)",
             body: UpdateBody(
                 definition: definition,
                 includesLaunchConstraints: definition.launchConstraints != nil
                     || previouslyHadLaunchConstraints
-            )
-        )
-        return try JSONDecoder().decode(AgentResponse.self, from: data).agent
+            ),
+            as: AgentResponse.self
+        ).agent
     }
 
     /// CAS patch so a model-star tap cannot overwrite a concurrent Agent edit.
@@ -96,11 +81,11 @@ extension APIClient {
         struct Defaults: Encodable { let model: String }
         struct Patch: Encodable { let sessionDefaults: Defaults }
         let encodedId = try percentEncodePathSegment(agentId)
-        let data = try await patch(
+        return try await patch(
             "/agents/\(encodedId)?expectedVersion=\(version)",
-            body: Patch(sessionDefaults: Defaults(model: model))
-        )
-        return try JSONDecoder().decode(AgentResponse.self, from: data).agent
+            body: Patch(sessionDefaults: Defaults(model: model)),
+            as: AgentResponse.self
+        ).agent
     }
 
     /// CAS patch of an Agent's prompt alone, as the in-app editor writes it: the
@@ -136,11 +121,11 @@ extension APIClient {
         let patchBody = Patch(
             instructions: text.isEmpty ? nil : Instructions(mode: mode, text: text)
         )
-        let data = try await patch(
+        return try await patch(
             "/agents/\(encodedId)?expectedVersion=\(expectedVersion)",
-            body: patchBody
-        )
-        return try JSONDecoder().decode(AgentResponse.self, from: data).agent
+            body: patchBody,
+            as: AgentResponse.self
+        ).agent
     }
 
     /// CAS patch of a Schedule's prompt alone. The prompt is required, so the
@@ -153,11 +138,11 @@ extension APIClient {
         struct Action: Encodable { let prompt: String }
         struct Patch: Encodable { let action: Action }
         let encodedId = try percentEncodePathSegment(scheduleId)
-        let data = try await patch(
+        return try await patch(
             "/schedules/\(encodedId)?expectedVersion=\(expectedVersion)",
-            body: Patch(action: Action(prompt: prompt))
-        )
-        return try JSONDecoder().decode(AgentScheduleSummaryResponse.self, from: data).schedule
+            body: Patch(action: Action(prompt: prompt)),
+            as: AgentScheduleSummaryResponse.self
+        ).schedule
     }
 
     func updateAgentNative(
@@ -178,7 +163,7 @@ extension APIClient {
     ) async throws -> StoredAgentDefinition {
         let encodedAgentId = try percentEncodePathSegment(agentId)
         let query = expectedVersion.map { "?expectedVersion=\($0)" } ?? ""
-        let data = try await patch(
+        return try await patch(
             "/agents/\(encodedAgentId)\(query)",
             body: NativeAgentUpdateBody(
                 name: name,
@@ -196,9 +181,9 @@ extension APIClient {
                 launchConstraints: launchConstraints,
                 includesLaunchConstraints: launchConstraints != nil
                     || previouslyHadLaunchConstraints
-            )
-        )
-        return try JSONDecoder().decode(AgentResponse.self, from: data).agent
+            ),
+            as: AgentResponse.self
+        ).agent
     }
 
     func updateAgentIcon(agentId: String, icon: IconChoice) async throws -> StoredAgentDefinition {
@@ -207,17 +192,12 @@ extension APIClient {
         }
 
         let encodedAgentId = try percentEncodePathSegment(agentId)
-        let data = try await patch(
-            "/agents/\(encodedAgentId)",
-            body: IconUpdateBody(icon: icon)
-        )
-        return try JSONDecoder().decode(AgentResponse.self, from: data).agent
+        return try await patch("/agents/\(encodedAgentId)", body: IconUpdateBody(icon: icon), as: AgentResponse.self).agent
     }
 
     func archiveAgent(agentId: String) async throws -> StoredAgentDefinition {
         let encodedAgentId = try percentEncodePathSegment(agentId)
-        let data = try await delete("/agents/\(encodedAgentId)")
-        return try JSONDecoder().decode(AgentResponse.self, from: data).agent
+        return try await delete("/agents/\(encodedAgentId)", as: AgentResponse.self).agent
     }
 
     func launchAgentSession(
@@ -280,8 +260,7 @@ extension APIClient {
 
     func listAgentSchedules(status: AgentScheduleStatus? = nil) async throws -> [AgentScheduleSummary] {
         let suffix = status.map { "?status=\($0.rawValue)" } ?? ""
-        let data = try await get("/schedules\(suffix)")
-        return try JSONDecoder().decode(AgentScheduleListResponse.self, from: data).schedules
+        return try await get("/schedules\(suffix)", as: AgentScheduleListResponse.self).schedules
     }
 
     /// Past runs with their sessions' outcomes and upcoming occurrences in `[from, to)`, at most
@@ -289,14 +268,12 @@ extension APIClient {
     func scheduleCalendar(from: Date, to: Date) async throws -> ScheduleCalendarResponse {
         let fromMs = Int64((from.timeIntervalSince1970 * 1000).rounded(.down))
         let toMs = Int64((to.timeIntervalSince1970 * 1000).rounded(.down))
-        let data = try await get("/schedules/calendar?from=\(fromMs)&to=\(toMs)")
-        return try JSONDecoder().decode(ScheduleCalendarResponse.self, from: data)
+        return try await get("/schedules/calendar?from=\(fromMs)&to=\(toMs)", as: ScheduleCalendarResponse.self)
     }
 
     func getAgentSchedule(_ scheduleId: String) async throws -> AgentSchedule {
         let encodedScheduleId = try percentEncodePathSegment(scheduleId)
-        let data = try await get("/schedules/\(encodedScheduleId)")
-        return try JSONDecoder().decode(AgentScheduleResponse.self, from: data).schedule
+        return try await get("/schedules/\(encodedScheduleId)", as: AgentScheduleResponse.self).schedule
     }
 
     func createAgentSchedule(
@@ -309,8 +286,11 @@ extension APIClient {
             let trigger: AgentScheduleTrigger
             let action: AgentScheduleAction
         }
-        let data = try await post("/schedules", body: Body(name: name, trigger: trigger, action: action))
-        return try JSONDecoder().decode(AgentScheduleSummaryResponse.self, from: data).schedule
+        return try await post(
+            "/schedules",
+            body: Body(name: name, trigger: trigger, action: action),
+            as: AgentScheduleSummaryResponse.self
+        ).schedule
     }
 
     func updateAgentSchedule(
@@ -325,11 +305,11 @@ extension APIClient {
             let action: AgentScheduleAction
         }
         let encodedScheduleId = try percentEncodePathSegment(scheduleId)
-        let data = try await patch(
+        return try await patch(
             "/schedules/\(encodedScheduleId)",
-            body: Body(name: name, trigger: trigger, action: action)
-        )
-        return try JSONDecoder().decode(AgentScheduleSummaryResponse.self, from: data).schedule
+            body: Body(name: name, trigger: trigger, action: action),
+            as: AgentScheduleSummaryResponse.self
+        ).schedule
     }
 
     func updateAgentScheduleNative(
@@ -341,15 +321,15 @@ extension APIClient {
     ) async throws -> AgentScheduleSummary {
         let encodedScheduleId = try percentEncodePathSegment(scheduleId)
         let query = expectedVersion.map { "?expectedVersion=\($0)" } ?? ""
-        let data = try await patch(
+        return try await patch(
             "/schedules/\(encodedScheduleId)\(query)",
             body: NativeScheduleUpdateBody(
                 name: name,
                 trigger: trigger,
                 action: NativeScheduleActionUpdate(action)
-            )
-        )
-        return try JSONDecoder().decode(AgentScheduleSummaryResponse.self, from: data).schedule
+            ),
+            as: AgentScheduleSummaryResponse.self
+        ).schedule
     }
 
     func pauseAgentSchedule(_ scheduleId: String) async throws -> AgentScheduleSummary {
@@ -373,17 +353,19 @@ extension APIClient {
             let requestId: String
         }
         let encodedScheduleId = try percentEncodePathSegment(scheduleId)
-        let data = try await post(
+        return try await post(
             "/schedules/\(encodedScheduleId)/run",
-            body: Body(requestId: "ios-manual-\(UUID().uuidString)")
-        )
-        return try JSONDecoder().decode(AgentScheduleRunResponse.self, from: data).run
+            body: Body(requestId: "ios-manual-\(UUID().uuidString)"),
+            as: AgentScheduleRunResponse.self
+        ).run
     }
 
     func listAgentScheduleRuns(scheduleId: String, limit: Int = 20) async throws -> [AgentScheduleRunSummary] {
         let encodedScheduleId = try percentEncodePathSegment(scheduleId)
-        let data = try await get("/schedules/\(encodedScheduleId)/runs?limit=\(limit)&order=desc")
-        let runs = try JSONDecoder().decode(AgentScheduleRunsResponse.self, from: data).runs
+        let runs = try await get(
+            "/schedules/\(encodedScheduleId)/runs?limit=\(limit)&order=desc",
+            as: AgentScheduleRunsResponse.self
+        ).runs
         return runs.sorted {
             if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
             return $0.id > $1.id
@@ -392,22 +374,11 @@ extension APIClient {
 
     private func scheduleStateMutation(scheduleId: String, action: String) async throws -> AgentScheduleSummary {
         let encodedScheduleId = try percentEncodePathSegment(scheduleId)
-        let data = try await post("/schedules/\(encodedScheduleId)/\(action)", body: APIClientEmptyBody())
-        return try JSONDecoder().decode(AgentScheduleSummaryResponse.self, from: data).schedule
-    }
-}
-
-private extension APIClient {
-    func patch<T: Encodable>(_ path: String, body: T) async throws -> Data {
-        let (data, response) = try await request("PATCH", path: path, body: body)
-        try checkStatus(response, data: data)
-        return data
-    }
-
-    func delete(_ path: String) async throws -> Data {
-        let (data, response) = try await request("DELETE", path: path)
-        try checkStatus(response, data: data)
-        return data
+        return try await post(
+            "/schedules/\(encodedScheduleId)/\(action)",
+            body: EmptyBody(),
+            as: AgentScheduleSummaryResponse.self
+        ).schedule
     }
 }
 
@@ -548,8 +519,6 @@ private extension KeyedEncodingContainer {
         }
     }
 }
-
-private struct APIClientEmptyBody: Encodable {}
 
 private extension String {
     var nilIfBlank: String? {

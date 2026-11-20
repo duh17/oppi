@@ -3,36 +3,6 @@ import OSLog
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "APIClient")
 
-struct CreateWorkspaceSessionConflict: Error, Sendable {
-    let sessionId: String
-    let message: String
-}
-
-enum HostFileResolvedPathHeaders {
-    static let resolvedPathField = "X-Oppi-Resolved-Path"
-
-    static func resolvedPath(from response: URLResponse) -> String? {
-        guard let http = response as? HTTPURLResponse else { return nil }
-        let raw = http.value(forHTTPHeaderField: resolvedPathField)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let raw, !raw.isEmpty else { return nil }
-        return decode(raw)
-    }
-
-    /// Inverse of the server's `encodeURIComponent` header encoding, which
-    /// keeps `/` literal so ASCII paths stay readable on the wire.
-    static func decode(_ raw: String) -> String? {
-        guard let decoded = raw.removingPercentEncoding, decoded.hasPrefix("/") else {
-            return nil
-        }
-        return decoded
-    }
-}
-
-/// The editor's read of a file that is not there yet: there is no ETag, and the
-/// first save creates the file (`If-None-Match: *`).
-let workspaceFileCreatableHeader = "X-Oppi-Creatable"
-
 /// Network failures that may make an HTTP route unavailable for future work.
 /// HTTP responses, decoding failures, cancellation, and TLS failures are intentionally excluded.
 enum APIClientAvailabilityFailure: Sendable, Equatable {
@@ -90,24 +60,14 @@ private final class DeviceAuthSessionBox: @unchecked Sendable {
     }
 }
 
-private struct SessionCommandRejectedError: LocalizedError {
-    let message: String
-
-    var errorDescription: String? {
-        UserFacingErrorText.normalize(message)
-    }
-}
-
 /// REST client for oppi server.
 ///
-/// Handles session CRUD, health checks, and authentication.
-/// All methods throw on network/server errors with descriptive messages.
+/// This file owns the transport: auth and its 401 refresh, URL building, status
+/// checks, and failure observation. The endpoints live in `APIClient+<Area>.swift`
+/// and go through `get`/`post`/`put`/`patch`/`delete`, whose `as:` forms decode
+/// the JSON body. An endpoint with its own status handling, headers, or decoding
+/// calls `request` or `performAuthorized` and `checkStatus` itself.
 actor APIClient: ClientLogUploading {
-    enum SessionTraceView: String, Sendable {
-        case context
-        case full
-    }
-
     /// A total deadline for one candidate bootstrap request. This races the
     /// complete URLSession task and cancels that task when the deadline wins.
     struct BootstrapDeadline: Sendable {
@@ -126,19 +86,8 @@ actor APIClient: ClientLogUploading {
         }
     }
 
-    struct SessionTracePageResponse: Decodable, Sendable {
-        let session: Session
-        let trace: [TraceEvent]
-        let page: TracePageMetadata
-        let metrics: TracePageMetrics
-    }
-
-    struct SessionTraceOutlineResponse: Decodable, Sendable {
-        let session: Session
-        let outline: SessionOutlineSnapshot
-    }
-
-    private struct EmptyJSONObject: Encodable {}
+    /// The JSON body `{}`.
+    struct EmptyBody: Encodable {}
 
     let baseURL: URL
     let token: String
@@ -155,35 +104,16 @@ actor APIClient: ClientLogUploading {
     /// `workspaceFileEditing`, `skillFileEditing`, `piFileEditing`, and
     /// `fileEditOrigins` from this client's own `/server/info`. Nil keeps those
     /// files read-only.
-    private var workspaceFileEditing: ServerInfo.WorkspaceFileEditingCapability?
-    private var skillFileEditing: ServerInfo.WorkspaceFileEditingCapability?
-    private var piFileEditing: ServerInfo.WorkspaceFileEditingCapability?
-    private var fileEditOrigins: ServerInfo.WorkspaceFileEditingCapability?
+    private(set) var workspaceFileEditing: ServerInfo.WorkspaceFileEditingCapability?
+    private(set) var skillFileEditing: ServerInfo.WorkspaceFileEditingCapability?
+    private(set) var piFileEditing: ServerInfo.WorkspaceFileEditingCapability?
+    private(set) var fileEditOrigins: ServerInfo.WorkspaceFileEditingCapability?
 
     init(
         environment: OppiClientEnvironment,
         availabilityObserver: APIClientAvailabilityObserver? = nil
     ) {
-        self.tailnetRoute = .forHost(environment.baseURL.host)
-        self.environment = environment
-        self.baseURL = environment.baseURL
-        self.token = environment.bearerToken
-        self.tlsCertFingerprint = environment.pinnedCertificateFingerprint
-        self.availabilityObserver = availabilityObserver
-        trustDelegate = PinnedServerTrustDelegate(
-            pinnedLeafFingerprint: environment.pinnedCertificateFingerprint,
-            expectedServerName: environment.tlsServerName
-        )
-
-        let config = TailnetTransportRoute.defaultSessionConfiguration(route: tailnetRoute)
-        config.timeoutIntervalForRequest = 15
-        config.timeoutIntervalForResource = 30
-        session = URLSession(
-            configuration: config,
-            delegate: trustDelegate,
-            delegateQueue: nil
-        )
-        backgroundUploadsAllowed = true
+        self.init(environment: environment, sessionConfiguration: nil, availabilityObserver: availabilityObserver)
     }
 
     init(
@@ -192,31 +122,15 @@ actor APIClient: ClientLogUploading {
         tlsCertFingerprint: String? = nil,
         availabilityObserver: APIClientAvailabilityObserver? = nil
     ) {
-        self.tailnetRoute = .forHost(baseURL.host)
-        let environment = OppiClientEnvironment(
-            baseURL: baseURL,
-            bearerToken: token,
-            pinnedCertificateFingerprint: tlsCertFingerprint
+        self.init(
+            environment: OppiClientEnvironment(
+                baseURL: baseURL,
+                bearerToken: token,
+                pinnedCertificateFingerprint: tlsCertFingerprint
+            ),
+            sessionConfiguration: nil,
+            availabilityObserver: availabilityObserver
         )
-        self.environment = environment
-        self.baseURL = environment.baseURL
-        self.token = environment.bearerToken
-        self.tlsCertFingerprint = environment.pinnedCertificateFingerprint
-        self.availabilityObserver = availabilityObserver
-        trustDelegate = PinnedServerTrustDelegate(
-            pinnedLeafFingerprint: environment.pinnedCertificateFingerprint,
-            expectedServerName: environment.tlsServerName
-        )
-
-        let config = TailnetTransportRoute.defaultSessionConfiguration(route: tailnetRoute)
-        config.timeoutIntervalForRequest = 15
-        config.timeoutIntervalForResource = 30
-        session = URLSession(
-            configuration: config,
-            delegate: trustDelegate,
-            delegateQueue: nil
-        )
-        backgroundUploadsAllowed = true
     }
 
     // periphery:ignore - used by APIClientTests via @testable import
@@ -226,22 +140,7 @@ actor APIClient: ClientLogUploading {
         configuration: URLSessionConfiguration,
         availabilityObserver: APIClientAvailabilityObserver? = nil
     ) {
-        self.tailnetRoute = .forHost(environment.baseURL.host)
-        self.environment = environment
-        self.baseURL = environment.baseURL
-        self.token = environment.bearerToken
-        self.tlsCertFingerprint = environment.pinnedCertificateFingerprint
-        self.availabilityObserver = availabilityObserver
-        trustDelegate = PinnedServerTrustDelegate(
-            pinnedLeafFingerprint: environment.pinnedCertificateFingerprint,
-            expectedServerName: environment.tlsServerName
-        )
-        session = URLSession(
-            configuration: configuration,
-            delegate: trustDelegate,
-            delegateQueue: nil
-        )
-        backgroundUploadsAllowed = false
+        self.init(environment: environment, sessionConfiguration: configuration, availabilityObserver: availabilityObserver)
     }
 
     /// Test-only init with custom URLSessionConfiguration.
@@ -252,12 +151,26 @@ actor APIClient: ClientLogUploading {
         tlsCertFingerprint: String? = nil,
         availabilityObserver: APIClientAvailabilityObserver? = nil
     ) {
-        self.tailnetRoute = .forHost(baseURL.host)
-        let environment = OppiClientEnvironment(
-            baseURL: baseURL,
-            bearerToken: token,
-            pinnedCertificateFingerprint: tlsCertFingerprint
+        self.init(
+            environment: OppiClientEnvironment(
+                baseURL: baseURL,
+                bearerToken: token,
+                pinnedCertificateFingerprint: tlsCertFingerprint
+            ),
+            sessionConfiguration: configuration,
+            availabilityObserver: availabilityObserver
         )
+    }
+
+    /// `sessionConfiguration` nil is a client the app builds for a server: the
+    /// route's default configuration with the API timeouts, and file uploads
+    /// that may run in the background session. A test passes its stub configuration.
+    private init(
+        environment: OppiClientEnvironment,
+        sessionConfiguration: URLSessionConfiguration?,
+        availabilityObserver: APIClientAvailabilityObserver?
+    ) {
+        self.tailnetRoute = .forHost(environment.baseURL.host)
         self.environment = environment
         self.baseURL = environment.baseURL
         self.token = environment.bearerToken
@@ -267,12 +180,21 @@ actor APIClient: ClientLogUploading {
             pinnedLeafFingerprint: environment.pinnedCertificateFingerprint,
             expectedServerName: environment.tlsServerName
         )
+
+        let config: URLSessionConfiguration
+        if let sessionConfiguration {
+            config = sessionConfiguration
+        } else {
+            config = TailnetTransportRoute.defaultSessionConfiguration(route: tailnetRoute)
+            config.timeoutIntervalForRequest = 15
+            config.timeoutIntervalForResource = 30
+        }
         session = URLSession(
-            configuration: configuration,
+            configuration: config,
             delegate: trustDelegate,
             delegateQueue: nil
         )
-        backgroundUploadsAllowed = false
+        backgroundUploadsAllowed = sessionConfiguration == nil
     }
 
     /// A session that is never invalidated keeps its delegate and connection
@@ -308,7 +230,7 @@ actor APIClient: ClientLogUploading {
         return transport
     }
 
-    // MARK: - Health & Auth
+    // MARK: - Health & Server Info
 
     /// Check server reachability.
     func health() async throws -> Bool {
@@ -330,166 +252,9 @@ actor APIClient: ClientLogUploading {
         return (response as? HTTPURLResponse)?.statusCode == 200
     }
 
-    /// Exchange a one-time pairing token for a device-key credential.
-    /// The server registers `devicePublicKey` and returns a short-lived access
-    /// token, not a long-lived bearer. A 202 means another device must approve.
-    func pairDevice(
-        pairingToken: String,
-        deviceName: String? = nil,
-        devicePublicKey: DevicePublicKey
-    ) async throws -> PairDeviceResponse {
-        switch try await startPairDevice(
-            pairingToken: pairingToken,
-            deviceName: deviceName,
-            devicePublicKey: devicePublicKey
-        ) {
-        case .enrolled(let response):
-            return response
-        case .approvalRequired:
-            throw APIError.server(status: 202, message: "approval_required")
-        }
-    }
-
-    func startPairDevice(
-        pairingToken: String,
-        deviceName: String? = nil,
-        devicePublicKey: DevicePublicKey
-    ) async throws -> PairDeviceStart {
-        let body = PairDeviceRequest(
-            pairingToken: pairingToken,
-            deviceName: deviceName,
-            devicePublicKey: devicePublicKey
-        )
-        let (data, response) = try await requestNoAuth("POST", path: "/pair", body: body)
-        return try decodePairDeviceStart(data: data, response: response)
-    }
-
-    func pollPairingApprovalStatus(
-        approvalId: String,
-        pendingToken: String
-    ) async throws -> PairingApprovalPoll {
-        struct Body: Encodable {
-            let approvalId: String
-            let pendingToken: String
-        }
-        let (data, response) = try await requestNoAuth(
-            "POST",
-            path: "/pair/approval-status",
-            body: Body(approvalId: approvalId, pendingToken: pendingToken)
-        )
-        return try decodePairingApprovalPoll(data: data, response: response)
-    }
-
-    func listPairingApprovals() async throws -> [PendingPairingApproval] {
-        let data = try await get("/auth/pairing-approvals")
-        return try JSONDecoder().decode(PairingApprovalListResponse.self, from: data).approvals
-    }
-
-    func approvePairingApproval(id: String, signature: String) async throws {
-        struct Body: Encodable {
-            let signature: String
-        }
-        let encodedId = try percentEncodePathSegment(id)
-        _ = try await post(
-            "/auth/pairing-approvals/\(encodedId)/approve",
-            body: Body(signature: signature)
-        )
-    }
-
-    func denyPairingApproval(id: String) async throws {
-        let encodedId = try percentEncodePathSegment(id)
-        _ = try await post(
-            "/auth/pairing-approvals/\(encodedId)/deny",
-            body: EmptyJSONObject()
-        )
-    }
-
-    private func decodePairDeviceStart(data: Data, response: URLResponse) throws -> PairDeviceStart {
-        guard let http = response as? HTTPURLResponse else {
-            throw APIError.invalidResponse
-        }
-        switch http.statusCode {
-        case 200:
-            return .enrolled(try JSONDecoder().decode(PairDeviceResponse.self, from: data))
-        case 202:
-            let required = try JSONDecoder().decode(PairingApprovalRequired.self, from: data)
-            guard required.status == "approval_required",
-                  !required.approvalId.isEmpty,
-                  !required.pendingToken.isEmpty else {
-                throw APIError.invalidResponse
-            }
-            return .approvalRequired(required)
-        default:
-            try checkStatus(response, data: data)
-            throw APIError.invalidResponse
-        }
-    }
-
-    private func decodePairingApprovalPoll(data: Data, response: URLResponse) throws -> PairingApprovalPoll {
-        guard let http = response as? HTTPURLResponse else {
-            throw APIError.invalidResponse
-        }
-        switch http.statusCode {
-        case 200:
-            return .enrolled(try JSONDecoder().decode(PairDeviceResponse.self, from: data))
-        case 202:
-            let pending = try JSONDecoder().decode(PairingApprovalPendingStatus.self, from: data)
-            guard pending.status == "pending" else {
-                throw APIError.invalidResponse
-            }
-            return .pending(expiresAt: pending.expiresAt)
-        default:
-            try checkStatus(response, data: data)
-            throw APIError.invalidResponse
-        }
-    }
-
-    /// Mint a same-Tailscale-user pairing invite. Auth is the TCP whois check
-    /// on the server; do not send owner `sk_`.
-    func issueTailscalePairingInvite() async throws -> TailscalePairingInvite {
-        let (data, response) = try await requestNoAuth(
-            "POST",
-            path: "/pair/tailscale",
-            body: EmptyJSONObject()
-        )
-        try checkStatus(response, data: data)
-        return try JSONDecoder().decode(TailscalePairingInvite.self, from: data)
-    }
-
-    /// Get authenticated user info.
-    func me() async throws -> User {
-        let data = try await get("/me")
-        return try JSONDecoder().decode(User.self, from: data)
-    }
-
-    /// List paired devices for this server. Includes revoked rows.
-    func listAuthDevices() async throws -> [AuthDevice] {
-        let data = try await get("/auth/devices")
-        return try JSONDecoder().decode(AuthDeviceListResponse.self, from: data).devices
-    }
-
-    /// Revoke a paired device. Its access tokens are invalidated immediately.
-    func revokeAuthDevice(id: String) async throws {
-        let (data, response) = try await request(
-            "DELETE",
-            path: "/auth/devices/\(id)"
-        )
-        try checkStatus(response, data: data)
-    }
-
     /// Fetch server metadata (version, uptime, stats) for the server detail view.
     func serverInfo() async throws -> ServerInfo {
-        let data = try await get("/server/info")
-        return recordCapabilities(try JSONDecoder().decode(ServerInfo.self, from: data))
-    }
-
-    /// Start an exact-version npm update of a globally installed oppi-server.
-    func startServerUpdate(version: String) async throws -> ServerInfo.UpdateInfo {
-        struct Body: Encodable {
-            let version: String
-        }
-        let data = try await post("/server/update", body: Body(version: version))
-        return try JSONDecoder().decode(ServerInfo.UpdateInfo.self, from: data)
+        recordCapabilities(try await get("/server/info", as: ServerInfo.self))
     }
 
     private func recordCapabilities(_ info: ServerInfo) -> ServerInfo {
@@ -504,2002 +269,22 @@ actor APIClient: ClientLogUploading {
     /// The deadline applies only to this bootstrap call; the retained client's
     /// normal 15-second request and 30-second resource policies remain intact.
     func serverInfo(bootstrapDeadline: BootstrapDeadline) async throws -> ServerInfo {
-        var request = try URLRequest(url: makeURL(path: "/server/info"))
-        request.httpMethod = "GET"
-        var current = try await authorizedToken()
-        ServerAuthorization.apply(token: current, to: &request)
+        let url = try makeURL(path: "/server/info")
         logger.debug("GET /server/info [bootstrap]")
-
-        var (data, response) = try await bootstrapData(for: request, deadline: bootstrapDeadline)
-        if authSessionBox.get() != nil, (response as? HTTPURLResponse)?.statusCode == 401 {
-            current = try await authorizedToken(forceRefresh: true, replacing: current)
-            var retry = try URLRequest(url: makeURL(path: "/server/info"))
-            retry.httpMethod = "GET"
-            ServerAuthorization.apply(token: current, to: &retry)
-            (data, response) = try await bootstrapData(for: retry, deadline: bootstrapDeadline)
+        let (data, response) = try await withAuthorizedRetry {
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            return request
+        } perform: { request in
+            try await self.bootstrapData(for: request, deadline: bootstrapDeadline)
         }
         try checkStatus(response, data: data)
         return recordCapabilities(try JSONDecoder().decode(ServerInfo.self, from: data))
     }
 
-    /// Client timezone offset in minutes (e.g. PDT = -420).
-    /// Sent to the server so daily/hourly buckets align with the user's local time.
-    private static var tzOffsetMinutes: Int {
-        TimeZone.current.secondsFromGMT() / 60
-    }
+    // MARK: - Transport
 
-    /// Fetch server stats for the given range.
-    func fetchStats(range: UsageRange = .week) async throws -> ServerStats {
-        let tz = Self.tzOffsetMinutes
-        let data = try await get("/server/stats?range=\(range.rawValue)&tz=\(tz)")
-        return try JSONDecoder().decode(ServerStats.self, from: data)
-    }
-
-    /// Fetch hourly breakdown for a specific day.
-    func fetchDailyDetail(date: String) async throws -> DailyDetail {
-        let tz = Self.tzOffsetMinutes
-        let data = try await get("/server/stats/daily/\(date)?tz=\(tz)")
-        return try JSONDecoder().decode(DailyDetail.self, from: data)
-    }
-
-    /// Fetch normalized provider quota windows (Codex, xAI, …) from the server.
-    func fetchProviderQuotas() async throws -> ProviderQuotasInfo {
-        let data = try await get("/server/provider-quotas")
-        return try JSONDecoder().decode(ProviderQuotasInfo.self, from: data)
-    }
-
-    // MARK: - Sessions
-
-    /// Full-text search across session content.
-    func searchSessions(
-        query: String,
-        workspaceId: String? = nil,
-        limit: Int = 20
-    ) async throws -> SessionSearchResponse {
-        var items = [
-            URLQueryItem(name: "q", value: query),
-            URLQueryItem(name: "limit", value: String(limit)),
-        ]
-        if let workspaceId {
-            items.append(URLQueryItem(name: "workspaceId", value: workspaceId))
-        }
-        var components = URLComponents()
-        components.queryItems = items
-        let qs = components.percentEncodedQuery ?? ""
-        let data = try await get("/sessions/search?\(qs)")
-        return try JSONDecoder().decode(SessionSearchResponse.self, from: data)
-    }
-
-    struct SequencedServerEvent: Sendable, Equatable {
-        let seq: Int
-        let message: ServerMessage
-    }
-
-    struct SessionEventsResponse: Sendable, Equatable {
-        let events: [SequencedServerEvent]
-        let currentSeq: Int
-        let runtimeEpoch: String?
-        let session: Session
-        let catchUpComplete: Bool
-        /// False when the session exists but has no live event ring.
-        let live: Bool
-
-        init(
-            events: [SequencedServerEvent],
-            currentSeq: Int,
-            runtimeEpoch: String? = nil,
-            session: Session,
-            catchUpComplete: Bool,
-            live: Bool = true
-        ) {
-            self.events = events
-            self.currentSeq = currentSeq
-            self.runtimeEpoch = runtimeEpoch
-            self.session = session
-            self.catchUpComplete = catchUpComplete
-            self.live = live
-        }
-    }
-
-    private func focusedSessionPath(scope: SessionRouteScope, sessionId: String) -> String {
-        switch scope {
-        case .workspace(let workspaceId):
-            return "/workspaces/\(workspaceId)/sessions/\(sessionId)"
-        case .control:
-            return "/control-sessions/\(sessionId)"
-        }
-    }
-
-    /// Fetch sequenced durable session events after `since` for reconnect catch-up.
-    ///
-    /// Decodes the response in a single pass using `Decodable` — no intermediate
-    /// `JSONValue` tree, no per-event re-encode/re-decode round-trip.
-    func getSessionEvents(workspaceId: String, id: String, since: Int) async throws -> SessionEventsResponse {
-        try await getSessionEvents(scope: .workspace(workspaceId), id: id, since: since)
-    }
-
-    func getSessionEvents(scope: SessionRouteScope, id: String, since: Int) async throws -> SessionEventsResponse {
-        let data = try await get("\(focusedSessionPath(scope: scope, sessionId: id))/events?since=\(since)")
-
-        let payload = try JSONDecoder().decode(SessionEventsPayload.self, from: data)
-
-        let events = payload.events.map {
-            SequencedServerEvent(seq: $0.seq, message: $0.message)
-        }
-
-        return SessionEventsResponse(
-            events: events,
-            currentSeq: payload.currentSeq,
-            runtimeEpoch: payload.runtimeEpoch,
-            session: payload.session,
-            catchUpComplete: payload.catchUpComplete,
-            live: payload.live
-        )
-    }
-
-    /// Wire format for `/workspaces/:workspaceId/sessions/:id/events` response.
-    ///
-    /// Each event object has `seq` alongside the `ServerMessage` fields:
-    /// `{ "seq": 42, "type": "text_delta", "delta": "hello" }`.
-    /// The wrapper decodes `seq` then delegates the rest to `ServerMessage.init(from:)`.
-    private struct SessionEventsPayload: Decodable {
-        let events: [SequencedEventEntry]
-        let currentSeq: Int
-        let runtimeEpoch: String?
-        let catchUpComplete: Bool
-        let session: Session
-        /// This server always sends `live`. A missing field is a decode failure, not a live ring.
-        let live: Bool
-    }
-
-    private struct SequencedEventEntry: Decodable {
-        let seq: Int
-        let message: ServerMessage
-
-        private enum CodingKeys: String, CodingKey {
-            case seq
-        }
-
-        init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            seq = try container.decode(Int.self, forKey: .seq)
-            message = try ServerMessage(from: decoder)
-        }
-    }
-
-    /// Fetches a session together with its trace. The trace read is the expensive part of
-    /// the route, so `traceView` has no default: a caller that needs only the session
-    /// record uses `getSessionRecord(sessionId:)`.
-    func getSession(
-        scope: SessionRouteScope,
-        sessionId: String,
-        traceView: SessionTraceView
-    ) async throws -> (session: Session, trace: [TraceEvent]) {
-        let data = try await get("\(focusedSessionPath(scope: scope, sessionId: sessionId))?view=\(traceView.rawValue)")
-        struct Response: Decodable { let session: Session; let trace: [TraceEvent] }
-        let response = try JSONDecoder().decode(
-            Response.self,
-            from: JSONUnpairedSurrogateRepair.repairing(data)
-        )
-        return (response.session, response.trace)
-    }
-
-    /// Generic session metadata without a workspace or control route scope.
-    func getSessionRecord(sessionId: String) async throws -> Session {
-        let data = try await get("/sessions/\(sessionId)")
-        struct Response: Decodable { let session: Session }
-        return try JSONDecoder().decode(Response.self, from: data).session
-    }
-
-    struct SessionDialogsResponse: Decodable, Sendable, Equatable {
-        let dialogs: [ExtensionUIRequest.DialogSnapshot]
-        let serverNow: Int64?
-    }
-
-    /// Pending user-reply dialogs for one session (`GET /sessions/:id/dialogs`).
-    func getSessionDialogs(sessionId: String) async throws -> SessionDialogsResponse {
-        let data = try await get("/sessions/\(sessionId)/dialogs")
-        return try JSONDecoder().decode(SessionDialogsResponse.self, from: data)
-    }
-
-    /// Get a paged workspace session trace for timeline history.
-    func getWorkspaceSessionTracePage(
-        workspaceId: String,
-        sessionId: String,
-        cursor: String? = nil,
-        targetEvents: Int? = nil,
-        previewBytes: Int? = nil
-    ) async throws -> SessionTracePageResponse {
-        try await getSessionTracePage(
-            scope: .workspace(workspaceId),
-            sessionId: sessionId,
-            cursor: cursor,
-            targetEvents: targetEvents,
-            previewBytes: previewBytes
-        )
-    }
-
-    func getSessionTracePage(
-        scope: SessionRouteScope,
-        sessionId: String,
-        cursor: String? = nil,
-        targetEvents: Int? = nil,
-        previewBytes: Int? = nil
-    ) async throws -> SessionTracePageResponse {
-        var items = [URLQueryItem(name: "presentation", value: "mobile")]
-        if let cursor {
-            items.append(URLQueryItem(name: "cursor", value: cursor))
-        }
-        if let targetEvents {
-            items.append(URLQueryItem(name: "targetEvents", value: String(targetEvents)))
-        }
-        if let previewBytes {
-            items.append(URLQueryItem(name: "previewBytes", value: String(previewBytes)))
-        }
-        var components = URLComponents()
-        components.queryItems = items.isEmpty ? nil : items
-        let query = components.percentEncodedQuery.map { "?\($0)" } ?? ""
-        let data = try await get("\(focusedSessionPath(scope: scope, sessionId: sessionId))/trace-page\(query)")
-        return try JSONDecoder().decode(
-            SessionTracePageResponse.self,
-            from: JSONUnpairedSurrogateRepair.repairing(data)
-        )
-    }
-
-    func getSessionTraceOutline(
-        scope: SessionRouteScope,
-        sessionId: String
-    ) async throws -> SessionTraceOutlineResponse {
-        let data = try await get("\(focusedSessionPath(scope: scope, sessionId: sessionId))/trace-outline")
-        return try JSONDecoder().decode(SessionTraceOutlineResponse.self, from: data)
-    }
-
-    /// Stop a running workspace session.
-    func stopWorkspaceSession(workspaceId: String, sessionId: String) async throws -> Session {
-        try await stopSession(scope: .workspace(workspaceId), sessionId: sessionId)
-    }
-
-    func stopSession(scope: SessionRouteScope, sessionId: String) async throws -> Session {
-        let data = try await post("\(focusedSessionPath(scope: scope, sessionId: sessionId))/stop", body: EmptyBody())
-        struct Response: Decodable { let session: Session? }
-        let response = try JSONDecoder().decode(Response.self, from: data)
-        if let session = response.session { return session }
-        return try await getSessionRecord(sessionId: sessionId)
-    }
-
-    /// Delete a workspace session permanently.
-    func deleteWorkspaceSession(workspaceId: String, sessionId: String) async throws {
-        try await deleteSession(scope: .workspace(workspaceId), sessionId: sessionId)
-    }
-
-    func deleteSession(scope: SessionRouteScope, sessionId: String) async throws {
-        let (data, response) = try await request("DELETE", path: focusedSessionPath(scope: scope, sessionId: sessionId))
-        try checkStatus(response, data: data)
-    }
-
-    /// Send a session command over HTTP when no focused session WebSocket is available.
-    func sendWorkspaceSessionCommand(
-        workspaceId: String,
-        sessionId: String,
-        message: ClientMessage
-    ) async throws {
-        try await sendSessionCommand(scope: .workspace(workspaceId), sessionId: sessionId, message: message)
-    }
-
-    func sendSessionCommand(
-        scope: SessionRouteScope,
-        sessionId: String,
-        message: ClientMessage
-    ) async throws {
-        struct Response: Decodable {
-            let messages: [ServerMessage]
-        }
-
-        let data = try await post(
-            "\(focusedSessionPath(scope: scope, sessionId: sessionId))/command",
-            body: message
-        )
-        let response = try JSONDecoder().decode(Response.self, from: data)
-        for case .commandResult(_, _, false, _, let error) in response.messages {
-            throw SessionCommandRejectedError(message: error ?? "Session command failed")
-        }
-    }
-
-    /// Respond to an extension UI request in another session without focusing its stream.
-    func sendExtensionUIResponse(
-        workspaceId: String,
-        sessionId: String,
-        id: String,
-        payload: ExtensionUIResponsePayload,
-        requestId: String? = nil
-    ) async throws {
-        try await sendExtensionUIResponse(
-            scope: .workspace(workspaceId),
-            sessionId: sessionId,
-            id: id,
-            payload: payload,
-            requestId: requestId
-        )
-    }
-
-    func sendExtensionUIResponse(
-        scope: SessionRouteScope,
-        sessionId: String,
-        id: String,
-        payload: ExtensionUIResponsePayload,
-        requestId: String? = nil
-    ) async throws {
-        try await sendSessionCommand(
-            scope: scope,
-            sessionId: sessionId,
-            message: .extensionUIResponse(
-                id: id,
-                value: payload.value,
-                confirmed: payload.confirmed,
-                cancelled: payload.cancelled,
-                requestId: requestId
-            )
-        )
-    }
-
-    // MARK: - Models
-
-    /// Fetch available models from the server.
-    func listModels() async throws -> [ModelInfo] {
-        let data = try await get("/models")
-        struct Response: Decodable { let models: [ModelInfo] }
-        return try JSONDecoder().decode(Response.self, from: data).models
-    }
-
-    // MARK: - Provider Auth
-
-    /// List provider auth status (OAuth/API key) from the server.
-    func listProviderAuthStatus() async throws -> [ProviderAuthProviderStatus] {
-        let data = try await get("/provider-auth/status")
-        struct Response: Decodable { let providers: [ProviderAuthProviderStatus] }
-        return try JSONDecoder().decode(Response.self, from: data).providers
-    }
-
-    /// Start an OAuth/device-code flow for a provider.
-    func startProviderAuthFlow(
-        providerId: String,
-        launchMode: ProviderAuthFlowSnapshot.LaunchMode = .serverBrowser
-    ) async throws -> ProviderAuthFlowSnapshot {
-        struct Body: Encodable {
-            let providerId: String
-            let launchMode: ProviderAuthFlowSnapshot.LaunchMode
-        }
-
-        let data = try await post(
-            "/provider-auth/flows",
-            body: Body(providerId: providerId, launchMode: launchMode)
-        )
-        struct Response: Decodable { let flow: ProviderAuthFlowSnapshot }
-        return try JSONDecoder().decode(Response.self, from: data).flow
-    }
-
-    /// Fetch latest state for an in-flight provider auth flow.
-    func getProviderAuthFlow(flowId: String) async throws -> ProviderAuthFlowSnapshot {
-        let data = try await get("/provider-auth/flows/\(flowId)")
-        struct Response: Decodable { let flow: ProviderAuthFlowSnapshot }
-        return try JSONDecoder().decode(Response.self, from: data).flow
-    }
-
-    /// Submit response for a provider flow prompt.
-    func submitProviderAuthPromptResponse(flowId: String, value: String) async throws -> ProviderAuthFlowSnapshot {
-        struct Body: Encodable { let value: String }
-        let data = try await post(
-            "/provider-auth/flows/\(flowId)/prompt-response",
-            body: Body(value: value)
-        )
-        struct Response: Decodable { let flow: ProviderAuthFlowSnapshot }
-        return try JSONDecoder().decode(Response.self, from: data).flow
-    }
-
-    /// Submit manually pasted callback URL/code for a provider flow.
-    func submitProviderAuthManualCode(flowId: String, input: String) async throws -> ProviderAuthFlowSnapshot {
-        struct Body: Encodable { let input: String }
-        let data = try await post(
-            "/provider-auth/flows/\(flowId)/manual-code",
-            body: Body(input: input)
-        )
-        struct Response: Decodable { let flow: ProviderAuthFlowSnapshot }
-        return try JSONDecoder().decode(Response.self, from: data).flow
-    }
-
-    /// Cancel an in-flight provider auth flow.
-    func cancelProviderAuthFlow(flowId: String, reason: String? = nil) async throws -> ProviderAuthFlowSnapshot {
-        struct Body: Encodable { let reason: String? }
-        let data = try await post(
-            "/provider-auth/flows/\(flowId)/cancel",
-            body: Body(reason: reason)
-        )
-        struct Response: Decodable { let flow: ProviderAuthFlowSnapshot }
-        return try JSONDecoder().decode(Response.self, from: data).flow
-    }
-
-    /// Save an API key credential for a provider.
-    func setProviderAPIKey(providerId: String, key: String) async throws {
-        struct Body: Encodable {
-            let providerId: String
-            let key: String
-        }
-        _ = try await put(
-            "/provider-auth/api-key",
-            body: Body(providerId: providerId, key: key)
-        )
-    }
-
-    /// Remove saved credential for a provider.
-    func removeProviderCredential(providerId: String) async throws {
-        let (data, response) = try await request("DELETE", path: "/provider-auth/\(providerId)")
-        try checkStatus(response, data: data)
-    }
-
-    // MARK: - Themes
-
-    /// List available custom themes on the server.
-    func listThemes() async throws -> [RemoteThemeSummary] {
-        let data = try await get("/themes")
-        struct Response: Decodable { let themes: [RemoteThemeSummary] }
-        return try JSONDecoder().decode(Response.self, from: data).themes
-    }
-
-    /// Fetch a full theme by name.
-    func getTheme(name: String) async throws -> RemoteTheme {
-        let data = try await get("/themes/\(name)")
-        struct Response: Decodable { let theme: RemoteTheme }
-        return try JSONDecoder().decode(Response.self, from: data).theme
-    }
-
-    // MARK: - Workspaces
-
-    struct WorkspaceCatalogResponse: Decodable, Sendable {
-        let serverNow: Int64?
-        let workspaces: [Workspace]
-        let summaries: [WorkspaceListSummary]?
-    }
-
-    /// List workspace cards, including optional list summaries for catalog/home UI.
-    func listWorkspaceCatalog(includeGitSummary: Bool = true) async throws -> WorkspaceCatalogResponse {
-        let query = includeGitSummary ? "?includeGitSummary=true" : ""
-        let data = try await get("/workspaces\(query)")
-        return try JSONDecoder().decode(WorkspaceCatalogResponse.self, from: data)
-    }
-
-    /// List all workspaces for the authenticated user.
-    func listWorkspaces() async throws -> [Workspace] {
-        try await listWorkspaceCatalog(includeGitSummary: false).workspaces
-    }
-
-    /// List git worktrees/checkouts available inside a workspace.
-    func listWorkspaceWorktrees(workspaceId: String) async throws -> [WorkspaceWorktree] {
-        let data = try await get("/workspaces/\(workspaceId)/worktrees")
-        struct Response: Decodable { let worktrees: [WorkspaceWorktree] }
-        return try JSONDecoder().decode(Response.self, from: data).worktrees
-    }
-
-    /// Create a new workspace.
-    func createWorkspace(_ request: CreateWorkspaceRequest) async throws -> Workspace {
-        let data = try await post("/workspaces", body: request)
-        struct Response: Decodable { let workspace: Workspace }
-        return try JSONDecoder().decode(Response.self, from: data).workspace
-    }
-
-    /// Update an existing workspace.
-    func updateWorkspace(id: String, _ request: UpdateWorkspaceRequest) async throws -> Workspace {
-        let data = try await put("/workspaces/\(id)", body: request.body)
-        struct Response: Decodable { let workspace: Workspace }
-        return try JSONDecoder().decode(Response.self, from: data).workspace
-    }
-
-    /// Delete a workspace.
-    func deleteWorkspace(id: String) async throws {
-        let (data, response) = try await request("DELETE", path: "/workspaces/\(id)")
-        try checkStatus(response, data: data)
-    }
-
-    // MARK: - Git Commits
-
-    /// Fetch a page of a checkout's commit graph: HEAD and every local branch,
-    /// with the repository's worktrees on the first page.
-    func getGitGraph(
-        workspaceId: String,
-        worktreeId: String?,
-        offset: Int = 0,
-        limit: Int = 50
-    ) async throws -> CommitGraphResponse {
-        var queryItems = [
-            URLQueryItem(name: "offset", value: String(offset)),
-            URLQueryItem(name: "limit", value: String(limit)),
-        ]
-        if let worktreeId, !worktreeId.isEmpty {
-            queryItems.append(URLQueryItem(name: "worktreeId", value: worktreeId))
-        }
-        let query = try makePercentEncodedQuery(queryItems).map { "?\($0)" } ?? ""
-        let data = try await get("/workspaces/\(workspaceId)/git/graph\(query)")
-        return try JSONDecoder().decode(CommitGraphResponse.self, from: data)
-    }
-
-    /// Fetch detailed info for a single commit (metadata + changed files).
-    func getCommitDetail(workspaceId: String, sha: String) async throws -> GitCommitDetail {
-        let data = try await get("/workspaces/\(workspaceId)/git/commits/\(sha)")
-        return try JSONDecoder().decode(GitCommitDetail.self, from: data)
-    }
-
-    /// Fetch diff for a specific file in a commit.
-    func getCommitFileDiff(workspaceId: String, sha: String, path: String) async throws -> WorkspaceReviewDiffResponse {
-        let encodedPath = try encodeQueryPath(path)
-        let data = try await get("/workspaces/\(workspaceId)/git/commits/\(sha)/diff?path=\(encodedPath)")
-        return try JSONDecoder().decode(WorkspaceReviewDiffResponse.self, from: data)
-    }
-
-    // MARK: - Git Status
-
-    /// Fetch the lightweight Git state used by workspace catalog rows.
-    func getWorkspaceGitSummary(workspaceId: String) async throws -> WorkspaceGitSummary {
-        let data = try await get("/workspaces/\(workspaceId)/git/summary")
-        return try JSONDecoder().decode(WorkspaceGitSummary.self, from: data)
-    }
-
-    /// Fetch git status for a workspace checkout.
-    func getGitStatus(workspaceId: String, worktreeId: String? = nil) async throws -> GitStatus {
-        var queryItems: [URLQueryItem] = []
-        if let worktreeId, !worktreeId.isEmpty {
-            queryItems.append(URLQueryItem(name: "worktreeId", value: worktreeId))
-        }
-        let query = try makePercentEncodedQuery(queryItems).map { "?\($0)" } ?? ""
-        let data = try await get("/workspaces/\(workspaceId)/git/status\(query)")
-        return try JSONDecoder().decode(GitStatus.self, from: data)
-    }
-
-    /// Fetch a review diff for a single workspace file.
-    func getWorkspaceReviewDiff(
-        workspaceId: String,
-        path: String,
-        selectedSessionId: String? = nil,
-        worktreeId: String? = nil
-    ) async throws -> WorkspaceReviewDiffResponse {
-        var queryItems = [URLQueryItem(name: "path", value: path)]
-        if let selectedSessionId, !selectedSessionId.isEmpty {
-            queryItems.append(URLQueryItem(name: "selectedSessionId", value: selectedSessionId))
-        }
-        if let worktreeId, !worktreeId.isEmpty {
-            queryItems.append(URLQueryItem(name: "worktreeId", value: worktreeId))
-        }
-        let query = try makePercentEncodedQuery(queryItems) ?? ""
-        let route = "/workspaces/\(workspaceId)/git/diff?\(query)"
-        let data = try await get(route)
-        return try JSONDecoder().decode(WorkspaceReviewDiffResponse.self, from: data)
-    }
-
-    func getWorkspaceQuickActions(
-        workspaceId: String,
-        selectedSessionId: String? = nil,
-        worktreeId: String? = nil
-    ) async throws -> WorkspaceQuickActionsResponse {
-        var queryItems: [URLQueryItem] = []
-        if let selectedSessionId, !selectedSessionId.isEmpty {
-            queryItems.append(URLQueryItem(name: "selectedSessionId", value: selectedSessionId))
-        }
-        if let worktreeId, !worktreeId.isEmpty {
-            queryItems.append(URLQueryItem(name: "worktreeId", value: worktreeId))
-        }
-        let query = try makePercentEncodedQuery(queryItems).map { "?\($0)" } ?? ""
-        let data = try await get("/workspaces/\(workspaceId)/quick-actions\(query)")
-        return try JSONDecoder().decode(WorkspaceQuickActionsResponse.self, from: data)
-    }
-
-    func prepareWorkspaceQuickActionSelection(
-        workspaceId: String,
-        paths: [String],
-        selectedSessionId: String? = nil,
-        worktreeId: String? = nil,
-        commitSha: String? = nil,
-        promptTemplateName: String
-    ) async throws -> WorkspaceQuickActionSelectionResponse {
-        struct Body: Encodable {
-            let paths: [String]
-            let selectedSessionId: String?
-            let worktreeId: String?
-            let commitSha: String?
-            let promptTemplateName: String
-        }
-
-        let data = try await post(
-            "/workspaces/\(workspaceId)/quick-actions/selection",
-            body: Body(
-                paths: paths,
-                selectedSessionId: selectedSessionId,
-                worktreeId: worktreeId,
-                commitSha: commitSha,
-                promptTemplateName: promptTemplateName
-            )
-        )
-        return try JSONDecoder().decode(WorkspaceQuickActionSelectionResponse.self, from: data)
-    }
-
-    /// Create and seed a focused follow-up session from a selected-files quick action.
-    func createWorkspaceQuickActionSession(
-        workspaceId: String,
-        paths: [String],
-        selectedSessionId: String? = nil,
-        worktreeId: String? = nil,
-        commitSha: String? = nil,
-        promptTemplateName: String
-    ) async throws -> WorkspaceQuickActionSessionResponse {
-        struct Body: Encodable {
-            let paths: [String]
-            let selectedSessionId: String?
-            let worktreeId: String?
-            let commitSha: String?
-            let promptTemplateName: String
-        }
-
-        let data = try await post(
-            "/workspaces/\(workspaceId)/quick-actions/session",
-            body: Body(
-                paths: paths,
-                selectedSessionId: selectedSessionId,
-                worktreeId: worktreeId,
-                commitSha: commitSha,
-                promptTemplateName: promptTemplateName
-            )
-        )
-        return try JSONDecoder().decode(WorkspaceQuickActionSessionResponse.self, from: data)
-    }
-
-    // MARK: - Skills
-
-    /// List available skills from Pi resource discovery.
-    func listSkills(cwd: String? = nil, workspaceId: String? = nil) async throws -> [SkillInfo] {
-        var queryItems: [URLQueryItem] = []
-        if let workspaceId, !workspaceId.isEmpty {
-            queryItems.append(URLQueryItem(name: "workspaceId", value: workspaceId))
-        } else if let cwd, !cwd.isEmpty {
-            queryItems.append(URLQueryItem(name: "cwd", value: cwd))
-        }
-        let data = try await get(
-            url: try makeURL(pathSegments: ["skills"], queryItems: queryItems)
-        )
-        struct Response: Decodable { let skills: [SkillInfo] }
-        return try JSONDecoder().decode(Response.self, from: data).skills
-    }
-
-    /// Enable or disable a Pi resource by writing Pi user/project settings for the cwd.
-    func setPiResourceEnabled(
-        type: String,
-        path: String,
-        cwd: String? = nil,
-        workspaceId: String? = nil,
-        enabled: Bool
-    ) async throws {
-        struct Body: Encodable {
-            let type: String
-            let path: String
-            let cwd: String?
-            let workspaceId: String?
-            let enabled: Bool
-        }
-
-        _ = try await post(
-            "/pi/resources/enabled",
-            body: Body(
-                type: type,
-                path: path,
-                cwd: workspaceId == nil ? cwd : nil,
-                workspaceId: workspaceId,
-                enabled: enabled
-            )
-        )
-    }
-
-    /// List available host extensions for the current workspace context.
-    ///
-    /// The server resolves extensions using pi's resource resolver, including
-    /// auto-discovered dirs, settings paths, and installed package extensions.
-    func listExtensions(cwd: String? = nil, workspaceId: String? = nil) async throws -> WorkspaceExtensionList {
-        var path = "/extensions"
-        var queryItems: [URLQueryItem] = []
-        if let workspaceId, !workspaceId.isEmpty {
-            queryItems.append(URLQueryItem(name: "workspaceId", value: workspaceId))
-        } else if let cwd, !cwd.isEmpty {
-            queryItems.append(URLQueryItem(name: "cwd", value: cwd))
-        }
-        if !queryItems.isEmpty {
-            var components = URLComponents()
-            components.queryItems = queryItems
-            if let query = components.percentEncodedQuery {
-                path += "?\(query)"
-            }
-        }
-
-        return try JSONDecoder().decode(WorkspaceExtensionList.self, from: try await get(path))
-    }
-
-    /// Discover project directories on the host.
-    ///
-    /// Scans default roots (`~/workspace`, `~/projects`, `~/src`, `~/code`, `~/Developer`)
-    /// and returns directories that look like projects (have `.git`, manifest files, or `AGENTS.md`).
-    func listDirectories() async throws -> [HostDirectory] {
-        let data = try await get("/host/directories")
-        struct Response: Decodable { let directories: [HostDirectory] }
-        return try JSONDecoder().decode(Response.self, from: data).directories
-    }
-
-    /// Validate a manually entered host path.
-    func getHostPathStatus(path: String) async throws -> HostPathStatus {
-        let data = try await get(
-            url: makeURL(
-                pathSegments: ["host", "path", "status"],
-                queryItems: [URLQueryItem(name: "path", value: path)]
-            )
-        )
-        struct Response: Decodable { let status: HostPathStatus }
-        return try JSONDecoder().decode(Response.self, from: data).status
-    }
-
-    /// Complete a manually entered host path using host directory names.
-    func completeHostPath(prefix: String, limit: Int = 12) async throws -> [HostPathCompletion] {
-        let data = try await get(
-            url: makeURL(
-                pathSegments: ["host", "path", "completions"],
-                queryItems: [
-                    URLQueryItem(name: "prefix", value: prefix),
-                    URLQueryItem(name: "limit", value: String(limit)),
-                ]
-            )
-        )
-        struct Response: Decodable { let completions: [HostPathCompletion] }
-        return try JSONDecoder().decode(Response.self, from: data).completions
-    }
-
-    /// Create a host directory after explicit user confirmation.
-    func createHostPath(path: String) async throws -> HostPathCreateResult {
-        struct Body: Encodable {
-            let path: String
-            let confirmed: Bool
-        }
-        let data = try await post(
-            "/host/path/create",
-            body: Body(path: path, confirmed: true)
-        )
-        return try JSONDecoder().decode(HostPathCreateResult.self, from: data)
-    }
-
-    /// Get full skill detail: metadata, SKILL.md content, and file tree.
-    func getSkillDetail(name: String, cwd: String? = nil) async throws -> SkillDetail {
-        var queryItems: [URLQueryItem] = []
-        if let cwd, !cwd.isEmpty {
-            queryItems.append(URLQueryItem(name: "cwd", value: cwd))
-        }
-        let data = try await get(
-            url: try makeURL(pathSegments: ["skills", name], queryItems: queryItems)
-        )
-        return try JSONDecoder().decode(SkillDetail.self, from: data)
-    }
-
-    /// Get a single file's content from a skill directory.
-    func getSkillFile(name: String, path: String, cwd: String? = nil) async throws -> String {
-        let data = try await get(url: makeSkillFileURL(name: name, path: path, cwd: cwd))
-        struct Response: Decodable { let content: String }
-        return try JSONDecoder().decode(Response.self, from: data).content
-    }
-
-    // MARK: - Workspace-scoped Sessions (v2 API)
-
-    struct WorkspaceSessionSummariesResponse: Decodable {
-        let sessionSummaries: [SessionSummary]
-
-        enum CodingKeys: String, CodingKey {
-            case sessionSummaries = "sessions"
-        }
-    }
-
-    struct WorkspaceAttentionResponse: Decodable, Sendable {
-        struct Attention: Decodable, Sendable {
-            let asks: [AskRequest]
-        }
-
-        let workspaceId: String
-        let serverNow: Int64
-        let attention: Attention
-    }
-
-    enum WorkspaceSessionListRow: Decodable, Sendable, Equatable {
-        case session(SessionSummary)
-        case tui(LocalSession)
-
-        private enum CodingKeys: String, CodingKey {
-            case source
-        }
-
-        init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            if try container.decodeIfPresent(String.self, forKey: .source) == "tui" {
-                self = .tui(try LocalSession(from: decoder))
-            } else {
-                self = .session(try SessionSummary(from: decoder))
-            }
-        }
-    }
-
-    struct WorkspaceSessionCollectionResponse: Decodable, Sendable, Equatable {
-        let workspaceId: String
-        let sinceMs: Int64?
-        let untilMs: Int64?
-        let serverNow: Int64
-        let active: [WorkspaceSessionListRow]
-        let stopped: [WorkspaceSessionListRow]
-
-        var sessionSummaries: [SessionSummary] {
-            (active + stopped).compactMap { row in
-                if case .session(let summary) = row { return summary }
-                return nil
-            }
-        }
-
-        var importableSessions: [LocalSession] {
-            stopped.compactMap { row in
-                if case .tui(let session) = row { return session }
-                return nil
-            }
-        }
-
-        enum CodingKeys: String, CodingKey {
-            case workspaceId, sinceMs, untilMs, serverNow, active, stopped
-        }
-
-        init(from decoder: Decoder) throws {
-            let c = try decoder.container(keyedBy: CodingKeys.self)
-            workspaceId = try c.decode(String.self, forKey: .workspaceId)
-            sinceMs = try c.decodeIfPresent(Int64.self, forKey: .sinceMs)
-            untilMs = try c.decodeIfPresent(Int64.self, forKey: .untilMs)
-            serverNow = try c.decode(Int64.self, forKey: .serverNow)
-            active = try c.decodeIfPresent([WorkspaceSessionListRow].self, forKey: .active) ?? []
-            stopped = try c.decodeIfPresent([WorkspaceSessionListRow].self, forKey: .stopped) ?? []
-        }
-    }
-
-    struct WorkspaceSessionBucketsResponse: Decodable, Sendable {
-        let workspaceId: String
-        let status: String
-        let beforeMs: Int64
-        let serverNow: Int64
-        let buckets: [WorkspaceSessionArchiveBucket]
-    }
-
-    /// Assembled on device from the sessions, session-buckets, and attention routes; never decoded.
-    struct WorkspaceSessionListResponse: Sendable {
-        let workspace: Workspace
-        let serverNow: Int64
-        let sessionSummaries: [SessionSummary]
-        let attention: WorkspaceAttentionResponse.Attention
-        let importableSessions: [LocalSession]
-        let archiveBuckets: [WorkspaceSessionArchiveBucket]
-    }
-
-    /// Assembled on device from one sessions route response; never decoded.
-    struct WorkspaceSessionListBucketResponse: Sendable {
-        let workspaceId: String
-        let sinceMs: Int64
-        let untilMs: Int64
-        let sessionSummaries: [SessionSummary]
-        let importableSessions: [LocalSession]
-    }
-
-    func getWorkspaceAttention(workspaceId: String) async throws -> WorkspaceAttentionResponse {
-        let data = try await get("/workspaces/\(workspaceId)/attention")
-        return try JSONDecoder().decode(WorkspaceAttentionResponse.self, from: data)
-    }
-
-    func getWorkspaceSessionList(
-        workspace: Workspace,
-        since: Date,
-        until: Date,
-        worktreeId: String? = nil
-    ) async throws -> WorkspaceSessionListResponse {
-        let workspaceId = workspace.id
-        let sinceMs = Int64(since.timeIntervalSince1970 * 1000)
-        let untilMs = Int64(until.timeIntervalSince1970 * 1000)
-        var sessionQueryItems = [
-            URLQueryItem(name: "status", value: "active,stopped"),
-            URLQueryItem(name: "sinceMs", value: String(sinceMs)),
-            URLQueryItem(name: "untilMs", value: String(untilMs)),
-        ]
-        var bucketQueryItems = [
-            URLQueryItem(name: "status", value: "stopped"),
-            URLQueryItem(name: "beforeMs", value: String(sinceMs)),
-        ]
-        if let worktreeId, !worktreeId.isEmpty {
-            sessionQueryItems.append(URLQueryItem(name: "worktreeId", value: worktreeId))
-            bucketQueryItems.append(URLQueryItem(name: "worktreeId", value: worktreeId))
-        }
-        let sessionsQuery = try makePercentEncodedQuery(sessionQueryItems) ?? ""
-        let bucketsQuery = try makePercentEncodedQuery(bucketQueryItems) ?? ""
-
-        async let sectionsData = get("/workspaces/\(workspaceId)/sessions?\(sessionsQuery)")
-        async let bucketsData = get("/workspaces/\(workspaceId)/session-buckets?\(bucketsQuery)")
-        async let attention = getWorkspaceAttention(workspaceId: workspaceId)
-
-        let resolvedSectionsData = try await sectionsData
-        let resolvedBucketsData = try await bucketsData
-        let resolvedAttention = try await attention
-
-        let sections = try JSONDecoder().decode(WorkspaceSessionCollectionResponse.self, from: resolvedSectionsData)
-        let buckets = try JSONDecoder().decode(WorkspaceSessionBucketsResponse.self, from: resolvedBucketsData)
-
-        return WorkspaceSessionListResponse(
-            workspace: workspace,
-            serverNow: sections.serverNow,
-            sessionSummaries: sections.sessionSummaries,
-            attention: resolvedAttention.attention,
-            importableSessions: sections.importableSessions,
-            archiveBuckets: buckets.buckets
-        )
-    }
-
-    func getWorkspaceSessionListBucket(
-        workspaceId: String,
-        since: Date,
-        until: Date,
-        worktreeId: String? = nil
-    ) async throws -> WorkspaceSessionListBucketResponse {
-        let sinceMs = Int64(since.timeIntervalSince1970 * 1000)
-        let untilMs = Int64(until.timeIntervalSince1970 * 1000)
-        var queryItems = [
-            URLQueryItem(name: "status", value: "stopped"),
-            URLQueryItem(name: "sinceMs", value: String(sinceMs)),
-            URLQueryItem(name: "untilMs", value: String(untilMs)),
-        ]
-        if let worktreeId, !worktreeId.isEmpty {
-            queryItems.append(URLQueryItem(name: "worktreeId", value: worktreeId))
-        }
-        let query = try makePercentEncodedQuery(queryItems) ?? ""
-        let data = try await get("/workspaces/\(workspaceId)/sessions?\(query)")
-        let sections = try JSONDecoder().decode(WorkspaceSessionCollectionResponse.self, from: data)
-        return WorkspaceSessionListBucketResponse(
-            workspaceId: workspaceId,
-            sinceMs: sinceMs,
-            untilMs: untilMs,
-            sessionSummaries: sections.sessionSummaries,
-            importableSessions: sections.importableSessions
-        )
-    }
-
-    /// List recent session summaries across all workspaces with one server request.
-    func listRecentWorkspaceSessionSummaries(recentDays: Int = 3) async throws -> [SessionSummary] {
-        let data = try await get("/sessions/recent?recentDays=\(recentDays)")
-        return try JSONDecoder().decode(WorkspaceSessionSummariesResponse.self, from: data).sessionSummaries
-    }
-
-    /// Bootstrap helper for flows that have an API client but no populated workspace store yet.
-    func listSessionsFromWorkspaces(recentDays: Int = 3) async throws -> [Session] {
-        let summaries = try await listRecentWorkspaceSessionSummaries(recentDays: recentDays)
-        return summaries.map(\.session)
-    }
-
-    /// Create a new session in a specific workspace.
-    /// Create a new session in a workspace.
-    ///
-    /// When `prompt` is provided, the server auto-resumes the session and delivers
-    /// the first message — no WebSocket round-trip needed. The response includes
-    /// `prompted: true` on success.
-    func createWorkspaceSession(
-        workspaceId: String,
-        name: String? = nil,
-        model: String? = nil,
-        prompt: String? = nil,
-        thinking: String? = nil,
-        ephemeral: Bool? = nil,
-        worktreeId: String? = nil,
-        attachments: [ChatAttachmentRef]? = nil,
-        launchIdempotencyKey: String? = nil,
-        engine: SessionEngine = .classic
-    ) async throws -> CreateSessionResponse {
-        struct Body: Encodable {
-            let name: String?
-            let model: String?
-            let prompt: String?
-            let thinking: String?
-            let ephemeral: Bool?
-            let worktreeId: String?
-            let attachments: [ChatAttachmentRef]?
-            let launchIdempotencyKey: String?
-            /// Omitted for classic, the server default.
-            let engine: SessionEngine?
-        }
-        let (data, response) = try await request(
-            "POST",
-            path: "/workspaces/\(workspaceId)/sessions",
-            body: Body(
-                name: name,
-                model: model,
-                prompt: prompt,
-                thinking: thinking,
-                ephemeral: ephemeral,
-                worktreeId: worktreeId,
-                attachments: attachments,
-                launchIdempotencyKey: launchIdempotencyKey,
-                engine: engine == .durable ? engine : nil
-            )
-        )
-        if let http = response as? HTTPURLResponse, http.statusCode == 409 {
-            struct ConflictBody: Decodable {
-                let error: String?
-                let sessionId: String?
-            }
-            if let conflict = try? JSONDecoder().decode(ConflictBody.self, from: data),
-               let sessionId = conflict.sessionId?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !sessionId.isEmpty {
-                throw CreateWorkspaceSessionConflict(
-                    sessionId: sessionId,
-                    message: conflict.error ?? "Conflict"
-                )
-            }
-        }
-        try checkStatus(response, data: data)
-        return try JSONDecoder().decode(CreateSessionResponse.self, from: data)
-    }
-
-    /// Body of `POST /control-sessions`. The prompt carries the target, request,
-    /// and staged review comments; the server delivers it once per launch key.
-    struct CreateControlSessionRequest: Codable, Sendable {
-        let prompt: String
-        /// Staged comments the server renders before `prompt` for the model only.
-        let context: [PromptContextItem]?
-        let name: String?
-        let model: String?
-        let thinking: ThinkingLevel?
-        let launchIdempotencyKey: String?
-
-        init(
-            prompt: String,
-            context: [PromptContextItem]? = nil,
-            name: String? = nil,
-            model: String? = nil,
-            thinking: ThinkingLevel? = nil,
-            launchIdempotencyKey: String? = nil
-        ) {
-            self.prompt = prompt
-            self.context = context
-            self.name = name
-            self.model = model
-            self.thinking = thinking
-            self.launchIdempotencyKey = launchIdempotencyKey
-        }
-    }
-
-    func createControlSession(_ request: CreateControlSessionRequest) async throws -> CreateSessionResponse {
-        let data = try await post("/control-sessions", body: request)
-        return try JSONDecoder().decode(CreateSessionResponse.self, from: data)
-    }
-
-    /// Response from session creation. Includes `prompted` when a prompt was provided.
-    struct CreateSessionResponse: Decodable, Sendable {
-        let session: Session
-        let prompted: Bool?
-    }
-
-    struct CreateUploadResponse: Decodable, Sendable {
-        let uploadId: String
-        let contentUrl: String
-        let expiresAt: Int
-    }
-
-    struct UploadContentResponse: Decodable, Sendable {
-        let attachment: ChatAttachmentRef
-    }
-
-    private struct UploadCreateBody: Encodable {
-        let name: String
-        let mimeType: String
-        let sizeBytes: Int
-        let purpose: String
-    }
-
-    func createSessionAttachmentUpload(
-        workspaceId: String,
-        sessionId: String,
-        name: String,
-        mimeType: String,
-        sizeBytes: Int,
-        purpose: String = "chat_attachment"
-    ) async throws -> CreateUploadResponse {
-        try await createSessionAttachmentUpload(
-            scope: .workspace(workspaceId), sessionId: sessionId, name: name,
-            mimeType: mimeType, sizeBytes: sizeBytes, purpose: purpose
-        )
-    }
-
-    func createSessionAttachmentUpload(
-        scope: SessionRouteScope,
-        sessionId: String,
-        name: String,
-        mimeType: String,
-        sizeBytes: Int,
-        purpose: String = "chat_attachment"
-    ) async throws -> CreateUploadResponse {
-        let data = try await post(
-            "\(focusedSessionPath(scope: scope, sessionId: sessionId))/attachments",
-            body: UploadCreateBody(name: name, mimeType: mimeType, sizeBytes: sizeBytes, purpose: purpose)
-        )
-        return try JSONDecoder().decode(CreateUploadResponse.self, from: data)
-    }
-
-    func uploadSessionAttachmentContent(
-        workspaceId: String,
-        sessionId: String,
-        attachmentId: String,
-        data body: Data,
-        contentType: String = "application/octet-stream"
-    ) async throws -> ChatAttachmentRef {
-        try await uploadSessionAttachmentContent(
-            scope: .workspace(workspaceId), sessionId: sessionId,
-            attachmentId: attachmentId, data: body, contentType: contentType
-        )
-    }
-
-    func uploadSessionAttachmentContent(
-        scope: SessionRouteScope,
-        sessionId: String,
-        attachmentId: String,
-        data body: Data,
-        contentType: String = "application/octet-stream",
-        progress: AttachmentUploadTransport.Progress? = nil
-    ) async throws -> ChatAttachmentRef {
-        try await putAttachmentContent(
-            path: "\(focusedSessionPath(scope: scope, sessionId: sessionId))/attachments/\(attachmentId)/content",
-            body: .data(body),
-            contentType: contentType,
-            progress: progress
-        )
-    }
-
-    func uploadSessionAttachmentContent(
-        workspaceId: String,
-        sessionId: String,
-        attachmentId: String,
-        fileURL: URL,
-        contentType: String = "application/octet-stream"
-    ) async throws -> ChatAttachmentRef {
-        try await uploadSessionAttachmentContent(
-            scope: .workspace(workspaceId),
-            sessionId: sessionId,
-            attachmentId: attachmentId,
-            fileURL: fileURL,
-            contentType: contentType
-        )
-    }
-
-    /// Streams the file from disk; `progress` reports the upload task's sent bytes.
-    func uploadSessionAttachmentContent(
-        scope: SessionRouteScope,
-        sessionId: String,
-        attachmentId: String,
-        fileURL: URL,
-        contentType: String = "application/octet-stream",
-        progress: AttachmentUploadTransport.Progress? = nil
-    ) async throws -> ChatAttachmentRef {
-        try await putAttachmentContent(
-            path: "\(focusedSessionPath(scope: scope, sessionId: sessionId))/attachments/\(attachmentId)/content",
-            body: .file(fileURL),
-            contentType: contentType,
-            progress: progress
-        )
-    }
-
-    private func putAttachmentContent(
-        path: String,
-        body: AttachmentUploadBody,
-        contentType: String,
-        progress: AttachmentUploadTransport.Progress?
-    ) async throws -> ChatAttachmentRef {
-        let (data, response) = try await performAuthorizedAttachmentUpload(
-            path: path,
-            body: body,
-            contentType: contentType,
-            progress: progress
-        )
-        try checkStatus(response, data: data)
-        let parsed = try JSONDecoder().decode(UploadContentResponse.self, from: data)
-        return parsed.attachment
-    }
-
-    /// Create a session that resumes an existing local pi TUI session.
-    func createWorkspaceSessionFromLocal(
-        workspaceId: String,
-        piSessionFile: String,
-        worktreeId: String? = nil
-    ) async throws -> Session {
-        struct Body: Encodable { let piSessionFile: String; let worktreeId: String? }
-        let data = try await post(
-            "/workspaces/\(workspaceId)/sessions",
-            body: Body(piSessionFile: piSessionFile, worktreeId: worktreeId)
-        )
-        struct Response: Decodable { let session: Session }
-        return try JSONDecoder().decode(Response.self, from: data).session
-    }
-
-    /// Resume a stopped session in its workspace.
-    func resumeWorkspaceSession(workspaceId: String, sessionId: String) async throws -> Session {
-        try await resumeSession(scope: .workspace(workspaceId), sessionId: sessionId)
-    }
-
-    func resumeSession(scope: SessionRouteScope, sessionId: String) async throws -> Session {
-        let data = try await post("\(focusedSessionPath(scope: scope, sessionId: sessionId))/resume", body: EmptyBody())
-        struct Response: Decodable { let session: Session }
-        return try JSONDecoder().decode(Response.self, from: data).session
-    }
-
-    /// Create a branched fork session from a source session entry.
-    func forkWorkspaceSession(
-        workspaceId: String,
-        sessionId: String,
-        entryId: String,
-        name: String? = nil
-    ) async throws -> Session {
-        struct Body: Encodable {
-            let entryId: String
-            let name: String?
-        }
-
-        let data = try await post(
-            "/workspaces/\(workspaceId)/sessions/\(sessionId)/fork",
-            body: Body(entryId: entryId, name: name)
-        )
-
-        struct Response: Decodable { let session: Session }
-        return try JSONDecoder().decode(Response.self, from: data).session
-    }
-
-    /// Read-only disclosure of a generated input's advertised output, not its model prompt.
-    func getInputCardOutput(scope: SessionRouteScope, sessionId: String, entryId: String) async throws -> String {
-        let encoded = entryId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/?#%"))) ?? entryId
-        let data = try await get("\(focusedSessionPath(scope: scope, sessionId: sessionId))/input-card-output/\(encoded)")
-        struct Response: Decodable { let output: String }
-        return try JSONDecoder().decode(Response.self, from: data).output
-    }
-
-    /// The viewer's read of a session's internal URL (`proc://bash-3`), its
-    /// output after UTF-16 offset `from` when the viewer already holds that much.
-    func getInternalURLView(
-        scope: SessionRouteScope,
-        sessionId: String,
-        url: String,
-        from: Int?
-    ) async throws -> InternalURLView {
-        var query = [URLQueryItem(name: "url", value: url)]
-        if let from { query.append(URLQueryItem(name: "from", value: String(from))) }
-        let data = try await get(url: makeURL(
-            pathSegments: internalURLPathSegments(scope: scope, sessionId: sessionId),
-            queryItems: query
-        ))
-        return try JSONDecoder().decode(InternalURLView.self, from: data)
-    }
-
-    /// Stops what a session's internal URL names (`InternalURLView.stoppable`).
-    func stopInternalURL(scope: SessionRouteScope, sessionId: String, url: String) async throws {
-        let (data, response) = try await request(
-            "POST",
-            url: makeURL(
-                pathSegments: internalURLPathSegments(scope: scope, sessionId: sessionId) + ["stop"],
-                queryItems: [URLQueryItem(name: "url", value: url)]
-            ),
-            body: EmptyBody()
-        )
-        try checkStatus(response, data: data)
-    }
-
-    private func internalURLPathSegments(scope: SessionRouteScope, sessionId: String) -> [String] {
-        switch scope {
-        case .workspace(let workspaceId): ["workspaces", workspaceId, "sessions", sessionId, "internal-url"]
-        case .control: ["control-sessions", sessionId, "internal-url"]
-        }
-    }
-
-    // MARK: - Tool Output & Files
-
-    /// Fetch the full tool output for a specific tool call ID from the session's JSONL trace.
-    ///
-    /// Used to lazy-load evicted tool output when the user expands an old tool call row.
-    private func getToolOutput(workspaceId: String, sessionId: String, toolCallId: String) async throws -> (output: String, isError: Bool) {
-        try await getToolOutput(scope: .workspace(workspaceId), sessionId: sessionId, toolCallId: toolCallId)
-    }
-
-    private func getToolOutput(scope: SessionRouteScope, sessionId: String, toolCallId: String) async throws -> (output: String, isError: Bool) {
-        let data = try await get("\(focusedSessionPath(scope: scope, sessionId: sessionId))/tool-output/\(toolCallId)")
-        struct Response: Decodable { let output: String; let isError: Bool }
-        let response = try JSONDecoder().decode(Response.self, from: data)
-        return (response.output, response.isError)
-    }
-
-    /// Fetch full tool output and return nil if it is empty/whitespace-only.
-    func getNonEmptyToolOutput(workspaceId: String, sessionId: String, toolCallId: String) async throws -> String? {
-        let (output, _) = try await getToolOutput(workspaceId: workspaceId, sessionId: sessionId, toolCallId: toolCallId)
-        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : output
-    }
-
-    func getNonEmptyToolOutput(scope: SessionRouteScope, sessionId: String, toolCallId: String) async throws -> String? {
-        let (output, _) = try await getToolOutput(scope: scope, sessionId: sessionId, toolCallId: toolCallId)
-        return output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : output
-    }
-
-    /// Fetch raw full (untruncated) tool output from the server temp-file side channel.
-    ///
-    /// Returns nil when the server no longer has the backing temp file (404).
-    private func getFullToolOutput(workspaceId: String, sessionId: String, toolCallId: String) async throws -> String? {
-        try await getFullToolOutput(scope: .workspace(workspaceId), sessionId: sessionId, toolCallId: toolCallId)
-    }
-
-    private func getFullToolOutput(scope: SessionRouteScope, sessionId: String, toolCallId: String) async throws -> String? {
-        do {
-            let data = try await get("\(focusedSessionPath(scope: scope, sessionId: sessionId))/tool-output/\(toolCallId)?full=true")
-            struct Response: Decodable { let output: String }
-            let response = try JSONDecoder().decode(Response.self, from: data)
-            return response.output
-        } catch let APIError.server(status, _) where status == 404 {
-            return nil
-        }
-    }
-
-    /// Fetch full untruncated tool output and return nil if empty/whitespace-only.
-    func getNonEmptyFullToolOutput(workspaceId: String, sessionId: String, toolCallId: String) async throws -> String? {
-        guard let output = try await getFullToolOutput(workspaceId: workspaceId, sessionId: sessionId, toolCallId: toolCallId) else {
-            return nil
-        }
-
-        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : output
-    }
-
-    func getNonEmptyFullToolOutput(scope: SessionRouteScope, sessionId: String, toolCallId: String) async throws -> String? {
-        guard let output = try await getFullToolOutput(scope: scope, sessionId: sessionId, toolCallId: toolCallId) else { return nil }
-        return output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : output
-    }
-
-    func headFullToolOutput(
-        scope: SessionRouteScope,
-        sessionId: String,
-        toolCallId: String
-    ) async throws -> Int? {
-        let path = fullToolOutputPath(scope: scope, sessionId: sessionId, toolCallId: toolCallId)
-        do {
-            let (data, response) = try await request("HEAD", path: path)
-            try checkStatus(response, data: data)
-            guard let http = response as? HTTPURLResponse else {
-                throw APIError.invalidResponse
-            }
-            guard let lengthValue = http.value(forHTTPHeaderField: "Content-Length"),
-                  let length = Int(lengthValue),
-                  length >= 0 else {
-                return nil
-            }
-            return length
-        } catch let APIError.server(status, _) where status == 404 {
-            return nil
-        }
-    }
-
-    /// Sidecar raw Range. Do not decode/re-encode these bytes: invalid UTF-8
-    /// still occupies wire offsets.
-    func getTerminalOutputRange(
-        scope: SessionRouteScope, sessionId: String, toolCallId: String, range: Range<Int>
-    ) async throws -> TerminalOutputRange {
-        guard !range.isEmpty, range.lowerBound >= 0 else { throw APIError.invalidResponse }
-        let path = fullToolOutputPath(scope: scope, sessionId: sessionId, toolCallId: toolCallId)
-        let (data, response) = try await performAuthorized {
-            var req = try URLRequest(url: self.makeURL(path: path))
-            req.httpMethod = "GET"
-            req.setValue("bytes=\(range.lowerBound)-\(range.upperBound - 1)", forHTTPHeaderField: "Range")
-            return req
-        }
-        try checkStatus(response, data: data)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 206,
-              let parsed = ToolOutputSidecarHTTP.parseContentRange(http.value(forHTTPHeaderField: "Content-Range")),
-              parsed.end < parsed.total, data.count == parsed.end - parsed.start + 1 else {
-            throw APIError.invalidResponse
-        }
-        return TerminalOutputRange(data: data, start: parsed.start, end: parsed.end + 1, totalBytes: parsed.total)
-    }
-
-    func getFullToolOutputSidecarWindow(
-        scope: SessionRouteScope,
-        sessionId: String,
-        toolCallId: String,
-        startByte: Int,
-        maxBytes: Int = ToolOutputSidecarHTTP.firstWindowBytes
-    ) async throws -> ToolOutputSidecarWindow? {
-        guard startByte >= 0, maxBytes > 0 else { return nil }
-        let endByte = startByte + maxBytes - 1
-        let path = fullToolOutputPath(scope: scope, sessionId: sessionId, toolCallId: toolCallId)
-        do {
-            let (data, response) = try await performAuthorized {
-                var req = try URLRequest(url: self.makeURL(path: path))
-                req.httpMethod = "GET"
-                req.setValue("bytes=\(startByte)-\(endByte)", forHTTPHeaderField: "Range")
-                logger.debug("GET \(path) Range bytes=\(startByte)-\(endByte)")
-                return req
-            }
-            try checkStatus(response, data: data)
-            guard let http = response as? HTTPURLResponse else {
-                throw APIError.invalidResponse
-            }
-            guard let parsed = ToolOutputSidecarHTTP.parseContentRange(
-                http.value(forHTTPHeaderField: "Content-Range")
-            ) else {
-                throw APIError.invalidResponse
-            }
-            guard let text = String(data: data, encoding: .utf8) else {
-                throw APIError.invalidResponse
-            }
-            return ToolOutputSidecarWindow(
-                text: text,
-                endByteOffset: parsed.end + 1,
-                totalBytes: parsed.total
-            )
-        } catch let APIError.server(status, _) where status == 404 {
-            return nil
-        }
-    }
-
-    /// First sidecar window: HEAD + Range for large output, JSON for small.
-    /// HEAD miss uses Range without decoding `?full=true` JSON.
-    func openFullToolOutputSidecar(
-        scope: SessionRouteScope,
-        sessionId: String,
-        toolCallId: String
-    ) async throws -> ToolOutputSidecarWindow? {
-        if let total = try await headFullToolOutput(
-            scope: scope,
-            sessionId: sessionId,
-            toolCallId: toolCallId
-        ) {
-            if total == 0 { return nil }
-            if total <= ToolOutputSidecarHTTP.firstWindowBytes {
-                guard let text = try await getFullToolOutput(
-                    scope: scope,
-                    sessionId: sessionId,
-                    toolCallId: toolCallId
-                ) else {
-                    return nil
-                }
-                let bytes = text.utf8.count
-                return ToolOutputSidecarWindow(
-                    text: text,
-                    endByteOffset: bytes,
-                    totalBytes: max(total, bytes)
-                )
-            }
-            return try await getFullToolOutputSidecarWindow(
-                scope: scope,
-                sessionId: sessionId,
-                toolCallId: toolCallId,
-                startByte: 0
-            )
-        }
-
-        // HEAD miss: Range without Content-Length. Do not JSON-decode a large sidecar.
-        return try await getFullToolOutputSidecarWindow(
-            scope: scope,
-            sessionId: sessionId,
-            toolCallId: toolCallId,
-            startByte: 0
-        )
-    }
-
-    private func fullToolOutputPath(
-        scope: SessionRouteScope,
-        sessionId: String,
-        toolCallId: String
-    ) -> String {
-        "\(focusedSessionPath(scope: scope, sessionId: sessionId))/tool-output/\(toolCallId)?full=true"
-    }
-
-    /// Fetch a generated session attachment by id.
-    ///
-    /// Session attachments are server-owned artifacts (for example, voice_speak audio)
-    /// stored in the Oppi data directory rather than the workspace checkout.
-    func fetchSessionAttachment(sessionId: String, attachmentId: String) async throws -> Data {
-        try await fetchSessionAttachment(scope: nil, sessionId: sessionId, attachmentId: attachmentId)
-    }
-
-    func fetchSessionAttachment(
-        scope: SessionRouteScope?,
-        sessionId: String,
-        attachmentId: String
-    ) async throws -> Data {
-        let pathSegments: [String]
-        if scope == .control {
-            pathSegments = ["control-sessions", sessionId, "attachments", attachmentId]
-        } else {
-            pathSegments = ["sessions", sessionId, "attachments", attachmentId]
-        }
-        let url = try makeURL(pathSegments: pathSegments)
-        logger.debug("GET \(url.path)")
-
-        let (data, response) = try await performAuthorized {
-            var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
-            req.httpMethod = "GET"
-            req.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-            return req
-        }
-        try checkStatus(response, data: data)
-        try checkCompleteSessionAttachmentResponse(response, data: data)
-        return data
-    }
-
-    /// Fetch raw data for a workspace file or an external path reported by the session.
-    func getSessionFileData(sessionId: String, path: String) async throws -> Data {
-        return try await get(url: makeCurrentFileURL(.session(sessionId: sessionId), path: path))
-    }
-
-    /// Fetch a workspace file by path (images, etc.) through the workspace-origin current-file read.
-    ///
-    /// Used by `MarkdownImageView` to load images referenced in markdown with relative paths.
-    /// Returns raw `Data` so the caller can decode as `UIImage`.
-    func fetchWorkspaceFile(workspaceID: String, path: String, worktreeId: String? = nil) async throws -> Data {
-        try await browseWorkspaceFile(workspaceId: workspaceID, path: path, worktreeId: worktreeId)
-    }
-
-    // MARK: - Workspace File Browser
-
-    /// List entries in a workspace directory.
-    ///
-    /// Pass an empty string or "/" for the workspace root. Subdirectory paths
-    /// should include a trailing slash (e.g. "src/").
-    ///
-    /// One page of up to 1000 entries: pass the previous page's `next` as
-    /// `after` for the one after it (`DirectoryListingResponse.next`).
-    func listWorkspaceDirectory(
-        workspaceId: String,
-        path: String = "",
-        worktreeId: String? = nil,
-        after: String? = nil
-    ) async throws -> DirectoryListingResponse {
-        let data = try await get(
-            url: makeWorkspaceContentsURL(
-                workspaceId: workspaceId,
-                path: path,
-                queryItems: workspaceWorktreeQueryItems(worktreeId) + Self.listingCursorQueryItems(after),
-                directory: true
-            )
-        )
-        return try JSONDecoder().decode(DirectoryListingResponse.self, from: data)
-    }
-
-    /// List entries in the connected server's home directory, one page at a
-    /// time like `listWorkspaceDirectory`.
-    ///
-    /// Pass an empty string or "/" for `~`. Subdirectory paths are
-    /// home-relative and should include a trailing slash (e.g. "Documents/").
-    func listHostDirectory(path: String = "", after: String? = nil) async throws -> DirectoryListingResponse {
-        let data = try await get(url: makeHostContentsURL(path: path, queryItems: Self.listingCursorQueryItems(after), directory: true))
-        return try JSONDecoder().decode(DirectoryListingResponse.self, from: data)
-    }
-
-    private static func listingCursorQueryItems(_ after: String?) -> [URLQueryItem] {
-        after.map { [URLQueryItem(name: "after", value: $0)] } ?? []
-    }
-
-    /// Fetch the complete file index for client-side fuzzy search.
-    ///
-    /// Returns all workspace-relative file paths in a single response.
-    /// The client caches this and filters locally for instant search feedback.
-    func fetchFileIndex(workspaceId: String, worktreeId: String? = nil) async throws -> FileIndexResponse {
-        let data = try await get(
-            url: makeURL(
-                pathSegments: ["workspaces", workspaceId, "paths"],
-                queryItems: workspaceWorktreeQueryItems(worktreeId)
-            )
-        )
-        return try JSONDecoder().decode(FileIndexResponse.self, from: data)
-    }
-
-    /// Fetch a workspace file in browse mode (text/code files, not just images).
-    ///
-    /// Returns raw file content as `Data`. For text files, decode to String with UTF-8.
-    func browseWorkspaceFile(workspaceId: String, path: String, worktreeId: String? = nil) async throws -> Data {
-        try await get(url: makeCurrentFileURL(.workspace(workspaceId: workspaceId, worktreeId: worktreeId), path: path))
-    }
-
-    // MARK: - File Editing
-
-    /// Editing capability for this server and owner. Nil means read-only:
-    /// workspace files need `workspaceFileEditing`, Skill files `skillFileEditing`,
-    /// Pi's own agent files `piFileEditing`, host files `fileEditOrigins`.
-    func fileEditingCapability(
-        for owner: WorkspaceFileEditIdentity.Owner
-    ) -> ServerInfo.WorkspaceFileEditingCapability? {
-        let capability: ServerInfo.WorkspaceFileEditingCapability? = switch owner {
-        case .workspace: workspaceFileEditing
-        case .skill: skillFileEditing
-        case .pi: piFileEditing
-        case .host: fileEditOrigins
-        // A record's prompt is edited through its own route, which every server of
-        // this version answers; it has no file-editing capability to check.
-        case .agent, .schedule: nil
-        }
-        guard let capability, capability.version >= 1, capability.maxBytes > 0 else { return nil }
-        return capability
-    }
-
-    /// The editor's read: the exact bytes with their strong ETag, or — for a file
-    /// the server offers to create — an empty base with no tag. Only on servers
-    /// that advertise editing for the identity's owner.
-    func readFileForEditing(_ identity: WorkspaceFileEditIdentity) async throws -> WorkspaceFileDiskSnapshot {
-        guard identity.owner.isFile, fileEditingCapability(for: identity.owner) != nil else {
-            throw CocoaError(.featureUnsupported)
-        }
-        let url = try makeFileEditURL(identity)
-        // A host file is tagged only on a read that asks for its owner.
-        let resolves = fileEditOrigins != nil
-        let (data, response) = try await performAuthorized {
-            var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
-            req.httpMethod = "GET"
-            if resolves { req.setValue("1", forHTTPHeaderField: fileEditResolveHeader) }
-            return req
-        }
-        try checkStatus(response, data: data)
-        let http = response as? HTTPURLResponse
-        // The server names a file it would let the editor create; the body is
-        // empty and there is no version to overwrite.
-        let creatable = http?.value(forHTTPHeaderField: workspaceFileCreatableHeader) != nil
-        let etag = creatable ? nil : http?.value(forHTTPHeaderField: "ETag")
-        return WorkspaceFileDiskSnapshot(bytes: data, etag: etag, creatable: creatable)
-    }
-
-    func readFileForEditingOutcome(_ identity: WorkspaceFileEditIdentity) async -> WorkspaceFileReadOutcome {
-        do {
-            let snapshot = try await readFileForEditing(identity)
-            return snapshot.creatable ? .creatable : .snapshot(snapshot)
-        } catch let APIError.server(status, _) where status == 404 {
-            return .missing
-        } catch let APIError.codedServer(status, _, _) where status == 404 {
-            return .missing
-        } catch {
-            return .failed
-        }
-    }
-
-    /// Who edits the file a reader read at `location`, and that read's bytes and
-    /// tag: one `GET /files/current` with `X-Oppi-Edit-Resolve`, through the
-    /// origin the reader used. The server follows the path to its canonical file
-    /// and names the origin that owns it, so a chat link, an Org `file:` link,
-    /// and the workspace tree all edit one file the same way. A read through a
-    /// sandbox session stays inside its sandbox. Without `fileEditOrigins` there
-    /// is no request and the answer is `.unresolved`.
-    func resolveFileForEditing(_ location: FileEditLocation) async -> FileEditResolution {
-        guard let capability = fileEditOrigins, capability.version >= 1 else { return .unresolved }
-        do {
-            let url = try makeCurrentFileURL(location.origin, path: location.path)
-            let (data, response) = try await performAuthorized {
-                var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
-                req.setValue("1", forHTTPHeaderField: fileEditResolveHeader)
-                return req
-            }
-            guard let http = response as? HTTPURLResponse else { return .unresolved }
-            return FileEditResolution(response: http, body: data, serverId: location.serverId)
-        } catch {
-            return .unresolved
-        }
-    }
-
-    /// Guarded write of one text file. The only file-write URL this client builds:
-    /// `PUT /files/current` with `origin=workspace`, `origin=skill`, `origin=pi`,
-    /// or `origin=host`, raw bytes, and one precondition — the version it
-    /// overwrites, or `If-None-Match: *` for a file it read as absent.
-    func writeEditedFile(
-        _ identity: WorkspaceFileEditIdentity,
-        bytes: Data,
-        condition: WorkspaceFileWriteCondition
-    ) async -> WorkspaceFileWriteOutcome {
-        guard identity.owner.isFile, fileEditingCapability(for: identity.owner) != nil else {
-            return .rejected(status: 0, message: "Editing is not available on this server")
-        }
-        if case .version(let tag) = condition, tag.isEmpty || tag == "*" {
-            return .rejected(status: 0, message: "Editing is not available on this server")
-        }
-        let data: Data
-        let response: URLResponse
-        do {
-            let url = try makeFileEditURL(identity)
-            (data, response) = try await performAuthorized {
-                var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
-                req.httpMethod = "PUT"
-                req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-                switch condition {
-                case .version(let tag):
-                    req.setValue(tag, forHTTPHeaderField: "If-Match")
-                case .absent:
-                    req.setValue("*", forHTTPHeaderField: "If-None-Match")
-                }
-                req.httpBody = bytes
-                return req
-            }
-        } catch {
-            return WorkspaceFileWriteFailureClassifier.outcome(for: error)
-        }
-        guard let http = response as? HTTPURLResponse else { return .unknown }
-        switch http.statusCode {
-        case 200:
-            struct Body: Decodable { let etag: String }
-            guard let body = try? JSONDecoder().decode(Body.self, from: data), !body.etag.isEmpty else {
-                return .unknown
-            }
-            return .saved(etag: body.etag)
-        case 412:
-            return .stale
-        case 404:
-            return .missing
-        default:
-            struct ErrorBody: Decodable { let error: String }
-            let message = (try? JSONDecoder().decode(ErrorBody.self, from: data).error)
-                ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
-            return .rejected(status: http.statusCode, message: message)
-        }
-    }
-
-    private func makeFileEditURL(_ identity: WorkspaceFileEditIdentity) throws -> URL {
-        let origin: CurrentFileOrigin = switch identity.owner {
-        case .workspace(let workspaceId, let worktreeId): .workspace(workspaceId: workspaceId, worktreeId: worktreeId)
-        case .skill(let skillId): .skill(skillId: skillId)
-        case .pi: .pi
-        case .host: .host(controlSessionId: nil)
-        case .agent, .schedule: throw CocoaError(.featureUnsupported)
-        }
-        return try makeCurrentFileURL(origin, path: identity.path)
-    }
-
-    /// Exact-path existence check for an owner host file. 404 is unresolved.
-    /// A 200 response yields the server's canonical realpath when present.
-    func resolveHostFile(path: String) async throws -> String? {
-        let url = try makeCurrentFileURL(.host(controlSessionId: nil), path: path)
-        do {
-            let (_, response) = try await request("HEAD", url: url)
-            try checkStatus(response, data: Data())
-            return HostFileResolvedPathHeaders.resolvedPath(from: response) ?? path
-        } catch let APIError.server(status, _) where status == 404 {
-            return nil
-        }
-    }
-
-    /// Fetch an authenticated owner-host file through the host-origin current-file read.
-    func browseHostFile(
-        path: String,
-        controlSessionId: String? = nil
-    ) async throws -> Data {
-        try await browseHostFileContent(path: path, controlSessionId: controlSessionId).data
-    }
-
-    /// Keep the server's canonical path with the bytes from the same GET.
-    /// Relative control files need it as the base for child Markdown links.
-    func browseHostFileContent(
-        path: String,
-        controlSessionId: String? = nil
-    ) async throws -> (data: Data, resolvedPath: String?) {
-        let (data, response) = try await request(
-            "GET", url: makeCurrentFileURL(.host(controlSessionId: controlSessionId), path: path)
-        )
-        try checkStatus(response, data: data)
-        return (data, HostFileResolvedPathHeaders.resolvedPath(from: response))
-    }
-
-    /// A file's size and modification time, read without its bytes (a
-    /// `HEAD` of the current-file read); nil when the file is not there.
-    func currentFileVersion(_ origin: CurrentFileOrigin, path: String) async throws -> CurrentFileVersion? {
-        do {
-            let (_, response) = try await request("HEAD", url: makeCurrentFileURL(origin, path: path))
-            try checkStatus(response, data: Data())
-            guard let http = response as? HTTPURLResponse,
-                  let size = http.value(forHTTPHeaderField: "Content-Length").flatMap(Int.init) else { return nil }
-            return CurrentFileVersion(size: size, modified: http.value(forHTTPHeaderField: "Last-Modified") ?? "")
-        } catch let APIError.server(status, _) where status == 404 {
-            return nil
-        }
-    }
-
-    /// A file's bytes through the current-file read of `origin`.
-    func currentFile(_ origin: CurrentFileOrigin, path: String) async throws -> Data {
-        try await get(url: makeCurrentFileURL(origin, path: path))
-    }
-
-    func makeHostFileMediaSource(
-        path: String,
-        controlSessionId: String? = nil,
-        contentTypeHint: String? = nil,
-        sourceFileExtension: String? = nil
-    ) throws -> AuthenticatedMediaSource {
-        try makeCurrentFileMediaSource(
-            .host(controlSessionId: controlSessionId),
-            path: path,
-            contentTypeHint: contentTypeHint,
-            sourceFileExtension: sourceFileExtension
-        )
-    }
-
-    /// Build a bearer-authenticated media source for AVPlayer resource loading.
-    ///
-    /// AVPlayer receives a local `oppi-media://` asset URL. The resource loader
-    /// translates byte-range requests to the workspace-origin current-file URL with the normal
-    /// `Authorization: Bearer ...` header.
-    func makeWorkspaceMediaSource(
-        workspaceId: String,
-        path: String,
-        worktreeId: String? = nil,
-        contentTypeHint: String? = nil,
-        sourceFileExtension: String? = nil
-    ) throws -> AuthenticatedMediaSource {
-        try makeCurrentFileMediaSource(
-            .workspace(workspaceId: workspaceId, worktreeId: worktreeId),
-            path: path,
-            contentTypeHint: contentTypeHint,
-            sourceFileExtension: sourceFileExtension
-        )
-    }
-
-    /// Build a bearer-authenticated, range-capable media source for a file
-    /// addressable through the owning session's session-origin current-file read.
-    func makeSessionFileMediaSource(
-        sessionId: String,
-        path: String,
-        contentTypeHint: String? = nil,
-        sourceFileExtension: String? = nil
-    ) throws -> AuthenticatedMediaSource {
-        try makeCurrentFileMediaSource(
-            .session(sessionId: sessionId),
-            path: path,
-            contentTypeHint: contentTypeHint,
-            sourceFileExtension: sourceFileExtension
-        )
-    }
-
-    private func makeCurrentFileMediaSource(
-        _ origin: CurrentFileOrigin,
-        path: String,
-        contentTypeHint: String?,
-        sourceFileExtension: String?
-    ) throws -> AuthenticatedMediaSource {
-        AuthenticatedMediaSource(
-            url: try makeCurrentFileURL(origin, path: path),
-            authorizationProvider: mediaAuthorizationProvider(),
-            tlsCertFingerprint: tlsCertFingerprint,
-            tlsServerName: environment.tlsServerName,
-            contentTypeHint: contentTypeHint,
-            sourceFileExtension: sourceFileExtension,
-            mediaInfoURL: try makeCurrentFileURL(origin, path: path, route: .mediaInfo)
-        )
-    }
-
-    /// Same-stem timed-text sidecar names beside an existing media file.
-    func listCurrentFileSidecars(_ origin: CurrentFileOrigin, mediaPath: String) async throws -> [String] {
-        struct Response: Decodable { let names: [String] }
-        let data = try await get(url: makeCurrentFileURL(origin, path: mediaPath, route: .sidecars))
-        return try JSONDecoder().decode(Response.self, from: data).names
-    }
-
-    /// Build a bearer-authenticated media source for a session attachment.
-    func makeSessionAttachmentMediaSource(
-        sessionId: String,
-        attachmentId: String,
-        contentTypeHint: String? = nil,
-        sourceFileExtension: String? = nil
-    ) throws -> AuthenticatedMediaSource {
-        try makeSessionAttachmentMediaSource(
-            scope: nil,
-            sessionId: sessionId,
-            attachmentId: attachmentId,
-            contentTypeHint: contentTypeHint,
-            sourceFileExtension: sourceFileExtension
-        )
-    }
-
-    func makeSessionAttachmentMediaSource(
-        scope: SessionRouteScope?,
-        sessionId: String,
-        attachmentId: String,
-        contentTypeHint: String? = nil,
-        sourceFileExtension: String? = nil
-    ) throws -> AuthenticatedMediaSource {
-        let pathSegments = scope == .control
-            ? ["control-sessions", sessionId, "attachments", attachmentId]
-            : ["sessions", sessionId, "attachments", attachmentId]
-        return AuthenticatedMediaSource(
-            url: try makeURL(pathSegments: pathSegments),
-            authorizationProvider: mediaAuthorizationProvider(),
-            tlsCertFingerprint: tlsCertFingerprint,
-            tlsServerName: environment.tlsServerName,
-            contentTypeHint: contentTypeHint,
-            sourceFileExtension: sourceFileExtension
-        )
-    }
-
-    /// List files touched (written/edited) by a specific session.
-    func listSessionChanges(workspaceId: String, sessionId: String) async throws -> SessionChangesResponse {
-        let data = try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/changes")
-        return try JSONDecoder().decode(SessionChangesResponse.self, from: data)
-    }
-
-    /// Fetch a session-derived diff for a touched file.
-    func getSessionDiff(
-        workspaceId: String,
-        sessionId: String,
-        path: String
-    ) async throws -> WorkspaceReviewDiffResponse {
-        let encodedPath = try encodeQueryPath(path)
-        let route = "/workspaces/\(workspaceId)/sessions/\(sessionId)/diff?path=\(encodedPath)"
-        let data = try await get(route)
-        return try JSONDecoder().decode(WorkspaceReviewDiffResponse.self, from: data)
-    }
-
-    // MARK: - Push Registration
-
-    /// Give the server this device's push key and relay send token (protocol/push/spec.md, section 5).
-    func putPushRegistration(_ registration: PushRegistrationRequest) async throws -> PushRegistrationResponse {
-        let data = try await put("/me/push-registration", body: registration)
-        return try JSONDecoder().decode(PushRegistrationResponse.self, from: data)
-    }
-
-    /// The server forgets this device's push key and send token.
-    func deletePushRegistration() async throws {
-        let (data, response) = try await request("DELETE", path: "/me/push-registration")
-        try checkStatus(response, data: data)
-    }
-
-    // MARK: - Diagnostics
-
-    /// Upload raw MetricKit payloads for backend trend dashboards.
-    func uploadMetricKitPayload(request body: MetricKitUploadRequest) async throws {
-        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
-        _ = try await postBackgroundUpload("/telemetry/metrickit", body: body)
-    }
-
-    /// Sorted-keys encoder for telemetry uploads: the same event always
-    /// encodes to the same bytes, whatever the dictionary insertion order.
-    static let telemetryEncoder: JSONEncoder = {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = .sortedKeys
-        return encoder
-    }()
-
-    /// Upload catalog events; the caller (`TelemetryEventUploader`) owns the
-    /// diagnostics gate. Throws unless the server answers 2xx. The response counts
-    /// events the server refused, by reason; it is `nil` when a 2xx body cannot be
-    /// read, which must not read as a failed upload: the accepted events are stored.
-    func uploadTelemetryEvents(request body: TelemetryEventUploadRequest) async throws -> TelemetryEventUploadResponse? {
-        let data = try await postBackgroundUpload(
-            "/telemetry/events",
-            body: body,
-            encoder: Self.telemetryEncoder
-        )
-        return try? JSONDecoder().decode(TelemetryEventUploadResponse.self, from: data)
-    }
-
-    func uploadClientLogs(request body: ClientLogUploadRequest) async throws {
-        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
-        _ = try await postBackgroundUpload(
-            "/telemetry/client-logs",
-            body: body,
-            encoder: Self.telemetryEncoder
-        )
-    }
-
-    // MARK: - Private
-
-    /// POST for telemetry and log uploads. A failed upload is no evidence about the route, so it
-    /// never feeds route availability; the uploader's own retry policy owns the failure.
-    private func postBackgroundUpload<T: Encodable>(
-        _ path: String,
-        body: T,
-        encoder: JSONEncoder? = nil
-    ) async throws -> Data {
-        let (data, response) = try await request("POST", path: path, body: body, encoder: encoder, reportsAvailability: false)
-        try checkStatus(response, data: data)
-        return data
-    }
-
-    private func performData(
+    func performData(
         for request: URLRequest,
         reportsAvailability: Bool = true
     ) async throws -> (Data, URLResponse) {
@@ -2611,38 +396,64 @@ actor APIClient: ClientLogUploading {
         Task { await availabilityObserver(failure) }
     }
 
+    // The endpoint verbs: each sends one authorized request and throws `checkStatus`'s
+    // error for a non-2xx answer. The `as:` forms then decode the JSON body as `type`.
+
     func get(_ path: String) async throws -> Data {
-        let (data, response) = try await request("GET", path: path)
-        try checkStatus(response, data: data)
-        return data
+        try checked(await request("GET", path: path))
+    }
+
+    func get<Response: Decodable>(_ path: String, as type: Response.Type) async throws -> Response {
+        try JSONDecoder().decode(type, from: await get(path))
     }
 
     func get(url: URL) async throws -> Data {
-        let (data, response) = try await request("GET", url: url)
-        try checkStatus(response, data: data)
-        return data
+        try checked(await request("GET", url: url))
     }
 
-    func post<T: Encodable>(
-        _ path: String,
-        body: T,
-        encoder: JSONEncoder? = nil
-    ) async throws -> Data {
-        let (data, response) = try await request("POST", path: path, body: body, encoder: encoder)
-        try checkStatus(response, data: data)
-        return data
+    func get<Response: Decodable>(url: URL, as type: Response.Type) async throws -> Response {
+        try JSONDecoder().decode(type, from: await get(url: url))
+    }
+
+    func post<T: Encodable>(_ path: String, body: T, encoder: JSONEncoder? = nil) async throws -> Data {
+        try checked(await request("POST", path: path, body: body, encoder: encoder))
+    }
+
+    func post<T: Encodable, Response: Decodable>(_ path: String, body: T, as type: Response.Type) async throws -> Response {
+        try JSONDecoder().decode(type, from: await post(path, body: body))
     }
 
     func put<T: Encodable>(_ path: String, body: T) async throws -> Data {
-        let (data, response) = try await request("PUT", path: path, body: body)
-        try checkStatus(response, data: data)
-        return data
+        try checked(await request("PUT", path: path, body: body))
+    }
+
+    func put<T: Encodable, Response: Decodable>(_ path: String, body: T, as type: Response.Type) async throws -> Response {
+        try JSONDecoder().decode(type, from: await put(path, body: body))
     }
 
     func put<T: Encodable>(url: URL, body: T) async throws -> Data {
-        let (data, response) = try await request("PUT", url: url, body: body)
-        try checkStatus(response, data: data)
-        return data
+        try checked(await request("PUT", url: url, body: body))
+    }
+
+    func put<T: Encodable, Response: Decodable>(url: URL, body: T, as type: Response.Type) async throws -> Response {
+        try JSONDecoder().decode(type, from: await put(url: url, body: body))
+    }
+
+    func patch<T: Encodable, Response: Decodable>(_ path: String, body: T, as type: Response.Type) async throws -> Response {
+        try JSONDecoder().decode(type, from: checked(await request("PATCH", path: path, body: body)))
+    }
+
+    func delete(_ path: String) async throws -> Data {
+        try checked(await request("DELETE", path: path))
+    }
+
+    func delete<Response: Decodable>(_ path: String, as type: Response.Type) async throws -> Response {
+        try JSONDecoder().decode(type, from: await delete(path))
+    }
+
+    private func checked(_ exchange: (Data, URLResponse)) throws -> Data {
+        try checkStatus(exchange.1, data: exchange.0)
+        return exchange.0
     }
 
     func request(_ method: String, path: String, timeoutInterval: TimeInterval? = nil) async throws -> (Data, URLResponse) {
@@ -2655,7 +466,7 @@ actor APIClient: ClientLogUploading {
         }
     }
 
-    private func request(_ method: String, url: URL) async throws -> (Data, URLResponse) {
+    func request(_ method: String, url: URL) async throws -> (Data, URLResponse) {
         try await performAuthorized {
             var req = URLRequest(url: url)
             req.httpMethod = method
@@ -2664,7 +475,7 @@ actor APIClient: ClientLogUploading {
         }
     }
 
-    private func request<T: Encodable>(
+    func request<T: Encodable>(
         _ method: String,
         url: URL,
         body: T,
@@ -2708,79 +519,6 @@ actor APIClient: ClientLogUploading {
             logger.debug("\(method) \(path)")
             return req
         }
-    }
-
-    // MARK: - Read aloud
-
-    /// `POST /speech`: read `text` aloud with the server's TTS provider. Returns
-    /// when the first passage is synthesized and response headers arrive; the
-    /// remaining audio follows on `chunks` as the server synthesizes it.
-    func speech(text: String) async throws -> SpeechAudioStream {
-        struct Body: Encodable { let text: String }
-        let body = try JSONEncoder().encode(Body(text: text))
-        func makeRequest() throws -> URLRequest {
-            var req = try URLRequest(url: self.makeURL(path: "/speech"))
-            req.httpMethod = "POST"
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.httpBody = body
-            // The server goes quiet while it synthesizes each passage.
-            req.timeoutInterval = 300
-            return req
-        }
-
-        var request = try makeRequest()
-        var current = try await authorizedToken()
-        ServerAuthorization.apply(token: current, to: &request)
-        var (bytes, response) = try await performBytes(for: request)
-        if authSessionBox.get() != nil, (response as? HTTPURLResponse)?.statusCode == 401 {
-            bytes.task.cancel()
-            current = try await authorizedToken(forceRefresh: true, replacing: current)
-            var retry = try makeRequest()
-            ServerAuthorization.apply(token: current, to: &retry)
-            (bytes, response) = try await performBytes(for: retry)
-        }
-
-        guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
-        guard (200 ... 299).contains(http.statusCode) else {
-            var data = Data()
-            for try await byte in bytes {
-                data.append(byte)
-                if data.count >= 16_384 { break }
-            }
-            bytes.task.cancel()
-            try checkStatus(response, data: data)
-            throw APIError.invalidResponse
-        }
-
-        let audioBytes = bytes
-        let chunks = AsyncThrowingStream<Data, Error> { continuation in
-            let reader = Task {
-                do {
-                    // Each passage arrives as one large write; hand it on in pieces.
-                    var piece = Data()
-                    for try await byte in audioBytes {
-                        piece.append(byte)
-                        if piece.count >= 16_384 {
-                            continuation.yield(piece)
-                            piece = Data()
-                        }
-                    }
-                    if !piece.isEmpty { continuation.yield(piece) }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-            continuation.onTermination = { _ in
-                reader.cancel()
-                audioBytes.task.cancel()
-            }
-        }
-        return SpeechAudioStream(
-            sampleRate: Double(http.value(forHTTPHeaderField: "X-Oppi-Sample-Rate") ?? "") ?? 0,
-            channels: Int(http.value(forHTTPHeaderField: "X-Oppi-Channels") ?? "") ?? 0,
-            chunks: chunks
-        )
     }
 
     private func performBytes(for request: URLRequest) async throws -> (URLSession.AsyncBytes, URLResponse) {
@@ -2856,28 +594,73 @@ actor APIClient: ClientLogUploading {
     /// Apply the bearer token, perform the request, and on a 401 with a device-key
     /// session refresh single-flight and retry exactly once. Refresh rejection
     /// (revoked/unknown device) propagates so the caller fails closed.
-    private func performAuthorized(
+    func performAuthorized(
         reportsAvailability: Bool = true,
         buildingRequest: () throws -> URLRequest
     ) async throws -> (Data, URLResponse) {
-        var request = try buildingRequest()
-        var current = try await authorizedToken()
-        ServerAuthorization.apply(token: current, to: &request)
-        var (data, response) = try await performData(for: request, reportsAvailability: reportsAvailability)
-        if authSessionBox.get() != nil, (response as? HTTPURLResponse)?.statusCode == 401 {
-            current = try await authorizedToken(forceRefresh: true, replacing: current)
-            var retry = try buildingRequest()
-            ServerAuthorization.apply(token: current, to: &retry)
-            (data, response) = try await performData(for: retry, reportsAvailability: reportsAvailability)
+        try await withAuthorizedRetry(buildingRequest) {
+            try await self.performData(for: $0, reportsAvailability: reportsAvailability)
         }
-        return (data, response)
     }
 
-    /// Streams attachment bytes from disk through the same auth-refresh, TLS,
-    /// and error-reporting path as `performAuthorized` without loading the file.
-    private enum AttachmentUploadBody {
+    /// `performAuthorized` for a streamed body; a 401's stream is cancelled before the retry.
+    func performAuthorizedBytes(
+        buildingRequest: () throws -> URLRequest
+    ) async throws -> (URLSession.AsyncBytes, URLResponse) {
+        try await withAuthorizedRetry(
+            buildingRequest,
+            discarding: { $0.task.cancel() },
+            perform: { try await self.performBytes(for: $0) }
+        )
+    }
+
+    /// The one bearer policy every authorized request follows: apply the token,
+    /// perform, and on a 401 with a device-key session `discard` the first answer,
+    /// refresh single-flight, and retry exactly once with a freshly built request.
+    private func withAuthorizedRetry<Body>(
+        _ makeRequest: () throws -> URLRequest,
+        discarding discard: (Body) -> Void = { _ in },
+        perform: (URLRequest) async throws -> (Body, URLResponse)
+    ) async throws -> (Body, URLResponse) {
+        var request = try makeRequest()
+        var current = try await authorizedToken()
+        ServerAuthorization.apply(token: current, to: &request)
+        var (body, response) = try await perform(request)
+        if authSessionBox.get() != nil, (response as? HTTPURLResponse)?.statusCode == 401 {
+            discard(body)
+            current = try await authorizedToken(forceRefresh: true, replacing: current)
+            var retry = try makeRequest()
+            ServerAuthorization.apply(token: current, to: &retry)
+            (body, response) = try await perform(retry)
+        }
+        return (body, response)
+    }
+
+    /// An attachment upload's bytes: in memory, or a file that streams from disk.
+    enum AttachmentUploadBody {
         case data(Data)
         case file(URL)
+    }
+
+    private struct UploadContentResponse: Decodable {
+        let attachment: ChatAttachmentRef
+    }
+
+    /// `PUT` attachment bytes to `path` and answer the attachment the server stored.
+    func putAttachmentContent(
+        path: String,
+        body: AttachmentUploadBody,
+        contentType: String,
+        progress: AttachmentUploadTransport.Progress?
+    ) async throws -> ChatAttachmentRef {
+        let (data, response) = try await performAuthorizedAttachmentUpload(
+            path: path,
+            body: body,
+            contentType: contentType,
+            progress: progress
+        )
+        try checkStatus(response, data: data)
+        return try JSONDecoder().decode(UploadContentResponse.self, from: data).attachment
     }
 
     /// Sends attachment bytes (a file streams from disk, never loaded) through the
@@ -2889,25 +672,15 @@ actor APIClient: ClientLogUploading {
         contentType: String,
         progress: AttachmentUploadTransport.Progress?
     ) async throws -> (Data, URLResponse) {
-        func makeRequest() throws -> URLRequest {
+        try await withAuthorizedRetry {
             var req = try URLRequest(url: self.makeURL(path: path))
             req.httpMethod = "PUT"
             req.setValue(contentType, forHTTPHeaderField: "Content-Type")
             logger.debug("PUT \(path) [attachment]")
             return req
+        } perform: {
+            try await self.performUpload(for: $0, body: body, progress: progress)
         }
-
-        var request = try makeRequest()
-        var current = try await authorizedToken()
-        ServerAuthorization.apply(token: current, to: &request)
-        var (data, response) = try await performUpload(for: request, body: body, progress: progress)
-        if authSessionBox.get() != nil, (response as? HTTPURLResponse)?.statusCode == 401 {
-            current = try await authorizedToken(forceRefresh: true, replacing: current)
-            var retry = try makeRequest()
-            ServerAuthorization.apply(token: current, to: &retry)
-            (data, response) = try await performUpload(for: retry, body: body, progress: progress)
-        }
-        return (data, response)
     }
 
     private func performUpload(
@@ -2931,237 +704,7 @@ actor APIClient: ClientLogUploading {
         }
     }
 
-    private func requestNoAuth<T: Encodable>(_ method: String, path: String, body: T) async throws -> (Data, URLResponse) {
-        var req = try URLRequest(url: makeURL(path: path))
-        req.httpMethod = method
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONEncoder().encode(body)
-        logger.debug("\(method) \(path) [no-auth]")
-        return try await performData(for: req)
-    }
-
-    private func encodeQueryPath(_ path: String) throws -> String {
-        try percentEncodeQueryComponent(path)
-    }
-
-    private func percentEncodeQueryComponent(_ component: String) throws -> String {
-        var allowed = CharacterSet.alphanumerics
-        allowed.insert(charactersIn: "-._~")
-        guard let encoded = component.addingPercentEncoding(withAllowedCharacters: allowed) else {
-            throw APIError.server(status: 400, message: "Invalid query value")
-        }
-        return encoded
-    }
-
-    private func makePercentEncodedQuery(_ queryItems: [URLQueryItem]) throws -> String? {
-        guard !queryItems.isEmpty else { return nil }
-
-        let parts = try queryItems.map { item in
-            let name = try percentEncodeQueryComponent(item.name)
-            guard let value = item.value else { return name }
-            return "\(name)=\(try percentEncodeQueryComponent(value))"
-        }
-        return parts.joined(separator: "&")
-    }
-
-    func percentEncodePathSegment(_ segment: String) throws -> String {
-        var allowed = CharacterSet.urlPathAllowed
-        allowed.remove(charactersIn: "/%+?#&")
-        guard let encoded = segment.addingPercentEncoding(withAllowedCharacters: allowed) else {
-            throw APIError.server(status: 400, message: "Invalid file path")
-        }
-        return encoded
-    }
-
-    func workspaceWorktreeQueryItems(_ worktreeId: String?) -> [URLQueryItem] {
-        let trimmed = worktreeId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !trimmed.isEmpty else { return [] }
-        return [URLQueryItem(name: "worktreeId", value: trimmed)]
-    }
-
-    private func makeWorkspaceContentsURL(
-        workspaceId: String,
-        path: String,
-        queryItems: [URLQueryItem] = [],
-        directory: Bool = false
-    ) throws -> URL {
-        let normalizedPath = path == "/" ? "" : path
-        let trailingSlash = directory || normalizedPath.hasSuffix("/")
-        return try makeURL(
-            pathSegments: ["workspaces", workspaceId, "contents"],
-            appendedPath: normalizedPath,
-            queryItems: queryItems,
-            trailingSlash: trailingSlash
-        )
-    }
-
-    private func makeHostContentsURL(path: String, queryItems: [URLQueryItem] = [], directory: Bool = false) throws -> URL {
-        let normalizedPath = path == "/" ? "" : path
-        let trailingSlash = directory || normalizedPath.hasSuffix("/")
-        return try makeURL(
-            pathSegments: ["host", "contents"],
-            appendedPath: normalizedPath,
-            queryItems: queryItems,
-            trailingSlash: trailingSlash
-        )
-    }
-
-    /// What `currentFileVersion` reads: `size` in bytes, `modified` as the
-    /// server's `Last-Modified`. Two reads of an unchanged file are equal.
-    struct CurrentFileVersion: Sendable, Hashable {
-        let size: Int
-        let modified: String
-    }
-
-    /// Namespace a current-file path resolves in. It selects resolution only;
-    /// pairing/auth is the host-file gate and sandbox paths stay confined.
-    enum CurrentFileOrigin: Sendable, Hashable {
-        /// Absolute or `~/` owner-host path; relative paths resolve from the
-        /// declared control session's cwd when one is given.
-        case host(controlSessionId: String?)
-        case workspace(workspaceId: String, worktreeId: String?)
-        /// Workspace session cwd; the server resolves the session by id.
-        case session(sessionId: String)
-        /// An editable Skill's own files, by Skill-relative path.
-        case skill(skillId: String)
-        /// Pi's own agent files (`SYSTEM.md`, `prompts/`), by agent-relative path.
-        case pi
-    }
-
-    /// `/files/current` and its per-file companions, which take the same query.
-    private enum CurrentFileRoute {
-        case bytes, sidecars, mediaInfo
-
-        var pathSegments: [String] {
-            switch self {
-            case .bytes: ["files", "current"]
-            case .sidecars: ["files", "current", "sidecars"]
-            case .mediaInfo: ["files", "current", "media-info"]
-            }
-        }
-    }
-
-    private func makeCurrentFileURL(
-        _ origin: CurrentFileOrigin,
-        path: String,
-        route: CurrentFileRoute = .bytes
-    ) throws -> URL {
-        var queryItems: [URLQueryItem]
-        switch origin {
-        case .host(let controlSessionId):
-            if let controlSessionId, !controlSessionId.isEmpty {
-                queryItems = [
-                    URLQueryItem(name: "origin", value: "session"),
-                    URLQueryItem(name: "sessionId", value: controlSessionId),
-                ]
-            } else {
-                queryItems = [URLQueryItem(name: "origin", value: "host")]
-            }
-        case .workspace(let workspaceId, let worktreeId):
-            queryItems = [
-                URLQueryItem(name: "origin", value: "workspace"),
-                URLQueryItem(name: "workspaceId", value: workspaceId),
-            ] + workspaceWorktreeQueryItems(worktreeId)
-        case .session(let sessionId):
-            queryItems = [
-                URLQueryItem(name: "origin", value: "session"),
-                URLQueryItem(name: "sessionId", value: sessionId),
-            ]
-        case .skill(let skillId):
-            queryItems = [
-                URLQueryItem(name: "origin", value: "skill"),
-                URLQueryItem(name: "skillId", value: skillId),
-            ]
-        case .pi:
-            queryItems = [URLQueryItem(name: "origin", value: "pi")]
-        }
-        queryItems.append(URLQueryItem(name: "path", value: path))
-        return try makeURL(pathSegments: route.pathSegments, queryItems: queryItems)
-    }
-
-    private func makeSkillFileURL(name: String, path: String, cwd: String? = nil) throws -> URL {
-        var queryItems = [URLQueryItem(name: "path", value: path)]
-        if let cwd, !cwd.isEmpty {
-            queryItems.append(URLQueryItem(name: "cwd", value: cwd))
-        }
-        return try makeURL(
-            pathSegments: ["skills", name, "file"],
-            queryItems: queryItems
-        )
-    }
-
-    func makeURL(
-        pathSegments: [String],
-        appendedPath: String? = nil,
-        queryItems: [URLQueryItem] = [],
-        trailingSlash: Bool = false
-    ) throws -> URL {
-        let encodedSegments = try pathSegments.map(percentEncodePathSegment)
-        let normalizedAppendedPath = appendedPath?.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ?? ""
-        let appendedSegments = try normalizedAppendedPath.isEmpty
-            ? []
-            : normalizedAppendedPath.split(separator: "/", omittingEmptySubsequences: true).map {
-                try percentEncodePathSegment(String($0))
-            }
-        let combined = encodedSegments + appendedSegments
-        var percentEncodedPath = "/\(combined.joined(separator: "/"))"
-        if trailingSlash {
-            percentEncodedPath += "/"
-        }
-        return try makeURL(percentEncodedPath: percentEncodedPath, queryItems: queryItems)
-    }
-
-    private func makeURL(percentEncodedPath: String, queryItems: [URLQueryItem]) throws -> URL {
-        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
-            throw APIError.invalidResponse
-        }
-
-        let normalizedBasePath: String = {
-            if components.percentEncodedPath.isEmpty || components.percentEncodedPath == "/" { return "" }
-            if components.percentEncodedPath.hasSuffix("/") { return String(components.percentEncodedPath.dropLast()) }
-            return components.percentEncodedPath
-        }()
-
-        let normalizedRequestPath = percentEncodedPath.hasPrefix("/") ? percentEncodedPath : "/\(percentEncodedPath)"
-        components.percentEncodedPath = normalizedBasePath + normalizedRequestPath
-        components.percentEncodedQuery = try makePercentEncodedQuery(queryItems)
-
-        guard let url = components.url else {
-            throw APIError.invalidResponse
-        }
-
-        return url
-    }
-
-    /// Build a request URL from an API path that may include a query string.
-    ///
-    /// `URL.appendingPathComponent` encodes `?` as a literal path character,
-    /// which breaks routes with query strings and yields 404.
-    private func makeURL(path: String) throws -> URL {
-        let parts = path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
-        let rawPath = parts.first.map(String.init) ?? ""
-        let rawQuery = parts.count > 1 ? String(parts[1]) : nil
-
-        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
-            throw APIError.invalidResponse
-        }
-
-        let normalizedBasePath: String = {
-            if components.path.isEmpty || components.path == "/" { return "" }
-            if components.path.hasSuffix("/") { return String(components.path.dropLast()) }
-            return components.path
-        }()
-
-        let normalizedRequestPath = rawPath.hasPrefix("/") ? rawPath : "/\(rawPath)"
-        components.path = normalizedBasePath + normalizedRequestPath
-        components.percentEncodedQuery = rawQuery
-
-        guard let url = components.url else {
-            throw APIError.invalidResponse
-        }
-
-        return url
-    }
+    // MARK: - Failure observation
 
     nonisolated func setResponseFailureObserver(
         _ observer: APIClientResponseFailureObserver?
@@ -3210,108 +753,9 @@ actor APIClient: ClientLogUploading {
         }
     }
 
-    private func checkCompleteSessionAttachmentResponse(_ response: URLResponse, data: Data) throws {
-        guard let http = response as? HTTPURLResponse else {
-            throw APIError.invalidResponse
-        }
-        guard http.statusCode != 206 else {
-            throw APIError.server(status: http.statusCode, message: "Attachment response was partial")
-        }
-        guard let contentLengthValue = http.value(forHTTPHeaderField: "Content-Length"),
-              let expectedBytes = Int(contentLengthValue),
-              expectedBytes >= 0 else {
-            return
-        }
-        guard data.count == expectedBytes else {
-            throw APIError.server(
-                status: http.statusCode,
-                message: "Attachment download was incomplete (\(data.count)/\(expectedBytes) bytes)"
-            )
-        }
-    }
-
-    private struct EmptyBody: Encodable {}
-    private struct ServerError: Decodable {
+    /// The server's error body: `{ "error": …, "code"?: … }`.
+    struct ServerError: Decodable {
         let error: String
         let code: String?
-    }
-}
-
-// MARK: - DeviceAuthTransport
-
-/// `APIClient` is the challenge/refresh transport for its server. These calls are
-/// unauthenticated (they carry their own proof) and never embed credentials in URLs.
-extension APIClient: DeviceAuthTransport {
-    /// Build a challenge/refresh request body. These endpoints carry their own
-    /// device-key proof and are unauthenticated on the network listener, so they
-    /// must NEVER consult the attached auth session: doing so re-enters
-    /// `DeviceAuthSession.refreshAccessToken()` from inside its own in-flight
-    /// refresh and deadlocks. Use only the statically captured bearer.
-    private func deviceAuthRequest<T: Encodable>(_ method: String, path: String, body: T) async throws -> (Data, URLResponse) {
-        var req = try URLRequest(url: makeURL(path: path))
-        req.httpMethod = method
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONEncoder().encode(body)
-        if !token.isEmpty {
-            ServerAuthorization.apply(token: token, to: &req)
-        }
-        return try await performData(for: req)
-    }
-
-    func requestChallenge(deviceId: String) async throws -> DeviceAuthChallenge {
-        struct Body: Encodable { let deviceId: String }
-        let (data, response) = try await deviceAuthRequest(
-            "POST",
-            path: "/auth/challenge",
-            body: Body(deviceId: deviceId)
-        )
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw DeviceAuthError.challengeUnavailable
-        }
-        guard let challenge = try? JSONDecoder().decode(DeviceAuthChallenge.self, from: data) else {
-            throw DeviceAuthError.malformedResponse
-        }
-        return challenge
-    }
-
-    func refresh(
-        deviceId: String,
-        nonce: String,
-        signature: String
-    ) async throws -> DeviceAuthRefreshResult {
-        struct Body: Encodable {
-            let deviceId: String
-            let nonce: String
-            let signature: String
-        }
-        struct RefreshResponse: Decodable {
-            let accessToken: String
-            let expiresAt: Int
-            let refreshChallenge: DeviceAuthChallenge?
-        }
-        let (data, response) = try await deviceAuthRequest(
-            "POST",
-            path: "/auth/refresh",
-            body: Body(
-                deviceId: deviceId,
-                nonce: nonce,
-                signature: signature
-            )
-        )
-        guard let http = response as? HTTPURLResponse else {
-            throw DeviceAuthError.malformedResponse
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            let code = (try? JSONDecoder().decode(ServerError.self, from: data).error) ?? "refresh_failed"
-            throw DeviceAuthError.refreshRejected(code: code)
-        }
-        guard let decoded = try? JSONDecoder().decode(RefreshResponse.self, from: data) else {
-            throw DeviceAuthError.malformedResponse
-        }
-        return DeviceAuthRefreshResult(
-            accessToken: decoded.accessToken,
-            expiresAt: decoded.expiresAt,
-            refreshChallenge: decoded.refreshChallenge
-        )
     }
 }
