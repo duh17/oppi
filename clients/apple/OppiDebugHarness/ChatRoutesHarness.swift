@@ -192,10 +192,16 @@ final class ChatRoutesPreviewController: PreviewRootController {
             view.addSubview(subview)
         }
         let safeArea = view.safeAreaLayoutGuide
+        // Below the middle of the leading edge, clear of the bar and the composer.
+        let belowMiddle = controls.topAnchor.constraint(equalTo: safeArea.centerYAnchor, constant: 107)
+        belowMiddle.priority = .defaultHigh
         NSLayoutConstraint.activate([
-            // Below the middle of the leading edge, clear of the bar and the composer.
             controls.leadingAnchor.constraint(equalTo: safeArea.leadingAnchor),
-            controls.topAnchor.constraint(equalTo: safeArea.centerYAnchor, constant: 107),
+            belowMiddle,
+            // A docked software keyboard covers that spot on an iPad (a tap on the control missed at
+            // hit point -1,-1), so the stack rides up to stay above the keyboard and the composer
+            // that sits on it. With no keyboard the guide is the safe area's bottom and this holds.
+            controls.bottomAnchor.constraint(lessThanOrEqualTo: view.keyboardLayoutGuide.topAnchor, constant: -Self.composerClearance),
             landingProbe.leadingAnchor.constraint(equalTo: safeArea.leadingAnchor),
             landingProbe.bottomAnchor.constraint(equalTo: safeArea.bottomAnchor),
             createdSessionsProbe.trailingAnchor.constraint(equalTo: safeArea.trailingAnchor),
@@ -274,6 +280,9 @@ final class ChatRoutesPreviewController: PreviewRootController {
         guard case .chatReader(let target)? = navigation.workspaceStackRouteElements.last else { return nil }
         return target
     }
+
+    /// Room kept between the controls and the keyboard for the composer, which grows with its text.
+    private static let composerClearance: CGFloat = 140
 
     /// A 12-point control a test taps by identifier.
     private func control(_ identifier: String, action: @escaping @MainActor () -> Void) -> UIButton {

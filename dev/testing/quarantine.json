@@ -24,14 +24,6 @@
     "expires": "2026-12-07"
   },
   {
-    "id": "OppiUITests/PaneUITests/testComposerKeepsTheKeyboardWhileALinkOpensBeside",
-    "owner": "lead",
-    "backlog": "panes/composer-focus-link-opens-beside-flake",
-    "reason": "iPad only: failed and passed on rerun at three separate heads in the ui-ipad lane (rerun ledger). The failure is the first wait, \"The file link did not open a pane\": the reader's close button did not appear within 10 s after the link tap under shard load. Not yet reproduced alone; rework: wait for the pane to mount (the companion's divider) before looking for the reader's close, and record whether the tap reached the link.",
-    "addedAt": "2026-11-13",
-    "expires": "2026-12-13"
-  },
-  {
     "id": "OppiUITests/ToolArgsStreamReaderUITests/testDoubleTapOpensStreamingArgumentsAndFollowsThem",
     "owner": "lead",
     "backlog": "reader/tool-args-stream-double-tap-flake",

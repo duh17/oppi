@@ -223,7 +223,17 @@ final class PaneUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(input.waitUntilExists(timeout: 10), "Composer input missing")
         input.tap()
         input.typeText("keep ")
-        app.buttons["chatRoutes.openFileViewer"].tap()
+        // The software keyboard is up now. A tap on a covered control lands at hit point -1,-1 and
+        // opens nothing, which reads as "the link did not open a pane"; say so here instead.
+        let link = app.buttons["chatRoutes.openFileViewer"]
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(
+            waitFor(link.exists && link.isHittable),
+            "The file link is not hittable before the tap (exists: \(link.exists), frame: \(link.frame), "
+                + "keyboard: \(keyboard.exists ? "\(keyboard.frame)" : "none"), window: \(app.windows.firstMatch.frame))"
+        )
+        attachScreenCapture("composer-keyboard-before-link")
+        link.tap()
         XCTAssertTrue(app.buttons["fullScreen.code.close"].waitUntilExists(timeout: 10), "The file link did not open a pane")
         // `typeText` fails unless the element still has keyboard focus.
         input.typeText("typing")
