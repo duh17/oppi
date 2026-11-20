@@ -429,29 +429,7 @@ enum MermaidGanttRenderer {
             }
         }
 
-        return MermaidFlowchartRenderer.FlowchartLayout(
-            graphResult: GraphLayoutResult(
-                nodePositions: [:], edgePaths: [], totalSize: .zero
-            ),
-            flowchart: .empty,
-            subgraphFrames: [:],
-            nodeLabels: [:],
-            nodeShapes: [:],
-            edgeLabels: [:],
-            edgeStyles: [:],
-            edgeIds: [:],
-            edgeKeys: [],
-            edgeStyleDirectives: [:],
-            edgeEndpointSubgraphs: [:],
-            classDefs: [:],
-            styleDirectives: [:],
-            fontSize: fontSize,
-            theme: theme,
-            isPlaceholder: false,
-            placeholderText: nil,
-            customDraw: customDraw,
-            customSize: size
-        )
+        return .custom(size: size, configuration: configuration, draw: customDraw)
     }
 
     /// `text` cut at the end with an ellipsis to fit `width`; empty when not

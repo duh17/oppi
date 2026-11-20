@@ -830,7 +830,7 @@ struct MermaidParser: DocumentParser, Sendable {
         let bodyStart = marker.upperBound
         guard let end = line[bodyStart...].lastIndex(of: "}") else { return nil }
         let body = String(line[bodyStart..<end])
-        let properties = parseMetadataProperties(body)
+        let properties = MermaidTextUtils.metadataProperties(body)
         guard !properties.isEmpty,
               properties["shape"] == nil,
               properties["icon"] == nil,
@@ -1476,8 +1476,8 @@ struct MermaidParser: DocumentParser, Sendable {
         else { return nil }
 
         let body = String(chars[(pos + 2)..<end])
-        let properties = parseMetadataProperties(body)
-        let rawShape = properties["shape"].map(normalizeMetadataValue)
+        let properties = MermaidTextUtils.metadataProperties(body)
+        let rawShape = properties["shape"].map(MermaidTextUtils.unquotedMetadataValue)
             ?? (properties["icon"] != nil || properties["img"] != nil ? "rect" : nil)
         guard let rawShape,
               let shape = flowNodeShape(forMetadataShape: rawShape)
@@ -1502,64 +1502,6 @@ struct MermaidParser: DocumentParser, Sendable {
             i += 1
         }
         return nil
-    }
-
-    private func parseMetadataProperties(_ body: String) -> [String: String] {
-        var result: [String: String] = [:]
-        for pair in splitMetadataPairs(body) {
-            guard let colonIndex = firstUnquotedColon(in: pair) else { continue }
-            let rawKey = String(pair[..<colonIndex])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let key = normalizeMetadataValue(rawKey).lowercased()
-            let valueStart = pair.index(after: colonIndex)
-            let value = String(pair[valueStart...]).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !key.isEmpty else { continue }
-            result[key] = value
-        }
-        return result
-    }
-
-    private func splitMetadataPairs(_ body: String) -> [String] {
-        var pairs: [String] = []
-        var current = ""
-        var inDoubleQuote = false
-
-        for char in body {
-            if char == "\"" {
-                inDoubleQuote.toggle()
-                current.append(char)
-            } else if char == ",", !inDoubleQuote {
-                pairs.append(current)
-                current = ""
-            } else {
-                current.append(char)
-            }
-        }
-
-        pairs.append(current)
-        return pairs
-    }
-
-    private func firstUnquotedColon(in text: String) -> String.Index? {
-        var inDoubleQuote = false
-        for index in text.indices {
-            let char = text[index]
-            if char == "\"" {
-                inDoubleQuote.toggle()
-            } else if char == ":", !inDoubleQuote {
-                return index
-            }
-        }
-        return nil
-    }
-
-    private func normalizeMetadataValue(_ value: String) -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count >= 2,
-              trimmed.first == "\"",
-              trimmed.last == "\""
-        else { return trimmed }
-        return String(trimmed.dropFirst().dropLast())
     }
 
     private func flowNodeShape(forMetadataShape rawShape: String) -> FlowNodeShape? {

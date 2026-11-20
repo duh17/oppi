@@ -119,7 +119,7 @@ enum MermaidERParser {
         }
 
         for rawLine in lines {
-            let line = stripComment(rawLine).trimmingCharacters(in: .whitespaces)
+            let line = MermaidTextUtils.stripLineComment(rawLine).trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty else { continue }
 
             // Inside an attribute block: `}` closes, anything else is an attribute.
@@ -175,24 +175,6 @@ enum MermaidERParser {
     }
 
     // MARK: - Comments
-
-    /// Remove `%%` comment from a line, preserving `%%` inside double quotes.
-    private static func stripComment(_ line: String) -> String {
-        var inDoubleQuote = false
-        var index = line.startIndex
-        while index < line.endIndex {
-            let char = line[index]
-            if char == "\"" { inDoubleQuote.toggle() }
-            if char == "%", !inDoubleQuote {
-                let next = line.index(after: index)
-                if next < line.endIndex, line[next] == "%" {
-                    return String(line[..<index])
-                }
-            }
-            index = line.index(after: index)
-        }
-        return line
-    }
 
     // MARK: - Statements
 

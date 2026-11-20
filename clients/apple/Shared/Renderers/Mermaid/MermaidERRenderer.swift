@@ -124,30 +124,12 @@ enum MermaidERRenderer {
         _ diagram: ERDiagram,
         configuration: RenderConfiguration
     ) -> MermaidFlowchartRenderer.FlowchartLayout {
-        let theme = configuration.theme
-
         guard !diagram.entities.isEmpty else {
-            return MermaidFlowchartRenderer.FlowchartLayout(
+            return .custom(
+                size: CGSize(width: 1, height: 1),
                 graphResult: GraphLayoutResult(nodePositions: [:], edgePaths: [], totalSize: .zero),
-                flowchart: .empty,
-                subgraphFrames: [:],
-                nodeLabels: [:],
-                nodeShapes: [:],
-                edgeLabels: [:],
-                edgeStyles: [:],
-                edgeIds: [:],
-                edgeKeys: [],
-                edgeStyleDirectives: [:],
-                edgeEndpointSubgraphs: [:],
-                classDefs: [:],
-                styleDirectives: [:],
-                fontSize: configuration.fontSize,
-                theme: theme,
-                isPlaceholder: false,
-                placeholderText: nil,
-                customDraw: nil,
-                customSize: CGSize(width: 1, height: 1)
-            )
+                configuration: configuration
+            ) { _, _ in }
         }
 
         let limit = configuration.maxWidth
@@ -258,26 +240,11 @@ enum MermaidERRenderer {
             }
         }
 
-        return MermaidFlowchartRenderer.FlowchartLayout(
+        return .custom(
+            size: arrangement.size,
             graphResult: arrangement.graphResult,
-            flowchart: .empty,
-            subgraphFrames: [:],
-            nodeLabels: [:],
-            nodeShapes: [:],
-            edgeLabels: [:],
-            edgeStyles: [:],
-            edgeIds: [:],
-            edgeKeys: [],
-            edgeStyleDirectives: [:],
-            edgeEndpointSubgraphs: [:],
-            classDefs: [:],
-            styleDirectives: [:],
-            fontSize: configuration.fontSize,
-            theme: theme,
-            isPlaceholder: false,
-            placeholderText: nil,
-            customDraw: drawBlock,
-            customSize: arrangement.size
+            configuration: configuration,
+            draw: drawBlock
         )
     }
 
@@ -333,7 +300,7 @@ enum MermaidERRenderer {
         let input = GraphLayoutInput(
             nodes: nodes,
             edges: edges,
-            direction: graphLayoutDirection(for: diagram.direction),
+            direction: diagram.direction.graphLayoutDirection,
             nodeSpacing: constants.nodeSpacing,
             rankSpacing: constants.rankSpacing
         )
@@ -344,15 +311,6 @@ enum MermaidERRenderer {
             direction: diagram.direction,
             constants: constants
         )
-    }
-
-    private static func graphLayoutDirection(for direction: FlowDirection) -> GraphLayoutDirection {
-        switch direction {
-        case .TB, .TD: return .topToBottom
-        case .BT: return .bottomToTop
-        case .LR: return .leftToRight
-        case .RL: return .rightToLeft
-        }
     }
 
     // MARK: - Relationship routing
@@ -526,11 +484,11 @@ enum MermaidERRenderer {
     private static func measureRow(_ attribute: ERAttribute, constants: LayoutConstants) -> RowMeasure {
         let keysText = keysDisplayText(attribute.keys)
         return RowMeasure(
-            typeWidth: measureText(attribute.type, font: constants.font, fontSize: constants.fontSize).width,
-            nameWidth: measureText(attribute.name, font: constants.font, fontSize: constants.fontSize).width,
-            keysWidth: keysText.isEmpty ? 0 : measureText(keysText, font: constants.font, fontSize: constants.fontSize).width,
+            typeWidth: MermaidTextUtils.measureText(attribute.type, font: constants.font, fontSize: constants.fontSize).width,
+            nameWidth: MermaidTextUtils.measureText(attribute.name, font: constants.font, fontSize: constants.fontSize).width,
+            keysWidth: keysText.isEmpty ? 0 : MermaidTextUtils.measureText(keysText, font: constants.font, fontSize: constants.fontSize).width,
             commentWidth: attribute.comment.map {
-                measureText($0, font: constants.font, fontSize: constants.fontSize).width
+                MermaidTextUtils.measureText($0, font: constants.font, fontSize: constants.fontSize).width
             } ?? 0
         )
     }
@@ -556,7 +514,7 @@ enum MermaidERRenderer {
             font: constants.headerFont,
             constants: constants
         )
-        let headerHeight = measureText(title, font: constants.headerFont, fontSize: constants.fontSize).height
+        let headerHeight = MermaidTextUtils.measureText(title, font: constants.headerFont, fontSize: constants.fontSize).height
             + constants.headerPaddingV * 2
 
         var rows: [PreparedRow] = []
@@ -573,9 +531,9 @@ enum MermaidERRenderer {
             }
             let nameHeight = nameText.isEmpty
                 ? 0
-                : measureText(nameText, font: constants.font, fontSize: constants.fontSize).height
+                : MermaidTextUtils.measureText(nameText, font: constants.font, fontSize: constants.fontSize).height
             let commentHeight = commentText.map {
-                measureText($0, font: constants.font, fontSize: constants.fontSize).height + constants.fontSize * 0.15
+                MermaidTextUtils.measureText($0, font: constants.font, fontSize: constants.fontSize).height + constants.fontSize * 0.15
             } ?? 0
             let rowHeight = nameHeight + commentHeight + constants.rowPaddingV * 2
             rows.append(PreparedRow(
@@ -608,7 +566,7 @@ enum MermaidERRenderer {
         let keysColumn = rowMeasures.map(\.keysWidth).max() ?? 0
         let nameMax = rowMeasures.map(\.nameWidth).max() ?? 0
         let commentMax = rowMeasures.map(\.commentWidth).max() ?? 0
-        let headerWidth = measureText(entity.displayName, font: constants.headerFont, fontSize: constants.fontSize).width
+        let headerWidth = MermaidTextUtils.measureText(entity.displayName, font: constants.headerFont, fontSize: constants.fontSize).width
 
         let rowMax = typeColumn
             + (typeColumn > 0 ? constants.columnGap : 0)
@@ -654,7 +612,7 @@ enum MermaidERRenderer {
         constants: LayoutConstants
     ) -> String {
         guard budget > 0 else { return text }
-        let single = measureText(text, font: font, fontSize: constants.fontSize)
+        let single = MermaidTextUtils.measureText(text, font: font, fontSize: constants.fontSize)
         if single.width <= budget { return text }
         return wrap(text, to: budget, font: font, fontSize: constants.fontSize)
     }
@@ -809,7 +767,13 @@ enum MermaidERRenderer {
 
         // Label at the polyline's arc-length midpoint.
         if let label {
-            drawLabel(label, on: points, theme: theme, constants: constants, in: ctx)
+            MermaidShapes.drawLabelChip(
+                label,
+                centeredAt: MermaidShapes.arcMidpoint(points),
+                padding: constants.fontSize * 0.25,
+                theme: theme,
+                in: ctx
+            )
         }
     }
 
@@ -905,64 +869,5 @@ enum MermaidERRenderer {
         ctx.fillEllipse(in: bounds)
         ctx.strokeEllipse(in: bounds)
         ctx.restoreGState()
-    }
-
-    private static func drawLabel(
-        _ label: MermaidPreparedText,
-        on points: [CGPoint],
-        theme: RenderTheme,
-        constants: LayoutConstants,
-        in ctx: CGContext
-    ) {
-        let mid = arcMidpoint(points)
-        let textSize = label.size
-        let padding = constants.fontSize * 0.25
-        let background = CGRect(
-            x: mid.x - textSize.width / 2 - padding,
-            y: mid.y - textSize.height / 2 - padding,
-            width: textSize.width + padding * 2,
-            height: textSize.height + padding * 2
-        )
-
-        ctx.saveGState()
-        ctx.setFillColor(theme.background)
-        ctx.fill(background)
-        ctx.restoreGState()
-
-        label.draw(centeredIn: background, in: ctx)
-    }
-
-    /// Point at half the polyline's total arc length.
-    private static func arcMidpoint(_ points: [CGPoint]) -> CGPoint {
-        guard points.count >= 2 else { return points.first ?? .zero }
-        var total: CGFloat = 0
-        for index in 0..<(points.count - 1) {
-            total += hypot(
-                points[index + 1].x - points[index].x,
-                points[index + 1].y - points[index].y
-            )
-        }
-        guard total > 0 else { return points[0] }
-        var remaining = total / 2
-        for index in 0..<(points.count - 1) {
-            let dx = points[index + 1].x - points[index].x
-            let dy = points[index + 1].y - points[index].y
-            let length = hypot(dx, dy)
-            if length >= remaining {
-                let t = length > 0 ? remaining / length : 0
-                return CGPoint(
-                    x: points[index].x + dx * t,
-                    y: points[index].y + dy * t
-                )
-            }
-            remaining -= length
-        }
-        return points[points.count - 1]
-    }
-
-    // MARK: - Text helpers
-
-    private static func measureText(_ text: String, font: CTFont, fontSize: CGFloat) -> CGSize {
-        MermaidTextUtils.measureText(text, font: font, fontSize: fontSize)
     }
 }

@@ -72,16 +72,34 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         /// Shared bag for dedicated renderers (pie, xy, gitGraph, …).
         static func custom(
             size: CGSize,
-            nodePositions: [String: CGRect],
-            nodeLabels: [String: String],
+            nodePositions: [String: CGRect] = [:],
+            nodeLabels: [String: String] = [:],
             configuration: RenderConfiguration,
             edgePaths: [GraphLayoutEdgePath] = [],
             draw: @escaping @Sendable (CGContext, CGPoint) -> Void
         ) -> Self {
-            Self(
+            custom(
+                size: size,
                 graphResult: GraphLayoutResult(
                     nodePositions: nodePositions, edgePaths: edgePaths, totalSize: size
                 ),
+                nodeLabels: nodeLabels,
+                configuration: configuration,
+                draw: draw
+            )
+        }
+
+        /// Bag for a dedicated renderer that keeps its own graph layout result
+        /// (class and ER node frames and edge paths).
+        static func custom(
+            size: CGSize,
+            graphResult: GraphLayoutResult,
+            nodeLabels: [String: String] = [:],
+            configuration: RenderConfiguration,
+            draw: @escaping @Sendable (CGContext, CGPoint) -> Void
+        ) -> Self {
+            Self(
+                graphResult: graphResult,
                 flowchart: .empty,
                 subgraphFrames: [:],
                 nodeLabels: nodeLabels,
@@ -473,7 +491,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
                 ? node.label
                 : wrapFlowNodeLabel(node.label, shape: node.shape, font: font, fontSize: layout.fontSize)
             if label != layout.nodeLabels[node.id] { rewraps = true }
-            let textSize = measureText(label, font: font, fontSize: layout.fontSize, isMarkdown: node.isMarkdown)
+            let textSize = MermaidTextUtils.measureText(label, font: font, fontSize: layout.fontSize, isMarkdown: node.isMarkdown)
             let size = padForShape(textSize, shape: node.shape, fontSize: layout.fontSize)
             widths[node.id] = size.width
             let natural = layout.graphResult.nodePositions[node.id]?.size ?? size
@@ -487,8 +505,8 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             let wrapped = wrapFlowEdgeLabel(label, fontSize: layout.fontSize)
             guard wrapped != current else { continue }
             rewraps = true
-            shrink += max(0, measureText(current, font: labelFont, fontSize: labelFontSize).width
-                - measureText(wrapped, font: labelFont, fontSize: labelFontSize).width)
+            shrink += max(0, MermaidTextUtils.measureText(current, font: labelFont, fontSize: labelFontSize).width
+                - MermaidTextUtils.measureText(wrapped, font: labelFont, fontSize: labelFontSize).width)
         }
         return rewraps ? (widths, shrink, heightShrink) : nil
     }
@@ -654,7 +672,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         // Measure node sizes.
         var layoutNodes: [GraphLayoutNode] = []
         for node in flowchart.nodes {
-            let textSize = measureText(
+            let textSize = MermaidTextUtils.measureText(
                 nodeLabels[node.id] ?? node.label,
                 font: font,
                 fontSize: fontSize,
@@ -673,7 +691,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         }
 
         // Map direction.
-        let direction = graphLayoutDirection(for: flowchart.direction)
+        let direction = flowchart.direction.graphLayoutDirection
 
         // Wrap first so reserved rank/sibling space matches the strings we store.
         var wrappedEdgeLabels: [Int: String] = [:]
@@ -1152,19 +1170,6 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         [subgraph.id] + subgraph.subgraphs.flatMap(allSubgraphIds(in:))
     }
 
-    private func graphLayoutDirection(for flowDirection: FlowDirection) -> GraphLayoutDirection {
-        switch flowDirection {
-        case .TB, .TD:
-            return .topToBottom
-        case .BT:
-            return .bottomToTop
-        case .LR:
-            return .leftToRight
-        case .RL:
-            return .rightToLeft
-        }
-    }
-
     private func compoundGraphResult(
         flowchart: FlowchartDiagram,
         layoutNodes: [GraphLayoutNode],
@@ -1203,7 +1208,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             let localDirection: GraphLayoutDirection
             if let requestedDirection = subgraph.direction,
                canApplySubgraphDirection(subgraph, flowchart: eligibilityFlowchart) {
-                localDirection = graphLayoutDirection(for: requestedDirection)
+                localDirection = requestedDirection.graphLayoutDirection
             } else {
                 localDirection = direction
             }
@@ -1459,7 +1464,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             let effectiveDirection: GraphLayoutDirection
             if let requestedDirection = subgraph.direction,
                canApplySubgraphDirection(subgraph, flowchart: flowchart) {
-                effectiveDirection = graphLayoutDirection(for: requestedDirection)
+                effectiveDirection = requestedDirection.graphLayoutDirection
             } else {
                 effectiveDirection = inheritedDirection
             }
@@ -2891,17 +2896,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         return CGSize(width: maxX, height: maxY)
     }
 
-    // MARK: - Text measurement
-
-    /// Measure text size using CoreText. Returns the natural size without padding.
-    private func measureText(
-        _ text: String,
-        font: CTFont,
-        fontSize: CGFloat,
-        isMarkdown: Bool = false
-    ) -> CGSize {
-        MermaidTextUtils.measureText(text, font: font, fontSize: fontSize, isMarkdown: isMarkdown)
-    }
+    // MARK: - Shape padding
 
     /// Add shape-specific padding around text.
     private func padForShape(_ textSize: CGSize, shape: FlowNodeShape, fontSize: CGFloat) -> CGSize {
@@ -2976,7 +2971,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         let attrString = NSAttributedString(string: text, attributes: attributes)
         let line = CTLineCreateWithAttributedString(attrString)
 
-        drawCTLine(line, at: CGPoint(x: origin.x + 10, y: origin.y + 10), fontSize: 14, in: ctx)
+        MermaidTextUtils.drawCTLine(line, at: CGPoint(x: origin.x + 10, y: origin.y + 10), fontSize: 14, in: ctx)
     }
 
     // MARK: - Drawing: Flowchart
@@ -3136,7 +3131,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
                     layout.nodeLabels[node.id] ?? node.id,
                     font: nodeFont,
                     fontSize: fontSize,
-                    color: contrastingTextColor(on: fill, theme: theme),
+                    color: MermaidShapes.contrastingTextColor(on: fill, theme: theme),
                     isMarkdown: node.isMarkdown
                 )
             ))
@@ -3380,10 +3375,10 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
     }
 
     private func subgraphFillColor(theme: RenderTheme) -> CGColor {
-        guard let background = sRGBComponents(theme.background) else {
+        guard let background = MermaidShapes.sRGBComponents(theme.background) else {
             return theme.background
         }
-        let luminance = relativeLuminance(
+        let luminance = MermaidShapes.relativeLuminance(
             red: background.red,
             green: background.green,
             blue: background.blue
@@ -3507,7 +3502,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         case .diamond:
             return diamondPath(rect)
         case .hexagon:
-            return hexagonPath(rect)
+            return MermaidShapes.hexagonPath(rect)
         case .circle, .filledCircle:
             return CGPath(ellipseIn: rect, transform: nil)
         case .cylindrical, .linedCylinder:
@@ -3582,10 +3577,6 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         path.addLine(to: CGPoint(x: rect.minX, y: cy))
         path.closeSubpath()
         return path
-    }
-
-    private func hexagonPath(_ rect: CGRect) -> CGPath {
-        MermaidTextUtils.hexagonPath(rect)
     }
 
     private func subroutinePath(_ rect: CGRect) -> CGPath {
@@ -4060,54 +4051,9 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         return CGColor(red: r, green: g, blue: b, alpha: 1.0)
     }
 
-    private func contrastingTextColor(on fill: CGColor, theme: RenderTheme) -> CGColor {
-        let candidates = [theme.foreground, theme.background, theme.backgroundDark]
-        return candidates.max { lhs, rhs in
-            contrastRatio(foreground: lhs, background: fill) < contrastRatio(foreground: rhs, background: fill)
-        } ?? theme.foreground
-    }
-
-    private func contrastRatio(foreground: CGColor, background: CGColor) -> CGFloat {
-        guard let fg = sRGBComponents(foreground), let bg = sRGBComponents(background) else { return 1 }
-        let fgLuminance = relativeLuminance(red: fg.red, green: fg.green, blue: fg.blue)
-        let bgLuminance = relativeLuminance(red: bg.red, green: bg.green, blue: bg.blue)
-        let lighter = max(fgLuminance, bgLuminance)
-        let darker = min(fgLuminance, bgLuminance)
-        return (lighter + 0.05) / (darker + 0.05)
-    }
-
-    private func relativeLuminance(red: CGFloat, green: CGFloat, blue: CGFloat) -> CGFloat {
-        func linearized(_ component: CGFloat) -> CGFloat {
-            component <= 0.03928 ? component / 12.92 : pow((component + 0.055) / 1.055, 2.4)
-        }
-        return 0.2126 * linearized(red) + 0.7152 * linearized(green) + 0.0722 * linearized(blue)
-    }
-
-    private struct SRGBComponents {
-        let red: CGFloat
-        let green: CGFloat
-        let blue: CGFloat
-    }
-
-    private func sRGBComponents(_ color: CGColor) -> SRGBComponents? {
-        let converted = color.converted(
-            to: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
-            intent: .defaultIntent,
-            options: nil
-        ) ?? color
-        guard let components = converted.components else { return nil }
-        if components.count >= 3 {
-            return SRGBComponents(red: components[0], green: components[1], blue: components[2])
-        }
-        if components.count >= 1 {
-            return SRGBComponents(red: components[0], green: components[0], blue: components[0])
-        }
-        return nil
-    }
-
     private func blendColor(_ foreground: CGColor, over background: CGColor, amount: CGFloat) -> CGColor? {
-        guard let foreground = sRGBComponents(foreground),
-              let background = sRGBComponents(background)
+        guard let foreground = MermaidShapes.sRGBComponents(foreground),
+              let background = MermaidShapes.sRGBComponents(background)
         else { return nil }
         let clampedAmount = min(max(amount, 0), 1)
         let inverse = 1 - clampedAmount
@@ -4140,19 +4086,6 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         return values.isEmpty ? nil : values
     }
 
-    /// Draw a CTLine at (x, y) in UIKit top-left coordinates.
-    ///
-    /// CTLineDraw expects standard CG coords (Y-up), but UIKit gives Y-down.
-    /// This flips locally around the text position so text renders right-side-up.
-    private func drawCTLine(_ line: CTLine, at point: CGPoint, fontSize: CGFloat, in ctx: CGContext) {
-        ctx.saveGState()
-        ctx.translateBy(x: point.x, y: point.y + fontSize)
-        ctx.scaleBy(x: 1, y: -1)
-        ctx.textMatrix = .identity
-        ctx.textPosition = .zero
-        CTLineDraw(line, ctx)
-        ctx.restoreGState()
-    }
 }
 
 private extension FlowEdgeStyle {

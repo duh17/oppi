@@ -235,21 +235,12 @@ enum MermaidSequenceRenderer {
         }
         let prepared = prepare(diagram, configuration: configuration)
         let captured = prepared
-        var layout = MermaidFlowchartRenderer.FlowchartLayout(
-            graphResult: GraphLayoutResult(nodePositions: [:], edgePaths: [], totalSize: .zero),
-            flowchart: .empty,
-            subgraphFrames: [:],
-            nodeLabels: [:], nodeShapes: [:], edgeLabels: [:], edgeStyles: [:],
-            edgeIds: [:], edgeKeys: [], edgeStyleDirectives: [:], edgeEndpointSubgraphs: [:],
-            classDefs: [:], styleDirectives: [:],
-            fontSize: prepared.fontSize,
-            theme: prepared.theme,
-            isPlaceholder: false, placeholderText: nil,
-            customDraw: { ctx, origin in
-                drawDiagram(ctx: ctx, origin: origin, prepared: captured)
-            },
-            customSize: prepared.facts.size
-        )
+        var layout = MermaidFlowchartRenderer.FlowchartLayout.custom(
+            size: prepared.facts.size,
+            configuration: configuration
+        ) { ctx, origin in
+            drawDiagram(ctx: ctx, origin: origin, prepared: captured)
+        }
         layout.semanticRegions = semanticRegions(prepared: prepared)
         return layout
     }
@@ -430,7 +421,7 @@ enum MermaidSequenceRenderer {
             )
             let boxCap = max(maxBoxWidth, wrapLimit + c.boxPadH * 2)
             wrappedLabels[p.id] = wrapped
-            let size = measureText(wrapped, font: font, fontSize: c.fontSize)
+            let size = MermaidTextUtils.measureText(wrapped, font: font, fontSize: c.fontSize)
             labelSizes[p.id] = size
             boxWidths[p.id] = min(max(size.width + c.boxPadH * 2, c.minBoxWidth), boxCap + c.boxPadH)
         }
@@ -471,7 +462,7 @@ enum MermaidSequenceRenderer {
                       !message.text.isEmpty || number != nil else { continue }
                 if a == b {
                     let wrapped = messageLabel(message.text, number: number, maxWidth: selfLabelWrap)
-                    let width = measureText(wrapped, font: msgFont, fontSize: msgFontSize).width
+                    let width = MermaidTextUtils.measureText(wrapped, font: msgFont, fontSize: msgFontSize).width
                     need(a, a + 1, c.selfMessageWidth + c.labelGap + width + c.fontSize * 0.5)
                 } else {
                     let lo = min(a, b), hi = max(a, b)
@@ -479,7 +470,7 @@ enum MermaidSequenceRenderer {
                         max($0 * CGFloat(hi - lo) - c.messageLabelPad, c.minMessageWrap)
                     } ?? c.naturalLabelCap
                     let wrapped = messageLabel(message.text, number: number, maxWidth: limit)
-                    let width = measureText(wrapped, font: msgFont, fontSize: msgFontSize).width
+                    let width = MermaidTextUtils.measureText(wrapped, font: msgFont, fontSize: msgFontSize).width
                     need(lo, hi, width + c.messageLabelPad)
                 }
             case .note(let note):
@@ -495,7 +486,7 @@ enum MermaidSequenceRenderer {
                 let wrapped = MermaidTextUtils.wrapText(
                     note.text, maxWidth: wrap - c.notePadH * 2, font: noteFont, fontSize: noteFontSize
                 )
-                let textSize = measureText(wrapped, font: noteFont, fontSize: noteFontSize)
+                let textSize = MermaidTextUtils.measureText(wrapped, font: noteFont, fontSize: noteFontSize)
                 let size = CGSize(width: textSize.width + c.notePadH * 2, height: textSize.height + c.notePadV * 2)
                 preparedNotes[eventIndex] = (wrapped, size)
                 guard let a = indices.first else { continue }
@@ -640,7 +631,7 @@ enum MermaidSequenceRenderer {
         var messageNumberIndex = 0
         let frameTitleFontSize = c.fontSize * 0.78
         let frameTitleFont = CTFontCreateWithName("Helvetica-Bold" as CFString, frameTitleFontSize, nil)
-        let frameTitleLineHeight = measureText(" ", font: frameTitleFont, fontSize: frameTitleFontSize).height
+        let frameTitleLineHeight = MermaidTextUtils.measureText(" ", font: frameTitleFont, fontSize: frameTitleFontSize).height
 
         struct OpenFrame {
             let kind: SequenceBlockKind
@@ -722,7 +713,7 @@ enum MermaidSequenceRenderer {
                 )
                 let titleHeight = title.isEmpty
                     ? 0
-                    : measureText(title, font: frameTitleFont, fontSize: frameTitleFontSize).height
+                    : MermaidTextUtils.measureText(title, font: frameTitleFont, fontSize: frameTitleFontSize).height
                 openFrames.append(OpenFrame(
                     kind: kind,
                     label: label,
@@ -769,7 +760,7 @@ enum MermaidSequenceRenderer {
                 let wrapped = messageLabel(
                     message.text, number: number, maxWidth: wrapWidth(from: message.from, to: message.to)
                 )
-                let labelSize = measureText(wrapped, font: msgFont, fontSize: msgFontSize)
+                let labelSize = MermaidTextUtils.measureText(wrapped, font: msgFont, fontSize: msgFontSize)
                 currentY += labelSize.height + c.labelGap
                 let isSelf = message.from == message.to
                 messageLayouts.append(MessageLayout(
@@ -939,29 +930,17 @@ enum MermaidSequenceRenderer {
         let size = CGSize(width: 100, height: 40)
         let theme = configuration.theme
         let fontSize = configuration.fontSize
-        return MermaidFlowchartRenderer.FlowchartLayout(
-            graphResult: GraphLayoutResult(nodePositions: [:], edgePaths: [], totalSize: .zero),
-            flowchart: .empty,
-            subgraphFrames: [:],
-            nodeLabels: [:], nodeShapes: [:], edgeLabels: [:], edgeStyles: [:],
-            edgeIds: [:], edgeKeys: [], edgeStyleDirectives: [:], edgeEndpointSubgraphs: [:],
-            classDefs: [:], styleDirectives: [:],
-            fontSize: fontSize,
-            theme: theme,
-            isPlaceholder: false, placeholderText: nil,
-            customDraw: { ctx, origin in
-                let font = CTFontCreateWithName("Helvetica" as CFString, fontSize, nil)
-                let attrs: [NSAttributedString.Key: Any] = [
-                    .font: font,
-                    .foregroundColor: theme.foregroundDim,
-                ]
-                let line = CTLineCreateWithAttributedString(
-                    NSAttributedString(string: "(empty sequence diagram)", attributes: attrs)
-                )
-                drawCTLine(line, at: CGPoint(x: origin.x + 8, y: origin.y + 8), fontSize: fontSize, in: ctx)
-            },
-            customSize: size
-        )
+        return .custom(size: size, configuration: configuration) { ctx, origin in
+            let font = CTFontCreateWithName("Helvetica" as CFString, fontSize, nil)
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: theme.foregroundDim,
+            ]
+            let line = CTLineCreateWithAttributedString(
+                NSAttributedString(string: "(empty sequence diagram)", attributes: attrs)
+            )
+            MermaidTextUtils.drawCTLine(line, at: CGPoint(x: origin.x + 8, y: origin.y + 8), fontSize: fontSize, in: ctx)
+        }
     }
 
     // MARK: - Drawing
@@ -2323,19 +2302,5 @@ enum MermaidSequenceRenderer {
              .solidReverseTopStickHalfArrow:
             false
         }
-    }
-
-    private static func measureText(_ text: String, font: CTFont, fontSize: CGFloat) -> CGSize {
-        MermaidTextUtils.measureText(text, font: font, fontSize: fontSize)
-    }
-
-    private static func drawCTLine(_ line: CTLine, at point: CGPoint, fontSize: CGFloat, in ctx: CGContext) {
-        ctx.saveGState()
-        ctx.translateBy(x: point.x, y: point.y + fontSize)
-        ctx.scaleBy(x: 1, y: -1)
-        ctx.textMatrix = .identity
-        ctx.textPosition = .zero
-        CTLineDraw(line, ctx)
-        ctx.restoreGState()
     }
 }

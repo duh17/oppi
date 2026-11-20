@@ -9,19 +9,6 @@ import Foundation
 /// `nonisolated static`.
 enum MermaidTextUtils {
 
-    static func hexagonPath(_ rect: CGRect) -> CGPath {
-        let path = CGMutablePath()
-        let inset = rect.width * 0.15
-        path.move(to: CGPoint(x: rect.minX + inset, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX - inset, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
-        path.addLine(to: CGPoint(x: rect.maxX - inset, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.minX + inset, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.midY))
-        path.closeSubpath()
-        return path
-    }
-
     // MARK: - Text normalization
 
     /// Replace `<br>`, `<br/>`, `<br />` with `\n`.
@@ -265,6 +252,147 @@ enum MermaidTextUtils {
         "nbsp": "\u{00A0}",
         "quot": "\"",
     ]
+
+    // MARK: - Statement parsing
+
+    /// If `text` starts with `keyword` (case-insensitive) as a whole token,
+    /// return the trimmed rest. The keyword may be followed by whitespace, a
+    /// quote (`title"Quoted"`), or one of `followers` (`[` for xychart axis
+    /// lists, `:` for gitGraph options).
+    static func consumingKeyword(
+        _ text: String,
+        _ keyword: String,
+        followers: Set<Character> = []
+    ) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        let key = keyword.lowercased()
+        guard trimmed.lowercased().hasPrefix(key) else { return nil }
+        if trimmed.count == key.count { return "" }
+        let nextIndex = trimmed.index(trimmed.startIndex, offsetBy: key.count)
+        let next = trimmed[nextIndex]
+        if next.isWhitespace || next == "\"" || next == "'" || followers.contains(next) {
+            return String(trimmed[nextIndex...]).trimmingCharacters(in: .whitespaces)
+        }
+        return nil
+    }
+
+    /// A `title` value: quotes are stripped when they wrap the whole value,
+    /// and an empty unquoted value is no title.
+    static func titleValue(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return nil }
+        if trimmed.first == "\"" || trimmed.first == "'",
+           trimmed.count >= 2,
+           trimmed.last == trimmed.first {
+            return normalizeLabel(String(trimmed.dropFirst().dropLast()))
+        }
+        let normalized = normalizeLabel(trimmed)
+        return normalized.isEmpty ? nil : normalized
+    }
+
+    /// Leading `"..."` or `'...'` (backslash escapes skipped), normalized,
+    /// with the trimmed leftover after the closing quote.
+    static func quotedPrefix(_ text: String) -> (String, String)? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard let quote = trimmed.first, quote == "\"" || quote == "'" else { return nil }
+        guard let close = closingQuoteIndex(in: trimmed, quote: quote) else { return nil }
+        let inner = String(trimmed[trimmed.index(after: trimmed.startIndex)..<close])
+        let leftover = String(trimmed[trimmed.index(after: close)...])
+            .trimmingCharacters(in: .whitespaces)
+        return (normalizeLabel(inner), leftover)
+    }
+
+    /// Index of the quote closing the one `text` starts with, skipping
+    /// backslash escapes.
+    static func closingQuoteIndex(in text: String, quote: Character) -> String.Index? {
+        var index = text.index(after: text.startIndex)
+        var escaped = false
+        while index < text.endIndex {
+            let character = text[index]
+            if escaped {
+                escaped = false
+            } else if character == "\\" {
+                escaped = true
+            } else if character == quote {
+                return index
+            }
+            index = text.index(after: index)
+        }
+        return nil
+    }
+
+    /// Remove a `%%` comment, ignoring `%%` inside double quotes. Unlike
+    /// `MermaidSourceIndex.stripComment`, a `%%{` directive is cut too.
+    static func stripLineComment(_ line: String) -> String {
+        var inDoubleQuote = false
+        let chars = Array(line)
+        for i in 0..<chars.count {
+            if chars[i] == "\"" { inDoubleQuote.toggle() }
+            if !inDoubleQuote, i + 1 < chars.count, chars[i] == "%", chars[i + 1] == "%" {
+                return String(chars[0..<i])
+            }
+        }
+        return line
+    }
+
+    /// `key: value` pairs from a `@{ ... }` metadata body. Commas and colons
+    /// inside double quotes stay in the value; keys are unquoted and lowercased.
+    static func metadataProperties(_ body: String) -> [String: String] {
+        var result: [String: String] = [:]
+        for pair in splitMetadataPairs(body) {
+            guard let colonIndex = firstUnquotedColon(in: pair) else { continue }
+            let rawKey = String(pair[..<colonIndex])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let key = unquotedMetadataValue(rawKey).lowercased()
+            let valueStart = pair.index(after: colonIndex)
+            let value = String(pair[valueStart...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty else { continue }
+            result[key] = value
+        }
+        return result
+    }
+
+    /// A metadata value with one pair of wrapping double quotes removed.
+    static func unquotedMetadataValue(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2,
+              trimmed.first == "\"",
+              trimmed.last == "\""
+        else { return trimmed }
+        return String(trimmed.dropFirst().dropLast())
+    }
+
+    private static func splitMetadataPairs(_ body: String) -> [String] {
+        var pairs: [String] = []
+        var current = ""
+        var inDoubleQuote = false
+        for char in body {
+            if char == "\"" {
+                inDoubleQuote.toggle()
+                current.append(char)
+            } else if char == ",", !inDoubleQuote {
+                pairs.append(current)
+                current = ""
+            } else {
+                current.append(char)
+            }
+        }
+        pairs.append(current)
+        return pairs
+    }
+
+    private static func firstUnquotedColon(in text: String) -> String.Index? {
+        var inDoubleQuote = false
+        for index in text.indices {
+            let char = text[index]
+            if char == "\"" {
+                inDoubleQuote.toggle()
+            } else if char == ":", !inDoubleQuote {
+                return index
+            }
+        }
+        return nil
+    }
 
     // MARK: - Label values
 

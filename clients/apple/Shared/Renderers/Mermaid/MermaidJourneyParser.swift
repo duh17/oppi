@@ -33,18 +33,18 @@ enum MermaidJourneyParser {
             guard !line.isEmpty else { continue }
             if line.hasPrefix("%%") { continue }
 
-            if consumingKeyword(line, "journey") != nil {
+            if MermaidTextUtils.consumingKeyword(line, "journey") != nil {
                 continue
             }
 
-            if let value = consumingKeyword(line, "title") {
-                title = parseTitleValue(value)
+            if let value = MermaidTextUtils.consumingKeyword(line, "title") {
+                title = MermaidTextUtils.titleValue(value)
                 continue
             }
 
-            if let value = consumingKeyword(line, "section") {
+            if let value = MermaidTextUtils.consumingKeyword(line, "section") {
                 flushSection()
-                currentName = parseTitleValue(value) ?? value.trimmingCharacters(in: .whitespaces)
+                currentName = MermaidTextUtils.titleValue(value) ?? value.trimmingCharacters(in: .whitespaces)
                 continue
             }
 
@@ -98,28 +98,4 @@ enum MermaidJourneyParser {
         return "Journey score must be 1-5, got \(score)"
     }
 
-    private static func consumingKeyword(_ text: String, _ keyword: String) -> String? {
-        let trimmed = text.trimmingCharacters(in: .whitespaces)
-        let key = keyword.lowercased()
-        guard trimmed.lowercased().hasPrefix(key) else { return nil }
-        if trimmed.count == key.count { return "" }
-        let nextIndex = trimmed.index(trimmed.startIndex, offsetBy: key.count)
-        let next = trimmed[nextIndex]
-        if next.isWhitespace || next == "\"" || next == "'" {
-            return String(trimmed[nextIndex...]).trimmingCharacters(in: .whitespaces)
-        }
-        return nil
-    }
-
-    private static func parseTitleValue(_ raw: String) -> String? {
-        let trimmed = raw.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return nil }
-        if trimmed.first == "\"" || trimmed.first == "'",
-           trimmed.count >= 2,
-           trimmed.last == trimmed.first {
-            return MermaidTextUtils.normalizeLabel(String(trimmed.dropFirst().dropLast()))
-        }
-        let normalized = MermaidTextUtils.normalizeLabel(trimmed)
-        return normalized.isEmpty ? nil : normalized
-    }
 }

@@ -78,50 +78,16 @@ enum MermaidXYChartRenderer {
 
         let maxWidth = max(configuration.maxWidth, 1)
         let contentWidth = max(maxWidth - outerMargin * 2, 40)
-
-        let titleFont = CTFontCreateWithName("Helvetica" as CFString, fontSize, nil)
-        let axisTitleFont = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.85, nil)
         let labelFont = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.75, nil)
-        let legendFont = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.85, nil)
 
         var y: CGFloat = outerMargin
         var nodePositions: [String: CGRect] = [:]
         var nodeLabels: [String: String] = [:]
 
-        let resolvedTitle = (diagram.title?.isEmpty == false) ? diagram.title : nil
-        var wrappedTitle: String?
-        if let title = resolvedTitle {
-            let wrapped = MermaidTextUtils.wrapTextTruncated(
-                title, font: titleFont, fontSize: fontSize, maxWidth: contentWidth, maxLines: titleMaxLines
-            )
-            wrappedTitle = wrapped
-            let titleSize = MermaidTextUtils.measureText(
-                wrapped, font: titleFont, fontSize: fontSize
-            )
-            nodeLabels["$title"] = wrapped
-            nodePositions["title"] = CGRect(
-                x: outerMargin, y: y, width: contentWidth, height: titleSize.height
-            )
-            y += titleSize.height + titleGap
-        }
-
-        if let yTitle = prepared.yTitle {
-            let wrapped = MermaidTextUtils.wrapTextTruncated(
-                yTitle,
-                font: axisTitleFont,
-                fontSize: fontSize * 0.85,
-                maxWidth: contentWidth,
-                maxLines: axisTitleMaxLines
-            )
-            let size = MermaidTextUtils.measureText(
-                wrapped, font: axisTitleFont, fontSize: fontSize * 0.85
-            )
-            nodeLabels["$yTitle"] = wrapped
-            nodePositions["yTitle"] = CGRect(
-                x: outerMargin, y: y, width: contentWidth, height: size.height
-            )
-            y += size.height + axisTitleGap
-        }
+        layoutHeader(
+            diagram, prepared: prepared, fontSize: fontSize, contentWidth: contentWidth,
+            y: &y, nodePositions: &nodePositions, nodeLabels: &nodeLabels
+        )
 
         let yTicks = niceTicks(min: prepared.yMin, max: prepared.yMax)
         let yTickLabels = yTicks.map { formatAxisNumber($0) }
@@ -197,59 +163,14 @@ enum MermaidXYChartRenderer {
         )
         y += xLabelHeight
 
-        if let xTitle = prepared.xTitle {
-            y += axisTitleGap
-            let wrapped = MermaidTextUtils.wrapTextTruncated(
-                xTitle,
-                font: axisTitleFont,
-                fontSize: fontSize * 0.85,
-                maxWidth: plotWidth,
-                maxLines: axisTitleMaxLines
-            )
-            let size = MermaidTextUtils.measureText(
-                wrapped, font: axisTitleFont, fontSize: fontSize * 0.85
-            )
-            nodeLabels["$xTitle"] = wrapped
-            nodePositions["xTitle"] = CGRect(
-                x: plotLeft, y: y, width: plotWidth, height: size.height
-            )
-            y += size.height
-        }
+        let legendRows = layoutFooter(
+            prepared: prepared, fontSize: fontSize, plotLeft: plotLeft, plotWidth: plotWidth,
+            contentWidth: contentWidth, y: &y, nodePositions: &nodePositions, nodeLabels: &nodeLabels
+        )
 
-        let named = prepared.series.enumerated().compactMap { index, series -> (Int, String)? in
-            guard let name = series.name, !name.isEmpty else { return nil }
-            return (index, name)
-        }
-        var legendRows: [LegendRow] = []
-        if !named.isEmpty {
-            y += legendGap
-            let rows = wrapLegend(
-                items: named,
-                font: legendFont,
-                fontSize: fontSize * 0.85,
-                maxWidth: contentWidth
-            )
-            legendRows = rows
-            let legendHeight = rows.reduce(CGFloat(0)) { $0 + $1.height }
-            nodePositions["legend"] = CGRect(
-                x: outerMargin, y: y, width: contentWidth, height: legendHeight
-            )
-            for (index, name) in named {
-                nodeLabels["$legend-\(index)"] = name
-            }
-            y += legendHeight
-        }
+        let size = CGSize(width: maxWidth, height: y + outerMargin)
 
-        let totalHeight = y + outerMargin
-        let size = CGSize(width: maxWidth, height: totalHeight)
-
-        let capturedTitle = wrappedTitle
-        let capturedTitleRect = nodePositions["title"]
-        let capturedYTitle = nodeLabels["$yTitle"]
-        let capturedYTitleRect = nodePositions["yTitle"]
-        let capturedXTitle = nodeLabels["$xTitle"]
-        let capturedXTitleRect = nodePositions["xTitle"]
-        let capturedLegendOrigin = nodePositions["legend"]?.origin ?? .zero
+        let chrome = Chrome(nodePositions: nodePositions, nodeLabels: nodeLabels, legendRows: legendRows)
         let capturedColors = seriesColors(theme: theme)
         let capturedPrepared = prepared
         let capturedYTicks = yTicks
@@ -260,39 +181,12 @@ enum MermaidXYChartRenderer {
         let capturedShownX = shownX
         let capturedSlotCenters = slotCenters
         let capturedSlotWidth = slotWidth
-        let capturedLegendRows = legendRows
 
         let customDraw: @Sendable (CGContext, CGPoint) -> Void = { ctx, origin in
             let ox = origin.x
             let oy = origin.y
 
-            if let title = capturedTitle, let rect = capturedTitleRect {
-                let font = CTFontCreateWithName("Helvetica" as CFString, fontSize, nil)
-                MermaidTextUtils.drawText(
-                    title,
-                    at: CGPoint(x: ox + rect.minX, y: oy + rect.minY),
-                    width: rect.width,
-                    font: font,
-                    fontSize: fontSize,
-                    foregroundColor: theme.foreground,
-                    alignment: .left,
-                    in: ctx
-                )
-            }
-
-            if let yTitle = capturedYTitle, let rect = capturedYTitleRect {
-                let font = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.85, nil)
-                MermaidTextUtils.drawText(
-                    yTitle,
-                    at: CGPoint(x: ox + rect.minX, y: oy + rect.minY),
-                    width: rect.width,
-                    font: font,
-                    fontSize: fontSize * 0.85,
-                    foregroundColor: theme.foregroundDim,
-                    alignment: .left,
-                    in: ctx
-                )
-            }
+            drawHeader(chrome, origin: origin, fontSize: fontSize, theme: theme, in: ctx)
 
             let plot = plotRect.offsetBy(dx: ox, dy: oy)
             drawGridAndAxes(
@@ -350,17 +244,7 @@ enum MermaidXYChartRenderer {
                         plot: plot
                     )
                     guard barRect.height > 0.5 else { continue }
-                    let radius = min(barCornerRadius, barRect.width / 2, barRect.height / 2)
-                    ctx.saveGState()
-                    ctx.setFillColor(color.copy(alpha: 0.82) ?? color)
-                    ctx.addPath(CGPath(
-                        roundedRect: barRect,
-                        cornerWidth: radius,
-                        cornerHeight: radius,
-                        transform: nil
-                    ))
-                    ctx.fillPath()
-                    ctx.restoreGState()
+                    fillBar(barRect, color: color, in: ctx)
                 }
             }
 
@@ -376,28 +260,7 @@ enum MermaidXYChartRenderer {
                     )
                     points.append(CGPoint(x: x, y: yPoint))
                 }
-                guard points.count >= 1 else { continue }
-                ctx.saveGState()
-                ctx.setStrokeColor(color)
-                ctx.setLineWidth(lineWidth)
-                ctx.setLineJoin(.round)
-                ctx.setLineCap(.round)
-                ctx.addLines(between: points)
-                ctx.strokePath()
-                ctx.setFillColor(color)
-                ctx.setStrokeColor(theme.background)
-                ctx.setLineWidth(1)
-                for point in points {
-                    let dot = CGRect(
-                        x: point.x - pointRadius,
-                        y: point.y - pointRadius,
-                        width: pointRadius * 2,
-                        height: pointRadius * 2
-                    )
-                    ctx.fillEllipse(in: dot)
-                    ctx.strokeEllipse(in: dot)
-                }
-                ctx.restoreGState()
+                strokeLineSeries(points, color: color, theme: theme, in: ctx)
             }
 
             for item in capturedShownX {
@@ -416,77 +279,15 @@ enum MermaidXYChartRenderer {
                 )
             }
 
-            if let xTitle = capturedXTitle, let rect = capturedXTitleRect {
-                let font = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.85, nil)
-                MermaidTextUtils.drawText(
-                    xTitle,
-                    at: CGPoint(x: ox + rect.minX, y: oy + rect.minY),
-                    width: rect.width,
-                    font: font,
-                    fontSize: fontSize * 0.85,
-                    foregroundColor: theme.foregroundDim,
-                    alignment: .center,
-                    in: ctx
-                )
-            }
-
-            if !capturedLegendRows.isEmpty {
-                var legendY = oy + capturedLegendOrigin.y
-                let font = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.85, nil)
-                for row in capturedLegendRows {
-                    var x = ox + capturedLegendOrigin.x
-                    for item in row.items {
-                        let color = capturedColors[item.seriesIndex % capturedColors.count]
-                        let swatch = CGRect(
-                            x: x,
-                            y: legendY + 1,
-                            width: swatchSize,
-                            height: swatchSize
-                        )
-                        ctx.saveGState()
-                        ctx.setFillColor(color)
-                        ctx.addPath(CGPath(
-                            roundedRect: swatch, cornerWidth: 2, cornerHeight: 2, transform: nil
-                        ))
-                        ctx.fillPath()
-                        ctx.restoreGState()
-                        MermaidTextUtils.drawText(
-                            item.text,
-                            at: CGPoint(x: swatch.maxX + swatchTextGap, y: legendY),
-                            font: font,
-                            fontSize: fontSize * 0.85,
-                            foregroundColor: theme.foreground,
-                            in: ctx
-                        )
-                        x += item.width + legendItemGap
-                    }
-                    legendY += row.height
-                }
-            }
+            drawFooter(chrome, origin: origin, colors: capturedColors, fontSize: fontSize, theme: theme, in: ctx)
         }
 
-        return MermaidFlowchartRenderer.FlowchartLayout(
-            graphResult: GraphLayoutResult(
-                nodePositions: nodePositions, edgePaths: [], totalSize: size
-            ),
-            flowchart: .empty,
-            subgraphFrames: [:],
+        return .custom(
+            size: size,
+            nodePositions: nodePositions,
             nodeLabels: nodeLabels,
-            nodeShapes: [:],
-            edgeLabels: [:],
-            edgeStyles: [:],
-            edgeIds: [:],
-            edgeKeys: [],
-            edgeStyleDirectives: [:],
-            edgeEndpointSubgraphs: [:],
-            classDefs: [:],
-            styleDirectives: [:],
-            fontSize: fontSize,
-            theme: theme,
-            isPlaceholder: false,
-            placeholderText: nil,
-            customDraw: customDraw,
-            customSize: size
+            configuration: configuration,
+            draw: customDraw
         )
     }
 
@@ -502,50 +303,16 @@ enum MermaidXYChartRenderer {
         let fontSize = configuration.fontSize
         let maxWidth = max(configuration.maxWidth, 1)
         let contentWidth = max(maxWidth - outerMargin * 2, 40)
-
-        let titleFont = CTFontCreateWithName("Helvetica" as CFString, fontSize, nil)
-        let axisTitleFont = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.85, nil)
         let labelFont = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.75, nil)
-        let legendFont = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.85, nil)
 
         var y: CGFloat = outerMargin
         var nodePositions: [String: CGRect] = [:]
         var nodeLabels: [String: String] = [:]
 
-        let resolvedTitle = (diagram.title?.isEmpty == false) ? diagram.title : nil
-        var wrappedTitle: String?
-        if let title = resolvedTitle {
-            let wrapped = MermaidTextUtils.wrapTextTruncated(
-                title, font: titleFont, fontSize: fontSize, maxWidth: contentWidth, maxLines: titleMaxLines
-            )
-            wrappedTitle = wrapped
-            let titleSize = MermaidTextUtils.measureText(
-                wrapped, font: titleFont, fontSize: fontSize
-            )
-            nodeLabels["$title"] = wrapped
-            nodePositions["title"] = CGRect(
-                x: outerMargin, y: y, width: contentWidth, height: titleSize.height
-            )
-            y += titleSize.height + titleGap
-        }
-
-        if let yTitle = prepared.yTitle {
-            let wrapped = MermaidTextUtils.wrapTextTruncated(
-                yTitle,
-                font: axisTitleFont,
-                fontSize: fontSize * 0.85,
-                maxWidth: contentWidth,
-                maxLines: axisTitleMaxLines
-            )
-            let size = MermaidTextUtils.measureText(
-                wrapped, font: axisTitleFont, fontSize: fontSize * 0.85
-            )
-            nodeLabels["$yTitle"] = wrapped
-            nodePositions["yTitle"] = CGRect(
-                x: outerMargin, y: y, width: contentWidth, height: size.height
-            )
-            y += size.height + axisTitleGap
-        }
+        layoutHeader(
+            diagram, prepared: prepared, fontSize: fontSize, contentWidth: contentWidth,
+            y: &y, nodePositions: &nodePositions, nodeLabels: &nodeLabels
+        )
 
         let rawCategoryWidths = prepared.categories.map { MermaidTextUtils.lineWidth($0, font: labelFont) }
         let categoryCol = min(
@@ -614,66 +381,20 @@ enum MermaidXYChartRenderer {
         )
         y = plotRect.maxY
 
-        if let xTitle = prepared.xTitle {
-            y += axisTitleGap
-            let wrapped = MermaidTextUtils.wrapTextTruncated(
-                xTitle,
-                font: axisTitleFont,
-                fontSize: fontSize * 0.85,
-                maxWidth: plotWidth,
-                maxLines: axisTitleMaxLines
-            )
-            let size = MermaidTextUtils.measureText(
-                wrapped, font: axisTitleFont, fontSize: fontSize * 0.85
-            )
-            nodeLabels["$xTitle"] = wrapped
-            nodePositions["xTitle"] = CGRect(
-                x: plotLeft, y: y, width: plotWidth, height: size.height
-            )
-            y += size.height
-        }
+        let legendRows = layoutFooter(
+            prepared: prepared, fontSize: fontSize, plotLeft: plotLeft, plotWidth: plotWidth,
+            contentWidth: contentWidth, y: &y, nodePositions: &nodePositions, nodeLabels: &nodeLabels
+        )
 
-        let named = prepared.series.enumerated().compactMap { index, series -> (Int, String)? in
-            guard let name = series.name, !name.isEmpty else { return nil }
-            return (index, name)
-        }
-        var legendRows: [LegendRow] = []
-        if !named.isEmpty {
-            y += legendGap
-            let rows = wrapLegend(
-                items: named,
-                font: legendFont,
-                fontSize: fontSize * 0.85,
-                maxWidth: contentWidth
-            )
-            legendRows = rows
-            let legendHeight = rows.reduce(CGFloat(0)) { $0 + $1.height }
-            nodePositions["legend"] = CGRect(
-                x: outerMargin, y: y, width: contentWidth, height: legendHeight
-            )
-            for (index, name) in named {
-                nodeLabels["$legend-\(index)"] = name
-            }
-            y += legendHeight
-        }
+        let size = CGSize(width: maxWidth, height: y + outerMargin)
 
-        let totalHeight = y + outerMargin
-        let size = CGSize(width: maxWidth, height: totalHeight)
-
-        let capturedTitle = wrappedTitle
-        let capturedTitleRect = nodePositions["title"]
-        let capturedYTitle = nodeLabels["$yTitle"]
-        let capturedYTitleRect = nodePositions["yTitle"]
-        let capturedXTitle = nodeLabels["$xTitle"]
-        let capturedXTitleRect = nodePositions["xTitle"]
-        let capturedLegendOrigin = nodePositions["legend"]?.origin ?? .zero
+        let chrome = Chrome(nodePositions: nodePositions, nodeLabels: nodeLabels, legendRows: legendRows)
         let capturedColors = seriesColors(theme: theme)
         let capturedPrepared = prepared
         let capturedYTicks = yTicks
         let capturedShownY = shownY
         let capturedSlotCenters = slotCenters
         let capturedSlotHeight = slotHeight
-        let capturedLegendRows = legendRows
         let capturedValueTickY = nodePositions["yAxis"]?.minY ?? 0
         let capturedCategoryItems: [(text: String, frame: CGRect)] = prepared.categories.indices.compactMap { index in
             guard let frame = nodePositions["x-\(index)"],
@@ -686,33 +407,7 @@ enum MermaidXYChartRenderer {
             let ox = origin.x
             let oy = origin.y
 
-            if let title = capturedTitle, let rect = capturedTitleRect {
-                let font = CTFontCreateWithName("Helvetica" as CFString, fontSize, nil)
-                MermaidTextUtils.drawText(
-                    title,
-                    at: CGPoint(x: ox + rect.minX, y: oy + rect.minY),
-                    width: rect.width,
-                    font: font,
-                    fontSize: fontSize,
-                    foregroundColor: theme.foreground,
-                    alignment: .left,
-                    in: ctx
-                )
-            }
-
-            if let yTitle = capturedYTitle, let rect = capturedYTitleRect {
-                let font = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.85, nil)
-                MermaidTextUtils.drawText(
-                    yTitle,
-                    at: CGPoint(x: ox + rect.minX, y: oy + rect.minY),
-                    width: rect.width,
-                    font: font,
-                    fontSize: fontSize * 0.85,
-                    foregroundColor: theme.foregroundDim,
-                    alignment: .left,
-                    in: ctx
-                )
-            }
+            drawHeader(chrome, origin: origin, fontSize: fontSize, theme: theme, in: ctx)
 
             let plot = plotRect.offsetBy(dx: ox, dy: oy)
             drawHorizontalGridAndAxes(
@@ -758,17 +453,7 @@ enum MermaidXYChartRenderer {
                         plot: plot
                     )
                     guard barRect.width > 0.5 else { continue }
-                    let radius = min(barCornerRadius, barRect.width / 2, barRect.height / 2)
-                    ctx.saveGState()
-                    ctx.setFillColor(color.copy(alpha: 0.82) ?? color)
-                    ctx.addPath(CGPath(
-                        roundedRect: barRect,
-                        cornerWidth: radius,
-                        cornerHeight: radius,
-                        transform: nil
-                    ))
-                    ctx.fillPath()
-                    ctx.restoreGState()
+                    fillBar(barRect, color: color, in: ctx)
                 }
             }
 
@@ -787,28 +472,7 @@ enum MermaidXYChartRenderer {
                     let yPoint = oy + capturedSlotCenters[categoryIndex]
                     points.append(CGPoint(x: x, y: yPoint))
                 }
-                guard points.count >= 1 else { continue }
-                ctx.saveGState()
-                ctx.setStrokeColor(color)
-                ctx.setLineWidth(lineWidth)
-                ctx.setLineJoin(.round)
-                ctx.setLineCap(.round)
-                ctx.addLines(between: points)
-                ctx.strokePath()
-                ctx.setFillColor(color)
-                ctx.setStrokeColor(theme.background)
-                ctx.setLineWidth(1)
-                for point in points {
-                    let dot = CGRect(
-                        x: point.x - pointRadius,
-                        y: point.y - pointRadius,
-                        width: pointRadius * 2,
-                        height: pointRadius * 2
-                    )
-                    ctx.fillEllipse(in: dot)
-                    ctx.strokeEllipse(in: dot)
-                }
-                ctx.restoreGState()
+                strokeLineSeries(points, color: color, theme: theme, in: ctx)
             }
 
             for item in capturedCategoryItems {
@@ -824,78 +488,281 @@ enum MermaidXYChartRenderer {
                 )
             }
 
-            if let xTitle = capturedXTitle, let rect = capturedXTitleRect {
-                let font = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.85, nil)
-                MermaidTextUtils.drawText(
-                    xTitle,
-                    at: CGPoint(x: ox + rect.minX, y: oy + rect.minY),
-                    width: rect.width,
-                    font: font,
-                    fontSize: fontSize * 0.85,
-                    foregroundColor: theme.foregroundDim,
-                    alignment: .center,
-                    in: ctx
-                )
-            }
-
-            if !capturedLegendRows.isEmpty {
-                var legendY = oy + capturedLegendOrigin.y
-                let font = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.85, nil)
-                for row in capturedLegendRows {
-                    var x = ox + capturedLegendOrigin.x
-                    for item in row.items {
-                        let color = capturedColors[item.seriesIndex % capturedColors.count]
-                        let swatch = CGRect(
-                            x: x,
-                            y: legendY + 1,
-                            width: swatchSize,
-                            height: swatchSize
-                        )
-                        ctx.saveGState()
-                        ctx.setFillColor(color)
-                        ctx.addPath(CGPath(
-                            roundedRect: swatch, cornerWidth: 2, cornerHeight: 2, transform: nil
-                        ))
-                        ctx.fillPath()
-                        ctx.restoreGState()
-                        MermaidTextUtils.drawText(
-                            item.text,
-                            at: CGPoint(x: swatch.maxX + swatchTextGap, y: legendY),
-                            font: font,
-                            fontSize: fontSize * 0.85,
-                            foregroundColor: theme.foreground,
-                            in: ctx
-                        )
-                        x += item.width + legendItemGap
-                    }
-                    legendY += row.height
-                }
-            }
+            drawFooter(chrome, origin: origin, colors: capturedColors, fontSize: fontSize, theme: theme, in: ctx)
         }
 
-        return MermaidFlowchartRenderer.FlowchartLayout(
-            graphResult: GraphLayoutResult(
-                nodePositions: nodePositions, edgePaths: [], totalSize: size
-            ),
-            flowchart: .empty,
-            subgraphFrames: [:],
+        return .custom(
+            size: size,
+            nodePositions: nodePositions,
             nodeLabels: nodeLabels,
-            nodeShapes: [:],
-            edgeLabels: [:],
-            edgeStyles: [:],
-            edgeIds: [:],
-            edgeKeys: [],
-            edgeStyleDirectives: [:],
-            edgeEndpointSubgraphs: [:],
-            classDefs: [:],
-            styleDirectives: [:],
-            fontSize: fontSize,
-            theme: theme,
-            isPlaceholder: false,
-            placeholderText: nil,
-            customDraw: customDraw,
-            customSize: size
+            configuration: configuration,
+            draw: customDraw
         )
+    }
+
+    // MARK: - Shared chrome (both orientations)
+
+    /// Title, axis titles, and legend, positioned during layout and drawn
+    /// around the plot.
+    private struct Chrome: Sendable {
+        let title: String?
+        let titleRect: CGRect?
+        let yTitle: String?
+        let yTitleRect: CGRect?
+        let xTitle: String?
+        let xTitleRect: CGRect?
+        let legendOrigin: CGPoint
+        let legendRows: [LegendRow]
+
+        init(nodePositions: [String: CGRect], nodeLabels: [String: String], legendRows: [LegendRow]) {
+            title = nodeLabels["$title"]
+            titleRect = nodePositions["title"]
+            yTitle = nodeLabels["$yTitle"]
+            yTitleRect = nodePositions["yTitle"]
+            xTitle = nodeLabels["$xTitle"]
+            xTitleRect = nodePositions["xTitle"]
+            legendOrigin = nodePositions["legend"]?.origin ?? .zero
+            self.legendRows = legendRows
+        }
+    }
+
+    /// Chart title, then the value-axis title, above the plot.
+    private static func layoutHeader(
+        _ diagram: XYChartDiagram,
+        prepared: PreparedChart,
+        fontSize: CGFloat,
+        contentWidth: CGFloat,
+        y: inout CGFloat,
+        nodePositions: inout [String: CGRect],
+        nodeLabels: inout [String: String]
+    ) {
+        if let title = diagram.title, !title.isEmpty {
+            let titleFont = CTFontCreateWithName("Helvetica" as CFString, fontSize, nil)
+            let wrapped = MermaidTextUtils.wrapTextTruncated(
+                title, font: titleFont, fontSize: fontSize, maxWidth: contentWidth, maxLines: titleMaxLines
+            )
+            let titleSize = MermaidTextUtils.measureText(
+                wrapped, font: titleFont, fontSize: fontSize
+            )
+            nodeLabels["$title"] = wrapped
+            nodePositions["title"] = CGRect(
+                x: outerMargin, y: y, width: contentWidth, height: titleSize.height
+            )
+            y += titleSize.height + titleGap
+        }
+
+        if let yTitle = prepared.yTitle {
+            let size = layoutAxisTitle(
+                yTitle, key: "yTitle", x: outerMargin, y: y, width: contentWidth, fontSize: fontSize,
+                nodePositions: &nodePositions, nodeLabels: &nodeLabels
+            )
+            y += size.height + axisTitleGap
+        }
+    }
+
+    /// Category-axis title under the plot, then the legend for named series.
+    private static func layoutFooter(
+        prepared: PreparedChart,
+        fontSize: CGFloat,
+        plotLeft: CGFloat,
+        plotWidth: CGFloat,
+        contentWidth: CGFloat,
+        y: inout CGFloat,
+        nodePositions: inout [String: CGRect],
+        nodeLabels: inout [String: String]
+    ) -> [LegendRow] {
+        if let xTitle = prepared.xTitle {
+            y += axisTitleGap
+            let size = layoutAxisTitle(
+                xTitle, key: "xTitle", x: plotLeft, y: y, width: plotWidth, fontSize: fontSize,
+                nodePositions: &nodePositions, nodeLabels: &nodeLabels
+            )
+            y += size.height
+        }
+
+        let named = prepared.series.enumerated().compactMap { index, series -> (Int, String)? in
+            guard let name = series.name, !name.isEmpty else { return nil }
+            return (index, name)
+        }
+        guard !named.isEmpty else { return [] }
+        y += legendGap
+        let legendFont = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.85, nil)
+        let rows = wrapLegend(
+            items: named,
+            font: legendFont,
+            fontSize: fontSize * 0.85,
+            maxWidth: contentWidth
+        )
+        let legendHeight = rows.reduce(CGFloat(0)) { $0 + $1.height }
+        nodePositions["legend"] = CGRect(
+            x: outerMargin, y: y, width: contentWidth, height: legendHeight
+        )
+        for (index, name) in named {
+            nodeLabels["$legend-\(index)"] = name
+        }
+        y += legendHeight
+        return rows
+    }
+
+    private static func layoutAxisTitle(
+        _ title: String,
+        key: String,
+        x: CGFloat,
+        y: CGFloat,
+        width: CGFloat,
+        fontSize: CGFloat,
+        nodePositions: inout [String: CGRect],
+        nodeLabels: inout [String: String]
+    ) -> CGSize {
+        let font = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.85, nil)
+        let wrapped = MermaidTextUtils.wrapTextTruncated(
+            title,
+            font: font,
+            fontSize: fontSize * 0.85,
+            maxWidth: width,
+            maxLines: axisTitleMaxLines
+        )
+        let size = MermaidTextUtils.measureText(wrapped, font: font, fontSize: fontSize * 0.85)
+        nodeLabels["$\(key)"] = wrapped
+        nodePositions[key] = CGRect(x: x, y: y, width: width, height: size.height)
+        return size
+    }
+
+    private static func drawHeader(
+        _ chrome: Chrome,
+        origin: CGPoint,
+        fontSize: CGFloat,
+        theme: RenderTheme,
+        in ctx: CGContext
+    ) {
+        if let title = chrome.title, let rect = chrome.titleRect {
+            let font = CTFontCreateWithName("Helvetica" as CFString, fontSize, nil)
+            MermaidTextUtils.drawText(
+                title,
+                at: CGPoint(x: origin.x + rect.minX, y: origin.y + rect.minY),
+                width: rect.width,
+                font: font,
+                fontSize: fontSize,
+                foregroundColor: theme.foreground,
+                alignment: .left,
+                in: ctx
+            )
+        }
+        if let yTitle = chrome.yTitle, let rect = chrome.yTitleRect {
+            drawAxisTitle(yTitle, in: rect, origin: origin, alignment: .left, fontSize: fontSize, theme: theme, ctx: ctx)
+        }
+    }
+
+    private static func drawFooter(
+        _ chrome: Chrome,
+        origin: CGPoint,
+        colors: [CGColor],
+        fontSize: CGFloat,
+        theme: RenderTheme,
+        in ctx: CGContext
+    ) {
+        if let xTitle = chrome.xTitle, let rect = chrome.xTitleRect {
+            drawAxisTitle(xTitle, in: rect, origin: origin, alignment: .center, fontSize: fontSize, theme: theme, ctx: ctx)
+        }
+        guard !chrome.legendRows.isEmpty else { return }
+        var legendY = origin.y + chrome.legendOrigin.y
+        let font = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.85, nil)
+        for row in chrome.legendRows {
+            var x = origin.x + chrome.legendOrigin.x
+            for item in row.items {
+                let color = colors[item.seriesIndex % colors.count]
+                let swatch = CGRect(
+                    x: x,
+                    y: legendY + 1,
+                    width: swatchSize,
+                    height: swatchSize
+                )
+                ctx.saveGState()
+                ctx.setFillColor(color)
+                ctx.addPath(CGPath(
+                    roundedRect: swatch, cornerWidth: 2, cornerHeight: 2, transform: nil
+                ))
+                ctx.fillPath()
+                ctx.restoreGState()
+                MermaidTextUtils.drawText(
+                    item.text,
+                    at: CGPoint(x: swatch.maxX + swatchTextGap, y: legendY),
+                    font: font,
+                    fontSize: fontSize * 0.85,
+                    foregroundColor: theme.foreground,
+                    in: ctx
+                )
+                x += item.width + legendItemGap
+            }
+            legendY += row.height
+        }
+    }
+
+    private static func drawAxisTitle(
+        _ text: String,
+        in rect: CGRect,
+        origin: CGPoint,
+        alignment: MermaidTextUtils.TextAlignment,
+        fontSize: CGFloat,
+        theme: RenderTheme,
+        ctx: CGContext
+    ) {
+        let font = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.85, nil)
+        MermaidTextUtils.drawText(
+            text,
+            at: CGPoint(x: origin.x + rect.minX, y: origin.y + rect.minY),
+            width: rect.width,
+            font: font,
+            fontSize: fontSize * 0.85,
+            foregroundColor: theme.foregroundDim,
+            alignment: alignment,
+            in: ctx
+        )
+    }
+
+    private static func fillBar(_ rect: CGRect, color: CGColor, in ctx: CGContext) {
+        let radius = min(barCornerRadius, rect.width / 2, rect.height / 2)
+        ctx.saveGState()
+        ctx.setFillColor(color.copy(alpha: 0.82) ?? color)
+        ctx.addPath(CGPath(
+            roundedRect: rect,
+            cornerWidth: radius,
+            cornerHeight: radius,
+            transform: nil
+        ))
+        ctx.fillPath()
+        ctx.restoreGState()
+    }
+
+    /// Polyline through the series values with a dot on each point.
+    private static func strokeLineSeries(
+        _ points: [CGPoint],
+        color: CGColor,
+        theme: RenderTheme,
+        in ctx: CGContext
+    ) {
+        guard points.count >= 1 else { return }
+        ctx.saveGState()
+        ctx.setStrokeColor(color)
+        ctx.setLineWidth(lineWidth)
+        ctx.setLineJoin(.round)
+        ctx.setLineCap(.round)
+        ctx.addLines(between: points)
+        ctx.strokePath()
+        ctx.setFillColor(color)
+        ctx.setStrokeColor(theme.background)
+        ctx.setLineWidth(1)
+        for point in points {
+            let dot = CGRect(
+                x: point.x - pointRadius,
+                y: point.y - pointRadius,
+                width: pointRadius * 2,
+                height: pointRadius * 2
+            )
+            ctx.fillEllipse(in: dot)
+            ctx.strokeEllipse(in: dot)
+        }
+        ctx.restoreGState()
     }
 
     // MARK: - Prepared chart

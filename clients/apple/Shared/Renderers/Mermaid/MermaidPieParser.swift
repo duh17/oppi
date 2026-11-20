@@ -82,11 +82,11 @@ enum MermaidPieParser {
                 seenHeader = true
                 var remainder = String(line.dropFirst("pie".count))
                     .trimmingCharacters(in: .whitespaces)
-                if let afterShowData = consumingKeyword(remainder, "showData") {
+                if let afterShowData = MermaidTextUtils.consumingKeyword(remainder, "showData") {
                     showData = true
                     remainder = afterShowData
                 }
-                if let titleValue = consumingKeyword(remainder, "title") {
+                if let titleValue = MermaidTextUtils.consumingKeyword(remainder, "title") {
                     title = MermaidTextUtils.normalizeLabel(titleValue)
                 }
                 continue
@@ -99,7 +99,7 @@ enum MermaidPieParser {
             }
 
             // `title <value>` — value may be quoted.
-            if let value = consumingKeyword(line, "title") {
+            if let value = MermaidTextUtils.consumingKeyword(line, "title") {
                 title = MermaidTextUtils.normalizeLabel(value)
                 continue
             }
@@ -171,7 +171,7 @@ enum MermaidPieParser {
         guard !trimmed.isEmpty else { return nil }
 
         if let quote = trimmed.first, quote == "\"" || quote == "'" {
-            guard let close = indexOfClosingQuote(in: trimmed, quote: quote) else {
+            guard let close = MermaidTextUtils.closingQuoteIndex(in: trimmed, quote: quote) else {
                 return nil
             }
             let afterQuote = trimmed[trimmed.index(after: close)...]
@@ -187,42 +187,6 @@ enum MermaidPieParser {
         let value = String(trimmed[trimmed.index(after: colon)...])
             .trimmingCharacters(in: .whitespaces)
         return (label, value)
-    }
-
-    /// Index of the matching closer, skipping `\"` / `\'` escapes.
-    private static func indexOfClosingQuote(in text: String, quote: Character) -> String.Index? {
-        var index = text.index(after: text.startIndex)
-        var escaped = false
-        while index < text.endIndex {
-            let character = text[index]
-            if escaped {
-                escaped = false
-            } else if character == "\\" {
-                escaped = true
-            } else if character == quote {
-                return index
-            }
-            index = text.index(after: index)
-        }
-        return nil
-    }
-
-    /// If `text` starts with `keyword` as a whole token, return the rest.
-    /// Allows `title"Quoted"` (quote immediately after the keyword).
-    private static func consumingKeyword(_ text: String, _ keyword: String) -> String? {
-        let trimmed = text.trimmingCharacters(in: .whitespaces)
-        let key = keyword.lowercased()
-        guard trimmed.lowercased().hasPrefix(key) else { return nil }
-        if trimmed.count == key.count { return "" }
-        let nextIndex = trimmed.index(trimmed.startIndex, offsetBy: key.count)
-        let next = trimmed[nextIndex]
-        if next.isWhitespace {
-            return String(trimmed[nextIndex...]).trimmingCharacters(in: .whitespaces)
-        }
-        if next == "\"" || next == "'" {
-            return String(trimmed[nextIndex...])
-        }
-        return nil
     }
 
     private static func isDoubleQuoted(_ s: String) -> Bool {

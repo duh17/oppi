@@ -187,7 +187,7 @@ enum MermaidClassRenderer {
 
         let rawEdges: [PreparedEdge] = zip(diagram.relations, laidOut.edgePaths).map { relation, path in
             let label = wrappedLabel(relation.label, constants: constants)
-            let mid = path.points.count >= 2 ? arcMidpoint(path.points) : path.points.first
+            let mid = path.points.count >= 2 ? MermaidShapes.arcMidpoint(path.points) : path.points.first
             return PreparedEdge(
                 points: path.points,
                 fromEnd: relation.fromEnd,
@@ -249,26 +249,12 @@ enum MermaidClassRenderer {
             }
         }
 
-        return MermaidFlowchartRenderer.FlowchartLayout(
+        return .custom(
+            size: arrangement.size,
             graphResult: arrangement.graphResult,
-            flowchart: .empty,
-            subgraphFrames: [:],
             nodeLabels: Dictionary(uniqueKeysWithValues: diagram.classes.map { ($0.id, $0.displayName) }),
-            nodeShapes: [:],
-            edgeLabels: [:],
-            edgeStyles: [:],
-            edgeIds: [:],
-            edgeKeys: [],
-            edgeStyleDirectives: [:],
-            edgeEndpointSubgraphs: [:],
-            classDefs: [:],
-            styleDirectives: [:],
-            fontSize: configuration.fontSize,
-            theme: theme,
-            isPlaceholder: false,
-            placeholderText: nil,
-            customDraw: drawBlock,
-            customSize: arrangement.size
+            configuration: configuration,
+            draw: drawBlock
         )
     }
 
@@ -325,7 +311,7 @@ enum MermaidClassRenderer {
         let input = GraphLayoutInput(
             nodes: nodes,
             edges: edges,
-            direction: graphLayoutDirection(for: diagram.direction),
+            direction: diagram.direction.graphLayoutDirection,
             nodeSpacing: constants.nodeSpacing + reservedCrossAxisLabelSpace(diagram, constants: constants),
             rankSpacing: constants.rankSpacing + reservedLabelSpace(diagram, constants: constants)
         )
@@ -339,7 +325,7 @@ enum MermaidClassRenderer {
         var extra: CGFloat = 0
         for relation in diagram.relations {
             guard let wrapped = wrappedLabel(relation.label, constants: constants) else { continue }
-            let size = measureText(wrapped, font: font, fontSize: constants.fontSize)
+            let size = MermaidTextUtils.measureText(wrapped, font: font, fontSize: constants.fontSize)
             let padding = constants.fontSize * 0.5
             let alongRank = isHorizontal ? size.width : size.height
             var needed = alongRank + padding
@@ -368,7 +354,7 @@ enum MermaidClassRenderer {
         for group in byFrom.values where group.count >= 2 {
             let crosses: [CGFloat] = group.compactMap { relation in
                 guard let wrapped = wrappedLabel(relation.label, constants: constants) else { return nil }
-                let size = measureText(wrapped, font: font, fontSize: constants.fontSize)
+                let size = MermaidTextUtils.measureText(wrapped, font: font, fontSize: constants.fontSize)
                 return isHorizontal ? size.height : size.width
             }
             guard let maxCross = crosses.max(), crosses.count >= 2 else { continue }
@@ -402,7 +388,7 @@ enum MermaidClassRenderer {
         var items: [Item] = []
         for (index, edge) in edges.enumerated() {
             guard let label = edge.label, let mid = edge.labelCenter else { continue }
-            let size = measureText(label, font: font, fontSize: constants.fontSize)
+            let size = MermaidTextUtils.measureText(label, font: font, fontSize: constants.fontSize)
             let alongRank = isHorizontal ? mid.x : mid.y
             items.append(Item(index: index, mid: mid, size: size, alongRank: alongRank))
         }
@@ -469,20 +455,11 @@ enum MermaidClassRenderer {
         let padding = constants.fontSize * 0.25
         for edge in edges {
             guard let label = edge.label, let center = edge.labelCenter else { continue }
-            let size = measureText(label, font: font, fontSize: constants.fontSize)
+            let size = MermaidTextUtils.measureText(label, font: font, fontSize: constants.fontSize)
             width = max(width, center.x + size.width / 2 + padding)
             height = max(height, center.y + size.height / 2 + padding)
         }
         return CGSize(width: width, height: height)
-    }
-
-    private static func graphLayoutDirection(for direction: FlowDirection) -> GraphLayoutDirection {
-        switch direction {
-        case .TB, .TD: return .topToBottom
-        case .BT: return .bottomToTop
-        case .LR: return .leftToRight
-        case .RL: return .rightToLeft
-        }
     }
 
     // MARK: - Measuring
@@ -519,12 +496,12 @@ enum MermaidClassRenderer {
     private static func measuredBoxWidth(for node: ClassNode, constants: LayoutConstants) -> CGFloat {
         let titleFont = headerFont(constants.fontSize)
         let stereo = node.stereotype.map { "<<\($0)>>" }
-        let titleWidth = measureText(node.displayName, font: titleFont, fontSize: constants.fontSize).width
+        let titleWidth = MermaidTextUtils.measureText(node.displayName, font: titleFont, fontSize: constants.fontSize).width
         let stereoWidth = stereo.map {
-            measureText($0, font: stereoFont(constants.fontSize), fontSize: constants.fontSize * 0.85).width
+            MermaidTextUtils.measureText($0, font: stereoFont(constants.fontSize), fontSize: constants.fontSize * 0.85).width
         } ?? 0
         let memberWidth = (node.attributes + node.methods).map {
-            measureText($0.displayText, font: memberFont($0, fontSize: constants.fontSize), fontSize: constants.fontSize).width
+            MermaidTextUtils.measureText($0.displayText, font: memberFont($0, fontSize: constants.fontSize), fontSize: constants.fontSize).width
         }.max() ?? 0
         let natural = max(titleWidth, stereoWidth, memberWidth) + constants.rowPaddingH * 2
         return min(max(natural, constants.minBoxWidth), constants.maxBoxWidth)
@@ -537,9 +514,9 @@ enum MermaidClassRenderer {
     ) -> CGFloat {
         let budget = width - constants.rowPaddingH * 2
         let title = wrapIfNeeded(node.displayName, budget: budget, font: headerFont(constants.fontSize), constants: constants)
-        var height = measureText(title, font: headerFont(constants.fontSize), fontSize: constants.fontSize).height
+        var height = MermaidTextUtils.measureText(title, font: headerFont(constants.fontSize), fontSize: constants.fontSize).height
         if let stereo = wrappedStereotype(node.stereotype, budget: budget, constants: constants) {
-            height += measureText(stereo, font: stereoFont(constants.fontSize), fontSize: constants.fontSize * 0.85).height
+            height += MermaidTextUtils.measureText(stereo, font: stereoFont(constants.fontSize), fontSize: constants.fontSize * 0.85).height
             height += constants.fontSize * 0.1
         }
         return height + constants.headerPaddingV * 2
@@ -558,7 +535,7 @@ enum MermaidClassRenderer {
         for member in members {
             let font = memberFont(member, fontSize: constants.fontSize)
             let wrapped = wrapIfNeeded(member.displayText, budget: budget, font: font, constants: constants)
-            var rowHeight = measureText(wrapped, font: font, fontSize: constants.fontSize).height
+            var rowHeight = MermaidTextUtils.measureText(wrapped, font: font, fontSize: constants.fontSize).height
             if member.isStatic {
                 rowHeight += constants.fontSize * 0.15
             }
@@ -628,7 +605,7 @@ enum MermaidClassRenderer {
         for member in members {
             let font = memberFont(member, fontSize: constants.fontSize)
             let wrapped = wrapIfNeeded(member.displayText, budget: budget, font: font, constants: constants)
-            var height = measureText(wrapped, font: font, fontSize: constants.fontSize).height
+            var height = MermaidTextUtils.measureText(wrapped, font: font, fontSize: constants.fontSize).height
             if member.isStatic {
                 height += constants.fontSize * 0.15
             }
@@ -673,7 +650,7 @@ enum MermaidClassRenderer {
         constants _: LayoutConstants
     ) -> String {
         guard budget > 0 else { return text }
-        if lineWidth(text, font: font) <= budget { return text }
+        if MermaidTextUtils.lineWidth(text, font: font) <= budget { return text }
         return wrap(text, to: budget, font: font)
     }
 
@@ -695,7 +672,7 @@ enum MermaidClassRenderer {
                         continue
                     }
                     let candidate = current + " " + piece
-                    if index == 0, lineWidth(candidate, font: font) <= maxWidth {
+                    if index == 0, MermaidTextUtils.lineWidth(candidate, font: font) <= maxWidth {
                         current = candidate
                     } else {
                         lines.append(current)
@@ -712,12 +689,12 @@ enum MermaidClassRenderer {
 
     /// Split an unbroken identifier so each piece fits `maxWidth`.
     private static func breakToken(_ token: String, to maxWidth: CGFloat, font: CTFont) -> [String] {
-        if lineWidth(token, font: font) <= maxWidth { return [token] }
+        if MermaidTextUtils.lineWidth(token, font: font) <= maxWidth { return [token] }
         var pieces: [String] = []
         var current = ""
         for character in token {
             let candidate = current + String(character)
-            if !current.isEmpty, lineWidth(candidate, font: font) > maxWidth {
+            if !current.isEmpty, MermaidTextUtils.lineWidth(candidate, font: font) > maxWidth {
                 pieces.append(current)
                 current = String(character)
             } else {
@@ -728,13 +705,6 @@ enum MermaidClassRenderer {
             pieces.append(current)
         }
         return pieces.isEmpty ? [token] : pieces
-    }
-
-    private static func lineWidth(_ text: String, font: CTFont) -> CGFloat {
-        let attrs: [NSAttributedString.Key: Any] = [.font: font]
-        let attrStr = NSAttributedString(string: text, attributes: attrs)
-        let line = CTLineCreateWithAttributedString(attrStr)
-        return CTLineGetBoundsWithOptions(line, []).width
     }
 
     // MARK: - Box drawing
@@ -820,12 +790,12 @@ enum MermaidClassRenderer {
         var result: [(width: CGFloat, top: CGFloat)] = []
         for line in text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
             let lineHeight = max(
-                measureText(line, font: font, fontSize: fontSize).height,
+                MermaidTextUtils.measureText(line, font: font, fontSize: fontSize).height,
                 fontSize * 1.4
             )
             if !line.isEmpty {
                 // drawCTLine places the baseline at origin.y + fontSize.
-                result.append((max(lineWidth(line, font: font), fontSize * 0.8), y + fontSize + 1.5))
+                result.append((max(MermaidTextUtils.lineWidth(line, font: font), fontSize * 0.8), y + fontSize + 1.5))
             }
             y += lineHeight + spacing
         }
@@ -914,8 +884,14 @@ enum MermaidClassRenderer {
         if let label = text.label {
             let center = edge.labelCenter.map {
                 CGPoint(x: $0.x + offset.x, y: $0.y + offset.y)
-            } ?? arcMidpoint(points)
-            drawLabel(label, at: center, theme: theme, constants: constants, in: ctx)
+            } ?? MermaidShapes.arcMidpoint(points)
+            MermaidShapes.drawLabelChip(
+                label,
+                centeredAt: center,
+                padding: labelChipPadding(constants.fontSize),
+                theme: theme,
+                in: ctx
+            )
         }
     }
 
@@ -1028,60 +1004,5 @@ enum MermaidClassRenderer {
         ctx.fill(rect.insetBy(dx: -2, dy: -1))
         ctx.restoreGState()
         text.draw(centeredIn: rect, in: ctx)
-    }
-
-    private static func drawLabel(
-        _ label: MermaidPreparedText,
-        at mid: CGPoint,
-        theme: RenderTheme,
-        constants: LayoutConstants,
-        in ctx: CGContext
-    ) {
-        let textSize = label.size
-        let padding = labelChipPadding(constants.fontSize)
-        let background = CGRect(
-            x: mid.x - textSize.width / 2 - padding,
-            y: mid.y - textSize.height / 2 - padding,
-            width: textSize.width + padding * 2,
-            height: textSize.height + padding * 2
-        )
-        ctx.saveGState()
-        ctx.setFillColor(theme.background)
-        ctx.fill(background)
-        ctx.restoreGState()
-        label.draw(centeredIn: background, in: ctx)
-    }
-
-    private static func arcMidpoint(_ points: [CGPoint]) -> CGPoint {
-        guard points.count >= 2 else { return points.first ?? .zero }
-        var total: CGFloat = 0
-        for index in 0..<(points.count - 1) {
-            total += hypot(
-                points[index + 1].x - points[index].x,
-                points[index + 1].y - points[index].y
-            )
-        }
-        guard total > 0 else { return points[0] }
-        var remaining = total / 2
-        for index in 0..<(points.count - 1) {
-            let dx = points[index + 1].x - points[index].x
-            let dy = points[index + 1].y - points[index].y
-            let length = hypot(dx, dy)
-            if length >= remaining {
-                let t = length > 0 ? remaining / length : 0
-                return CGPoint(
-                    x: points[index].x + dx * t,
-                    y: points[index].y + dy * t
-                )
-            }
-            remaining -= length
-        }
-        return points[points.count - 1]
-    }
-
-    // MARK: - Text helpers
-
-    private static func measureText(_ text: String, font: CTFont, fontSize: CGFloat) -> CGSize {
-        MermaidTextUtils.measureText(text, font: font, fontSize: fontSize)
     }
 }

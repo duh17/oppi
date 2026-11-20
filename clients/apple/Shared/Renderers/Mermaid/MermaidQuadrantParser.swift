@@ -32,44 +32,44 @@ enum MermaidQuadrantParser {
             guard !line.isEmpty else { continue }
             if line.hasPrefix("%%") { continue }
 
-            if consumingKeyword(line, "quadrantChart") != nil
-                || consumingKeyword(line, "quadrantchart") != nil {
+            if MermaidTextUtils.consumingKeyword(line, "quadrantChart") != nil
+                || MermaidTextUtils.consumingKeyword(line, "quadrantchart") != nil {
                 continue
             }
 
-            if let value = consumingKeyword(line, "title") {
-                title = parseTitleValue(value)
+            if let value = MermaidTextUtils.consumingKeyword(line, "title") {
+                title = MermaidTextUtils.titleValue(value)
                 continue
             }
 
-            if let remainder = consumingKeyword(line, "x-axis") {
+            if let remainder = MermaidTextUtils.consumingKeyword(line, "x-axis") {
                 let parts = splitArrow(remainder)
-                xAxisLeft = parseTitleValue(parts.left)
-                xAxisRight = parseTitleValue(parts.right)
+                xAxisLeft = MermaidTextUtils.titleValue(parts.left)
+                xAxisRight = parts.right.flatMap(MermaidTextUtils.titleValue)
                 continue
             }
 
-            if let remainder = consumingKeyword(line, "y-axis") {
+            if let remainder = MermaidTextUtils.consumingKeyword(line, "y-axis") {
                 let parts = splitArrow(remainder)
-                yAxisBottom = parseTitleValue(parts.left)
-                yAxisTop = parseTitleValue(parts.right)
+                yAxisBottom = MermaidTextUtils.titleValue(parts.left)
+                yAxisTop = parts.right.flatMap(MermaidTextUtils.titleValue)
                 continue
             }
 
-            if let value = consumingKeyword(line, "quadrant-1") {
-                quadrant1 = parseTitleValue(value)
+            if let value = MermaidTextUtils.consumingKeyword(line, "quadrant-1") {
+                quadrant1 = MermaidTextUtils.titleValue(value)
                 continue
             }
-            if let value = consumingKeyword(line, "quadrant-2") {
-                quadrant2 = parseTitleValue(value)
+            if let value = MermaidTextUtils.consumingKeyword(line, "quadrant-2") {
+                quadrant2 = MermaidTextUtils.titleValue(value)
                 continue
             }
-            if let value = consumingKeyword(line, "quadrant-3") {
-                quadrant3 = parseTitleValue(value)
+            if let value = MermaidTextUtils.consumingKeyword(line, "quadrant-3") {
+                quadrant3 = MermaidTextUtils.titleValue(value)
                 continue
             }
-            if let value = consumingKeyword(line, "quadrant-4") {
-                quadrant4 = parseTitleValue(value)
+            if let value = MermaidTextUtils.consumingKeyword(line, "quadrant-4") {
+                quadrant4 = MermaidTextUtils.titleValue(value)
                 continue
             }
 
@@ -112,7 +112,7 @@ enum MermaidQuadrantParser {
         if let classRange = name.range(of: ":::") {
             name = String(name[..<classRange.lowerBound]).trimmingCharacters(in: .whitespaces)
         }
-        name = parseTitleValue(name) ?? name
+        name = MermaidTextUtils.titleValue(name) ?? name
         guard !name.isEmpty else { return nil }
 
         let after = String(line[bracket...])
@@ -126,29 +126,4 @@ enum MermaidQuadrantParser {
         return QuadrantChartPoint(name: name, x: x, y: y)
     }
 
-    private static func consumingKeyword(_ text: String, _ keyword: String) -> String? {
-        let trimmed = text.trimmingCharacters(in: .whitespaces)
-        let key = keyword.lowercased()
-        guard trimmed.lowercased().hasPrefix(key) else { return nil }
-        if trimmed.count == key.count { return "" }
-        let nextIndex = trimmed.index(trimmed.startIndex, offsetBy: key.count)
-        let next = trimmed[nextIndex]
-        if next.isWhitespace || next == "\"" || next == "'" {
-            return String(trimmed[nextIndex...]).trimmingCharacters(in: .whitespaces)
-        }
-        return nil
-    }
-
-    private static func parseTitleValue(_ raw: String?) -> String? {
-        guard let raw else { return nil }
-        let trimmed = raw.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return nil }
-        if trimmed.first == "\"" || trimmed.first == "'",
-           trimmed.count >= 2,
-           trimmed.last == trimmed.first {
-            return MermaidTextUtils.normalizeLabel(String(trimmed.dropFirst().dropLast()))
-        }
-        let normalized = MermaidTextUtils.normalizeLabel(trimmed)
-        return normalized.isEmpty ? nil : normalized
-    }
 }

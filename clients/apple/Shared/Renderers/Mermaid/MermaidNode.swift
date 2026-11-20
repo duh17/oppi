@@ -744,6 +744,15 @@ struct FlowEdge: Equatable, Sendable {
 
 enum FlowDirection: String, Sendable, CaseIterable {
     case TB, TD, BT, LR, RL
+
+    var graphLayoutDirection: GraphLayoutDirection {
+        switch self {
+        case .TB, .TD: .topToBottom
+        case .BT: .bottomToTop
+        case .LR: .leftToRight
+        case .RL: .rightToLeft
+        }
+    }
 }
 
 enum FlowNodeShape: Equatable, Sendable {

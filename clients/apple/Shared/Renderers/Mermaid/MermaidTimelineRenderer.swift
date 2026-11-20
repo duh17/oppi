@@ -118,35 +118,23 @@ enum MermaidTimelineRenderer {
         let theme = configuration.theme
         let fontSize = configuration.fontSize
         let model = buildLayout(diagram, configuration: configuration)
-        let size = model.size
-
-        let customDraw: @Sendable (CGContext, CGPoint) -> Void = { ctx, origin in
-            draw(model, size: size, theme: theme, fontSize: fontSize, origin: origin, in: ctx)
+        return .custom(size: model.size, configuration: configuration) { ctx, origin in
+            draw(model, theme: theme, fontSize: fontSize, origin: origin, in: ctx)
         }
+    }
 
-        return MermaidFlowchartRenderer.FlowchartLayout(
-            graphResult: GraphLayoutResult(
-                nodePositions: [:], edgePaths: [], totalSize: .zero
-            ),
-            flowchart: .empty,
-            subgraphFrames: [:],
-            nodeLabels: [:],
-            nodeShapes: [:],
-            edgeLabels: [:],
-            edgeStyles: [:],
-            edgeIds: [:],
-            edgeKeys: [],
-            edgeStyleDirectives: [:],
-            edgeEndpointSubgraphs: [:],
-            classDefs: [:],
-            styleDirectives: [:],
-            fontSize: fontSize,
-            theme: theme,
-            isPlaceholder: false,
-            placeholderText: nil,
-            customDraw: customDraw,
-            customSize: size
-        )
+    private struct Fonts {
+        let title: CTFont
+        let section: CTFont
+        let period: CTFont
+        let event: CTFont
+
+        init(fontSize: CGFloat) {
+            title = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize * 1.1, nil)
+            section = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize * 0.85, nil)
+            period = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize * 0.9, nil)
+            event = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.85, nil)
+        }
     }
 
     // MARK: - Layout computation
@@ -174,10 +162,7 @@ enum MermaidTimelineRenderer {
     ) -> LayoutModel {
         let fontSize = configuration.fontSize
         let maxWidth = configuration.maxWidth
-        let titleFont = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize * 1.1, nil)
-        let sectionFont = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize * 0.85, nil)
-        let periodFont = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize * 0.9, nil)
-        let eventFont = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.85, nil)
+        let fonts = Fonts(fontSize: fontSize)
 
         let sections = diagram.sections.filter { !$0.periods.isEmpty }
         let totalPeriods = max(sections.reduce(0) { $0 + $1.periods.count }, 1)
@@ -193,90 +178,22 @@ enum MermaidTimelineRenderer {
             + CGFloat(sectionCount) * bandPadX * 2
         let ideal = (usable - gaps) / CGFloat(totalPeriods)
         let columnWidth = min(max(ideal, minColumnWidth), maxColumnWidth)
-        let labelWrapWidth = columnWidth
-        let eventWrapWidth = columnWidth - boxPaddingH * 2
-
-        let hasNamedSections = sections.contains { $0.name != nil }
 
         // Pre-wrap every label and event at the target column width.
-        struct WrappedPeriod {
-            let period: TimelinePeriod
-            let colorIndex: Int
-            let wrappedLabel: String
-            let labelSize: CGSize
-            let eventTexts: [String]
-            let eventSizes: [CGSize]
-        }
-        struct WrappedSection {
-            let name: String?
-            let colorIndex: Int
-            let periods: [WrappedPeriod]
-        }
-
-        var wrappedSections: [WrappedSection] = []
-        var maxLabelHeight = MermaidTextUtils.measureText(
-            " ", font: periodFont, fontSize: fontSize * 0.9
-        ).height
-        var maxStackHeight: CGFloat = 0
-
-        for (sectionIndex, section) in sections.enumerated() {
-            let sectionColor = sectionIndex % accentCount
-            var wrappedPeriods: [WrappedPeriod] = []
-
-            for (periodIndex, period) in section.periods.enumerated() {
-                // Official multicolor: section color bands when sections
-                // exist, otherwise each period gets its own color.
-                let colorIndex = hasNamedSections ? sectionColor : periodIndex % accentCount
-
-                let wrappedLabel = MermaidTextUtils.wrapTruncated(
-                    period.label, font: periodFont,
-                    maxWidth: labelWrapWidth, maxLines: maxPeriodLabelLines,
-                    preservesHardBreaks: true, breaksOnWords: true
-                )
-                let labelSize = MermaidTextUtils.measureText(
-                    wrappedLabel, font: periodFont, fontSize: fontSize * 0.9
-                )
-                maxLabelHeight = max(maxLabelHeight, labelSize.height)
-
-                var eventTexts: [String] = []
-                var eventSizes: [CGSize] = []
-                var stackHeight: CGFloat = 0
-                for (i, event) in period.events.enumerated() {
-                    let text = MermaidTextUtils.wrapTruncated(
-                        event, font: eventFont,
-                        maxWidth: eventWrapWidth, maxLines: maxEventLines,
-                        preservesHardBreaks: true, breaksOnWords: true
-                    )
-                    let textSize = MermaidTextUtils.measureText(
-                        text, font: eventFont, fontSize: fontSize * 0.85
-                    )
-                    let boxSize = CGSize(
-                        width: columnWidth,
-                        height: textSize.height + boxPaddingV * 2
-                    )
-                    eventTexts.append(text)
-                    eventSizes.append(boxSize)
-                    stackHeight += boxSize.height
-                    if i < period.events.count - 1 { stackHeight += eventGap }
-                }
-                maxStackHeight = max(maxStackHeight, stackHeight)
-
-                wrappedPeriods.append(WrappedPeriod(
-                    period: period,
-                    colorIndex: colorIndex,
-                    wrappedLabel: wrappedLabel,
-                    labelSize: labelSize,
-                    eventTexts: eventTexts,
-                    eventSizes: eventSizes
-                ))
-            }
-
-            wrappedSections.append(WrappedSection(
-                name: section.name,
-                colorIndex: sectionColor,
-                periods: wrappedPeriods
-            ))
-        }
+        let wrappedSections = wrapSections(
+            sections,
+            fonts: fonts,
+            fontSize: fontSize,
+            labelWidth: columnWidth,
+            eventWrapWidth: columnWidth - boxPaddingH * 2,
+            boxWidth: columnWidth
+        )
+        let hasNamedSections = sections.contains { $0.name != nil }
+        let allPeriods = wrappedSections.flatMap(\.periods)
+        let maxLabelHeight = allPeriods.reduce(
+            MermaidTextUtils.measureText(" ", font: fonts.period, fontSize: fontSize * 0.9).height
+        ) { max($0, $1.labelSize.height) }
+        let maxStackHeight = allPeriods.reduce(CGFloat(0)) { max($0, $1.stackHeight) }
 
         // Horizontal geometry first so title and section headings can wrap
         // to the final canvas / band widths.
@@ -292,49 +209,30 @@ enum MermaidTimelineRenderer {
         let offsetX = (totalWidth - naturalWidth) / 2
 
         // Title wraps to the bubble even when the period row is wider.
-        let titleWrapWidth = max(min(totalWidth, maxWidth) - margin * 2, 40)
-        var wrappedTitle: String?
-        var titleSize = CGSize.zero
-        if let title = diagram.title {
-            let wrapped = MermaidTextUtils.wrapTruncated(
-                title, font: titleFont,
-                maxWidth: titleWrapWidth, maxLines: maxTitleLines,
-                preservesHardBreaks: true, breaksOnWords: true
-            )
-            wrappedTitle = wrapped
-            titleSize = MermaidTextUtils.measureText(
-                wrapped, font: titleFont, fontSize: fontSize * 1.1
-            )
-        }
-        let titleFrame = wrappedTitle.map { _ in
-            CGRect(x: margin, y: margin, width: titleWrapWidth, height: titleSize.height)
-        }
-        let titleBlock = wrappedTitle == nil ? 0 : titleSize.height + titleToBandGap
+        let title = layoutTitle(
+            diagram.title,
+            fonts: fonts,
+            fontSize: fontSize,
+            wrapWidth: max(min(totalWidth, maxWidth) - margin * 2, 40)
+        )
 
-        var wrappedNames: [String?] = []
-        var headingSizes: [CGSize] = []
+        var headings: [(text: String, size: CGSize)?] = []
         var maxHeadingHeight: CGFloat = 0
         for (sectionIndex, section) in wrappedSections.enumerated() {
             guard let name = section.name else {
-                wrappedNames.append(nil)
-                headingSizes.append(.zero)
+                headings.append(nil)
                 continue
             }
-            let wrapWidth = max(sectionWidths[sectionIndex] - bandPadX * 2, 40)
-            let wrapped = MermaidTextUtils.wrapTruncated(
-                name, font: sectionFont,
-                maxWidth: wrapWidth, maxLines: maxSectionHeadingLines,
-                preservesHardBreaks: true, breaksOnWords: true
+            let heading = wrap(
+                name, font: fonts.section, fontSize: fontSize * 0.85,
+                maxWidth: max(sectionWidths[sectionIndex] - bandPadX * 2, 40),
+                maxLines: maxSectionHeadingLines
             )
-            let size = MermaidTextUtils.measureText(
-                wrapped, font: sectionFont, fontSize: fontSize * 0.85
-            )
-            wrappedNames.append(wrapped)
-            headingSizes.append(size)
-            maxHeadingHeight = max(maxHeadingHeight, size.height)
+            headings.append(heading)
+            maxHeadingHeight = max(maxHeadingHeight, heading.size.height)
         }
 
-        let bandTop = margin + titleBlock
+        let bandTop = margin + title.block
         let sectionHeaderBlock = hasNamedSections
             ? maxHeadingHeight + sectionLabelGap
             : 0
@@ -355,7 +253,7 @@ enum MermaidTimelineRenderer {
                 x: x + bandPadX,
                 y: bandTop + bandPaddingTop,
                 width: sectionWidths[sectionIndex] - bandPadX * 2,
-                height: headingSizes[sectionIndex].height
+                height: headings[sectionIndex]?.size.height ?? 0
             )
 
             var periodPlacements: [PeriodPlacement] = []
@@ -371,34 +269,20 @@ enum MermaidTimelineRenderer {
                     x: periodX, y: labelTopY,
                     width: columnWidth, height: wrapped.labelSize.height
                 )
-
-                var eventBoxes: [EventBoxPlacement] = []
-                var boxY = spineY + spineToEventsGap
-                for (text, boxSize) in zip(wrapped.eventTexts, wrapped.eventSizes) {
-                    eventBoxes.append(EventBoxPlacement(
-                        text: text,
-                        frame: CGRect(x: periodX, y: boxY, width: boxSize.width, height: boxSize.height)
-                    ))
-                    boxY += boxSize.height + eventGap
-                }
-
-                periodPlacements.append(PeriodPlacement(
-                    label: wrapped.period.label,
-                    events: wrapped.period.events,
-                    wrappedLabel: wrapped.wrappedLabel,
-                    colorIndex: wrapped.colorIndex,
+                periodPlacements.append(wrapped.placement(
                     centerX: centerX,
                     centerY: spineY,
                     columnFrame: columnFrame,
                     labelFrame: labelFrame,
-                    eventBoxes: eventBoxes
+                    boxX: periodX,
+                    boxTop: spineY + spineToEventsGap
                 ))
                 periodX += columnWidth + columnGap
             }
 
             placements.append(SectionPlacement(
                 name: section.name,
-                wrappedName: wrappedNames[sectionIndex],
+                wrappedName: headings[sectionIndex]?.text,
                 headingFrame: headingFrame,
                 colorIndex: section.colorIndex,
                 bandFrame: bandFrame,
@@ -414,8 +298,8 @@ enum MermaidTimelineRenderer {
 
         return LayoutModel(
             title: diagram.title,
-            wrappedTitle: wrappedTitle,
-            titleFrame: titleFrame,
+            wrappedTitle: title.wrapped,
+            titleFrame: title.frame,
             size: CGSize(width: canvasWidth, height: bandTop + bandHeight + margin),
             direction: diagram.direction,
             spineY: spineY,
@@ -439,13 +323,9 @@ enum MermaidTimelineRenderer {
     ) -> LayoutModel {
         let fontSize = configuration.fontSize
         let maxWidth = configuration.maxWidth
-        let titleFont = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize * 1.1, nil)
-        let sectionFont = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize * 0.85, nil)
-        let periodFont = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize * 0.9, nil)
-        let eventFont = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.85, nil)
+        let fonts = Fonts(fontSize: fontSize)
 
         let sections = diagram.sections.filter { !$0.periods.isEmpty }
-        let hasNamedSections = sections.contains { $0.name != nil }
 
         let totalWidth = max(maxWidth, 320)
         let inner = max(totalWidth - margin * 2, 80)
@@ -456,97 +336,21 @@ enum MermaidTimelineRenderer {
             eventWidth = inner - bandPadX * 2 - labelCol - tdSpineGap - tdEventLead
         }
         eventWidth = max(eventWidth, 72)
-        let eventWrapWidth = max(eventWidth - boxPaddingH * 2, 40)
 
-        struct WrappedPeriod {
-            let period: TimelinePeriod
-            let colorIndex: Int
-            let wrappedLabel: String
-            let labelSize: CGSize
-            let eventTexts: [String]
-            let eventSizes: [CGSize]
-            let stackHeight: CGFloat
-        }
-        struct WrappedSection {
-            let name: String?
-            let colorIndex: Int
-            let periods: [WrappedPeriod]
-        }
+        let wrappedSections = wrapSections(
+            sections,
+            fonts: fonts,
+            fontSize: fontSize,
+            labelWidth: labelCol,
+            eventWrapWidth: max(eventWidth - boxPaddingH * 2, 40),
+            boxWidth: eventWidth
+        )
 
-        var wrappedSections: [WrappedSection] = []
-        for (sectionIndex, section) in sections.enumerated() {
-            let sectionColor = sectionIndex % accentCount
-            var wrappedPeriods: [WrappedPeriod] = []
-            for (periodIndex, period) in section.periods.enumerated() {
-                let colorIndex = hasNamedSections ? sectionColor : periodIndex % accentCount
-                let wrappedLabel = MermaidTextUtils.wrapTruncated(
-                    period.label, font: periodFont,
-                    maxWidth: labelCol, maxLines: maxPeriodLabelLines,
-                    preservesHardBreaks: true, breaksOnWords: true
-                )
-                let labelSize = MermaidTextUtils.measureText(
-                    wrappedLabel, font: periodFont, fontSize: fontSize * 0.9
-                )
-                var eventTexts: [String] = []
-                var eventSizes: [CGSize] = []
-                var stackHeight: CGFloat = 0
-                for (i, event) in period.events.enumerated() {
-                    let text = MermaidTextUtils.wrapTruncated(
-                        event, font: eventFont,
-                        maxWidth: eventWrapWidth, maxLines: maxEventLines,
-                        preservesHardBreaks: true, breaksOnWords: true
-                    )
-                    let textSize = MermaidTextUtils.measureText(
-                        text, font: eventFont, fontSize: fontSize * 0.85
-                    )
-                    let boxSize = CGSize(
-                        width: eventWidth,
-                        height: textSize.height + boxPaddingV * 2
-                    )
-                    eventTexts.append(text)
-                    eventSizes.append(boxSize)
-                    stackHeight += boxSize.height
-                    if i < period.events.count - 1 { stackHeight += eventGap }
-                }
-                wrappedPeriods.append(WrappedPeriod(
-                    period: period,
-                    colorIndex: colorIndex,
-                    wrappedLabel: wrappedLabel,
-                    labelSize: labelSize,
-                    eventTexts: eventTexts,
-                    eventSizes: eventSizes,
-                    stackHeight: stackHeight
-                ))
-            }
-            wrappedSections.append(WrappedSection(
-                name: section.name,
-                colorIndex: sectionColor,
-                periods: wrappedPeriods
-            ))
-        }
-
-        let titleWrapWidth = max(inner, 40)
-        var wrappedTitle: String?
-        var titleSize = CGSize.zero
-        if let title = diagram.title {
-            let wrapped = MermaidTextUtils.wrapTruncated(
-                title, font: titleFont,
-                maxWidth: titleWrapWidth, maxLines: maxTitleLines,
-                preservesHardBreaks: true, breaksOnWords: true
-            )
-            wrappedTitle = wrapped
-            titleSize = MermaidTextUtils.measureText(
-                wrapped, font: titleFont, fontSize: fontSize * 1.1
-            )
-        }
-        let titleFrame = wrappedTitle.map { _ in
-            CGRect(x: margin, y: margin, width: titleWrapWidth, height: titleSize.height)
-        }
-        let titleBlock = wrappedTitle == nil ? 0 : titleSize.height + titleToBandGap
+        let title = layoutTitle(diagram.title, fonts: fonts, fontSize: fontSize, wrapWidth: max(inner, 40))
 
         let spineX = margin + bandPadX + labelCol + tdSpineGap
         let eventX = spineX + tdEventLead
-        var y = margin + titleBlock
+        var y = margin + title.block
         var placements: [SectionPlacement] = []
 
         for section in wrappedSections {
@@ -556,16 +360,12 @@ enum MermaidTimelineRenderer {
             var wrappedName: String?
             var headingHeight: CGFloat = 0
             if let name = section.name {
-                let wrapped = MermaidTextUtils.wrapTruncated(
-                    name, font: sectionFont,
-                    maxWidth: headingWrapWidth, maxLines: maxSectionHeadingLines,
-                    preservesHardBreaks: true, breaksOnWords: true
+                let heading = wrap(
+                    name, font: fonts.section, fontSize: fontSize * 0.85,
+                    maxWidth: headingWrapWidth, maxLines: maxSectionHeadingLines
                 )
-                let size = MermaidTextUtils.measureText(
-                    wrapped, font: sectionFont, fontSize: fontSize * 0.85
-                )
-                wrappedName = wrapped
-                headingHeight = size.height
+                wrappedName = heading.text
+                headingHeight = heading.size.height
                 headingFrame = CGRect(
                     x: margin + bandPadX,
                     y: bandTop + bandPaddingTop,
@@ -589,31 +389,13 @@ enum MermaidTimelineRenderer {
                     width: labelCol,
                     height: wrapped.labelSize.height
                 )
-                let centerY = periodY + rowHeight / 2
-
-                var eventBoxes: [EventBoxPlacement] = []
-                var boxY = periodY + max(rowHeight - wrapped.stackHeight, 0) / 2
-                for (text, boxSize) in zip(wrapped.eventTexts, wrapped.eventSizes) {
-                    eventBoxes.append(EventBoxPlacement(
-                        text: text,
-                        frame: CGRect(
-                            x: eventX, y: boxY,
-                            width: boxSize.width, height: boxSize.height
-                        )
-                    ))
-                    boxY += boxSize.height + eventGap
-                }
-
-                periodPlacements.append(PeriodPlacement(
-                    label: wrapped.period.label,
-                    events: wrapped.period.events,
-                    wrappedLabel: wrapped.wrappedLabel,
-                    colorIndex: wrapped.colorIndex,
+                periodPlacements.append(wrapped.placement(
                     centerX: spineX,
-                    centerY: centerY,
+                    centerY: periodY + rowHeight / 2,
                     columnFrame: columnFrame,
                     labelFrame: labelFrame,
-                    eventBoxes: eventBoxes
+                    boxX: eventX,
+                    boxTop: periodY + max(rowHeight - wrapped.stackHeight, 0) / 2
                 ))
                 periodY += rowHeight + periodRowGap
             }
@@ -643,8 +425,8 @@ enum MermaidTimelineRenderer {
 
         return LayoutModel(
             title: diagram.title,
-            wrappedTitle: wrappedTitle,
-            titleFrame: titleFrame,
+            wrappedTitle: title.wrapped,
+            titleFrame: title.frame,
             size: CGSize(width: totalWidth, height: canvasHeight),
             direction: .TD,
             spineY: spineStartY,
@@ -659,28 +441,152 @@ enum MermaidTimelineRenderer {
         )
     }
 
+    // MARK: - Wrapping (both directions)
+
+    private struct WrappedPeriod {
+        let period: TimelinePeriod
+        let colorIndex: Int
+        let wrappedLabel: String
+        let labelSize: CGSize
+        let eventTexts: [String]
+        let eventSizes: [CGSize]
+        let stackHeight: CGFloat
+
+        /// Event boxes stack down from `boxTop` at `boxX`.
+        func placement(
+            centerX: CGFloat,
+            centerY: CGFloat,
+            columnFrame: CGRect,
+            labelFrame: CGRect,
+            boxX: CGFloat,
+            boxTop: CGFloat
+        ) -> PeriodPlacement {
+            var eventBoxes: [EventBoxPlacement] = []
+            var boxY = boxTop
+            for (text, boxSize) in zip(eventTexts, eventSizes) {
+                eventBoxes.append(EventBoxPlacement(
+                    text: text,
+                    frame: CGRect(x: boxX, y: boxY, width: boxSize.width, height: boxSize.height)
+                ))
+                boxY += boxSize.height + eventGap
+            }
+            return PeriodPlacement(
+                label: period.label,
+                events: period.events,
+                wrappedLabel: wrappedLabel,
+                colorIndex: colorIndex,
+                centerX: centerX,
+                centerY: centerY,
+                columnFrame: columnFrame,
+                labelFrame: labelFrame,
+                eventBoxes: eventBoxes
+            )
+        }
+    }
+
+    private struct WrappedSection {
+        let name: String?
+        let colorIndex: Int
+        let periods: [WrappedPeriod]
+    }
+
+    /// Wrap every period label and event. Official multicolor: section
+    /// color bands when sections are named, otherwise each period gets its
+    /// own color.
+    private static func wrapSections(
+        _ sections: [TimelineSection],
+        fonts: Fonts,
+        fontSize: CGFloat,
+        labelWidth: CGFloat,
+        eventWrapWidth: CGFloat,
+        boxWidth: CGFloat
+    ) -> [WrappedSection] {
+        let hasNamedSections = sections.contains { $0.name != nil }
+        return sections.enumerated().map { sectionIndex, section in
+            let sectionColor = sectionIndex % accentCount
+            let periods = section.periods.enumerated().map { periodIndex, period in
+                let label = wrap(
+                    period.label, font: fonts.period, fontSize: fontSize * 0.9,
+                    maxWidth: labelWidth, maxLines: maxPeriodLabelLines
+                )
+                var eventTexts: [String] = []
+                var eventSizes: [CGSize] = []
+                var stackHeight: CGFloat = 0
+                for (i, event) in period.events.enumerated() {
+                    let text = wrap(
+                        event, font: fonts.event, fontSize: fontSize * 0.85,
+                        maxWidth: eventWrapWidth, maxLines: maxEventLines
+                    )
+                    let boxSize = CGSize(width: boxWidth, height: text.size.height + boxPaddingV * 2)
+                    eventTexts.append(text.text)
+                    eventSizes.append(boxSize)
+                    stackHeight += boxSize.height
+                    if i < period.events.count - 1 { stackHeight += eventGap }
+                }
+                return WrappedPeriod(
+                    period: period,
+                    colorIndex: hasNamedSections ? sectionColor : periodIndex % accentCount,
+                    wrappedLabel: label.text,
+                    labelSize: label.size,
+                    eventTexts: eventTexts,
+                    eventSizes: eventSizes,
+                    stackHeight: stackHeight
+                )
+            }
+            return WrappedSection(name: section.name, colorIndex: sectionColor, periods: periods)
+        }
+    }
+
+    private static func layoutTitle(
+        _ title: String?,
+        fonts: Fonts,
+        fontSize: CGFloat,
+        wrapWidth: CGFloat
+    ) -> (wrapped: String?, frame: CGRect?, block: CGFloat) {
+        guard let title else { return (nil, nil, 0) }
+        let wrapped = wrap(
+            title, font: fonts.title, fontSize: fontSize * 1.1,
+            maxWidth: wrapWidth, maxLines: maxTitleLines
+        )
+        return (
+            wrapped.text,
+            CGRect(x: margin, y: margin, width: wrapWidth, height: wrapped.size.height),
+            wrapped.size.height + titleToBandGap
+        )
+    }
+
+    /// Word-wrapped to `maxWidth`, at most `maxLines` (ellipsized), `<br>`
+    /// breaks kept, and measured.
+    private static func wrap(
+        _ text: String,
+        font: CTFont,
+        fontSize: CGFloat,
+        maxWidth: CGFloat,
+        maxLines: Int
+    ) -> (text: String, size: CGSize) {
+        let wrapped = MermaidTextUtils.wrapTruncated(
+            text, font: font,
+            maxWidth: maxWidth, maxLines: maxLines,
+            preservesHardBreaks: true, breaksOnWords: true
+        )
+        return (wrapped, MermaidTextUtils.measureText(wrapped, font: font, fontSize: fontSize))
+    }
+
     // MARK: - Drawing
 
+    /// One drawing pass for both directions. LR: spine across, labels above
+    /// it, events stacked below. TD: spine down, labels left, events right.
     private static func draw(
         _ model: LayoutModel,
-        size: CGSize,
         theme: RenderTheme,
         fontSize: CGFloat,
         origin: CGPoint,
         in ctx: CGContext
     ) {
-        if model.direction == .TD {
-            drawTD(model, size: size, theme: theme, fontSize: fontSize, origin: origin, in: ctx)
-            return
-        }
-
         let ox = origin.x
         let oy = origin.y
-
-        let titleFont = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize * 1.1, nil)
-        let sectionFont = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize * 0.85, nil)
-        let periodFont = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize * 0.9, nil)
-        let eventFont = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.85, nil)
+        let isTD = model.direction == .TD
+        let fonts = Fonts(fontSize: fontSize)
         let accents = accentColors(theme)
 
         if let wrappedTitle = model.wrappedTitle, let titleFrame = model.titleFrame {
@@ -688,7 +594,7 @@ enum MermaidTimelineRenderer {
                 wrappedTitle,
                 at: CGPoint(x: ox + titleFrame.minX, y: oy + titleFrame.minY),
                 width: titleFrame.width,
-                font: titleFont,
+                font: fonts.title,
                 fontSize: fontSize * 1.1,
                 foregroundColor: theme.foreground,
                 in: ctx
@@ -732,7 +638,7 @@ enum MermaidTimelineRenderer {
                     name,
                     at: headingOrigin,
                     width: headingWidth,
-                    font: sectionFont,
+                    font: fonts.section,
                     fontSize: fontSize * 0.85,
                     foregroundColor: sectionColor,
                     in: ctx
@@ -741,28 +647,28 @@ enum MermaidTimelineRenderer {
         }
 
         // One continuous spine across every section, plus a terminal arrow
-        // so chronology still reads left-to-right through the gaps.
+        // so chronology still reads through the gaps.
         if !model.sections.isEmpty {
             ctx.saveGState()
             ctx.setStrokeColor(theme.comment.copy(alpha: 0.6) ?? theme.comment)
             ctx.setLineWidth(1.5)
             ctx.setLineCap(.round)
             ctx.setLineJoin(.round)
-            ctx.move(to: CGPoint(x: ox + model.spineStartX, y: oy + model.spineY))
-            ctx.addLine(to: CGPoint(x: ox + model.spineArrowTipX, y: oy + model.spineY))
+            let tip = CGPoint(x: ox + model.spineArrowTipX, y: oy + model.spineArrowTipY)
+            ctx.move(to: CGPoint(x: ox + model.spineStartX, y: oy + model.spineStartY))
+            ctx.addLine(to: tip)
             ctx.strokePath()
 
-            let tip = CGPoint(x: ox + model.spineArrowTipX, y: oy + model.spineY)
             ctx.move(to: tip)
-            ctx.addLine(to: CGPoint(
-                x: tip.x - spineArrowLength,
-                y: tip.y - spineArrowHalf
-            ))
-            ctx.move(to: tip)
-            ctx.addLine(to: CGPoint(
-                x: tip.x - spineArrowLength,
-                y: tip.y + spineArrowHalf
-            ))
+            if isTD {
+                ctx.addLine(to: CGPoint(x: tip.x - spineArrowHalf, y: tip.y - spineArrowLength))
+                ctx.move(to: tip)
+                ctx.addLine(to: CGPoint(x: tip.x + spineArrowHalf, y: tip.y - spineArrowLength))
+            } else {
+                ctx.addLine(to: CGPoint(x: tip.x - spineArrowLength, y: tip.y - spineArrowHalf))
+                ctx.move(to: tip)
+                ctx.addLine(to: CGPoint(x: tip.x - spineArrowLength, y: tip.y + spineArrowHalf))
+            }
             ctx.strokePath()
             ctx.restoreGState()
         }
@@ -771,193 +677,18 @@ enum MermaidTimelineRenderer {
             for period in section.periods {
                 let color = accents[period.colorIndex % accents.count]
 
-                // Period label above the spine.
                 MermaidTextUtils.drawText(
                     period.wrappedLabel,
                     at: CGPoint(x: ox + period.labelFrame.minX, y: oy + period.labelFrame.minY),
                     width: period.labelFrame.width,
-                    font: periodFont,
+                    font: fonts.period,
                     fontSize: fontSize * 0.9,
                     foregroundColor: color,
-                    alignment: .center,
+                    alignment: isTD ? .right : .center,
                     in: ctx
                 )
 
                 // Spine dot.
-                ctx.saveGState()
-                ctx.setFillColor(color)
-                ctx.fillEllipse(in: CGRect(
-                    x: ox + period.centerX - spineDotRadius,
-                    y: oy + model.spineY - spineDotRadius,
-                    width: spineDotRadius * 2,
-                    height: spineDotRadius * 2
-                ))
-                ctx.restoreGState()
-
-                // Connector from the spine to the first event box.
-                if let firstBox = period.eventBoxes.first {
-                    ctx.saveGState()
-                    ctx.setStrokeColor(color.copy(alpha: 0.45) ?? color)
-                    ctx.setLineWidth(1)
-                    ctx.move(to: CGPoint(
-                        x: ox + period.centerX,
-                        y: oy + model.spineY + spineDotRadius + 1
-                    ))
-                    ctx.addLine(to: CGPoint(x: ox + period.centerX, y: oy + firstBox.frame.minY))
-                    ctx.strokePath()
-                    ctx.restoreGState()
-                }
-
-                // Event boxes stacked under the period.
-                for (i, box) in period.eventBoxes.enumerated() {
-                    let rect = box.frame.offsetBy(dx: ox, dy: oy)
-
-                    // Connector from the previous box.
-                    if i > 0 {
-                        let previous = period.eventBoxes[i - 1].frame
-                        ctx.saveGState()
-                        ctx.setStrokeColor(color.copy(alpha: 0.35) ?? color)
-                        ctx.setLineWidth(1)
-                        ctx.move(to: CGPoint(x: ox + period.centerX, y: oy + previous.maxY))
-                        ctx.addLine(to: CGPoint(x: ox + period.centerX, y: oy + rect.minY))
-                        ctx.strokePath()
-                        ctx.restoreGState()
-                    }
-
-                    ctx.saveGState()
-                    let boxPath = CGPath(
-                        roundedRect: rect,
-                        cornerWidth: boxCornerRadius, cornerHeight: boxCornerRadius,
-                        transform: nil
-                    )
-                    ctx.setFillColor(color.copy(alpha: 0.16) ?? color)
-                    ctx.addPath(boxPath)
-                    ctx.fillPath()
-                    ctx.setStrokeColor(color.copy(alpha: 0.5) ?? color)
-                    ctx.setLineWidth(0.75)
-                    ctx.addPath(boxPath)
-                    ctx.strokePath()
-                    ctx.restoreGState()
-
-                    MermaidTextUtils.drawText(
-                        box.text,
-                        centeredIn: rect.insetBy(dx: boxPaddingH, dy: boxPaddingV),
-                        font: eventFont,
-                        fontSize: fontSize * 0.85,
-                        foregroundColor: theme.foreground,
-                        in: ctx
-                    )
-                }
-            }
-        }
-    }
-
-    private static func drawTD(
-        _ model: LayoutModel,
-        size: CGSize,
-        theme: RenderTheme,
-        fontSize: CGFloat,
-        origin: CGPoint,
-        in ctx: CGContext
-    ) {
-        let ox = origin.x
-        let oy = origin.y
-
-        let titleFont = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize * 1.1, nil)
-        let sectionFont = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize * 0.85, nil)
-        let periodFont = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize * 0.9, nil)
-        let eventFont = CTFontCreateWithName("Helvetica" as CFString, fontSize * 0.85, nil)
-        let accents = accentColors(theme)
-
-        if let wrappedTitle = model.wrappedTitle, let titleFrame = model.titleFrame {
-            MermaidTextUtils.drawText(
-                wrappedTitle,
-                at: CGPoint(x: ox + titleFrame.minX, y: oy + titleFrame.minY),
-                width: titleFrame.width,
-                font: titleFont,
-                fontSize: fontSize * 1.1,
-                foregroundColor: theme.foreground,
-                in: ctx
-            )
-        }
-
-        for section in model.sections {
-            let sectionColor = accents[section.colorIndex % accents.count]
-            let band = section.bandFrame.offsetBy(dx: ox, dy: oy)
-            if let name = section.wrappedName ?? section.name {
-                ctx.saveGState()
-                let bandPath = CGPath(
-                    roundedRect: band,
-                    cornerWidth: 8, cornerHeight: 8,
-                    transform: nil
-                )
-                ctx.setFillColor(sectionColor.copy(alpha: 0.07) ?? sectionColor)
-                ctx.addPath(bandPath)
-                ctx.fillPath()
-                ctx.setStrokeColor(sectionColor.copy(alpha: 0.22) ?? sectionColor)
-                ctx.setLineWidth(0.75)
-                ctx.addPath(bandPath)
-                ctx.strokePath()
-                ctx.restoreGState()
-
-                let headingOrigin: CGPoint
-                let headingWidth: CGFloat
-                if let headingFrame = section.headingFrame {
-                    headingOrigin = CGPoint(
-                        x: ox + headingFrame.minX,
-                        y: oy + headingFrame.minY
-                    )
-                    headingWidth = headingFrame.width
-                } else {
-                    headingOrigin = CGPoint(x: band.minX + bandPadX, y: band.minY + bandPaddingTop)
-                    headingWidth = band.width - bandPadX * 2
-                }
-                MermaidTextUtils.drawText(
-                    name,
-                    at: headingOrigin,
-                    width: headingWidth,
-                    font: sectionFont,
-                    fontSize: fontSize * 0.85,
-                    foregroundColor: sectionColor,
-                    in: ctx
-                )
-            }
-        }
-
-        if !model.sections.isEmpty {
-            ctx.saveGState()
-            ctx.setStrokeColor(theme.comment.copy(alpha: 0.6) ?? theme.comment)
-            ctx.setLineWidth(1.5)
-            ctx.setLineCap(.round)
-            ctx.setLineJoin(.round)
-            ctx.move(to: CGPoint(x: ox + model.spineX, y: oy + model.spineStartY))
-            ctx.addLine(to: CGPoint(x: ox + model.spineX, y: oy + model.spineArrowTipY))
-            ctx.strokePath()
-
-            let tip = CGPoint(x: ox + model.spineX, y: oy + model.spineArrowTipY)
-            ctx.move(to: tip)
-            ctx.addLine(to: CGPoint(x: tip.x - spineArrowHalf, y: tip.y - spineArrowLength))
-            ctx.move(to: tip)
-            ctx.addLine(to: CGPoint(x: tip.x + spineArrowHalf, y: tip.y - spineArrowLength))
-            ctx.strokePath()
-            ctx.restoreGState()
-        }
-
-        for section in model.sections {
-            for period in section.periods {
-                let color = accents[period.colorIndex % accents.count]
-
-                MermaidTextUtils.drawText(
-                    period.wrappedLabel,
-                    at: CGPoint(x: ox + period.labelFrame.minX, y: oy + period.labelFrame.minY),
-                    width: period.labelFrame.width,
-                    font: periodFont,
-                    fontSize: fontSize * 0.9,
-                    foregroundColor: color,
-                    alignment: .right,
-                    in: ctx
-                )
-
                 ctx.saveGState()
                 ctx.setFillColor(color)
                 ctx.fillEllipse(in: CGRect(
@@ -968,31 +699,40 @@ enum MermaidTimelineRenderer {
                 ))
                 ctx.restoreGState()
 
+                // Connector from the spine to the first event box.
                 if let firstBox = period.eventBoxes.first {
                     ctx.saveGState()
                     ctx.setStrokeColor(color.copy(alpha: 0.45) ?? color)
                     ctx.setLineWidth(1)
-                    ctx.move(to: CGPoint(
-                        x: ox + period.centerX + spineDotRadius + 1,
-                        y: oy + period.centerY
-                    ))
-                    ctx.addLine(to: CGPoint(
-                        x: ox + firstBox.frame.minX,
-                        y: oy + firstBox.frame.midY
-                    ))
+                    if isTD {
+                        ctx.move(to: CGPoint(
+                            x: ox + period.centerX + spineDotRadius + 1,
+                            y: oy + period.centerY
+                        ))
+                        ctx.addLine(to: CGPoint(x: ox + firstBox.frame.minX, y: oy + firstBox.frame.midY))
+                    } else {
+                        ctx.move(to: CGPoint(
+                            x: ox + period.centerX,
+                            y: oy + period.centerY + spineDotRadius + 1
+                        ))
+                        ctx.addLine(to: CGPoint(x: ox + period.centerX, y: oy + firstBox.frame.minY))
+                    }
                     ctx.strokePath()
                     ctx.restoreGState()
                 }
 
+                // Event boxes stacked under (LR) or beside (TD) the period.
                 for (i, box) in period.eventBoxes.enumerated() {
                     let rect = box.frame.offsetBy(dx: ox, dy: oy)
+
+                    // Connector from the previous box.
                     if i > 0 {
                         let previous = period.eventBoxes[i - 1].frame
                         ctx.saveGState()
                         ctx.setStrokeColor(color.copy(alpha: 0.35) ?? color)
                         ctx.setLineWidth(1)
-                        ctx.move(to: CGPoint(x: ox + previous.midX, y: oy + previous.maxY))
-                        ctx.addLine(to: CGPoint(x: ox + rect.midX, y: oy + rect.minY))
+                        ctx.move(to: CGPoint(x: ox + (isTD ? previous.midX : period.centerX), y: oy + previous.maxY))
+                        ctx.addLine(to: CGPoint(x: ox + (isTD ? rect.midX : period.centerX), y: oy + rect.minY))
                         ctx.strokePath()
                         ctx.restoreGState()
                     }
@@ -1015,7 +755,7 @@ enum MermaidTimelineRenderer {
                     MermaidTextUtils.drawText(
                         box.text,
                         centeredIn: rect.insetBy(dx: boxPaddingH, dy: boxPaddingV),
-                        font: eventFont,
+                        font: fonts.event,
                         fontSize: fontSize * 0.85,
                         foregroundColor: theme.foreground,
                         in: ctx

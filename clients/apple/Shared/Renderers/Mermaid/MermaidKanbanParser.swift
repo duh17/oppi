@@ -33,7 +33,7 @@ enum MermaidKanbanParser {
 
         for rawLine in lines {
             if rawLine.trimmingCharacters(in: .whitespaces).hasPrefix("%%") { continue }
-            let withoutComment = stripTrailingComment(rawLine)
+            let withoutComment = MermaidTextUtils.stripLineComment(rawLine)
             let trimmed = withoutComment.trimmingCharacters(in: .whitespaces)
             guard !trimmed.isEmpty else { continue }
             if trimmed.lowercased() == "kanban" { continue }
@@ -185,15 +185,4 @@ enum MermaidKanbanParser {
         return count
     }
 
-    private static func stripTrailingComment(_ line: String) -> String {
-        var inQuote = false
-        let chars = Array(line)
-        for i in 0..<chars.count {
-            if chars[i] == "\"" { inQuote.toggle() }
-            if !inQuote, i + 1 < chars.count, chars[i] == "%", chars[i + 1] == "%" {
-                return String(chars[0..<i])
-            }
-        }
-        return line
-    }
 }

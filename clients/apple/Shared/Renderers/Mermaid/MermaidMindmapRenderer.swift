@@ -137,27 +137,7 @@ enum MermaidMindmapRenderer {
                 layout: renderLayout
             )
         }
-        return MermaidFlowchartRenderer.FlowchartLayout(
-            graphResult: GraphLayoutResult(nodePositions: [:], edgePaths: [], totalSize: .zero),
-            flowchart: .empty,
-            subgraphFrames: [:],
-            nodeLabels: [:],
-            nodeShapes: [:],
-            edgeLabels: [:],
-            edgeStyles: [:],
-            edgeIds: [:],
-            edgeKeys: [],
-            edgeStyleDirectives: [:],
-            edgeEndpointSubgraphs: [:],
-            classDefs: [:],
-            styleDirectives: [:],
-            fontSize: configuration.fontSize,
-            theme: theme,
-            isPlaceholder: false,
-            placeholderText: nil,
-            customDraw: drawBlock,
-            customSize: size
-        )
+        return .custom(size: size, configuration: configuration, draw: drawBlock)
     }
 
     // MARK: - Layout passes
@@ -271,7 +251,7 @@ enum MermaidMindmapRenderer {
         font: CTFont,
         constants: LayoutConstants
     ) -> CGSize {
-        let textSize = measureText(label, font: font, fontSize: constants.fontSize)
+        let textSize = MermaidTextUtils.measureText(label, font: font, fontSize: constants.fontSize)
         var nodeWidth = textSize.width + constants.hPadding * 2
         var nodeHeight = textSize.height + constants.vPadding * 2
 
@@ -475,7 +455,14 @@ enum MermaidMindmapRenderer {
     ) {
         let nodeRect = node.rect.offsetBy(dx: origin.x, dy: origin.y)
         drawNodeShape(node, rect: nodeRect, theme: theme, in: ctx, constants: constants)
-        drawLabel(node.label, in: nodeRect, fontSize: constants.fontSize, font: font, theme: theme, in: ctx)
+        MermaidTextUtils.drawText(
+            node.label,
+            centeredIn: nodeRect,
+            font: font,
+            fontSize: constants.fontSize,
+            foregroundColor: theme.foreground,
+            in: ctx
+        )
 
         switch layout {
         case .horizontal, .tidyTree:
@@ -631,7 +618,7 @@ enum MermaidMindmapRenderer {
         case .cloud:
             path = cloudPath(rect)
         case .hexagon:
-            path = hexagonPath(rect)
+            path = MermaidShapes.hexagonPath(rect)
         }
 
         ctx.addPath(path)
@@ -703,36 +690,5 @@ enum MermaidMindmapRenderer {
 
         path.closeSubpath()
         return path
-    }
-
-    /// Hexagon shape.
-    private static func hexagonPath(_ rect: CGRect) -> CGPath {
-        MermaidTextUtils.hexagonPath(rect)
-    }
-
-    // MARK: - Label drawing
-
-    private static func drawLabel(
-        _ text: String,
-        in rect: CGRect,
-        fontSize: CGFloat,
-        font: CTFont,
-        theme: RenderTheme,
-        in ctx: CGContext
-    ) {
-        MermaidTextUtils.drawText(
-            text,
-            centeredIn: rect,
-            font: font,
-            fontSize: fontSize,
-            foregroundColor: theme.foreground,
-            in: ctx
-        )
-    }
-
-    // MARK: - Text helpers
-
-    private static func measureText(_ text: String, font: CTFont, fontSize: CGFloat) -> CGSize {
-        MermaidTextUtils.measureText(text, font: font, fontSize: fontSize)
     }
 }

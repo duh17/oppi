@@ -31,15 +31,15 @@ enum MermaidGitGraphParser {
             guard !line.isEmpty else { continue }
             if line.hasPrefix("%%") { continue }
 
-            if let remainder = consumingKeyword(line, "gitGraph")
-                ?? consumingKeyword(line, "gitgraph") {
+            if let remainder = MermaidTextUtils.consumingKeyword(line, "gitGraph", followers: [":"])
+                ?? MermaidTextUtils.consumingKeyword(line, "gitgraph", followers: [":"]) {
                 orientation = parseOrientation(remainder)
                 continue
             }
 
             if error != nil { continue }
 
-            if let remainder = consumingKeyword(line, "commit") {
+            if let remainder = MermaidTextUtils.consumingKeyword(line, "commit", followers: [":"]) {
                 if let typeError = parseCommit(
                     remainder,
                     currentBranch: currentBranch,
@@ -58,7 +58,7 @@ enum MermaidGitGraphParser {
                 continue
             }
 
-            if let remainder = consumingKeyword(line, "branch") {
+            if let remainder = MermaidTextUtils.consumingKeyword(line, "branch", followers: [":"]) {
                 error = parseBranch(
                     remainder,
                     headId: headId,
@@ -70,8 +70,8 @@ enum MermaidGitGraphParser {
                 continue
             }
 
-            if let remainder = consumingKeyword(line, "checkout")
-                ?? consumingKeyword(line, "switch") {
+            if let remainder = MermaidTextUtils.consumingKeyword(line, "checkout", followers: [":"])
+                ?? MermaidTextUtils.consumingKeyword(line, "switch", followers: [":"]) {
                 error = parseCheckout(
                     remainder,
                     branchHeads: branchHeads,
@@ -81,7 +81,7 @@ enum MermaidGitGraphParser {
                 continue
             }
 
-            if let remainder = consumingKeyword(line, "merge") {
+            if let remainder = MermaidTextUtils.consumingKeyword(line, "merge", followers: [":"]) {
                 error = parseMerge(
                     remainder,
                     currentBranch: currentBranch,
@@ -94,7 +94,7 @@ enum MermaidGitGraphParser {
                 continue
             }
 
-            if let remainder = consumingKeyword(line, "cherry-pick") {
+            if let remainder = MermaidTextUtils.consumingKeyword(line, "cherry-pick", followers: [":"]) {
                 error = parseCherryPick(
                     remainder,
                     currentBranch: currentBranch,
@@ -383,7 +383,7 @@ enum MermaidGitGraphParser {
     private static func parseName(_ remainder: String) -> (String?, String) {
         let trimmed = remainder.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return (nil, "") }
-        if let (quoted, leftover) = parseQuotedPrefix(trimmed) {
+        if let (quoted, leftover) = MermaidTextUtils.quotedPrefix(trimmed) {
             return (quoted, leftover)
         }
         let chars = Array(trimmed)
@@ -407,7 +407,7 @@ enum MermaidGitGraphParser {
             let key = String(rest[..<colon]).trimmingCharacters(in: .whitespaces).lowercased()
             rest = String(rest[rest.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
             guard !key.isEmpty else { break }
-            if let (quoted, leftover) = parseQuotedPrefix(rest) {
+            if let (quoted, leftover) = MermaidTextUtils.quotedPrefix(rest) {
                 result[key] = quoted
                 rest = leftover
                 continue
@@ -423,38 +423,4 @@ enum MermaidGitGraphParser {
         return result
     }
 
-    private static func parseQuotedPrefix(_ text: String) -> (String, String)? {
-        let trimmed = text.trimmingCharacters(in: .whitespaces)
-        guard let quote = trimmed.first, quote == "\"" || quote == "'" else { return nil }
-        var index = trimmed.index(after: trimmed.startIndex)
-        var escaped = false
-        while index < trimmed.endIndex {
-            let character = trimmed[index]
-            if escaped {
-                escaped = false
-            } else if character == "\\" {
-                escaped = true
-            } else if character == quote {
-                let inner = String(trimmed[trimmed.index(after: trimmed.startIndex)..<index])
-                let leftover = String(trimmed[trimmed.index(after: index)...])
-                    .trimmingCharacters(in: .whitespaces)
-                return (MermaidTextUtils.normalizeLabel(inner), leftover)
-            }
-            index = trimmed.index(after: index)
-        }
-        return nil
-    }
-
-    private static func consumingKeyword(_ text: String, _ keyword: String) -> String? {
-        let trimmed = text.trimmingCharacters(in: .whitespaces)
-        let key = keyword.lowercased()
-        guard trimmed.lowercased().hasPrefix(key) else { return nil }
-        if trimmed.count == key.count { return "" }
-        let nextIndex = trimmed.index(trimmed.startIndex, offsetBy: key.count)
-        let next = trimmed[nextIndex]
-        if next.isWhitespace || next == ":" || next == "\"" || next == "'" {
-            return String(trimmed[nextIndex...]).trimmingCharacters(in: .whitespaces)
-        }
-        return nil
-    }
 }

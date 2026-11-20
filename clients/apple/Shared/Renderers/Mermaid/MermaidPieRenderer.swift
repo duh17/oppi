@@ -254,8 +254,8 @@ enum MermaidPieRenderer {
                         x: ox + lx - pctSize.width / 2,
                         y: oy + ly - pctSize.height / 2
                     )
-                    let textColor = contrastingTextColor(on: color, theme: theme)
-                    let ratio = contrastRatio(foreground: textColor, background: color)
+                    let textColor = MermaidShapes.contrastingTextColor(on: color, theme: theme)
+                    let ratio = MermaidShapes.contrastRatio(foreground: textColor, background: color)
                     if ratio < 4.5 {
                         let pad: CGFloat = 2
                         let backing = CGRect(
@@ -271,7 +271,7 @@ enum MermaidPieRenderer {
                             at: textOrigin,
                             font: smallFont,
                             fontSize: fontSize * 0.9,
-                            foregroundColor: contrastingTextColor(
+                            foregroundColor: MermaidShapes.contrastingTextColor(
                                 on: theme.background, theme: theme
                             ),
                             in: ctx
@@ -356,28 +356,12 @@ enum MermaidPieRenderer {
             legendY += row.height
         }
 
-        var layout = MermaidFlowchartRenderer.FlowchartLayout(
-            graphResult: GraphLayoutResult(
-                nodePositions: nodePositions, edgePaths: [], totalSize: size
-            ),
-            flowchart: .empty,
-            subgraphFrames: [:],
+        var layout = MermaidFlowchartRenderer.FlowchartLayout.custom(
+            size: size,
+            nodePositions: nodePositions,
             nodeLabels: nodeLabels,
-            nodeShapes: [:],
-            edgeLabels: [:],
-            edgeStyles: [:],
-            edgeIds: [:],
-            edgeKeys: [],
-            edgeStyleDirectives: [:],
-            edgeEndpointSubgraphs: [:],
-            classDefs: [:],
-            styleDirectives: [:],
-            fontSize: fontSize,
-            theme: theme,
-            isPlaceholder: false,
-            placeholderText: nil,
-            customDraw: customDraw,
-            customSize: size
+            configuration: configuration,
+            draw: customDraw
         )
         layout.semanticRegions = semanticRegions
         return layout
@@ -444,55 +428,7 @@ enum MermaidPieRenderer {
     /// Pick the most readable of theme foreground / background against a
     /// slice fill so percentage labels stay visible in light and dark.
     nonisolated static func sliceLabelColor(on fill: CGColor, theme: RenderTheme) -> CGColor {
-        contrastingTextColor(on: fill, theme: theme)
-    }
-
-    private static func contrastingTextColor(on fill: CGColor, theme: RenderTheme) -> CGColor {
-        let candidates = [theme.foreground, theme.background, theme.backgroundDark]
-        return candidates.max { lhs, rhs in
-            contrastRatio(foreground: lhs, background: fill)
-                < contrastRatio(foreground: rhs, background: fill)
-        } ?? theme.foreground
-    }
-
-    private static func contrastRatio(foreground: CGColor, background: CGColor) -> CGFloat {
-        guard let fg = sRGBComponents(foreground), let bg = sRGBComponents(background) else {
-            return 1
-        }
-        let fgLuminance = relativeLuminance(red: fg.red, green: fg.green, blue: fg.blue)
-        let bgLuminance = relativeLuminance(red: bg.red, green: bg.green, blue: bg.blue)
-        let lighter = max(fgLuminance, bgLuminance)
-        let darker = min(fgLuminance, bgLuminance)
-        return (lighter + 0.05) / (darker + 0.05)
-    }
-
-    private static func relativeLuminance(red: CGFloat, green: CGFloat, blue: CGFloat) -> CGFloat {
-        func linearized(_ component: CGFloat) -> CGFloat {
-            component <= 0.03928 ? component / 12.92 : pow((component + 0.055) / 1.055, 2.4)
-        }
-        return 0.2126 * linearized(red) + 0.7152 * linearized(green) + 0.0722 * linearized(blue)
-    }
-
-    private struct SRGBComponents {
-        let red: CGFloat
-        let green: CGFloat
-        let blue: CGFloat
-    }
-
-    private static func sRGBComponents(_ color: CGColor) -> SRGBComponents? {
-        let converted = color.converted(
-            to: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
-            intent: .defaultIntent,
-            options: nil
-        ) ?? color
-        guard let components = converted.components else { return nil }
-        if components.count >= 3 {
-            return SRGBComponents(red: components[0], green: components[1], blue: components[2])
-        }
-        if components.count >= 1 {
-            return SRGBComponents(red: components[0], green: components[0], blue: components[0])
-        }
-        return nil
+        MermaidShapes.contrastingTextColor(on: fill, theme: theme)
     }
 
     // MARK: - Number formatting

@@ -35,34 +35,34 @@ enum MermaidXYChartParser {
             guard !line.isEmpty else { continue }
             if line.hasPrefix("%%") { continue }
 
-            if let remainder = consumingKeyword(line, "xychart-beta")
-                ?? consumingKeyword(line, "xychart") {
+            if let remainder = MermaidTextUtils.consumingKeyword(line, "xychart-beta", followers: ["["])
+                ?? MermaidTextUtils.consumingKeyword(line, "xychart", followers: ["["]) {
                 orientation = parseOrientation(remainder)
                 continue
             }
 
-            if let value = consumingKeyword(line, "title") {
+            if let value = MermaidTextUtils.consumingKeyword(line, "title", followers: ["["]) {
                 title = parseTitleValue(value)
                 continue
             }
 
-            if let remainder = consumingKeyword(line, "x-axis") {
+            if let remainder = MermaidTextUtils.consumingKeyword(line, "x-axis", followers: ["["]) {
                 xAxis = parseXAxis(remainder)
                 continue
             }
 
-            if let remainder = consumingKeyword(line, "y-axis") {
+            if let remainder = MermaidTextUtils.consumingKeyword(line, "y-axis", followers: ["["]) {
                 yAxis = parseYAxis(remainder)
                 continue
             }
 
-            if let remainder = consumingKeyword(line, "bar"),
+            if let remainder = MermaidTextUtils.consumingKeyword(line, "bar", followers: ["["]),
                let parsed = parseSeries(remainder, kind: .bar) {
                 series.append(parsed)
                 continue
             }
 
-            if let remainder = consumingKeyword(line, "line"),
+            if let remainder = MermaidTextUtils.consumingKeyword(line, "line", followers: ["["]),
                let parsed = parseSeries(remainder, kind: .line) {
                 series.append(parsed)
                 continue
@@ -133,7 +133,7 @@ enum MermaidXYChartParser {
                 parts.array = items
                 rest = leftover
             }
-        } else if let (quoted, leftover) = parseQuotedPrefix(rest) {
+        } else if let (quoted, leftover) = MermaidTextUtils.quotedPrefix(rest) {
             parts.title = quoted
             rest = leftover
         }
@@ -169,7 +169,7 @@ enum MermaidXYChartParser {
         var rest = remainder.trimmingCharacters(in: .whitespaces)
         var name: String?
 
-        if let (quoted, leftover) = parseQuotedPrefix(rest) {
+        if let (quoted, leftover) = MermaidTextUtils.quotedPrefix(rest) {
             name = quoted
             rest = leftover
         } else if let bracket = rest.firstIndex(of: "["), bracket > rest.startIndex {
@@ -185,58 +185,14 @@ enum MermaidXYChartParser {
 
     // MARK: - Tokens
 
-    /// If `text` starts with `keyword` as a whole token, return the rest.
-    /// Allows `[` or a quote immediately after the keyword.
-    private static func consumingKeyword(_ text: String, _ keyword: String) -> String? {
-        let trimmed = text.trimmingCharacters(in: .whitespaces)
-        let key = keyword.lowercased()
-        guard trimmed.lowercased().hasPrefix(key) else { return nil }
-        if trimmed.count == key.count { return "" }
-        let nextIndex = trimmed.index(trimmed.startIndex, offsetBy: key.count)
-        let next = trimmed[nextIndex]
-        if next.isWhitespace || next == "\"" || next == "'" || next == "[" {
-            return String(trimmed[nextIndex...]).trimmingCharacters(in: .whitespaces)
-        }
-        return nil
-    }
-
     private static func parseTitleValue(_ raw: String) -> String? {
         let trimmed = raw.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return nil }
-        if let (quoted, leftover) = parseQuotedPrefix(trimmed), leftover.isEmpty {
+        if let (quoted, leftover) = MermaidTextUtils.quotedPrefix(trimmed), leftover.isEmpty {
             return quoted
         }
         let normalized = MermaidTextUtils.normalizeLabel(trimmed)
         return normalized.isEmpty ? nil : normalized
-    }
-
-    /// Leading `"..."` or `'...'`, with leftover trimmed.
-    private static func parseQuotedPrefix(_ text: String) -> (String, String)? {
-        let trimmed = text.trimmingCharacters(in: .whitespaces)
-        guard let quote = trimmed.first, quote == "\"" || quote == "'" else { return nil }
-        guard let close = indexOfClosingQuote(in: trimmed, quote: quote) else { return nil }
-        let inner = String(trimmed[trimmed.index(after: trimmed.startIndex)..<close])
-        let leftover = String(trimmed[trimmed.index(after: close)...])
-            .trimmingCharacters(in: .whitespaces)
-        let title = MermaidTextUtils.normalizeLabel(inner)
-        return (title, leftover)
-    }
-
-    private static func indexOfClosingQuote(in text: String, quote: Character) -> String.Index? {
-        var index = text.index(after: text.startIndex)
-        var escaped = false
-        while index < text.endIndex {
-            let character = text[index]
-            if escaped {
-                escaped = false
-            } else if character == "\\" {
-                escaped = true
-            } else if character == quote {
-                return index
-            }
-            index = text.index(after: index)
-        }
-        return nil
     }
 
     /// Parse `[a, "b c", 3]` and return items plus leftover after `]`.
@@ -287,7 +243,7 @@ enum MermaidXYChartParser {
 
     private static func normalizeListItem(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespaces)
-        if let (quoted, leftover) = parseQuotedPrefix(trimmed), leftover.isEmpty {
+        if let (quoted, leftover) = MermaidTextUtils.quotedPrefix(trimmed), leftover.isEmpty {
             return quoted
         }
         return MermaidTextUtils.normalizeLabel(trimmed)

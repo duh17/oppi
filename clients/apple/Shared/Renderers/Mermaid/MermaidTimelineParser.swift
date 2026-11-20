@@ -93,7 +93,7 @@ enum MermaidTimelineParser {
         var state = ParseState()
 
         for rawLine in lines {
-            let line = stripComment(rawLine).trimmingCharacters(in: .whitespaces)
+            let line = MermaidTextUtils.stripLineComment(rawLine).trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty else { continue }
 
             // Official grammar: `#` starts a comment. Only full-line comments
@@ -323,17 +323,4 @@ enum MermaidTimelineParser {
         MermaidTextUtils.normalizeBrTags(text).trimmingCharacters(in: .whitespaces)
     }
 
-    /// Remove a `%%` comment, ignoring `%%` inside double quotes.
-    /// Mirrors the shared MermaidParser behavior for direct callers.
-    private static func stripComment(_ line: String) -> String {
-        var inDoubleQuote = false
-        let chars = Array(line)
-        for i in 0..<chars.count {
-            if chars[i] == "\"" { inDoubleQuote.toggle() }
-            if !inDoubleQuote, i + 1 < chars.count, chars[i] == "%", chars[i + 1] == "%" {
-                return String(chars[0..<i])
-            }
-        }
-        return line
-    }
 }
