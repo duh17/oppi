@@ -1,8 +1,13 @@
 import UIKit
 
 /// The installed app icon from the bundle, or nil when it has none: the
-/// onboarding hero and the App Lock cover show it.
+/// onboarding hero, the App Lock cover, and the sidebar show it.
 enum InstalledAppIcon {
+    /// The name the Home Screen shows under the icon, for the icon's
+    /// accessibility label, so renaming the bundle renames the label.
+    static let displayName = (Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName")
+        ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName")) as? String ?? ""
+
     @MainActor static let image: UIImage? = {
         // The Mac build ships its icon as AppIcon.icns. Its asset catalog's
         // AppIcon is a Mac icon that `UIImage(named:)` raises on, so the

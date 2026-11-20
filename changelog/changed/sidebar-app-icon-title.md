@@ -1,0 +1,1 @@
+- **Client:** The sidebar on iPad and the drawer on iPhone now show the app's icon at the top in place of the written "Oppi" title.

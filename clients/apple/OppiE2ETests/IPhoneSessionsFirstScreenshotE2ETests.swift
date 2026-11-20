@@ -379,7 +379,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             tap(app.buttons["workspace.sidebar.open"], named: "workspace sidebar button")
         }
         XCTAssertTrue(waitForHittable(createWorkspaceButton, timeout: 10), "Sidebar did not open")
-        XCTAssertTrue(app.staticTexts["Oppi"].exists, "Sidebar should identify the app-level navigation surface")
+        XCTAssertTrue(app.images["workspace.sidebar.appIcon"].exists, "Sidebar should identify the app-level navigation surface")
         XCTAssertTrue(app.staticTexts["Workspaces"].exists, "Sidebar should label the workspace collection")
         XCTAssertTrue(
             waitForHittable(app.buttons["workspace.agents.open"], timeout: 5),

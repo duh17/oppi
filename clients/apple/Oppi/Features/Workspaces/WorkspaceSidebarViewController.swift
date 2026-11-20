@@ -21,7 +21,9 @@ final class WorkspaceSidebarViewController: UIViewController {
     private var navigation: SceneNavigation { root.navigation }
     private var coordinator: ConnectionCoordinator { root.coordinator }
 
-    private let headerLabel = UILabel()
+    /// The app's icon heads the column in place of a written name; the row
+    /// beside it stays free for a control.
+    private let appIconView = UIImageView()
     private let list: UICollectionView
     private let footerList: FooterListView
     private let footerDivider = UIView()
@@ -118,11 +120,19 @@ final class WorkspaceSidebarViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        headerLabel.text = "Oppi"
-        headerLabel.font = Self.font(.title2, .bold)
-        headerLabel.adjustsFontForContentSizeCategory = true
-        headerLabel.numberOfLines = 1
-        headerLabel.translatesAutoresizingMaskIntoConstraints = false
+        appIconView.image = InstalledAppIcon.image
+        appIconView.contentMode = .scaleAspectFit
+        appIconView.layer.cornerRadius = Self.appIconSide * 0.225
+        appIconView.layer.cornerCurve = .continuous
+        // A dark icon on a dark sidebar loses its edge without a hairline
+        // (coloured with the theme in `updateProperties()`).
+        appIconView.layer.borderWidth = 1 / max(1, traitCollection.displayScale)
+        appIconView.clipsToBounds = true
+        appIconView.isAccessibilityElement = true
+        appIconView.accessibilityLabel = InstalledAppIcon.displayName
+        appIconView.accessibilityTraits = [.image, .header]
+        appIconView.accessibilityIdentifier = "workspace.sidebar.appIcon"
+        appIconView.translatesAutoresizingMaskIntoConstraints = false
 
         list.backgroundColor = .clear
         list.allowsSelection = false
@@ -135,16 +145,17 @@ final class WorkspaceSidebarViewController: UIViewController {
         footerDivider.backgroundColor = .separator
         footerDivider.translatesAutoresizingMaskIntoConstraints = false
 
-        view.addSubview(headerLabel)
+        view.addSubview(appIconView)
         view.addSubview(list)
         view.addSubview(footerDivider)
         view.addSubview(footerList)
         let safeArea = view.safeAreaLayoutGuide
         NSLayoutConstraint.activate([
-            headerLabel.topAnchor.constraint(equalTo: safeArea.topAnchor, constant: 20),
-            headerLabel.leadingAnchor.constraint(equalTo: safeArea.leadingAnchor, constant: 20),
-            headerLabel.trailingAnchor.constraint(lessThanOrEqualTo: safeArea.trailingAnchor, constant: -20),
-            list.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 12),
+            appIconView.topAnchor.constraint(equalTo: safeArea.topAnchor, constant: 20),
+            appIconView.leadingAnchor.constraint(equalTo: safeArea.leadingAnchor, constant: 20),
+            appIconView.widthAnchor.constraint(equalToConstant: Self.appIconSide),
+            appIconView.heightAnchor.constraint(equalToConstant: Self.appIconSide),
+            list.topAnchor.constraint(equalTo: appIconView.bottomAnchor, constant: 12),
             list.leadingAnchor.constraint(equalTo: safeArea.leadingAnchor),
             list.trailingAnchor.constraint(equalTo: safeArea.trailingAnchor),
             list.bottomAnchor.constraint(equalTo: footerDivider.topAnchor),
@@ -183,7 +194,7 @@ final class WorkspaceSidebarViewController: UIViewController {
         if themeChanged {
             appliedThemeID = themeID
             view.backgroundColor = themeID.palette.ui.bg
-            headerLabel.textColor = themeID.palette.ui.fg
+            appIconView.layer.borderColor = themeID.palette.ui.comment.withAlphaComponent(0.5).cgColor
         }
         let previous = model
         model = makeModel()
@@ -622,6 +633,9 @@ final class WorkspaceSidebarViewController: UIViewController {
             return section
         }
     }
+
+    /// A navigation-bar title's height. Fixed: Dynamic Type scales text, not the mark.
+    private static let appIconSide: CGFloat = 32
 
     private static func font(_ style: UIFont.TextStyle, _ weight: UIFont.Weight) -> UIFont {
         let descriptor = UIFontDescriptor.preferredFontDescriptor(withTextStyle: style)
