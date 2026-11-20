@@ -137,23 +137,17 @@ final class SSHTerminalRexPanelContent: SSHTerminalOverviewContent {
     }
 
     /// A session as one row: its name, how many panes it has and how many of
-    /// them need you, and its headline status. A tap opens the pane Rex types
-    /// into there (the focused pane of its active window), else its first.
+    /// them need you, and its headline status. A tap opens its opening pane
+    /// (`RexSnapshot.Session.openingPane`).
     private static func sessionRow(_ session: RexSnapshot.Session) -> SSHTerminalOverviewRow {
         let panes = session.windows.flatMap(\.panes)
-        let waiting = panes.filter { $0.status?.isBlocked == true }.count
-        let count = panes.count == 1 ? String(localized: "1 pane") : String(localized: "\(panes.count) panes")
-        let needs = waiting == 1 ? String(localized: "1 needs you") : String(localized: "\(waiting) need you")
-        let subtitle = waiting > 0 ? count + " \u{00B7} " + needs : count
-        let active = session.windows.first { $0.windowID == session.activeWindowID } ?? session.windows.first
-        let target = active?.focusedBlockID.flatMap { id in panes.first { $0.blockID == id } } ?? panes.first
         return .init(
-            id: "session|\(session.sessionID)", title: session.label ?? String(localized: "Session"),
+            id: "session|\(session.sessionID)", title: session.displayName,
             kind: .item(
-                subtitle: subtitle, focused: false,
+                subtitle: RexSnapshot.paneSummary(panes: panes.count, needsYou: session.needsYou), focused: false,
                 status: SessionStatusRollup(root: nil, others: panes.compactMap(\.status)).headline.map { .known($0) } ?? .none
             ),
-            focus: target.map { .init(scope: session.sessionID, id: $0.blockID, isGroup: false) },
+            focus: session.openingPane.map { .init(scope: session.sessionID, id: $0.blockID, isGroup: false) },
             accessibilityID: "\(identifierPrefix).session.\(session.sessionID)"
         )
     }
@@ -181,9 +175,7 @@ extension SSHTerminalRexPanelContent {
     /// from the snapshot.
     static func needsYou(state: RexSessionState?, snapshot: RexSnapshot?, sessionID: String?) -> Int {
         let own = state?.panes.filter { $0.blockID != state?.shown && $0.status?.isBlocked == true }.count ?? 0
-        let others = snapshot?.sessions.filter { $0.sessionID != sessionID }.reduce(0) { total, session in
-            total + session.windows.reduce(0) { $0 + $1.panes.filter { $0.status?.isBlocked == true }.count }
-        } ?? 0
+        let others = snapshot?.sessions.filter { $0.sessionID != sessionID }.reduce(0) { $0 + $1.needsYou } ?? 0
         return own + others
     }
 }

@@ -24,11 +24,11 @@ struct SSHTerminalRexListSession: Hashable, Sendable {
         self.manages = manages
         let panes = session.windows.flatMap(\.panes)
         sessionID = session.sessionID
-        title = session.label.flatMap { $0.isEmpty ? nil : $0 } ?? "Session"
+        title = session.displayName
         windowCount = session.windows.count
         paneCount = panes.count
         let statuses = panes.compactMap(\.status)
-        needsYou = statuses.filter(\.isBlocked).count
+        needsYou = session.needsYou
         status = SessionStatusRollup(root: nil, others: statuses).headline.map { .known($0) } ?? .none
         folder = session.openingPane?.folderName
         isExpanded = expanded && !panes.isEmpty
@@ -40,11 +40,8 @@ struct SSHTerminalRexListSession: Hashable, Sendable {
     /// "3 panes", "1 pane", "2 windows · 3 panes" with more than one window,
     /// and "· 2 need you" after it while panes wait.
     var summary: String {
-        var parts: [String] = []
-        if windowCount > 1 { parts.append("\(windowCount) windows") }
-        parts.append(paneCount == 1 ? "1 pane" : "\(paneCount) panes")
-        if needsYou > 0 { parts.append(SSHTerminalRexListRow.needsYouText(needsYou)) }
-        return parts.joined(separator: " \u{00B7} ")
+        let panes = RexSnapshot.paneSummary(panes: paneCount, needsYou: needsYou)
+        return windowCount > 1 ? "\(windowCount) windows \u{00B7} " + panes : panes
     }
 
     /// The line under the name: the folder it works in, then the counts.
@@ -155,10 +152,6 @@ struct SSHTerminalRexListRow: Hashable, Sendable {
     /// Unique within a host: the diffable snapshot's identity, with the host's.
     let id: String
     let kind: Kind
-
-    static func needsYouText(_ count: Int) -> String {
-        count == 1 ? "1 needs you" : "\(count) need you"
-    }
 }
 
 /// What the tab knows of one Rex host: how its own connection is doing and what

@@ -259,7 +259,7 @@ final class SSHTerminalRexSessionsContent: SSHTerminalOverviewContent {
             let key = "session|\(session.sessionID)"
             let namesWindows = session.windows.count > 1
             var rows: [SSHTerminalOverviewRow] = [.init(
-                id: key, title: session.label ?? "Session", kind: .group(focused: false), focus: nil
+                id: key, title: session.displayName, kind: .group(focused: false), focus: nil
             )]
             for window in session.windows {
                 for pane in window.panes {

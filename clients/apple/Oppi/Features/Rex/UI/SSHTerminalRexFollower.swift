@@ -467,25 +467,15 @@ extension SSHTerminalRexListFollowing {
         monitor.open(.init(scope: sessionID, id: blockID, isGroup: false))
     }
 
-    /// A tapped session opens in a terminal of its own, on its focused pane,
-    /// or its first (an open terminal for the session is shown instead of a
-    /// second connection). False when the session is no longer in Rex's list.
+    /// A tapped session opens in a terminal of its own, on its opening pane
+    /// (`RexSnapshot.Session.openingPane`; an open terminal for the session is
+    /// shown instead of a second connection). False when the session is no
+    /// longer in Rex's list.
     @discardableResult
     func open(session sessionID: String) -> Bool {
         guard let session = monitor.snapshot?.sessions.first(where: { $0.sessionID == sessionID }),
               let pane = session.openingPane else { return false }
         return monitor.open(.init(scope: sessionID, id: pane.blockID, isGroup: false))
-    }
-}
-
-extension RexSnapshot.Session {
-    /// The pane a tap on the session opens: the one Rex types into, else the
-    /// session's first pane in window order.
-    var openingPane: RexSnapshot.Pane? {
-        for window in windows {
-            if let pane = window.panes.first(where: { isFocused($0, in: window) }) { return pane }
-        }
-        return windows.lazy.flatMap(\.panes).first
     }
 }
 

@@ -624,7 +624,7 @@ struct SSHTerminalRexControlTests {
     }
 
     private func session(
-        _ id: String, _ label: String, active: String? = nil, focused: String? = nil, panes: [RexSnapshot.Pane]
+        _ id: String, _ label: String?, focused: String? = nil, panes: [RexSnapshot.Pane]
     ) -> RexSnapshot.Session {
         RexSnapshot.Session(
             sessionID: id, label: label, activeWindowID: "\(id).w",
@@ -636,7 +636,7 @@ struct SSHTerminalRexControlTests {
         RexSnapshot(sessions: [
             session("s1", "oppi", panes: [pane("a", [record(.working)]), pane("b", [record(.blocked, kind: .permission)])]),
             session("s2", "dotfiles", focused: "d2", panes: [pane("d1"), pane("d2", [record(.blocked, kind: .question)])]),
-            session("s3", "scratch", panes: [pane("e", [record(.idle)])]),
+            session("s3", "  ", panes: [pane("e", [record(.idle)])]),
         ])
     }
 
@@ -673,7 +673,8 @@ struct SSHTerminalRexControlTests {
 
         // The other sessions, not this one, each with its panes and how many need you.
         let others = try #require(sections.first { $0.id == "otherSessions" })
-        #expect(others.rows.map(\.title) == ["Other sessions", "dotfiles", "scratch"])
+        // A session with a blank name is called Session, as on every Rex list.
+        #expect(others.rows.map(\.title) == ["Other sessions", "dotfiles", "Session"])
         #expect(others.rows[1].kind == .item(subtitle: "2 panes \u{00B7} 1 needs you", focused: false, status: .known(.question)))
         #expect(others.rows[2].kind == .item(subtitle: "1 pane", focused: false, status: .known(.idle)))
         // A tap opens the pane Rex types into there, else the first.

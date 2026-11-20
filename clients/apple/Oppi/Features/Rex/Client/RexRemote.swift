@@ -47,6 +47,43 @@ struct RexSnapshot: Equatable, Sendable {
         func isFocused(_ pane: Pane, in window: Window) -> Bool {
             window.windowID == activeWindowID && window.focusedBlockID == pane.blockID
         }
+
+        /// What every Rex list calls the session: Rex's label, or "Session"
+        /// when it has none or a blank one.
+        var displayName: String {
+            label.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+                ?? String(localized: "Session")
+        }
+
+        /// The pane a tap on the session opens on every Rex list: the active
+        /// window's focused pane, else the first window's focused pane, else
+        /// the first pane in window order.
+        var openingPane: Pane? {
+            let active = windows.first { $0.windowID == activeWindowID }
+            for window in [active, windows.first].compactMap({ $0 }) {
+                if let id = window.focusedBlockID, let pane = window.panes.first(where: { $0.blockID == id }) {
+                    return pane
+                }
+            }
+            return windows.lazy.flatMap(\.panes).first
+        }
+
+        /// Its panes waiting at an approval, question, or sign-in.
+        var needsYou: Int {
+            windows.reduce(0) { $0 + $1.panes.filter { $0.status?.isBlocked == true }.count }
+        }
+    }
+
+    /// "1 needs you", "2 need you": how a Rex list words panes that wait.
+    static func needsYouText(_ count: Int) -> String {
+        count == 1 ? String(localized: "1 needs you") : String(localized: "\(count) need you")
+    }
+
+    /// A session's counts on a Rex list: "3 panes" or "1 pane", then
+    /// "· 2 need you" while any wait.
+    static func paneSummary(panes: Int, needsYou: Int) -> String {
+        let count = panes == 1 ? String(localized: "1 pane") : String(localized: "\(panes) panes")
+        return needsYou > 0 ? count + " \u{00B7} " + needsYouText(needsYou) : count
     }
 
     let sessions: [Session]
@@ -57,9 +94,7 @@ struct RexSnapshot: Equatable, Sendable {
 
     /// Panes waiting at an approval, question, or sign-in.
     var needsAttention: Int {
-        sessions.reduce(0) { total, session in
-            total + session.windows.reduce(0) { $0 + $1.panes.filter { $0.status?.isBlocked == true }.count }
-        }
+        sessions.reduce(0) { $0 + $1.needsYou }
     }
 }
 
@@ -1126,8 +1161,8 @@ final class RexMonitor {
         return RexPaneTarget(sessionID: created.sessionID, blockID: block, label: "Shell")
     }
 
-    /// A new pane in an existing session: a shell split after the pane Rex types
-    /// into (else the session's first), focused on the host no further than Rex
+    /// A new pane in an existing session: a shell split after the session's
+    /// opening pane (`Session.openingPane`), focused on the host no further than Rex
     /// requires, and returned for the caller to open. The session's own view event
     /// lists it, as for a session made here.
     func createPane(in sessionID: String) async throws -> RexPaneTarget {

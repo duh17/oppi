@@ -33,6 +33,61 @@ private final class QuietConnection: SSHTerminalConnection {
     func cancel() async {}
 }
 
+/// The rule every Rex session list shares: what an unnamed session is called,
+/// and which pane a tap on a session opens.
+@Suite("Rex session row rule")
+struct RexSessionRowRuleTests {
+    private func session(
+        label: String? = nil, active: String?, focused: [String?], panes: [[String]]
+    ) -> RexSnapshot.Session {
+        RexSnapshot.Session(
+            sessionID: "s", label: label, activeWindowID: active,
+            windows: panes.enumerated().map { index, blocks in
+                RexSnapshot.Window(
+                    windowID: "w\(index)", label: nil, focusedBlockID: focused[index],
+                    panes: blocks.map { RexSnapshot.Pane(blockID: $0, label: nil, title: nil, pwd: nil, records: []) }
+                )
+            }
+        )
+    }
+
+    @Test func anUnnamedOrBlankSessionIsCalledSession() {
+        #expect(session(label: nil, active: nil, focused: [], panes: []).displayName == "Session")
+        #expect(session(label: "", active: nil, focused: [], panes: []).displayName == "Session")
+        #expect(session(label: " \t\n", active: nil, focused: [], panes: []).displayName == "Session")
+        #expect(session(label: " oppi ", active: nil, focused: [], panes: []).displayName == " oppi ", "a name is shown as Rex keeps it")
+    }
+
+    @Test func aTapOpensTheActiveWindowsFocusedPane() {
+        let s = session(active: "w1", focused: ["a", "d"], panes: [["a", "b"], ["c", "d"]])
+        #expect(s.openingPane?.blockID == "d")
+    }
+
+    @Test func withoutAnActiveWindowATapOpensTheFirstWindowsFocusedPane() {
+        let none = session(active: nil, focused: ["b", "d"], panes: [["a", "b"], ["c", "d"]])
+        #expect(none.openingPane?.blockID == "b")
+        // An active window Rex no longer lists counts as none.
+        let gone = session(active: "w9", focused: ["b", "d"], panes: [["a", "b"], ["c", "d"]])
+        #expect(gone.openingPane?.blockID == "b")
+        // An active window with no focused pane falls through to the first window's.
+        let unfocused = session(active: "w1", focused: ["b", nil], panes: [["a", "b"], ["c", "d"]])
+        #expect(unfocused.openingPane?.blockID == "b")
+    }
+
+    @Test func withNoFocusedPaneATapOpensTheFirstPane() {
+        let s = session(active: "w1", focused: [nil, nil], panes: [["a", "b"], ["c"]])
+        #expect(s.openingPane?.blockID == "a")
+        // A focus naming a pane that is gone is no focus.
+        let stale = session(active: "w0", focused: ["x"], panes: [["a", "b"]])
+        #expect(stale.openingPane?.blockID == "a")
+    }
+
+    @Test func aSessionWithNoPanesOpensNothing() {
+        #expect(session(active: "w0", focused: [nil], panes: [[]]).openingPane == nil)
+        #expect(session(active: nil, focused: [], panes: []).openingPane == nil)
+    }
+}
+
 /// What the Terminal tab's Rex section draws for a host, from the rows a
 /// host's state produces.
 @Suite("Terminal tab Rex rows")
@@ -148,14 +203,6 @@ struct SSHTerminalRexListRowTests {
         #expect(row.folder == "oppi")
         #expect(row.detail == "oppi \u{00B7} 2 panes")
         #expect(row.accessibilityLabel == "s, in oppi, 2 panes")
-    }
-
-    @Test func aTapOpensTheFocusedPaneElseTheFirst() {
-        let focused = session("s", "s", [[pane("a"), pane("b")], [pane("c")]], focused: "b")
-        #expect(focused.openingPane?.blockID == "b")
-        let none = session("s", "s", [[pane("a"), pane("b")]])
-        #expect(none.openingPane?.blockID == "a")
-        #expect(session("s", "s", []).openingPane == nil)
     }
 
     @Test func aHostNotReadYetShowsLoadingAndAnEmptyRexSaysSo() {

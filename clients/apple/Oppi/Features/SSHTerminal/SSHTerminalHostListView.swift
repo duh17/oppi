@@ -971,7 +971,7 @@ final class SSHTerminalHostListViewController:
                 fallbackSide: 17
             )
             content.imageProperties.tintColor = palette.ui.comment
-            content.secondaryText = needsYou > 0 ? "Rex \u{00B7} " + SSHTerminalRexListRow.needsYouText(needsYou) : "Rex"
+            content.secondaryText = needsYou > 0 ? "Rex \u{00B7} " + RexSnapshot.needsYouText(needsYou) : "Rex"
             content.secondaryTextProperties.font = .preferredFont(forTextStyle: .footnote)
             content.secondaryTextProperties.color = needsYou > 0 ? palette.orange : palette.comment
             cell.accessibilityIdentifier = "\(prefix).header"
