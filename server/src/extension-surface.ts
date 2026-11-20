@@ -1459,13 +1459,17 @@ export function extensionUISurfaceUsesBlocks(surface: ExtensionUISurface): boole
   );
 }
 
-/** One node of a body by id, the way a patch and a tap address it. */
+/**
+ * One node of a body by id, the way a tap addresses it. It steps into every node that has
+ * `children` (row, stack, group), the same rule as the projection's walks, so a control inside a
+ * group answers its tap.
+ */
 export function findExtensionUISurfaceNode(
   root: ExtensionUISurfaceNode,
   id: string,
 ): ExtensionUISurfaceNode | undefined {
   if (root.id === id) return root;
-  if (root.type !== "row" && root.type !== "stack") return undefined;
+  if (!("children" in root)) return undefined;
   for (const child of root.children) {
     const found = findExtensionUISurfaceNode(child, id);
     if (found) return found;

@@ -718,6 +718,24 @@ describe("a blocks surface's actions", () => {
     expect(h.settled().map((message) => message.id)).toEqual(["node-1"]);
   });
 
+  it("routes a tap on a control inside a foldable group, and refuses a disabled one", async () => {
+    const values: unknown[] = [];
+    const h = published(async (request) => {
+      values.push(request.values);
+      return { patch: {} };
+    });
+    const accepted = await h.act(
+      nodeTap("filter-running", "filters", { values: { filter: "running" } }),
+      "phone-1",
+      "blocks",
+    );
+    expect("error" in accepted).toBe(false);
+    expect(values).toEqual([{ filter: "running" }]);
+    const refused = await h.act(nodeTap("filter-archived", "filters"), "phone-1", "blocks");
+    expect(refused).toMatchObject({ error: { message: "This action is not available." } });
+    expect(values).toHaveLength(1);
+  });
+
   it("routes a toggle's new value and a menu item's action", async () => {
     const values: unknown[] = [];
     const actions: string[] = [];
