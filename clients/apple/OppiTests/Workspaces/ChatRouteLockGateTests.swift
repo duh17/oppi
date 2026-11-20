@@ -69,7 +69,6 @@ struct ChatRouteLockGateTests {
                 workspaceId: workspaceId,
                 routeScope: session?.routeScope
             ),
-            placement: .compactRoot,
             root: fixture.root
         )
         fixture.navigation.pushViewController(route, animated: false)

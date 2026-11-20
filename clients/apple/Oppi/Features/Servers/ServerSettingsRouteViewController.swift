@@ -15,12 +15,11 @@ import UIKit
 final class ServerSettingsRouteViewController: PinnedServerRouteViewController<ServerSettingsViewController> {
     let target: ServerDetailsNavTarget
 
-    init(target: ServerDetailsNavTarget, root: AppRootEnvironment, showsSidebarToggle: Bool = false) {
+    init(target: ServerDetailsNavTarget, root: AppRootEnvironment) {
         self.target = target
         super.init(
             root: root,
             openedServerId: target.serverId,
-            showsSidebarToggle: showsSidebarToggle,
             title: HostSwitcherDestination.serverSettings.title,
             makePage: { ServerSettingsViewController(server: $0, root: root) }
         )

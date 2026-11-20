@@ -355,7 +355,7 @@ final class FileBrowserColumnPreviewController: PreviewRootController {
             root: root,
             themeStore: root.themeStore,
             content: PreviewHost.screenStack(root: root) {
-                FileBrowserViewController(root: root, target: target, showsSidebarToggle: false)
+                FileBrowserViewController(root: root, target: target)
             }
         )
     }

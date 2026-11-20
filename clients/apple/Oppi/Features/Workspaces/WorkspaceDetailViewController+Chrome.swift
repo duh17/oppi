@@ -60,7 +60,6 @@ extension WorkspaceDetailViewController {
 
         let bars = BarState(
             joinsRail: joinsRail,
-            showsSidebarToggle: showsSidebarToggle,
             showsBottomItems: showsBottomItems,
             showsNowPlaying: detail.toolbar.showsNowPlayingPill,
             parksNowPlayingNextToCompose: detail.toolbar.parksNowPlayingNextToCompose,
@@ -88,9 +87,6 @@ extension WorkspaceDetailViewController {
             titleState = title
             configureTitleButton(title, palette: palette)
         }
-        if let sidebarToggle {
-            WorkspaceSplitSidebarToggle.sync(sidebarToggle, root: root)
-        }
     }
 
     /// The Git button's count and value follow the status every pass, without
@@ -115,8 +111,6 @@ extension WorkspaceDetailViewController {
     private func installBarItems(_ bars: BarState, palette: ThemePalette) {
         let tint = palette.ui.fg
         let railTint = SessionListBarItems.railTint(palette)
-        sidebarToggle = bars.showsSidebarToggle ? WorkspaceSplitSidebarToggle.makeItem(root: root) : nil
-        let leading: [UIBarButtonItem] = sidebarToggle.map { [$0] } ?? []
         var trailing: [UIBarButtonItem] = []
         var bottom: [UIBarButtonItem] = []
         let openConfiguration = UIAction { [weak self] _ in self?.openWorkspaceConfiguration() }
@@ -216,8 +210,6 @@ extension WorkspaceDetailViewController {
             }
         }
 
-        navigationItem.leadingItemGroups = leading.isEmpty
-            ? [] : [UIBarButtonItemGroup(barButtonItems: leading, representativeItem: nil)]
         navigationItem.trailingItemGroups = trailing.isEmpty
             ? [] : [UIBarButtonItemGroup(barButtonItems: trailing, representativeItem: nil)]
         setToolbarItems(bottom, animated: false)

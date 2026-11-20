@@ -968,19 +968,6 @@ enum SessionListBarItems {
         return item
     }
 
-    /// Opens the workspace drawer. The rail shows its title; the bar a symbol.
-    static func sidebarOpen(joinsRail: Bool, tint: UIColor, action: @escaping () -> Void) -> UIBarButtonItem {
-        let item = UIBarButtonItem(
-            title: joinsRail ? String(localized: "Workspaces") : nil,
-            image: UIImage(systemName: "sidebar.left"),
-            primaryAction: UIAction { _ in action() }
-        )
-        item.tintColor = tint
-        item.accessibilityLabel = String(localized: "Show workspaces")
-        item.accessibilityIdentifier = "workspace.sidebar.open"
-        return joinsRail ? railItem(item, priority: .navigation) : horizontalOnly(item)
-    }
-
     /// Folder for the trailing bottom-bar capsule. On the rail, `railTitle`
     /// makes it a labeled symbol so the system shows the folder and keeps the
     /// title for overflow.

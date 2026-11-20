@@ -10,35 +10,21 @@ enum ShellRouteScreens {
     static func make(
         _ route: ShellRoute,
         placement: ShellRoutePlacement,
-        root: AppRootEnvironment,
-        openSidebar: (() -> Void)?
+        root: AppRootEnvironment
     ) -> UIViewController {
-        let showsSidebarToggle = placement == .splitDetailRoot
         switch route {
         case .inbox:
-            return SessionInboxViewController(
-                root: root,
-                onOpenSidebar: openSidebar,
-                showsSidebarToggle: showsSidebarToggle
-            )
+            return SessionInboxViewController(root: root)
         case .sidebar:
             return WorkspaceSidebarViewController(root: root)
         case .workspace(let target):
-            return WorkspaceDetailViewController(
-                root: root,
-                target: target,
-                showsSidebarToggle: showsSidebarToggle
-            )
+            return WorkspaceDetailViewController(root: root, target: target)
         case .session(let target):
-            return ChatRouteViewController(target: target, placement: placement, root: root)
+            return ChatRouteViewController(target: target, root: root)
         case .fileBrowser(let target):
-            return FileBrowserViewController(
-                root: root,
-                target: target,
-                showsSidebarToggle: showsSidebarToggle
-            )
+            return FileBrowserViewController(root: root, target: target)
         case .linkedFile(let target):
-            return WorkspaceLinkedFileViewController(target: target, placement: placement, root: root)
+            return WorkspaceLinkedFileViewController(target: target, root: root)
         case .chatReader(let target):
             return ChatReaderViewController(target: target, root: root)
         case .workspaceConfiguration(let target):
@@ -50,13 +36,9 @@ enum ShellRouteScreens {
             configure(screen, target: target, placement: placement)
             return screen
         case .utility(let target):
-            return utilityScreen(target, placement: placement, root: root)
+            return utilityScreen(target, root: root)
         case .serverDetails(let target):
-            return ServerSettingsRouteViewController(
-                target: target,
-                root: root,
-                showsSidebarToggle: showsSidebarToggle
-            )
+            return ServerSettingsRouteViewController(target: target, root: root)
         case .modelProviders(let target):
             // Keyed by the route, not the visible host: a host-pill switch
             // reloads in place and keeps a live provider sign-in.
@@ -80,139 +62,52 @@ enum ShellRouteScreens {
         }
     }
 
-    private static func utilityScreen(
-        _ target: WorkspaceUtilityNavTarget,
-        placement: ShellRoutePlacement,
-        root: AppRootEnvironment
-    ) -> UIViewController {
-        let showsSidebarToggle = placement == .splitDetailRoot
+    private static func utilityScreen(_ target: WorkspaceUtilityNavTarget, root: AppRootEnvironment) -> UIViewController {
         switch target {
         case .pinned:
-            return PinnedViewController(root: root, showsSidebarToggle: showsSidebarToggle)
+            return PinnedViewController(root: root)
         case .sshTerminal:
-            let screen = SSHTerminalHostListViewController(showsSidebarToggle: showsSidebarToggle)
+            let screen = SSHTerminalHostListViewController()
             screen.traitOverrides.appRootEnvironment = root
             return screen
         case .rex:
-            let screen = RexListViewController(showsSidebarToggle: showsSidebarToggle)
-            screen.traitOverrides.appRootEnvironment = root
-            return screen
+            return PaneSplitScreens.rex(root: root)
         case .schedules:
-            return SchedulesViewController(root: root, showsSidebarToggle: showsSidebarToggle)
+            return SchedulesViewController(root: root)
         case .agents:
-            return AgentListViewController(root: root, showsSidebarToggle: showsSidebarToggle)
+            return AgentListViewController(root: root)
         case .pluginScreen(let entry):
             let title = root.windowConnection?.serverCapabilities?.pluginSidebar?.first { $0.id == entry }?.title
-            return PluginScreenViewController(
-                entry: entry, page: "list", title: title ?? "", root: root,
-                showsHost: true, showsSidebarToggle: showsSidebarToggle
-            )
+            return PluginScreenViewController(entry: entry, page: "list", title: title ?? "", root: root, showsHost: true)
         case .appSettings:
             return SettingsRootViewController(root: root)
         case .serverMetrics:
-            return ServerMetricsViewController(root: root, showsSidebarToggle: showsSidebarToggle)
+            return ServerMetricsViewController(root: root)
         case .extensions:
-            return ServerExtensionsViewController(root: root, showsSidebarToggle: showsSidebarToggle)
+            return ServerExtensionsViewController(root: root)
         case .manageServers:
-            return UsageRouteViewController(root: root, showsSidebarToggle: showsSidebarToggle)
+            return UsageRouteViewController(root: root)
         }
     }
 
-    /// Newer content for the same screen (a refreshed workspace).
-    static func update(
-        _ screen: UIViewController,
-        route: ShellRoute,
-        placement: ShellRoutePlacement,
-        openSidebar: (() -> Void)?
-    ) {
-        if let inbox = screen as? SessionInboxViewController {
-            inbox.onOpenSidebar = openSidebar
-            inbox.showsSidebarToggle = placement == .splitDetailRoot
-            return
-        }
-        if let list = screen as? SSHTerminalHostListViewController {
-            list.showsSidebarToggle = placement == .splitDetailRoot
-            return
-        }
-        if let list = screen as? RexListViewController {
-            list.showsSidebarToggle = placement == .splitDetailRoot
-            return
-        }
-        if let schedules = screen as? SchedulesViewController {
-            schedules.showsSidebarToggle = placement == .splitDetailRoot
-            return
-        }
-        if let pinned = screen as? PinnedViewController {
-            pinned.showsSidebarToggle = placement == .splitDetailRoot
-            return
-        }
-        if let list = screen as? AgentListViewController {
-            list.showsSidebarToggle = placement == .splitDetailRoot
-            return
-        }
-        if let metrics = screen as? ServerMetricsViewController {
-            metrics.showsSidebarToggle = placement == .splitDetailRoot
-            return
-        }
-        if let list = screen as? ServerExtensionsViewController {
-            list.showsSidebarToggle = placement == .splitDetailRoot
-            return
-        }
-        if let page = screen as? PluginScreenViewController {
-            page.showsSidebarToggle = placement == .splitDetailRoot
-            return
-        }
-        if let chatRoute = screen as? ChatRouteViewController {
-            chatRoute.placement = placement
-            return
-        }
-        if let serverSettings = screen as? ServerSettingsRouteViewController {
-            serverSettings.showsSidebarToggle = placement == .splitDetailRoot
-            return
-        }
-        if let usage = screen as? UsageRouteViewController {
-            usage.showsSidebarToggle = placement == .splitDetailRoot
-            return
-        }
-        if let files = screen as? FileBrowserViewController {
-            files.showsSidebarToggle = placement == .splitDetailRoot
-            return
-        }
-        if let linkedFile = screen as? WorkspaceLinkedFileViewController {
-            linkedFile.placement = placement
-            return
-        }
-        // The sidebar reads its own state.
-        if screen is WorkspaceSidebarViewController { return }
-        // A reader's payload and lock are its own state.
-        if screen is ChatReaderViewController { return }
-        // An Extension's detail and Model Providers read their own state.
-        if screen is ServerExtensionDetailViewController || screen is ModelProvidersViewController { return }
-        if let detail = screen as? WorkspaceDetailViewController {
-            if case .workspace(let target) = route {
-                detail.update(workspace: target.workspace)
-            }
-            detail.showsSidebarToggle = placement == .splitDetailRoot
-            return
-        }
-        if let settings = screen as? WorkspaceSettingsViewController {
-            if case .workspaceConfiguration(let target) = route {
-                configure(settings, target: target, placement: placement)
-            }
-            return
+    /// Newer content for the same screen (a refreshed workspace). The main
+    /// pane's sidebar button is the stack's, not the screen's.
+    static func update(_ screen: UIViewController, route: ShellRoute, placement: ShellRoutePlacement) {
+        if let detail = screen as? WorkspaceDetailViewController, case .workspace(let target) = route {
+            detail.update(workspace: target.workspace)
+        } else if let settings = screen as? WorkspaceSettingsViewController, case .workspaceConfiguration(let target) = route {
+            configure(settings, target: target, placement: placement)
         }
     }
 
-    /// As the split detail root, Workspace Settings carries the sidebar toggle
-    /// and a Done that returns the column to the workspace's sessions.
+    /// As the split detail root, Workspace Settings carries a Done that
+    /// returns the column to the workspace's sessions.
     private static func configure(
         _ screen: WorkspaceSettingsViewController,
         target: WorkspaceNavTarget,
         placement: ShellRoutePlacement
     ) {
-        let isSplitDetailRoot = placement == .splitDetailRoot
-        screen.showsSidebarToggle = isSplitDetailRoot
-        screen.onDone = isSplitDetailRoot ? { [navigation = screen.root.navigation] in
+        screen.onDone = placement == .splitDetailRoot ? { [navigation = screen.root.navigation] in
             navigation.completeWorkspaceConfiguration(target)
         } : nil
     }

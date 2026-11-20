@@ -20,9 +20,6 @@ import UIKit
 @MainActor
 final class ChatBarItems {
     weak var chat: ChatViewController?
-    /// Leading items the screen around the chat adds first (the split detail
-    /// root's sidebar toggle, `ChatRouteViewController`).
-    var leadingPrefix: [UIBarButtonItem] = []
 
     /// A per-screen state change (a panel opened, a value the bar reads) and a
     /// menu action now build their menus and stay on the same instance. Rail
@@ -211,13 +208,11 @@ final class ChatBarItems {
             for item in rail { joinsVerticalRail(item) }
             // Trailing items run from the trailing edge in; the rail reads
             // them in declaration order from the top.
-            setItems(left: leadingPrefix, right: rail.reversed(), on: navigationItem)
+            setItems(back: nil, right: rail.reversed(), on: navigationItem)
         } else {
             backButton.isHidden = !usesCustomBack
             applyTrailingGroup(drawn: drawn)
-            var leading = leadingPrefix
-            if usesCustomBack { leading.append(leadingGroup) }
-            setItems(left: leading, right: [trailingGroup], on: navigationItem)
+            setItems(back: usesCustomBack ? leadingGroup : nil, right: [trailingGroup], on: navigationItem)
         }
 
         titleControl.onTap = { [weak chat] in chat?.presentRenameAlert() }
@@ -257,10 +252,10 @@ final class ChatBarItems {
         )
     }
 
-    /// The glass circles before the title: the sidebar toggle the screen
-    /// around the chat adds, and Back.
+    /// The glass circles before the title: Back, and the main pane's sidebar
+    /// button (`MainPaneSidebarItem`).
     private func leadingItemCount(of chat: ChatViewController) -> Int {
-        leadingPrefix.count + (chat.usesCustomChatBackButton ? 1 : 0)
+        (chat.usesCustomChatBackButton ? 1 : 0) + (chat.screen.navigationItem.mainPaneSidebarItem == nil ? 0 : 1)
     }
 
     /// What the bar keeps besides its buttons: the side margins, each leading
@@ -540,10 +535,8 @@ final class ChatBarItems {
         return stack
     }
 
-    private func setItems(left: [UIBarButtonItem], right: [UIBarButtonItem], on navigationItem: UINavigationItem) {
-        if navigationItem.leftBarButtonItems?.elementsEqual(left, by: ===) != true {
-            navigationItem.leftBarButtonItems = left
-        }
+    private func setItems(back: UIBarButtonItem?, right: [UIBarButtonItem], on navigationItem: UINavigationItem) {
+        navigationItem.setLeadingItems([], back: back)
         if navigationItem.rightBarButtonItems?.elementsEqual(right, by: ===) != true {
             navigationItem.rightBarButtonItems = right
         }

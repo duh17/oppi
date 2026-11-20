@@ -24,9 +24,6 @@ final class PluginScreenViewController: ListScreenController<String, String> {
     let page: String
     /// The sidebar's root page of the entry: the host row, and the window's server.
     let showsHost: Bool
-    var showsSidebarToggle: Bool {
-        didSet { setNeedsUpdateProperties() }
-    }
 
     private let root: AppRootEnvironment
     private let fallbackTitle: String
@@ -42,7 +39,6 @@ final class PluginScreenViewController: ListScreenController<String, String> {
     private var pending: Set<String> = [] { didSet { setNeedsUpdateProperties() } }
     /// The last failed action's words, by the section of the row that asked.
     private var failures: [String: String] = [:] { didSet { setNeedsUpdateProperties() } }
-    private var sidebarToggle: UIBarButtonItem?
     private var barButtons: [String: UIBarButtonItem] = [:]
     /// The bar's search, once the page asks for one; the query filters item rows.
     private var search: ScreenSearchController?
@@ -58,7 +54,7 @@ final class PluginScreenViewController: ListScreenController<String, String> {
 
     init(
         entry: String, scope: String = "server", page: String, title: String, root: AppRootEnvironment,
-        showsHost: Bool = false, showsSidebarToggle: Bool = false
+        showsHost: Bool = false
     ) {
         self.entry = entry
         self.scope = scope
@@ -66,7 +62,6 @@ final class PluginScreenViewController: ListScreenController<String, String> {
         self.showsHost = showsHost
         self.root = root
         self.fallbackTitle = title
-        self.showsSidebarToggle = showsSidebarToggle
         super.init(
             title: title, listIdentifier: "screen.\(entry).\(page).list",
             headers: true, footers: true, endsAtKeyboard: true, dismissesKeyboardOnDrag: true
@@ -276,7 +271,7 @@ final class PluginScreenViewController: ListScreenController<String, String> {
         }
         let items = (content?.bar ?? []).reversed().map(barButton)
         let leading = presentingViewController != nil && navigationController?.viewControllers.first === self
-            ? [closeButton()] : sidebarItems()
+            ? [closeButton()] : []
         ListScreen.setBarItems(trailing: items, leading: leading, on: navigationItem)
     }
 
@@ -304,14 +299,6 @@ final class PluginScreenViewController: ListScreenController<String, String> {
         })
         barButtons["\u{1}close"] = close
         return close
-    }
-
-    private func sidebarItems() -> [UIBarButtonItem] {
-        guard showsSidebarToggle else { return [] }
-        let toggle = sidebarToggle ?? WorkspaceSplitSidebarToggle.makeItem(root: root)
-        sidebarToggle = toggle
-        WorkspaceSplitSidebarToggle.sync(toggle, root: root)
-        return [toggle]
     }
 
     /// Whether every field the submit requires, among the shown sections, holds text.

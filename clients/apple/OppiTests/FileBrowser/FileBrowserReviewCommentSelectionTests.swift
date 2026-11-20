@@ -394,7 +394,6 @@ struct FileBrowserReviewCommentSelectionTests {
                     fileName: FileBrowserTextMountURLProtocol.fileName
                 )
             ),
-            placement: .pushed,
             root: root
         )
     }

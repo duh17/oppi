@@ -1977,8 +1977,7 @@ struct WorkspaceFileEditEntryTests {
                 scope: .workspace(workspaceId: workspaceId, worktreeId: nil),
                 path: "",
                 columnSelectedFile: FileBrowserSelection(path: "notes.md", name: "notes.md", size: nil)
-            ),
-            showsSidebarToggle: false
+            )
         )
         let host = PaneHostController(primary: UINavigationController(rootViewController: files))
         let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))

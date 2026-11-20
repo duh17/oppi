@@ -70,7 +70,7 @@ enum ShellRoutePlacement: Equatable {
     case compactRoot
     /// The split shell's primary column.
     case splitSidebar
-    /// The split detail column's root, which carries the sidebar toggle.
+    /// The split detail column's root.
     case splitDetailRoot
     /// Pushed onto either stack.
     case pushed
@@ -101,8 +101,12 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
     var onRoutesPopped: ((Int) -> Void)?
     /// What `finish()` on the root screen does. Nil: the root stays.
     var onCloseRoot: (() -> Void)?
-    /// Opens the workspace drawer from the compact root.
-    var openSidebar: (() -> Void)?
+    /// The sidebar the main pane's sidebar button reaches (`MainPaneSidebarItem`),
+    /// set by the layout holding this stack. Nil for the split view's own
+    /// sidebar stack, which has no button.
+    var sidebar: ShellSidebar? {
+        didSet { setNeedsUpdateProperties() }
+    }
 
     /// The routes the stack last showed, and the ones it should show.
     private var shownRoutes: [ShellRoute] = []
@@ -128,11 +132,55 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
     /// The screen in front chooses the status bar, as in a stack with no bar.
     override var childForStatusBarStyle: UIViewController? { topViewController }
 
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        // The window's width decides how deep the sidebar button goes.
+        registerForTraitChanges([UITraitHorizontalSizeClass.self, UITraitVerticalSizeClass.self]) { (stack: Self, _: UITraitCollection) in
+            stack.setNeedsUpdateProperties()
+        }
+    }
+
     override func updateProperties() {
         super.updateProperties()
         // Observation tracking re-runs this when the theme store changes.
         overrideUserInterfaceStyle = root.themeStore.userInterfaceStyle
         view.backgroundColor = root.themeStore.backgroundColor
+        for (index, screen) in viewControllers.enumerated() {
+            applySidebarButton(to: screen, at: index)
+        }
+    }
+
+    // MARK: Sidebar button
+
+    /// Whether the screen at `index` shows the sidebar button: every screen in
+    /// a wide window, the root alone in a compact one. It follows the window,
+    /// not a trait a pane overrides.
+    private func showsSidebarButton(at index: Int) -> Bool {
+        sidebar != nil && (index == 0 || AdaptiveWidth.isWide(view.window?.traitCollection ?? traitCollection))
+    }
+
+    /// Whether the screen in front shows the sidebar button: ⌃⌘S works where it does.
+    var showsSidebarButtonOnTop: Bool {
+        showsSidebarButton(at: viewControllers.count - 1)
+    }
+
+    private func applySidebarButton(to screen: UIViewController, at index: Int) {
+        let navigationItem = screen.navigationItem
+        guard let sidebar, showsSidebarButton(at: index) else {
+            guard navigationItem.mainPaneSidebarItem != nil else { return }
+            navigationItem.setMainPaneSidebarItem(nil)
+            screen.setNeedsUpdatePropertiesInTree()
+            return
+        }
+        let existing = navigationItem.mainPaneSidebarItem
+        let item = existing ?? MainPaneSidebarItem { [weak self] in self?.sidebar?.toggle() }
+        let palette = root.themeStore.activeThemeID.palette
+        let tint = SystemVerticalBar.traitIsActive(traitCollection) ? SessionListBarItems.railTint(palette) : palette.ui.fg
+        let changed = item.apply(sidebar, tint: tint)
+        navigationItem.setMainPaneSidebarItem(item)
+        if existing == nil || changed {
+            screen.setNeedsUpdatePropertiesInTree()
+        }
     }
 
     /// Shows `routes`, the first as the root at `rootPlacement` (the
@@ -228,12 +276,7 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
                 if index == routes.count - 1 { stack.append(contentsOf: moved.pages) }
                 continue
             }
-            let screen = ShellRouteScreens.make(
-                routes[index],
-                placement: placement(at: index),
-                root: root,
-                openSidebar: openSidebar
-            )
+            let screen = ShellRouteScreens.make(routes[index], placement: placement(at: index), root: root)
             // A chevron alone, so a pushed screen's title and items keep their room.
             screen.navigationItem.backButtonDisplayMode = .minimal
             routeByScreen[ObjectIdentifier(screen)] = routes[index]
@@ -248,7 +291,7 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
     /// Gives a kept screen the route and placement it has now.
     private func reuse(_ screen: UIViewController, as index: Int) {
         routeByScreen[ObjectIdentifier(screen)] = routes[index]
-        ShellRouteScreens.update(screen, route: routes[index], placement: placement(at: index), openSidebar: openSidebar)
+        ShellRouteScreens.update(screen, route: routes[index], placement: placement(at: index))
         screen.navigationItem.backButtonDisplayMode = .minimal
     }
 
@@ -285,6 +328,8 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
             }
         }
         applyNavigationBar(forIncoming: viewController, animated: animated)
+        // In the bar the screen comes in with, not a pass later.
+        applySidebarButton(to: viewController, at: viewControllers.firstIndex(of: viewController) ?? viewControllers.count)
         PaneHostController.containing(self)?.routedLeafWillShowScreen()
     }
 

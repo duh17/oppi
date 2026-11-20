@@ -176,13 +176,17 @@ class SSHTerminalPillButton: UIButton {
     }
 }
 
-/// Back, bottom leading. It carries the attention dot while Herdr, Rex, or a
-/// blocked program wants you.
+/// Back, bottom leading, then the main pane's sidebar button while the
+/// terminal's stack shows one (`MainPaneSidebarItem`). Back carries the
+/// attention dot while Herdr, Rex, or a blocked program wants you.
 final class SSHTerminalBackPill: UIView {
     let pill = SSHTerminalGlassPill()
     /// A circle: the glass is as wide as it is tall.
     let button = SSHTerminalPillButton(
         systemName: "chevron.backward", label: "Back", identifier: "sshTerminal.back", width: SSHTerminalGlassPill.height
+    )
+    let sidebarButton = SSHTerminalPillButton(
+        systemName: "sidebar.leading", label: "Show Sidebar", identifier: "", width: SSHTerminalGlassPill.height
     )
     private let attentionDot = UIView()
 
@@ -191,6 +195,8 @@ final class SSHTerminalBackPill: UIView {
         translatesAutoresizingMaskIntoConstraints = false
         addSubview(pill)
         pill.stack.addArrangedSubview(button)
+        pill.stack.addArrangedSubview(sidebarButton)
+        sidebarButton.isHidden = true
 
         attentionDot.translatesAutoresizingMaskIntoConstraints = false
         attentionDot.isUserInteractionEnabled = false
@@ -207,7 +213,7 @@ final class SSHTerminalBackPill: UIView {
             pill.trailingAnchor.constraint(equalTo: trailingAnchor),
             attentionDot.widthAnchor.constraint(equalToConstant: 10),
             attentionDot.heightAnchor.constraint(equalToConstant: 10),
-            attentionDot.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: 1),
+            attentionDot.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: 1),
             attentionDot.topAnchor.constraint(equalTo: pill.topAnchor, constant: -1),
         ])
     }
@@ -229,8 +235,13 @@ final class SSHTerminalBackPill: UIView {
     }
 
     /// `foreground` is the terminal's own text color when its theme sets one.
-    func apply(themeID: ThemeID, attentionPending: Bool, foreground: UIColor? = nil) {
+    func apply(themeID: ThemeID, attentionPending: Bool, sidebar: MainPaneSidebarItem?, foreground: UIColor? = nil) {
         button.apply(tint: foreground ?? themeID.palette.ui.fg)
+        sidebarButton.apply(tint: foreground ?? themeID.palette.ui.fg)
+        sidebarButton.isHidden = sidebar == nil
+        sidebarButton.accessibilityIdentifier = sidebar?.accessibilityIdentifier
+        sidebarButton.accessibilityLabel = sidebar?.title
+        sidebarButton.largeContentTitle = sidebar?.title
         attentionDot.backgroundColor = themeID.palette.ui.orange
         attentionDot.layer.borderColor = themeID.palette.ui.bg.cgColor
         attentionDot.isHidden = !attentionPending

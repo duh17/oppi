@@ -29,10 +29,6 @@ final class SchedulesViewController: UIViewController {
     /// The mode chosen this app session.
     private static var chosenMode = Mode.day
 
-    var showsSidebarToggle: Bool {
-        didSet { setNeedsUpdateProperties() }
-    }
-
     private let root: AppRootEnvironment
     let list: ScheduleListViewController
     private let composer: GuidedControlComposerController
@@ -43,7 +39,6 @@ final class SchedulesViewController: UIViewController {
     private let todayItem = UIBarButtonItem()
     private let previousItem = UIBarButtonItem()
     private let nextItem = UIBarButtonItem()
-    private var sidebarToggle: UIBarButtonItem?
     /// The calendar views for the connection they were made for; replaced with the connection.
     private var calendar: CalendarViews?
     private var listError: String?
@@ -59,9 +54,8 @@ final class SchedulesViewController: UIViewController {
         let month: ScheduleCalendarMonthViewController
     }
 
-    init(root: AppRootEnvironment, showsSidebarToggle: Bool = false) {
+    init(root: AppRootEnvironment) {
         self.root = root
-        self.showsSidebarToggle = showsSidebarToggle
         list = ScheduleListViewController(root: root, agents: agents)
         composer = GuidedControlComposerController(
             configuration: GuidedControlComposerConfiguration(
@@ -190,7 +184,7 @@ final class SchedulesViewController: UIViewController {
         let calendarItems = wide ? [nextItem, previousItem, todayItem] : [todayItem]
         ListScreen.setBarItems(
             trailing: mode == .list ? [list.filterItem] : calendarItems,
-            leading: sidebarItems(),
+            leading: [],
             on: navigationItem
         )
         previousItem.accessibilityLabel = Self.stepLabel(mode, forward: false)
@@ -311,15 +305,6 @@ final class SchedulesViewController: UIViewController {
         child.willMove(toParent: nil)
         child.view.removeFromSuperview()
         child.removeFromParent()
-    }
-
-    /// The sidebar toggle at the split detail root.
-    private func sidebarItems() -> [UIBarButtonItem] {
-        guard showsSidebarToggle else { return [] }
-        let toggle = sidebarToggle ?? WorkspaceSplitSidebarToggle.makeItem(root: root)
-        sidebarToggle = toggle
-        WorkspaceSplitSidebarToggle.sync(toggle, root: root)
-        return [toggle]
     }
 
     /// The pushed detail reports changes back: the list takes the new summary and the

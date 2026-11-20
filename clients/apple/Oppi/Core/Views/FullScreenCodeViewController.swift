@@ -93,6 +93,14 @@ final class FullScreenCodeViewController: UIViewController {
         return bar
     }()
     private var lastNavigationPresentation: NavigationPresentation?
+    /// Back, embedded in a pushed screen, or the sheet's and pane's close.
+    private var dismissItem: UIBarButtonItem?
+    /// The main pane's sidebar button, drawn after Back in this reader's own
+    /// bar while it reads in the main pane (`MainPaneSidebarItem`).
+    private lazy var sidebarItem = UIBarButtonItem(
+        image: UIImage(systemName: "sidebar.leading"),
+        primaryAction: UIAction { [weak self] _ in self?.mainPaneSidebarItem?.toggle() }
+    )
     private var showSource = false
     private var largeFileNote: LargeFileNoteView?
     private var completeRawText: String?
@@ -422,7 +430,7 @@ final class FullScreenCodeViewController: UIViewController {
             dismissMode = nil
         }
         if let dismissMode {
-            vc.navigationItem.leftBarButtonItem = FullScreenViewerNavigationChrome.makeDismissButton(
+            dismissItem = FullScreenViewerNavigationChrome.makeDismissButton(
                 mode: dismissMode,
                 target: self,
                 action: #selector(doneTapped),
@@ -430,6 +438,7 @@ final class FullScreenCodeViewController: UIViewController {
                 // One id for the leave control in every presentation mode.
                 accessibilityIdentifier: "fullScreen.code.close"
             )
+            vc.navigationItem.leftBarButtonItem = dismissItem
         }
 
         contentHostController = vc
@@ -939,9 +948,26 @@ final class FullScreenCodeViewController: UIViewController {
     /// it changes, which also refreshes the rail item.
     override func updateProperties() {
         super.updateProperties()
+        if case .embedded = presentationMode, let host = contentHostController {
+            showMainPaneSidebar(on: host)
+        }
         guard reviewCommentStash != nil, isViewLoaded, let host = contentHostController else { return }
         configureFloatingStashButton(on: host, palette: bodyThemeID.palette)
         installRightBarItems(on: host, palette: bodyThemeID.palette)
+    }
+
+    /// The bar is this reader's, so the stack's sidebar button is drawn again
+    /// here; the stack asks for this pass when it changes the button.
+    private func showMainPaneSidebar(on host: UIViewController) {
+        let sidebar = mainPaneSidebarItem
+        sidebarItem.title = sidebar?.title
+        sidebarItem.accessibilityIdentifier = sidebar?.accessibilityIdentifier
+        sidebarItem.tintColor = dismissItem?.tintColor
+        let leading = [dismissItem, sidebar.map { _ in sidebarItem }].compactMap(\.self)
+        let item = host.navigationItem
+        guard !item.leadingItemGroups.flatMap(\.barButtonItems).elementsEqual(leading, by: ===) else { return }
+        // Each in its own glass, as in the stack's bar.
+        item.leadingItemGroups = leading.map { UIBarButtonItemGroup(barButtonItems: [$0], representativeItem: nil) }
     }
 
     private func configureFloatingStashButton(

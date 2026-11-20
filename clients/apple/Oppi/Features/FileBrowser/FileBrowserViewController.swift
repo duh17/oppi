@@ -66,11 +66,6 @@ final class FileBrowserViewportRestore {
 /// keyed by entry path; state rows have fixed ids.
 @MainActor
 final class FileBrowserViewController: UIViewController, UICollectionViewDelegate, UITextFieldDelegate {
-    /// The split detail root carries the sidebar toggle.
-    var showsSidebarToggle: Bool {
-        didSet { setNeedsUpdateProperties() }
-    }
-
     /// The chat panel applies this to its bar.
     var onEmbeddedChromeChange: ((FileBrowserEmbeddedChrome) -> Void)?
 
@@ -146,8 +141,16 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     private var compactSearchHeader: String?
     private var snapshotScope: String?
     private var lastThemeID: ThemeID?
-    private var appliedBars: BarState?
-    private var sidebarToggle: UIBarButtonItem?
+    /// Up a folder, while the column's content shows in place of the stack's Back.
+    private lazy var columnBackItem: UIBarButtonItem = {
+        let back = UIBarButtonItem(
+            title: String(localized: "Back"),
+            image: UIImage(systemName: "chevron.left"),
+            primaryAction: UIAction { [weak self] _ in self?.performColumnBack() }
+        )
+        back.accessibilityIdentifier = "fileBrowser.columnBack"
+        return SessionListBarItems.horizontalOnly(back)
+    }()
     private lazy var viewOptionsItem = Self.makeViewOptionsItem { [weak self] in self?.pinsSection?.viewOptionsElements() ?? [] }
     /// The Pinned section of a shell route's root (`FileBrowserPinsSection`).
     private(set) lazy var pinsSection: FileBrowserPinsSection? = isShellRoute ? serverId.map { serverId in
@@ -167,11 +170,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     private var changeMarks = FileBrowserChangeMarks.none
 
     /// The `.fileBrowser` shell route.
-    init(
-        root: AppRootEnvironment,
-        target: FileBrowserNavTarget,
-        showsSidebarToggle: Bool
-    ) {
+    init(root: AppRootEnvironment, target: FileBrowserNavTarget) {
         self.root = root
         serverId = target.serverId
         scope = target.scope
@@ -180,7 +179,6 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         isShellRoute = true
         restoredDirectory = target.columnDirectoryPath
         restoredSelection = target.columnSelectedFile
-        self.showsSidebarToggle = showsSidebarToggle
         state = ContentState(treeDirectoryPath: target.columnDirectoryPath, selectedFile: target.columnSelectedFile)
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewFlowLayout())
         super.init(nibName: nil, bundle: nil)
@@ -207,7 +205,6 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         isShellRoute = false
         restoredDirectory = nil
         restoredSelection = nil
-        showsSidebarToggle = false
         state = ContentState()
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewFlowLayout())
         super.init(nibName: nil, bundle: nil)
@@ -343,11 +340,11 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         }
 
         let isLocked = lockTarget.map { ScopedLockService.shared.isLocked($0) } ?? false
-        // The sidebar toggle stays on the lock cover and "Connecting"; the
-        // column Back belongs to the content.
+        // The column Back belongs to the content, not the lock cover or
+        // "Connecting".
         if isShellRoute {
             let showsContent = !isLocked && services != nil
-            syncLeadingItems(showsColumnBack: showsContent && replacesStackBackButton)
+            navigationItem.setLeadingItems([], back: showsContent && replacesStackBackButton ? columnBackItem : nil)
         }
         if isLocked {
             show(.locked)
@@ -901,7 +898,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             navigation.pushWorkspaceFileBrowser(target)
             return
         }
-        let page = FileBrowserViewController(root: root, target: target, showsSidebarToggle: false)
+        let page = FileBrowserViewController(root: root, target: target)
         page.navigationItem.backButtonDisplayMode = .minimal
         Router.push(page, from: self)
     }
@@ -2045,39 +2042,6 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         columnSearch.setScopes(isSearching ? scopeTitles : nil, selected: effectiveSearchScope.rawValue)
     }
 
-    /// The split detail root's sidebar toggle in every phase, then the
-    /// column Back (up a folder) while the content shows.
-    private func syncLeadingItems(showsColumnBack: Bool) {
-        let bars = BarState(
-            showsSidebarToggle: showsSidebarToggle,
-            showsColumnBack: showsColumnBack,
-            themeID: root.themeStore.activeThemeID
-        )
-        if bars != appliedBars {
-            appliedBars = bars
-            installBarItems(bars)
-        }
-        if let sidebarToggle {
-            WorkspaceSplitSidebarToggle.sync(sidebarToggle, root: root)
-        }
-    }
-
-    private func installBarItems(_ bars: BarState) {
-        sidebarToggle = bars.showsSidebarToggle ? WorkspaceSplitSidebarToggle.makeItem(root: root) : nil
-        var leading: [UIBarButtonItem] = sidebarToggle.map { [$0] } ?? []
-        if bars.showsColumnBack {
-            let back = UIBarButtonItem(
-                title: String(localized: "Back"),
-                image: UIImage(systemName: "chevron.left"),
-                primaryAction: UIAction { [weak self] _ in self?.performColumnBack() }
-            )
-            back.accessibilityIdentifier = "fileBrowser.columnBack"
-            leading.append(SessionListBarItems.horizontalOnly(back))
-        }
-        navigationItem.leadingItemGroups = leading.isEmpty
-            ? [] : [UIBarButtonItemGroup(barButtonItems: leading, representativeItem: nil)]
-    }
-
     private func installSearch() {
         guard !searchInstalled else { return }
         searchInstalled = true
@@ -2270,11 +2234,6 @@ private extension FileBrowserViewController {
         let context: FileBrowserNavigationContext?
     }
 
-    struct BarState: Equatable {
-        let showsSidebarToggle: Bool
-        let showsColumnBack: Bool
-        let themeID: ThemeID
-    }
 }
 
 private extension FileBrowserViewController.ContentState {

@@ -22,16 +22,10 @@ enum WorkspaceLinkedFileConnectionState {
 /// file. Unlocked, it makes the file's server the active one ("Connecting…",
 /// or "Unable to Load"), then shows the file viewer with the source chat's
 /// review-comment scope and Add to Chat destination. The viewer's bar items
-/// show in this screen's bar; a split detail root adds the sidebar toggle.
+/// show in this screen's bar.
 @MainActor
 final class WorkspaceLinkedFileViewController: UIViewController {
     let target: WorkspaceLinkedFileNavTarget
-    var placement: ShellRoutePlacement {
-        didSet {
-            guard placement != oldValue else { return }
-            setNeedsUpdateProperties()
-        }
-    }
 
     private enum Shown: Equatable {
         case locked
@@ -59,11 +53,9 @@ final class WorkspaceLinkedFileViewController: UIViewController {
     /// still the composer's destination.
     private let addToChatDestination: ComposerCanvasDestination?
     private var canvasAnchor: ComposerCanvasDestinationAnchorController?
-    private var sidebarToggle: UIBarButtonItem?
 
-    init(target: WorkspaceLinkedFileNavTarget, placement: ShellRoutePlacement, root: AppRootEnvironment) {
+    init(target: WorkspaceLinkedFileNavTarget, root: AppRootEnvironment) {
         self.target = target
-        self.placement = placement
         self.root = root
         addToChatDestination = Self.capturedAddToChatDestination(
             sourceSessionId: target.sourceSessionId,
@@ -313,17 +305,6 @@ final class WorkspaceLinkedFileViewController: UIViewController {
     // MARK: Bar
 
     private func updateBar() {
-        if placement == .splitDetailRoot {
-            let toggle = sidebarToggle ?? WorkspaceSplitSidebarToggle.makeItem(root: root)
-            sidebarToggle = toggle
-            WorkspaceSplitSidebarToggle.sync(toggle, root: root)
-            if navigationItem.leftBarButtonItems?.first !== toggle {
-                navigationItem.leftBarButtonItems = [toggle]
-            }
-        } else if sidebarToggle != nil {
-            sidebarToggle = nil
-            navigationItem.leftBarButtonItems = nil
-        }
         if let viewer {
             viewer.bar.apply(to: navigationItem)
         } else {

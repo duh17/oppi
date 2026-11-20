@@ -701,7 +701,7 @@ struct PaneTreeHostTests {
             serverId: "s", workspaceId: "", path: "/Users/alex/oppi/server/src/session-broadcast.ts",
             lineAnchor: SourceLineAnchor(startLine: 194, endLine: 194)
         )
-        return (target, { WorkspaceLinkedFileViewController(target: target, placement: .pushed, root: host.root) })
+        return (target, { WorkspaceLinkedFileViewController(target: target, root: host.root) })
     }
 
     /// A file a terminal link names opens where a tapped chat link's does:

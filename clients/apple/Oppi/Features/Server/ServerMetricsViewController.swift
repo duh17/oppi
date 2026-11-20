@@ -7,10 +7,6 @@ import UIKit
 /// the page follows it and reloads.
 @MainActor
 final class ServerMetricsViewController: UIViewController {
-    var showsSidebarToggle: Bool {
-        didSet { setNeedsUpdateProperties() }
-    }
-
     private let root: AppRootEnvironment
     private var themeID: ThemeID
     /// The host the page shows; nil while no server is paired.
@@ -31,7 +27,6 @@ final class ServerMetricsViewController: UIViewController {
     private var refreshTimer: Timer?
     private var switcher: SessionListServerSwitcher?
     private var switcherServerId: String?
-    private var sidebarToggle: UIBarButtonItem?
     /// A fixed snapshot that replaces the server load (screenshot preview only).
     private let fixture: ServerMetricsSnapshot?
 
@@ -55,9 +50,8 @@ final class ServerMetricsViewController: UIViewController {
         [processHeader, processCPUCard, processMemoryCard, activityCard, footerLabel]
     }
 
-    init(root: AppRootEnvironment, showsSidebarToggle: Bool = false) {
+    init(root: AppRootEnvironment) {
         self.root = root
-        self.showsSidebarToggle = showsSidebarToggle
         themeID = root.themeStore.activeThemeID
         fixture = nil
         super.init(nibName: nil, bundle: nil)
@@ -68,7 +62,6 @@ final class ServerMetricsViewController: UIViewController {
     /// Screenshot harness entry: a fixed snapshot, no server load.
     init(root: AppRootEnvironment, fixture: ServerMetricsSnapshot) {
         self.root = root
-        showsSidebarToggle = false
         themeID = root.themeStore.activeThemeID
         self.fixture = fixture
         super.init(nibName: nil, bundle: nil)
@@ -208,14 +201,7 @@ final class ServerMetricsViewController: UIViewController {
             switcher = nil
             switcherServerId = nil
         }
-        var leading: [UIBarButtonItem] = []
-        if showsSidebarToggle {
-            let toggle = sidebarToggle ?? WorkspaceSplitSidebarToggle.makeItem(root: root)
-            sidebarToggle = toggle
-            WorkspaceSplitSidebarToggle.sync(toggle, root: root)
-            leading = [toggle]
-        }
-        ListScreen.setBarItems(trailing: trailing, leading: leading, on: navigationItem)
+        ListScreen.setBarItems(trailing: trailing, leading: [], on: navigationItem)
     }
 
     private func cachedEnabled(_ serverId: String) -> Bool? {

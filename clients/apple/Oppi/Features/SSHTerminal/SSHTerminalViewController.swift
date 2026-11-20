@@ -522,6 +522,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         topStack.translatesAutoresizingMaskIntoConstraints = false
 
         backPill.button.addAction(UIAction { [weak self] _ in self?.goBack() }, for: .touchUpInside)
+        backPill.sidebarButton.addAction(UIAction { [weak self] _ in self?.mainPaneSidebarItem?.toggle() }, for: .touchUpInside)
         barPill.buttons.perform = { [weak self] slot in self?.perform(slot) }
         keyboardBarButtons.perform = { [weak self] slot in self?.perform(slot) }
         barPill.deliverPaste = { [weak self] items in self?.gridView?.paste(itemProviders: items) }
@@ -1138,7 +1139,10 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             themeID: themeID, reduceMotion: reduceMotion
         )
         if rexPanesShown, headline != nil || progress != nil { attention.glyphFrame.rect = rexPill.button.glyphFrame.rect }
-        backPill.apply(themeID: themeID, attentionPending: attentionPending(), foreground: lastTerminalColors?.foreground.map(UIColor.init))
+        backPill.apply(
+            themeID: themeID, attentionPending: attentionPending(), sidebar: mainPaneSidebarItem,
+            foreground: lastTerminalColors?.foreground.map(UIColor.init)
+        )
         updateKeyboardBar(
             offer: offer, themeID: themeID, tint: tint, background: background, openTerminals: openTerminals,
             showsStatus: showsStatus, rexStatus: rexPillStatus(headline: headline, progress: progress)
@@ -2036,7 +2040,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     ) {
         let target = WorkspaceLinkedFileNavTarget.hostFile(serverId: serverId, workspaceId: "", path: path, lineAnchor: line)
         show(PaneOpenContent(file: target), kind: .file, placement: placement) {
-            WorkspaceLinkedFileViewController(target: target, placement: .pushed, root: root)
+            WorkspaceLinkedFileViewController(target: target, root: root)
         }
     }
 
@@ -2052,7 +2056,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         let target = FileBrowserNavTarget.hostHome(serverId: serverId, path: relative)
         show(PaneOpenContent(folder: target), kind: .folder, placement: placement) { [weak self] in
             self?.leaveKeyboardForSheet()
-            return FileBrowserViewController(root: root, target: target, showsSidebarToggle: false)
+            return FileBrowserViewController(root: root, target: target)
         }
     }
 

@@ -290,7 +290,8 @@ final class WorkspaceSplitController: UISplitViewController, UISplitViewControll
         super.init(style: .doubleColumn)
         delegate = self
         preferredSplitBehavior = .tile
-        // The detail root carries its own toggle (`workspace.split.sidebarToggle`).
+        // The main pane carries its own button (`MainPaneSidebarItem`): the
+        // detail column is the pane host, whose bar is hidden.
         displayModeButtonVisibility = .never
         minimumPrimaryColumnWidth = 320
         preferredPrimaryColumnWidth = 380
@@ -301,7 +302,12 @@ final class WorkspaceSplitController: UISplitViewController, UISplitViewControll
 
     func adopt(_ area: WorkspacePaneArea) {
         self.area = area
-        area.stack.openSidebar = nil
+        let navigation = navigation
+        area.stack.sidebar = ShellSidebar(
+            identifier: "workspace.split.sidebarToggle",
+            isShown: { navigation.splitColumnVisibility != .detailOnly },
+            toggle: { navigation.toggleSplitSidebar() }
+        )
         // As the drawer last drew it, maybe mid-slide.
         area.host.view.isUserInteractionEnabled = true
         area.host.view.layer.cornerRadius = 0
@@ -440,7 +446,12 @@ final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDele
 
     func adopt(_ area: WorkspacePaneArea) {
         self.area = area
-        area.stack.openSidebar = { [weak self] in self?.settle(open: true) }
+        // The drawer covers the button while it is open.
+        area.stack.sidebar = ShellSidebar(
+            identifier: "workspace.sidebar.open",
+            isShown: { false },
+            toggle: { [weak self] in self?.settle(open: true) }
+        )
         let host = area.host
         addChild(host)
         foreground.addSubview(host.view)
@@ -457,7 +468,7 @@ final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDele
         host.willMove(toParent: nil)
         host.view.removeFromSuperview()
         host.removeFromParent()
-        area.stack.openSidebar = nil
+        area.stack.sidebar = nil
         self.area = nil
     }
 
@@ -557,9 +568,11 @@ final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDele
         host?.isUserInteractionEnabled = progress == 0
     }
 
-    /// The drawer opens from the stack's root only (as the edge drag does) and
-    /// closes from anywhere. Toggle Sidebar's availability and action.
-    var canToggleSidebar: Bool { isOpen || stack?.viewControllers.count == 1 }
+    /// The drawer opens wherever the sidebar button shows (every screen on a
+    /// wide window, the root on a compact one) and closes from anywhere. Toggle
+    /// Sidebar's availability and action. The edge drag stays at the root,
+    /// clear of the back swipe.
+    var canToggleSidebar: Bool { isOpen || stack?.showsSidebarButtonOnTop == true }
     var isSidebarOpen: Bool { isOpen }
 
     func toggleSidebar() {

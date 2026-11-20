@@ -15,10 +15,6 @@ import UIKit
 /// `ServerExtensionCatalogPresentationState`.
 @MainActor
 final class ServerExtensionsViewController: ListScreenController<ServerExtensionsViewController.Section, ServerExtensionsViewController.Item> {
-    var showsSidebarToggle: Bool {
-        didSet { setNeedsUpdateProperties() }
-    }
-
     enum Section: Hashable, Sendable {
         case server, notice, reload, state, noPi
         case kind(ServerExtensionSectionKind)
@@ -52,7 +48,6 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
 
     private let root: AppRootEnvironment
     private let search = ScreenSearchController(prompt: "Search extensions")
-    private var sidebarToggle: UIBarButtonItem?
     private lazy var reloadItem: UIBarButtonItem = {
         let item = UIBarButtonItem(
             title: String(localized: "Reload"),
@@ -69,9 +64,8 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
         didSet { setNeedsUpdateProperties() }
     }
 
-    init(root: AppRootEnvironment, showsSidebarToggle: Bool = false) {
+    init(root: AppRootEnvironment) {
         self.root = root
-        self.showsSidebarToggle = showsSidebarToggle
         super.init(title: "Extensions", listIdentifier: "extensions.list", headers: true, footers: true)
         traitOverrides.appRootEnvironment = root
     }
@@ -158,17 +152,8 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
         )
         super.updateProperties()
         reloadItem.isEnabled = state?.canReload == true
-        ListScreen.setBarItems(trailing: [reloadItem], leading: sidebarItems(), on: navigationItem)
+        ListScreen.setBarItems(trailing: [reloadItem], leading: [], on: navigationItem)
         search.setText(searchText)
-    }
-
-    /// The sidebar toggle at the split detail root.
-    private func sidebarItems() -> [UIBarButtonItem] {
-        guard showsSidebarToggle else { return [] }
-        let toggle = sidebarToggle ?? WorkspaceSplitSidebarToggle.makeItem(root: root)
-        sidebarToggle = toggle
-        WorkspaceSplitSidebarToggle.sync(toggle, root: root)
-        return [toggle]
     }
 
     // MARK: - List

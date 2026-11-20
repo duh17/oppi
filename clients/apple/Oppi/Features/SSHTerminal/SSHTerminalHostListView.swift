@@ -12,10 +12,6 @@ import UIKit
 /// and Reset, and its bar.
 final class SSHTerminalHostListViewController:
     ListScreenController<SSHTerminalHostListViewController.Section, SSHTerminalHostListViewController.Item> {
-    var showsSidebarToggle = false {
-        didSet { if isViewLoaded { installBarItems() } }
-    }
-
     /// Where the saved hosts live. Tests pass a store over their own defaults.
     private let profileStore: @Sendable () -> SSHTerminalProfileStore
 
@@ -39,11 +35,7 @@ final class SSHTerminalHostListViewController:
         case reset
     }
 
-    init(
-        showsSidebarToggle: Bool = false,
-        profileStore: @escaping @Sendable () -> SSHTerminalProfileStore = { SSHTerminalProfileStore() }
-    ) {
-        self.showsSidebarToggle = showsSidebarToggle
+    init(profileStore: @escaping @Sendable () -> SSHTerminalProfileStore = { SSHTerminalProfileStore() }) {
         self.profileStore = profileStore
         super.init(title: "Terminal", listIdentifier: "sshTerminal.hostList")
     }
@@ -303,9 +295,6 @@ final class SSHTerminalHostListViewController:
         )
         settings.accessibilityIdentifier = "sshTerminal.settings"
         navigationItem.rightBarButtonItems = [add, settings]
-        if showsSidebarToggle, let root = AppRootEnvironment.near(self) {
-            navigationItem.leftBarButtonItem = WorkspaceSplitSidebarToggle.makeItem(root: root)
-        }
     }
 
     // MARK: - Hosts

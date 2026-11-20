@@ -8,11 +8,10 @@ import UIKit
 /// it offers Add Server.
 @MainActor
 final class UsageRouteViewController: PinnedServerRouteViewController<UsageViewController> {
-    init(root: AppRootEnvironment, showsSidebarToggle: Bool = false) {
+    init(root: AppRootEnvironment) {
         super.init(
             root: root,
             openedServerId: nil,
-            showsSidebarToggle: showsSidebarToggle,
             title: HostSwitcherDestination.usage.title,
             makePage: { UsageViewController(server: $0, root: root) }
         )

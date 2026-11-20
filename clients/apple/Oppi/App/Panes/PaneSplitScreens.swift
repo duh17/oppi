@@ -97,7 +97,7 @@ enum PaneSplitScreens {
             return git
         }
         if case .sessions(nil) = entry.route {
-            return SessionInboxViewController(root: root, onOpenSidebar: nil, showsSidebarToggle: false)
+            return SessionInboxViewController(root: root)
         }
         if let element = PaneEntries.element(for: entry, coordinator: root.coordinator) {
             return screen(for: element, root: root)
@@ -142,7 +142,7 @@ enum PaneSplitScreens {
 
     /// The screen the shell would show for `element`, as a leaf's root.
     static func screen(for element: WorkspaceStackRouteElement, root: AppRootEnvironment) -> UIViewController {
-        ShellRouteScreens.make(ShellRoute(element), placement: .pushed, root: root, openSidebar: nil)
+        ShellRouteScreens.make(ShellRoute(element), placement: .pushed, root: root)
     }
 
     /// The workspace's folder terminal on the saved SSH host that serves its
@@ -157,14 +157,14 @@ enum PaneSplitScreens {
             )
             if let screen = SSHTerminalFolderEntry.screen(for: target) { return screen }
         }
-        let list = SSHTerminalHostListViewController(showsSidebarToggle: false)
+        let list = SSHTerminalHostListViewController()
         if let root { list.traitOverrides.appRootEnvironment = root }
         return list
     }
 
-    /// The Rex screen: Rex reached over Tailscale with no SSH, then the saved
-    /// hosts' Rex over SSH.
-    private static func rex(root: AppRootEnvironment?) -> UIViewController {
+    /// The Rex screen, as a pane or the sidebar's place: Rex reached over
+    /// Tailscale with no SSH, then the saved hosts' Rex over SSH.
+    static func rex(root: AppRootEnvironment?) -> UIViewController {
         #if DEBUG
         let list = _rexListForTesting?() ?? RexListViewController()
         #else

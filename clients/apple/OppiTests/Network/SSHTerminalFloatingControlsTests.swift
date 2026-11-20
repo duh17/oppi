@@ -131,9 +131,9 @@ struct SSHTerminalFloatingPillTests {
         #expect(back.button.accessibilityValue == nil)
 
         let theme = ThemeRuntimeState.currentThemeID()
-        back.apply(themeID: theme, attentionPending: true)
+        back.apply(themeID: theme, attentionPending: true, sidebar: nil)
         #expect(back.button.accessibilityValue == "Attention pending")
-        back.apply(themeID: theme, attentionPending: false)
+        back.apply(themeID: theme, attentionPending: false, sidebar: nil)
         #expect(back.button.accessibilityValue == nil)
     }
 

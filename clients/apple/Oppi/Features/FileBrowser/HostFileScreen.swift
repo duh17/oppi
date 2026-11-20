@@ -22,7 +22,6 @@ enum HostFileScreen {
         }
         return WorkspaceLinkedFileViewController(
             target: .hostFile(serverId: serverId, workspaceId: "", path: path),
-            placement: .pushed,
             root: root
         )
     }

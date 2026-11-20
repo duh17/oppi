@@ -93,8 +93,7 @@ struct FileBrowserPinsTests {
         defer { server.scope.end() }
         let files = FileBrowserViewController(
             root: server.root,
-            target: FileBrowserNavTarget(serverId: server.serverId, scope: .hostHome, path: ""),
-            showsSidebarToggle: false
+            target: FileBrowserNavTarget(serverId: server.serverId, scope: .hostHome, path: "")
         )
         let navigation = UINavigationController(rootViewController: files)
         let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 2_400))
@@ -138,8 +137,7 @@ struct FileBrowserPinsTests {
         defer { server.scope.end() }
         let files = FileBrowserViewController(
             root: server.root,
-            target: FileBrowserNavTarget(serverId: server.serverId, scope: .hostHome, path: ""),
-            showsSidebarToggle: false
+            target: FileBrowserNavTarget(serverId: server.serverId, scope: .hostHome, path: "")
         )
         let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 1_400))
         window.rootViewController = UINavigationController(rootViewController: files)

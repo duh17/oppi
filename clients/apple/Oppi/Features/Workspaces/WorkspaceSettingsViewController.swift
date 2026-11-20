@@ -57,9 +57,6 @@ final class WorkspaceSettingsViewController: ListScreenController<
     var onDone: (() -> Void)? {
         didSet { setNeedsUpdateProperties() }
     }
-    var showsSidebarToggle = false {
-        didSet { setNeedsUpdateProperties() }
-    }
 
     /// The workspace's server once it is ready: the list has nothing to show
     /// before it.
@@ -72,7 +69,6 @@ final class WorkspaceSettingsViewController: ListScreenController<
     /// The compact Oppi bar, made once the workspace's server is ready.
     private var composer: GuidedControlComposerController?
     private weak var deleteAlert: UIAlertController?
-    private var sidebarToggle: UIBarButtonItem?
     private var doneItem: UIBarButtonItem?
     /// Bumped when a toggle's write ends, so its switch is redrawn from the
     /// stored value even where that value did not change (a cancelled unlock,
@@ -293,12 +289,6 @@ final class WorkspaceSettingsViewController: ListScreenController<
 
     private func updateBar() {
         var leading: [UIBarButtonItem] = []
-        if showsSidebarToggle {
-            let toggle = sidebarToggle ?? WorkspaceSplitSidebarToggle.makeItem(root: root)
-            sidebarToggle = toggle
-            WorkspaceSplitSidebarToggle.sync(toggle, root: root)
-            leading.append(toggle)
-        }
         if showsWorkspace, let onDone {
             let item = doneItem ?? UIBarButtonItem(systemItem: .done)
             item.title = String(localized: "Done")

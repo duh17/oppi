@@ -6,13 +6,9 @@ import UIKit
 ///
 /// A `ListScreenController`: the base owns the list, the loading and failure
 /// row, and the load on appearance and pull to refresh. This page keeps its
-/// rows, its composer, and the sidebar toggle.
+/// rows and its composer.
 @MainActor
 final class AgentListViewController: ListScreenController<AgentListViewController.Section, AgentListViewController.Item> {
-    var showsSidebarToggle: Bool {
-        didSet { setNeedsUpdateProperties() }
-    }
-
     enum Section: Hashable, Sendable {
         case agents, status
     }
@@ -24,15 +20,13 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
 
     private let root: AppRootEnvironment
     private let composer: GuidedControlComposerController
-    private var sidebarToggle: UIBarButtonItem?
 
     private var agents: [AgentDefinitionSummary] = [] {
         didSet { setNeedsUpdateProperties() }
     }
 
-    init(root: AppRootEnvironment, showsSidebarToggle: Bool = false) {
+    init(root: AppRootEnvironment) {
         self.root = root
-        self.showsSidebarToggle = showsSidebarToggle
         composer = GuidedControlComposerController(
             configuration: GuidedControlComposerConfiguration(
                 domain: .agents,
@@ -71,11 +65,6 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
         composer.insetContent(of: collectionView)
     }
 
-    override func updateProperties() {
-        super.updateProperties()
-        ListScreen.setBarItems(trailing: [], leading: sidebarItems(), on: navigationItem)
-    }
-
     override var loadPolicy: LoadPolicy { .eachAppearance }
 
     /// The server and the client serving it: a connection that comes up, drops,
@@ -94,15 +83,6 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
     /// The active server's connection: the base reloads the page by itself when it
     /// installs an API client again after a rebuild.
     override func loadConnection() -> ServerConnection? { root.windowConnectionOrStandIn }
-
-    /// The sidebar toggle at the split detail root.
-    private func sidebarItems() -> [UIBarButtonItem] {
-        guard showsSidebarToggle else { return [] }
-        let toggle = sidebarToggle ?? WorkspaceSplitSidebarToggle.makeItem(root: root)
-        sidebarToggle = toggle
-        WorkspaceSplitSidebarToggle.sync(toggle, root: root)
-        return [toggle]
-    }
 
     // MARK: - List
 

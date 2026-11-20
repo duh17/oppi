@@ -184,7 +184,6 @@ struct GodotChatHandoffTests {
             let window = makeSceneWindow()
             let route = ChatRouteViewController(
                 target: WorkspaceSessionNavTarget(serverId: serverId, sessionId: "game-chat", workspaceId: "w1", routeScope: nil),
-                placement: .compactRoot,
                 root: root
             )
             let navigation = UINavigationController(rootViewController: route)

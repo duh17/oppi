@@ -9,13 +9,6 @@ import UIKit
 @MainActor
 final class ChatRouteViewController: UIViewController {
     let target: WorkspaceSessionNavTarget
-    /// The split detail root carries the sidebar toggle.
-    var placement: ShellRoutePlacement {
-        didSet {
-            guard placement != oldValue else { return }
-            setNeedsUpdateProperties()
-        }
-    }
 
     private enum Content: Equatable {
         case lockCover
@@ -31,11 +24,9 @@ final class ChatRouteViewController: UIViewController {
     private var connectTask: Task<Void, Never>?
     /// Set on each appearance; the unlocked route spends it on one connect.
     private var connectsOnUnlock = false
-    private lazy var sidebarToggle = makeSidebarToggle()
 
-    init(target: WorkspaceSessionNavTarget, placement: ShellRoutePlacement, root: AppRootEnvironment) {
+    init(target: WorkspaceSessionNavTarget, root: AppRootEnvironment) {
         self.target = target
-        self.placement = placement
         self.root = root
         super.init(nibName: nil, bundle: nil)
         traitOverrides.appRootEnvironment = root
@@ -119,19 +110,14 @@ final class ChatRouteViewController: UIViewController {
             }
         }
 
-        let prefix = placement == .splitDetailRoot ? [sidebarToggle] : []
-        updateSidebarToggle()
-        if let chat {
-            if chat.barItems.leadingPrefix.elementsEqual(prefix, by: ===) == false {
-                chat.barItems.leadingPrefix = prefix
-                chat.setNeedsUpdateProperties()
-            }
-        } else {
+        // The chat writes the bar; the lock cover and "Connecting…" keep Back
+        // and the main pane's sidebar button.
+        if chat == nil {
             navigationItem.title = nil
             navigationItem.titleView = nil
             navigationItem.rightBarButtonItems = nil
             navigationItem.hidesBackButton = false
-            navigationItem.leftBarButtonItems = prefix
+            navigationItem.setLeadingItems([])
         }
     }
 
@@ -185,25 +171,5 @@ final class ChatRouteViewController: UIViewController {
         current.willMove(toParent: nil)
         current.view.removeFromSuperview()
         current.removeFromParent()
-    }
-
-    private func makeSidebarToggle() -> UIBarButtonItem {
-        let toggle = UIBarButtonItem(
-            title: "Hide Sidebar",
-            image: UIImage(systemName: "sidebar.leading"),
-            primaryAction: UIAction { [weak self] _ in
-                self?.root.navigation.toggleSplitSidebar()
-            }
-        )
-        toggle.accessibilityIdentifier = "workspace.split.sidebarToggle"
-        return toggle
-    }
-
-    private func updateSidebarToggle() {
-        let visible = root.navigation.splitColumnVisibility != .detailOnly
-        // Title plus symbol so the bar can show it on the Duo's vertical rail
-        // and in overflow menus.
-        sidebarToggle.title = visible ? "Hide Sidebar" : "Show Sidebar"
-        sidebarToggle.tintColor = ComposerThemeColors(palette: root.themeStore.activeThemeID.palette).fg
     }
 }

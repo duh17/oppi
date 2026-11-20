@@ -41,11 +41,6 @@ enum WorkspaceDetailLoadErrorPolicy {
 /// Extensions: +List (rows and snapshot), +Chrome (bars, title, overlays),
 /// +Actions (what the controls do), +Refresh (loading and polling).
 final class WorkspaceDetailViewController: UIViewController {
-    /// The split detail root carries the sidebar toggle.
-    var showsSidebarToggle: Bool {
-        didSet { setNeedsUpdateProperties() }
-    }
-
     let root: AppRootEnvironment
     let serverId: String
     let workspaceId: String
@@ -142,7 +137,6 @@ final class WorkspaceDetailViewController: UIViewController {
         onDictate: { [weak self] in self?.startQuickSession(dictate: true) },
         onNowPlaying: { [weak self] in self?.openNowPlaying() }
     )
-    var sidebarToggle: UIBarButtonItem?
 
     lazy var rowActions = SessionListRowActions(
         open: { [weak self] session in self?.openSession(session) },
@@ -163,12 +157,11 @@ final class WorkspaceDetailViewController: UIViewController {
         }
     )
 
-    init(root: AppRootEnvironment, target: WorkspaceNavTarget, showsSidebarToggle: Bool = false) {
+    init(root: AppRootEnvironment, target: WorkspaceNavTarget) {
         self.root = root
         serverId = target.serverId
         workspaceId = target.workspace.id
         routeWorkspace = target.workspace
-        self.showsSidebarToggle = showsSidebarToggle
         super.init(nibName: nil, bundle: nil)
         traitOverrides.appRootEnvironment = root
         navigationItem.largeTitleDisplayMode = .never
@@ -400,10 +393,8 @@ final class WorkspaceDetailViewController: UIViewController {
         progressPanel.isHidden = true
         navigationItem.title = nil
         navigationItem.titleView = nil
-        navigationItem.leadingItemGroups = []
         navigationItem.trailingItemGroups = []
         navigationItem.backBarButtonItem?.accessibilityLabel = nil
-        sidebarToggle = nil
         barState = nil
         titleState = nil
         bottomBar.reset()
@@ -782,7 +773,6 @@ extension WorkspaceDetailViewController {
 
     struct BarState: Equatable {
         let joinsRail: Bool
-        let showsSidebarToggle: Bool
         let showsBottomItems: Bool
         let showsNowPlaying: Bool
         let parksNowPlayingNextToCompose: Bool

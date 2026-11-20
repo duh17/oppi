@@ -14,10 +14,6 @@ import UIKit
 /// behind the sections, which read Rex only while it shows with nothing over it,
 /// and its own pull to refresh (it loads nothing itself).
 final class RexListViewController: ListScreenController<RexListViewController.Section, RexListViewController.Item> {
-    var showsSidebarToggle = false {
-        didSet { if isViewLoaded { installBarItems() } }
-    }
-
     /// One run of a Rex's rows (`SSHTerminalRexListGroup`): its heading, its status
     /// card, a session's heading, or a session's panes.
     enum Section: Hashable, Sendable { case group(host: UUID, id: String) }
@@ -73,7 +69,6 @@ final class RexListViewController: ListScreenController<RexListViewController.Se
     private var experimentObserver: NSObjectProtocol?
 
     init(
-        showsSidebarToggle: Bool = false,
         profileStore: @escaping @Sendable () -> SSHTerminalProfileStore = { SSHTerminalProfileStore() },
         makeFollower: @escaping @MainActor (SSHTerminalProfile) -> SSHTerminalRexFollower = {
             SSHTerminalRexFollower(profile: $0, promptsAutomatically: false)
@@ -81,7 +76,6 @@ final class RexListViewController: ListScreenController<RexListViewController.Se
         tailnetRex: RexTailnetSection = RexTailnetSection(),
         startsTailnet: @escaping @MainActor () -> Void = { TailnetNodeController.shared.startIfEnabled() }
     ) {
-        self.showsSidebarToggle = showsSidebarToggle
         self.profileStore = profileStore
         self.makeFollower = makeFollower
         self.tailnetRex = tailnetRex
@@ -368,9 +362,6 @@ final class RexListViewController: ListScreenController<RexListViewController.Se
         settings.accessibilityIdentifier = "rex.settings"
         items.append(settings)
         navigationItem.rightBarButtonItems = items
-        if showsSidebarToggle, let root = AppRootEnvironment.near(self) {
-            navigationItem.leftBarButtonItem = WorkspaceSplitSidebarToggle.makeItem(root: root)
-        }
     }
 
     /// The Rexes ＋ was built for, by id and name: one found, gone, or renamed

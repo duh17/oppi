@@ -25,10 +25,6 @@ import UIKit
 /// section, and Done saves the order and removals once.
 @MainActor
 final class PinnedViewController: UIViewController {
-    var showsSidebarToggle: Bool {
-        didSet { setNeedsUpdateProperties() }
-    }
-
     /// The screen's sections: session cards, then the tile grid.
     enum Section: Int, Hashable, CaseIterable {
         case sessions, places
@@ -66,7 +62,6 @@ final class PinnedViewController: UIViewController {
     private let previews = PinPreviewStore()
     /// The window server's pins; a new section when the window's server changes.
     private var pinsSection: PinsSection?
-    private var sidebarToggle: UIBarButtonItem?
     /// Edit's tile move: a press on a tile drags it to a new place.
     private lazy var moveGesture: UILongPressGestureRecognizer = {
         let gesture = UILongPressGestureRecognizer(target: self, action: #selector(moveTile(_:)))
@@ -84,9 +79,8 @@ final class PinnedViewController: UIViewController {
         return item
     }()
 
-    init(root: AppRootEnvironment, showsSidebarToggle: Bool = false) {
+    init(root: AppRootEnvironment) {
         self.root = root
-        self.showsSidebarToggle = showsSidebarToggle
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewFlowLayout())
         super.init(nibName: nil, bundle: nil)
         traitOverrides.appRootEnvironment = root
@@ -175,7 +169,7 @@ final class PinnedViewController: UIViewController {
         editItem.title = isEditing ? String(localized: "Done") : String(localized: "Edit")
         editItem.style = isEditing ? .prominent : .plain
         editItem.isEnabled = content != nil
-        ListScreen.setBarItems(trailing: section == nil ? [] : [editItem], leading: sidebarItems(), on: navigationItem)
+        ListScreen.setBarItems(trailing: section == nil ? [] : [editItem], leading: [], on: navigationItem)
     }
 
     // MARK: Model
@@ -501,14 +495,6 @@ final class PinnedViewController: UIViewController {
 
     private func pinId(forSession sessionId: String) -> String? {
         root.windowConnection?.pins.pin(for: .session(sessionId))?.id
-    }
-
-    private func sidebarItems() -> [UIBarButtonItem] {
-        guard showsSidebarToggle else { return [] }
-        let toggle = sidebarToggle ?? WorkspaceSplitSidebarToggle.makeItem(root: root)
-        sidebarToggle = toggle
-        WorkspaceSplitSidebarToggle.sync(toggle, root: root)
-        return [toggle]
     }
 }
 

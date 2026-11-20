@@ -18,7 +18,7 @@ Every row and thread shows the same status. **Working** is blue. **Needs approva
 
 A workspace's session list has the same sections, rows, and swipe actions. It adds the worktree picker, host Pi sessions you can import, and older stopped history grouped by month.
 
-The sidebar (the iPhone's drawer) starts with **All Sessions**, then Pinned, saved Agents, schedules, and the other places the server offers, then the workspace list and App Settings. The highlighted row is where you are, and **All Sessions** takes you back to every session. Each workspace has its own sessions, files, and settings.
+The sidebar (the iPhone's drawer) starts with **All Sessions**, then Pinned, saved Agents, schedules, and the other places the server offers, then the workspace list and App Settings. The highlighted row is where you are, and **All Sessions** takes you back to every session. On iPad, the sidebar button sits at the top of every screen in the main pane, after Back when there is one: a chat, a file, a terminal (beside its Back button), however deep you went. In landscape it shows or hides the sidebar; in portrait it opens the sidebar over the screen. On iPhone the button is on **All Sessions**. Each workspace has its own sessions, files, and settings.
 
 Open a session to see the chat timeline. Tap a tool row to inspect its command, output, diff, or file content. If an extension shows a card or sheet, answer it in the app.
 

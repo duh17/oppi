@@ -344,6 +344,9 @@ final class ScheduleCalendarUITests: XCTestCase, PreviewUITestCase {
             waitFor(back.frame.minX - window.frame.minX < 60),
             "The chat fills the window: Back at \(back.frame), window \(window.frame)"
         )
+        let chatToggle = app.buttons["workspace.split.sidebarToggle"].firstMatch
+        XCTAssertTrue(chatToggle.waitUntilExists(timeout: 5), "The run's chat, pushed over Schedules, has the sidebar button")
+        XCTAssertGreaterThan(chatToggle.frame.minX, back.frame.maxX - 1, "It follows the chat's Back")
         hold()
         capture("landscape-run-session")
 

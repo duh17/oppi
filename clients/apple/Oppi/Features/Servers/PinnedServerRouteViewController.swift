@@ -12,20 +12,12 @@ import UIKit
 /// page's own model, which nothing shows any more.
 ///
 /// The page's server switcher is the bar item (the page writes it to this route's
-/// navigation item, `UIViewController.pinnedRouteNavigationItem`); this route adds the
-/// split detail root's sidebar toggle. The route tracks the selection itself, because a
-/// page pushed above it hides its view and a hidden view's `updateProperties()` does not
-/// run, so a switch made from the sidebar would otherwise not reach it.
+/// navigation item, `UIViewController.pinnedRouteNavigationItem`). The route tracks the
+/// selection itself, because a page pushed above it hides its view and a hidden view's
+/// `updateProperties()` does not run, so a switch made from the sidebar would otherwise
+/// not reach it.
 @MainActor
 class PinnedServerRouteViewController<Page: UIViewController>: UIViewController, PinnedServerRouting {
-    /// The split detail root carries the sidebar toggle.
-    var showsSidebarToggle: Bool {
-        didSet {
-            guard showsSidebarToggle != oldValue else { return }
-            setNeedsUpdateProperties()
-        }
-    }
-
     let root: AppRootEnvironment
     /// The server the route opened for: the visible one while none is active.
     let openedServerId: String?
@@ -34,19 +26,16 @@ class PinnedServerRouteViewController<Page: UIViewController>: UIViewController,
     private(set) var page: Page?
     private let makePage: (PairedServer) -> Page
     private var hasShownPage = false
-    private var sidebarToggle: UIBarButtonItem?
     private var isFinishing = false
 
     init(
         root: AppRootEnvironment,
         openedServerId: String?,
-        showsSidebarToggle: Bool,
         title: String,
         makePage: @escaping (PairedServer) -> Page
     ) {
         self.root = root
         self.openedServerId = openedServerId
-        self.showsSidebarToggle = showsSidebarToggle
         self.makePage = makePage
         super.init(nibName: nil, bundle: nil)
         traitOverrides.appRootEnvironment = root
@@ -91,7 +80,6 @@ class PinnedServerRouteViewController<Page: UIViewController>: UIViewController,
         super.updateProperties()
         view.backgroundColor = root.themeStore.backgroundColor
         reconcile()
-        updateLeadingItems()
     }
 
     private func observeSelection() {
@@ -162,21 +150,6 @@ class PinnedServerRouteViewController<Page: UIViewController>: UIViewController,
             page.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         page.didMove(toParent: self)
-    }
-
-    // MARK: - Bar
-
-    private func updateLeadingItems() {
-        var leading: [UIBarButtonItem] = []
-        if showsSidebarToggle {
-            let toggle = sidebarToggle ?? WorkspaceSplitSidebarToggle.makeItem(root: root)
-            sidebarToggle = toggle
-            WorkspaceSplitSidebarToggle.sync(toggle, root: root)
-            leading = [toggle]
-        }
-        if !(navigationItem.leftBarButtonItems ?? []).elementsEqual(leading, by: ===) {
-            navigationItem.leftBarButtonItems = leading
-        }
     }
 }
 

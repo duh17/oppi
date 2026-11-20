@@ -79,6 +79,15 @@ final class NavigationJourneyUITests: XCTestCase, PreviewUITestCase {
         app.buttons["workspace.agents.open"].tap()
         let agentsBar = app.navigationBars["Agents"]
         XCTAssertTrue(agentsBar.waitUntilExists(timeout: 5), "Agents did not open from the drawer")
+        // The sidebar button belongs to the main pane: on iPad on every screen
+        // of it, on iPhone at its root alone.
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            XCTAssertTrue(drawerButton.waitUntilExists(timeout: 5), "Agents pushed on the iPad keeps the sidebar button")
+        } else {
+            XCTAssertTrue(drawerButton.waitUntilGone(timeout: 5), "Agents pushed on a phone has Back alone")
+        }
+        hold()
+        attachScreenshot("drawer-compact-pushed")
         app.buttons["BackButton"].firstMatch.tap()
         XCTAssertTrue(drawerButton.waitUntilExists(timeout: 5), "Back must return to All Sessions")
 
@@ -89,6 +98,103 @@ final class NavigationJourneyUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(drawerButton.isHittable, "All Sessions must be the stack's root")
         XCTAssertTrue(app.searchFields["Search sessions"].exists, "All Sessions did not show")
         assertRunning()
+    }
+
+    /// iPad mini in landscape: the sidebar hidden from the Rex list, a pane's
+    /// terminal pushed over it; the sidebar button beside the terminal's Back
+    /// shows the sidebar, and All Sessions replaces the terminal.
+    func testSplitSidebarButtonOnARexTerminalGoesHome() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "The split view needs the iPad mini in landscape")
+        launchRex(orientation: .landscapeLeft)
+        let allSessions = app.buttons["workspace.allSessions.open"]
+        let toggle = app.buttons["workspace.split.sidebarToggle"].firstMatch
+        app.buttons["workspace.rex.open"].tap()
+        let session = app.buttons[Self.rexRow]
+        XCTAssertTrue(session.waitUntilExists(timeout: 15), "The Rex list shows the host's sessions")
+        XCTAssertTrue(toggle.waitUntilExists(timeout: 5), "The Rex list has the sidebar button")
+        toggle.tap()
+        XCTAssertTrue(waitFor(!isShowing(allSessions)), "The sidebar button hid the sidebar")
+
+        session.tap()
+        let grid = app.descendants(matching: .any)["sshTerminal.grid"]
+        XCTAssertTrue(grid.waitUntilExists(timeout: 15), "The session's terminal opened")
+        let back = app.buttons["sshTerminal.back"]
+        XCTAssertTrue(toggle.waitUntilExists(timeout: 5), "The terminal has the sidebar button")
+        XCTAssertGreaterThan(toggle.frame.minX, back.frame.maxX - 1, "It follows the terminal's Back")
+        XCTAssertEqual(toggle.frame.midY, back.frame.midY, accuracy: 2, "It sits in Back's row")
+        hold()
+        attachScreenshot("rex-terminal-ipad-landscape")
+
+        toggle.tap()
+        XCTAssertTrue(waitFor(isShowing(allSessions)), "The sidebar button showed the sidebar over the terminal's stack")
+        XCTAssertTrue(grid.exists, "Showing the sidebar keeps the terminal")
+        hold()
+        attachScreenshot("rex-terminal-ipad-landscape-sidebar")
+        allSessions.tap()
+        XCTAssertTrue(grid.waitUntilGone(timeout: 5), "All Sessions replaced the terminal")
+        XCTAssertTrue(app.searchFields["Search sessions"].waitUntilExists(timeout: 5), "All Sessions did not show")
+        XCTAssertTrue(waitFor(allSessions.isSelected), "All Sessions is the place again")
+        assertRunning()
+    }
+
+    /// iPad mini in portrait: the drawer opens from the terminal pushed over the
+    /// Rex list, and its All Sessions row goes home.
+    func testDrawerOpensFromARexTerminalOnTheIPadInPortrait() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Every screen has the button on the iPad mini")
+        launchRex(orientation: .portrait)
+        let drawerButton = app.buttons["workspace.sidebar.open"].firstMatch
+        let allSessions = app.buttons["workspace.allSessions.open"]
+        XCTAssertTrue(drawerButton.waitUntilExists(timeout: 5), "All Sessions has the drawer button")
+        drawerButton.tap()
+        XCTAssertTrue(waitFor(isShowing(allSessions)), "The drawer opened")
+        app.buttons["workspace.rex.open"].tap()
+        let session = app.buttons[Self.rexRow]
+        XCTAssertTrue(session.waitUntilExists(timeout: 15), "The Rex list shows the host's sessions")
+        XCTAssertTrue(waitFor(!isShowing(allSessions)), "Picking Rex closed the drawer")
+        hold()
+
+        session.tap()
+        let grid = app.descendants(matching: .any)["sshTerminal.grid"]
+        XCTAssertTrue(grid.waitUntilExists(timeout: 15), "The session's terminal opened")
+        XCTAssertTrue(drawerButton.waitUntilExists(timeout: 5), "The terminal has the drawer button")
+        XCTAssertGreaterThan(drawerButton.frame.minX, app.buttons["sshTerminal.back"].frame.maxX - 1, "It follows the terminal's Back")
+        hold()
+        attachScreenshot("rex-terminal-ipad-portrait")
+
+        drawerButton.tap()
+        XCTAssertTrue(waitFor(isShowing(allSessions)), "The drawer opened over the terminal")
+        hold()
+        attachScreenshot("rex-terminal-ipad-portrait-drawer")
+        allSessions.tap()
+        XCTAssertTrue(grid.waitUntilGone(timeout: 5), "All Sessions replaced the terminal")
+        XCTAssertTrue(waitFor(!isShowing(allSessions)), "Picking All Sessions closed the drawer")
+        XCTAssertTrue(app.searchFields["Search sessions"].waitUntilExists(timeout: 5), "All Sessions did not show")
+        hold()
+        assertRunning()
+    }
+
+    private static let rexRow = "sshTerminal.rexList.5E5E5E5E-0000-4000-8000-000000000001.session:01a18a26-6620-76be-b529-4d9ad2b36c63"
+
+    /// The production shell over the chat-routes fixtures with a fake Rex in
+    /// process (`RexPaneUITests`), so the Rex list and its terminal are real.
+    private func launchRex(orientation: UIDeviceOrientation) {
+        XCUIDevice.shared.orientation = orientation
+        addTeardownBlock { @MainActor in XCUIDevice.shared.orientation = .portrait }
+        launchPreview(
+            screen: "pane-restore",
+            environment: ["PANE_RESTORE_REX": "1"],
+            colorScheme: "dark",
+            arguments: OppiTestLaunch.experimentArguments([.rex: true]),
+            ready: nil
+        )
+        if orientation.isLandscape {
+            XCTAssertTrue(app.buttons["workspace.rex.open"].waitUntilExists(timeout: 10), "The sidebar offers Rex")
+        }
+    }
+
+    /// A beat for a recording to show each step.
+    private func hold() {
+        Thread.sleep(forTimeInterval: 0.8)
     }
 
     private func isShowing(_ element: XCUIElement) -> Bool {

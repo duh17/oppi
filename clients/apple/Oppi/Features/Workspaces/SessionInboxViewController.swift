@@ -10,16 +10,6 @@ import UIKit
 /// id to its `SessionListCollection`, which owns the cells, taps, swipes, and
 /// long-press menu.
 final class SessionInboxViewController: UIViewController {
-    /// Opens the workspace drawer; set only at the compact root.
-    var onOpenSidebar: (() -> Void)? {
-        didSet { setNeedsUpdateProperties() }
-    }
-
-    /// The split detail root carries the sidebar toggle.
-    var showsSidebarToggle: Bool {
-        didSet { setNeedsUpdateProperties() }
-    }
-
     private let root: AppRootEnvironment
     private var coordinator: ConnectionCoordinator { root.coordinator }
     private var navigation: SceneNavigation { root.navigation }
@@ -101,7 +91,6 @@ final class SessionInboxViewController: UIViewController {
     )
     private var switcher: SessionListServerSwitcher?
     private var switcherServerId: String?
-    private var sidebarToggle: UIBarButtonItem?
 
     private lazy var rowActions = SessionListRowActions(
         open: { [weak self] session in
@@ -137,10 +126,8 @@ final class SessionInboxViewController: UIViewController {
         }
     )
 
-    init(root: AppRootEnvironment, onOpenSidebar: (() -> Void)? = nil, showsSidebarToggle: Bool = false) {
+    init(root: AppRootEnvironment) {
         self.root = root
-        self.onOpenSidebar = onOpenSidebar
-        self.showsSidebarToggle = showsSidebarToggle
         super.init(nibName: nil, bundle: nil)
         traitOverrides.appRootEnvironment = root
         title = String(localized: "All Sessions")
@@ -1045,8 +1032,6 @@ final class SessionInboxViewController: UIViewController {
 
         let bars = BarState(
             joinsRail: joinsRail,
-            showsSidebarOpen: onOpenSidebar != nil,
-            showsSidebarToggle: showsSidebarToggle,
             hasServer: state.selectedServer != nil,
             showsNowPlaying: state.toolbar.showsNowPlayingPill && player != nil,
             parksNowPlayingNextToCompose: state.toolbar.parksNowPlayingNextToCompose,
@@ -1058,28 +1043,18 @@ final class SessionInboxViewController: UIViewController {
             barState = bars
             installBarItems(bars, palette: palette, showsDictation: showsDictation)
         }
-        if let sidebarToggle {
-            WorkspaceSplitSidebarToggle.sync(sidebarToggle, root: root)
-        }
     }
 
     private func installBarItems(_ bars: BarState, palette: ThemePalette, showsDictation: Bool) {
-        let tint = palette.ui.fg
         let railTint = SessionListBarItems.railTint(palette)
-        sidebarToggle = bars.showsSidebarToggle ? WorkspaceSplitSidebarToggle.makeItem(root: root) : nil
-        var leading: [UIBarButtonItem] = sidebarToggle.map { [$0] } ?? []
         var trailing: [UIBarButtonItem] = []
         var pinned: [UIBarButtonItem] = []
         var bottom: [UIBarButtonItem] = []
-        let openSidebar: () -> Void = { [weak self] in self?.onOpenSidebar?() }
 
         if bars.joinsRail {
-            // Navigation, then Message, then the pinned server switcher. A
-            // text principal would keep a horizontal bar, so the system title stays.
+            // Message, then the pinned server switcher. A text principal would
+            // keep a horizontal bar, so the system title stays.
             navigationItem.titleView = nil
-            if bars.showsSidebarOpen {
-                trailing.append(SessionListBarItems.sidebarOpen(joinsRail: true, tint: railTint, action: openSidebar))
-            }
             trailing.append(bottomBar.railCompose(showsDictation: showsDictation, tint: railTint))
             if bars.hasServer, let switcher {
                 pinned.append(SessionListBarItems.railItem(switcher.item, priority: .keep))
@@ -1095,12 +1070,9 @@ final class SessionInboxViewController: UIViewController {
                 palette: palette
             ) { [weak self] in self?.openFiles() })
         } else {
-            // The title leads, after the sidebar control. An empty title view
+            // The title leads, after the sidebar button. An empty title view
             // hides the centered system title but keeps `title` for Back.
             navigationItem.titleView = hiddenSystemTitle
-            if bars.showsSidebarOpen {
-                leading.append(SessionListBarItems.sidebarOpen(joinsRail: false, tint: tint, action: openSidebar))
-            }
             if bars.hasServer, let switcher {
                 trailing.append(switcher.item)
             }
@@ -1116,14 +1088,13 @@ final class SessionInboxViewController: UIViewController {
             )
         }
 
-        var leadingGroups = leading.isEmpty
-            ? [] : [UIBarButtonItemGroup(barButtonItems: leading, representativeItem: nil)]
+        var leadingGroups: [UIBarButtonItemGroup] = []
         if !bars.joinsRail {
             let titleItem = SessionListBarItems.horizontalOnly(UIBarButtonItem(customView: titleLabel))
             titleItem.hidesSharedBackground = true
             leadingGroups.append(UIBarButtonItemGroup(barButtonItems: [titleItem], representativeItem: nil))
         }
-        navigationItem.leadingItemGroups = leadingGroups
+        navigationItem.setLeadingGroups(leadingGroups)
         navigationItem.trailingItemGroups = trailing.isEmpty
             ? [] : [UIBarButtonItemGroup(barButtonItems: trailing, representativeItem: nil)]
         navigationItem.pinnedTrailingGroup = pinned.isEmpty
@@ -1238,8 +1209,6 @@ private extension SessionInboxViewController {
 
     struct BarState: Equatable {
         let joinsRail: Bool
-        let showsSidebarOpen: Bool
-        let showsSidebarToggle: Bool
         let hasServer: Bool
         let showsNowPlaying: Bool
         let parksNowPlayingNextToCompose: Bool

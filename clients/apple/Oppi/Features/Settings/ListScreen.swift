@@ -23,9 +23,7 @@ enum ListScreen {
         if !(item.rightBarButtonItems ?? []).elementsEqual(trailing, by: ===) {
             item.rightBarButtonItems = trailing
         }
-        if !(item.leftBarButtonItems ?? []).elementsEqual(leading, by: ===) {
-            item.leftBarButtonItems = leading
-        }
+        item.setLeadingItems(leading)
     }
 
     /// Readies a reused row as a button with `action`.
