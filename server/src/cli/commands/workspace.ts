@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 
 import * as c from "../../ansi.js";
 import { createLocalApiCommandContext } from "../command-support.js";
-import { iconChoiceFromFlag } from "../icon-flag.js";
+import { iconChoiceFromFlag, iconChoiceFromImageFile } from "../icon-flag.js";
 import type { LocalApiConnection } from "../local-api-client.js";
 import {
   codeValue,
@@ -56,6 +56,9 @@ export async function cmdWorkspace(
     if (mode === "create") {
       const definition = workspaceDefinitionFromFlags(flags);
       if (!definition.name) throw new Error("--name or definition.name is required");
+      if (Object.hasOwn(flags, "icon-image")) {
+        definition.icon = await iconChoiceFromImageFile(call, flags["icon-image"] ?? "");
+      }
       const result = await call<Record<string, unknown>>("/workspaces", {
         method: "POST",
         body: definition,
@@ -76,6 +79,9 @@ export async function cmdWorkspace(
       if (!reference) throw new Error("workspace id or name is required");
       const definition = workspaceDefinitionFromFlags(flags, { requireFields: true });
       const workspace = await resolveWorkspaceForCli(storage, reference);
+      if (Object.hasOwn(flags, "icon-image")) {
+        definition.icon = await iconChoiceFromImageFile(call, flags["icon-image"] ?? "");
+      }
       const result = await call<Record<string, unknown>>(
         `/workspaces/${encodeURIComponent(workspace.id)}`,
         {
@@ -135,12 +141,20 @@ function workspaceDefinitionFromFlags(
   applyStringFlag(definition, flags, "name", "name");
   applyStringFlag(definition, flags, "description", "description");
   if (Object.prototype.hasOwnProperty.call(flags, "icon")) {
+    if (Object.hasOwn(flags, "icon-image")) {
+      throw new Error("--icon and --icon-image cannot be used together");
+    }
     definition.icon = iconChoiceFromFlag(flags.icon);
   }
   applyStringFlag(definition, flags, "system-prompt", "systemPrompt");
   applyStringFlag(definition, flags, "host-mount", "hostMount");
   applyStringFlag(definition, flags, "runtime", "runtime");
-  if (options.requireFields && Object.keys(definition).length === 0) {
+  // `--icon-image` uploads, so the command sets it after these checks pass.
+  if (
+    options.requireFields &&
+    Object.keys(definition).length === 0 &&
+    !Object.hasOwn(flags, "icon-image")
+  ) {
     throw new Error("--definition or at least one workspace field flag is required");
   }
   return definition;

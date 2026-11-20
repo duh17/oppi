@@ -25,7 +25,9 @@ import { getOppiDocsPath } from "./oppi-docs.js";
  * boundary (the confirm gate on every non-GET request is); these are the ways a command reaches
  * the host without an HTTP request or the envelope, or that would hurt the server it runs in:
  * - flags that read a file of this host (`--definition PATH`, `--instructions-file`, dictionary
- *   `--file`) or stdin (`@-`, `--phrases`): the server's own files and stdin are not the owner's
+ *   `--file`) or stdin (`@-`, `--phrases`): the server's own files and stdin are not the owner's.
+ *   `--icon-image PATH` stays allowed: its bytes go only to the icon store, which keeps them only
+ *   as a valid image, and its upload's card names the file and its size.
  * - `--config-file`, and `config set`, which edits the config file directly with no request to gate
  * - `status`: it shells out synchronously (`execFileSync`), which would stall the server's event loop
  * - `--idempotency-key=…`, `--request-id=…`, `--turn-id=…`: the CLI does not split on `=`, so that

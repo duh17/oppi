@@ -6,7 +6,7 @@ import type { IconChoice } from "../../types.js";
 import type { LocalApiConnection } from "../local-api-client.js";
 import { createLocalApiCommandContext } from "../command-support.js";
 import { readDefinitionInput } from "../definition-input.js";
-import { iconChoiceFromFlag } from "../icon-flag.js";
+import { iconChoiceFromFlag, iconChoiceFromImageFile } from "../icon-flag.js";
 import {
   applySessionDefaultFlags,
   hasAgentDefinitionFlags,
@@ -103,6 +103,9 @@ export async function cmdAgent(
         flags,
       );
       if (!definition.name) throw new Error("--name or definition.name is required");
+      if (hasFlag(flags, "icon-image")) {
+        definition.icon = await iconChoiceFromImageFile(call, flags["icon-image"] ?? "");
+      }
       const result = await call<Record<string, unknown>>("/agents", {
         method: "POST",
         body: {
@@ -139,6 +142,9 @@ export async function cmdAgent(
         ),
         flags,
       );
+      if (hasFlag(flags, "icon-image")) {
+        definition.icon = await iconChoiceFromImageFile(call, flags["icon-image"] ?? "");
+      }
       if (Object.keys(definition).length === 0) {
         throw new Error("definition update must not be empty");
       }
@@ -239,7 +245,7 @@ function positiveVersion(value: unknown): number | undefined {
 
 const AGENT_VALUE_CLEAR_TWINS: Array<{ values: string[]; clear: string }> = [
   { values: ["description"], clear: "clear-description" },
-  { values: ["icon"], clear: "clear-icon" },
+  { values: ["icon", "icon-image"], clear: "clear-icon" },
   {
     values: ["instructions", "instructions-file", "instructions-mode"],
     clear: "clear-instructions",
@@ -255,11 +261,17 @@ function hasFlag(flags: Record<string, string>, name: string): boolean {
   return Object.hasOwn(flags, name);
 }
 
-/** Create's help topic does not declare the `--clear-*` flags, so only update sees them. */
+/**
+ * Create's help topic does not declare the `--clear-*` flags, so only update sees them.
+ * `--icon-image` uploads, so the command sets it after these checks pass.
+ */
 function applyAgentFieldFlags(
   definition: Record<string, unknown>,
   flags: Record<string, string>,
 ): Record<string, unknown> {
+  if (hasFlag(flags, "icon") && hasFlag(flags, "icon-image")) {
+    throw new Error("--icon and --icon-image cannot be used together");
+  }
   for (const twin of AGENT_VALUE_CLEAR_TWINS) {
     const present = twin.values.filter((name) => hasFlag(flags, name));
     if (present.length > 0 && hasFlag(flags, twin.clear)) {

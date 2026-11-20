@@ -8,6 +8,11 @@ import { isRecord } from "../json-shape.js";
 export type LocalApiRequestOptions = {
   method?: string;
   body?: Record<string, unknown>;
+  /**
+   * Raw bytes read from `file`, sent as `application/octet-stream` in place of `body`. An
+   * interceptor sees `{ file, sizeBytes }` as the body: the bytes are not something to show.
+   */
+  upload?: { file: string; bytes: Buffer };
   signal?: AbortSignal;
 };
 
@@ -58,11 +63,14 @@ export async function localApiRequest<T>(
   throwIfAborted(options.signal);
   const interceptor = localApiInterceptor.getStore();
   if (interceptor) {
+    const shown = options.upload
+      ? { file: options.upload.file, sizeBytes: options.upload.bytes.length }
+      : options.body;
     await interceptor(
       Object.freeze({
         method: (options.method ?? "GET").toUpperCase(),
         path,
-        ...(options.body ? { body: Object.freeze(structuredClone(options.body)) } : {}),
+        ...(shown ? { body: Object.freeze(structuredClone(shown)) } : {}),
         ...(options.signal ? { signal: options.signal } : {}),
       }),
     );
@@ -74,11 +82,18 @@ export async function localApiRequest<T>(
   }
 
   const socketPath = localApiSocketPath(storage.getDataDir());
-  const body = options.body ? JSON.stringify(options.body) : undefined;
+  const body = options.upload
+    ? options.upload.bytes
+    : options.body
+      ? JSON.stringify(options.body)
+      : undefined;
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
-    ...(body
-      ? { "Content-Type": "application/json", "Content-Length": String(Buffer.byteLength(body)) }
+    ...(body !== undefined
+      ? {
+          "Content-Type": options.upload ? "application/octet-stream" : "application/json",
+          "Content-Length": String(Buffer.byteLength(body)),
+        }
       : {}),
   };
 
@@ -107,7 +122,7 @@ export async function localApiRequest<T>(
       handleResponse,
     );
     req.on("error", reject);
-    if (body) req.write(body);
+    if (body !== undefined) req.write(body);
     req.end();
   });
 

@@ -30,7 +30,12 @@ import { Storage } from "../src/storage.js";
 import { pushRegistrationMessage } from "../src/push/registration.js";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "../src/security.js";
 import { structuralHeifFixture } from "./harness/heic-fixture.js";
-import { gifFixture } from "./harness/image-fixtures.js";
+import { gifFixture, pngFixture, webpFixture } from "./harness/image-fixtures.js";
+import type { ConversationId } from "@earendil-works/pi-durable";
+import { cardOf } from "../plugins/control/card.js";
+import { runCli } from "../src/cli/runner.js";
+import { DurableControlCli } from "../src/durable-control-cli.js";
+import type { ControlWrite } from "../src/durable-extension-api.js";
 import { WebSocket } from "ws";
 
 let dataDir: string;
@@ -388,6 +393,125 @@ describe("Agent image icon round trip", () => {
       icon: { kind: "image", assetId: `ia_${"m".repeat(43)}` },
     });
     expect(missing.status).toBe(400);
+  });
+});
+
+// ── Image icons set from a host file by the CLI and the control tools ──
+
+describe("--icon-image", () => {
+  type Envelope = { ok: boolean; data?: Record<string, unknown>; error?: { message: string } };
+  const oppi = async (argv: string[]): Promise<Envelope> =>
+    (await runCli(argv, { dataDir, forceJson: true, captureHuman: true })).json as Envelope;
+  const agentIcon = async (id: string): Promise<unknown> =>
+    ((await (await get(`/agents/${id}`)).json()) as { agent: { definition: { icon?: unknown } } })
+      .agent.definition.icon;
+  const hostFile = (name: string, bytes: Buffer | string): string => {
+    const path = join(dataDir, "host-files", name);
+    mkdirSync(join(dataDir, "host-files"), { recursive: true });
+    writeFileSync(path, bytes);
+    return path;
+  };
+
+  it("stores a host image through the upload route, sets it, and keeps it while referenced", async () => {
+    const gif = gifFixture({ width: 3, height: 3 });
+    const created = await oppi([
+      "agent",
+      "create",
+      "--name",
+      "Fox",
+      "--icon-image",
+      hostFile("fox.gif", gif),
+    ]);
+    expect(created.ok, JSON.stringify(created.error)).toBe(true);
+    const agentId = (created.data?.agent as { id: string }).id;
+    const icon = (await agentIcon(agentId)) as { kind: string; assetId: string };
+    expect(icon.kind).toBe("image");
+
+    const served = await get(`/icon-assets/${icon.assetId}`);
+    expect(served.headers.get("content-type")).toBe("image/gif");
+    expect(Buffer.from(await served.arrayBuffer())).toEqual(gif);
+
+    // A day and more later, the sweep removes an unreferenced upload and keeps the Agent's icon.
+    const orphan = storage.putIconAsset(pngFixture()).assetId;
+    const removed = storage.cleanupUnreferencedIconAssets(new Set([icon.assetId, orphan]), {
+      now: Date.now() + 2 * 24 * 60 * 60 * 1000,
+    });
+    expect(removed).toEqual([orphan]);
+    expect((await get(`/icon-assets/${icon.assetId}`)).status).toBe(200);
+
+    // Update replaces it; the clear twin and --icon cannot ride along.
+    const png = pngFixture({ width: 8, height: 8 });
+    const updated = await oppi([
+      "agent",
+      "update",
+      agentId,
+      "--icon-image",
+      hostFile("fox.png", png),
+    ]);
+    expect(updated.ok, JSON.stringify(updated.error)).toBe(true);
+    const replaced = (await agentIcon(agentId)) as { kind: string; assetId: string };
+    expect(replaced.kind).toBe("image");
+    expect(replaced.assetId).not.toBe(icon.assetId);
+    for (const extra of [["--clear-icon"], ["--icon", "🦊"]]) {
+      const both = await oppi([
+        "agent",
+        "update",
+        agentId,
+        "--icon-image",
+        hostFile("fox.png", png),
+        ...extra,
+      ]);
+      expect(both.error?.message).toContain("cannot be used together");
+    }
+  });
+
+  it("names why a file is refused and leaves the Agent's icon alone", async () => {
+    const created = await oppi(["agent", "create", "--name", "Badger", "--icon", "🦡"]);
+    const agentId = (created.data?.agent as { id: string }).id;
+    const cases: Array<[string, string]> = [
+      [hostFile("big.gif", Buffer.alloc(1024 * 1024 + 1, 0x47)), "exceeds the 1 MiB maximum"],
+      [hostFile("notes.txt", "not an image"), "Unsupported icon asset"],
+      [join(dataDir, "host-files", "missing.png"), "ENOENT"],
+    ];
+    for (const [file, reason] of cases) {
+      const refused = await oppi(["agent", "update", agentId, "--icon-image", file]);
+      expect(refused.ok).toBe(false);
+      expect(refused.error?.message).toContain(`--icon-image ${file}`);
+      expect(refused.error?.message).toContain(reason);
+    }
+    expect(await agentIcon(agentId)).toEqual({ kind: "emoji", value: "🦡" });
+  });
+
+  it("lets the control tools set it, with a card for the upload that names the file", async () => {
+    const created = await oppi(["agent", "create", "--name", "Otter"]);
+    const agentId = (created.data?.agent as { id: string }).id;
+    const file = hostFile("otter.webp", webpFixture());
+    const writes: ControlWrite[] = [];
+    const host = new DurableControlCli({ dataDir, sessionIdOf: () => "s-control" }).forConversation(
+      "control",
+      1 as ConversationId,
+    )!;
+    // The argv `agents_update({ id, iconImage })` runs.
+    const { envelope } = await host.run(["agent", "update", "--icon-image", file, "--", agentId], {
+      conversationId: 1 as ConversationId,
+      key: "9:0",
+      signal: new AbortController().signal,
+      onWrite: async (write) => {
+        writes.push(write);
+      },
+    });
+    expect(envelope.ok, JSON.stringify(envelope.error)).toBe(true);
+
+    expect(writes.map((write) => `${write.method} ${write.path.split("?")[0]}`)).toEqual([
+      "POST /icon-assets",
+      `PATCH /agents/${agentId}`,
+    ]);
+    const upload = writes[0]!;
+    expect(upload.body).toEqual({ file, sizeBytes: webpFixture().length });
+    const card = cardOf(upload);
+    expect(card.title).toBe("Store an icon image?");
+    expect(card.message).toContain(file);
+    expect(await agentIcon(agentId)).toMatchObject({ kind: "image" });
   });
 });
 

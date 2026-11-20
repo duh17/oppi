@@ -55,6 +55,7 @@ const AGENT_EDITOR_FLAGS = [
   "name",
   "description",
   "icon",
+  "icon-image",
   "instructions",
   "instructions-file",
   "instructions-mode",

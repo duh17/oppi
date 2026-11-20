@@ -201,6 +201,13 @@ function routeOf(method: string, path: string, body: Obj | undefined): Route {
       return item("Fork", "Session", id, "Starts a new session from this one.");
     case "DELETE sessions/:id":
       return item("Delete", "Session", id, "Deletes the session.");
+    // An `--icon-image` upload: the host shows the file it read and its size, not its bytes.
+    case "POST icon-assets":
+      return {
+        title: () => "Store an icon image?",
+        confirm: "Store Image",
+        does: "Stores an image for an icon.",
+      };
     default:
       break;
   }
@@ -328,6 +335,8 @@ const LABELS: { [path: string]: string } = {
   sessionName: "Session name",
   enabled: "Enabled",
   streamingBehavior: "Delivery",
+  file: "File",
+  sizeBytes: "Size in bytes",
 };
 
 /** Words for coded values. */

@@ -687,6 +687,11 @@ const HELP_TOPICS: HelpTopic[] = [
       },
       { name: "--description", value: "<text>", summary: "workspace description" },
       { name: "--icon", value: "<text>", summary: "SF Symbol name or emoji" },
+      {
+        name: "--icon-image",
+        value: "<file>",
+        summary: "PNG, GIF, or WebP file on this host (at most 1 MiB); not with --icon",
+      },
       { name: "--system-prompt", value: "<text>", summary: "workspace system prompt text" },
       { name: "--runtime", value: "<host|sandbox>", summary: "workspace runtime mode" },
       { name: "--definition", value: "<file>", summary: "JSON CreateWorkspaceRequest fields" },
@@ -711,6 +716,11 @@ const HELP_TOPICS: HelpTopic[] = [
       },
       { name: "--description", value: "<text>", summary: "workspace description" },
       { name: "--icon", value: "<text>", summary: "SF Symbol name or emoji" },
+      {
+        name: "--icon-image",
+        value: "<file>",
+        summary: "PNG, GIF, or WebP file on this host (at most 1 MiB); not with --icon",
+      },
       { name: "--system-prompt", value: "<text>", summary: "workspace system prompt text" },
       { name: "--runtime", value: "<host|sandbox>", summary: "workspace runtime mode" },
       { name: "--definition", value: "<file>", summary: "JSON UpdateWorkspaceRequest fields" },
@@ -1745,7 +1755,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Create saved Agent",
     summary: "Create a saved Agent from first-class flags and optional file or inline JSON.",
     usage:
-      "oppi agent create [--name <name>] [--description <text>] [--icon <text>] [--instructions <text> | --instructions-file <file>] [--instructions-mode <append|replace>] [--skills <csv>] [--extensions <csv>] [--allowed-workspaces <csv>] [--required-runtime <host|sandbox>] [--required-engine durable] [--definition <file> | --definition-json <json-object>] [--model <model[:thinking]>] [--thinking <level>] [--tools <csv>] [--exclude-tools <csv>] [--no-tools] [--no-builtin-tools] [--idempotency-key <key>] [--json]",
+      "oppi agent create [--name <name>] [--description <text>] [--icon <text> | --icon-image <file>] [--instructions <text> | --instructions-file <file>] [--instructions-mode <append|replace>] [--skills <csv>] [--extensions <csv>] [--allowed-workspaces <csv>] [--required-runtime <host|sandbox>] [--required-engine durable] [--definition <file> | --definition-json <json-object>] [--model <model[:thinking]>] [--thinking <level>] [--tools <csv>] [--exclude-tools <csv>] [--no-tools] [--no-builtin-tools] [--idempotency-key <key>] [--json]",
     flags: [
       {
         name: "--name",
@@ -1758,6 +1768,11 @@ const HELP_TOPICS: HelpTopic[] = [
         name: "--icon",
         value: "<text>",
         summary: "default, one Unicode emoji, or an SF Symbol name",
+      },
+      {
+        name: "--icon-image",
+        value: "<file>",
+        summary: "PNG, APNG, GIF, or WebP file on this host (at most 1 MiB) as the icon",
       },
       {
         name: "--instructions",
@@ -1855,7 +1870,7 @@ const HELP_TOPICS: HelpTopic[] = [
       "--required-engine durable writes launchConstraints.requiredEngine: every launch of the Agent (session create, Quick Session, schedules, subagents) runs durable; an omitted --engine becomes durable, --engine classic is refused, and launches fail while durable sessions are off on the server.",
       "Explicit flags override corresponding JSON keys without dropping sibling nested fields. Instructions replace as a whole.",
       "--instructions and --instructions-file are mutually exclusive. --instructions-mode is append or replace and defaults to append when creating from text or file; it requires --instructions, --instructions-file, or instructions.text in the definition JSON.",
-      '--icon is default, one Unicode emoji, or an SF Symbol name. There is no upload flag for Genmoji or image icons; set them via definition JSON after POST /icon-assets stores the bytes: {"kind":"genmoji","assetId":"ia_…","contentDescription":"…"} for a HEIC Genmoji, {"kind":"image","assetId":"ia_…"} for a PNG, APNG, GIF, or WebP of at most 1 MiB.',
+      '--icon is default, one Unicode emoji, or an SF Symbol name. --icon-image <file> reads a PNG, APNG, GIF, or WebP of at most 1 MiB from this host, stores it in the server\'s icon store (POST /icon-assets, which checks the bytes), and sets {"kind":"image","assetId":"ia_…"}; a relative path is from the current directory, and ~/ is expanded. --icon and --icon-image are mutually exclusive. A Genmoji has no flag: after POST /icon-assets stores its HEIC, set {"kind":"genmoji","assetId":"ia_…","contentDescription":"…"} in definition JSON.',
       "sessionDefaults.tools must list real tool names available at launch; unavailable names are dropped with a session warning, not a launch failure. excludeTools stays a denylist and noTools stays 'all' | 'builtin'.",
     ],
     examples: [
@@ -1878,7 +1893,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Update saved Agent",
     summary: "Patch a saved Agent from first-class flags and optional file or inline JSON.",
     usage:
-      "oppi agent update <agent> [--name <name>] [--description <text>] [--clear-description] [--icon <text>] [--clear-icon] [--instructions <text> | --instructions-file <file>] [--instructions-mode <append|replace>] [--clear-instructions] [--skills <csv>] [--clear-skills] [--extensions <csv>] [--clear-extensions] [--allowed-workspaces <csv>] [--clear-allowed-workspaces] [--required-runtime <host|sandbox>] [--clear-required-runtime] [--required-engine durable] [--clear-required-engine] [--definition <file> | --definition-json <json-object>] [--model <model[:thinking]>] [--thinking <level>] [--tools <csv>] [--exclude-tools <csv>] [--no-tools] [--no-builtin-tools] [--expected-version <version>] [--json]",
+      "oppi agent update <agent> [--name <name>] [--description <text>] [--clear-description] [--icon <text> | --icon-image <file>] [--clear-icon] [--instructions <text> | --instructions-file <file>] [--instructions-mode <append|replace>] [--clear-instructions] [--skills <csv>] [--clear-skills] [--extensions <csv>] [--clear-extensions] [--allowed-workspaces <csv>] [--clear-allowed-workspaces] [--required-runtime <host|sandbox>] [--clear-required-runtime] [--required-engine durable] [--clear-required-engine] [--definition <file> | --definition-json <json-object>] [--model <model[:thinking]>] [--thinking <level>] [--tools <csv>] [--exclude-tools <csv>] [--no-tools] [--no-builtin-tools] [--expected-version <version>] [--json]",
     arguments: [{ name: "<agent>", summary: "agent id or unique name" }],
     flags: [
       {
@@ -1896,6 +1911,11 @@ const HELP_TOPICS: HelpTopic[] = [
         name: "--icon",
         value: "<text>",
         summary: "default, one Unicode emoji, or an SF Symbol name",
+      },
+      {
+        name: "--icon-image",
+        value: "<file>",
+        summary: "PNG, APNG, GIF, or WebP file on this host (at most 1 MiB) as the icon",
       },
       { name: "--clear-icon", summary: "sets icon null" },
       {
@@ -2020,7 +2040,7 @@ const HELP_TOPICS: HelpTopic[] = [
       "--allowed-workspaces overlays launchConstraints.allowedWorkspaceIds (workspace IDs) and must not be empty; --clear-allowed-workspaces sets null (any). --required-runtime overlays launchConstraints.requiredRuntime; --clear-required-runtime sets null (either). --required-engine durable overlays launchConstraints.requiredEngine, so every launch runs durable and --engine classic is refused; --clear-required-engine sets null (either engine).",
       "Explicit flags override corresponding JSON keys without dropping sibling nested fields. Instructions replace as a whole. --name overlays definition.name.",
       "--instructions and --instructions-file are mutually exclusive. --instructions-mode requires --instructions, --instructions-file, or instructions.text in the definition JSON rather than dropping stored text.",
-      "--icon is default, one Unicode emoji, or an SF Symbol name; Genmoji and image icons go in definition JSON, as for create. Do not combine a value flag with its --clear-* twin.",
+      "--icon is default, one Unicode emoji, or an SF Symbol name; --icon-image <file> uploads a host image file as the icon, as for create; a Genmoji goes in definition JSON. Do not combine a value flag with its --clear-* twin.",
       "Omit --expected-version for a compatible unconditional PATCH.",
     ],
     examples: [
@@ -2029,6 +2049,7 @@ const HELP_TOPICS: HelpTopic[] = [
           'oppi agent update Reviewer --instructions "Review risky diffs" --expected-version 3 --json',
       },
       { command: "oppi agent update Reviewer --definition ./agent-update.json --json" },
+      { command: "oppi agent update Reviewer --icon-image ./fox.gif --json" },
       {
         command: `oppi agent update Reviewer --definition-json '{"sessionDefaults":{"tools":["read","grep","oppi"]}}' --expected-version 3 --json`,
       },

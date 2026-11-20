@@ -112,23 +112,30 @@ const TABLE: readonly Entry[] = [
   },
   {
     name: "agents_create",
-    description: "Create a saved Agent.",
+    description:
+      "Create a saved Agent. iconImage: absolute path of a PNG, GIF, or WebP (max 1 MiB) on this host.",
     cmd: ["agent", "create"],
     // First-class `oppi agent create|update` flags (kebab-case there); JSON is for bulk edits via oppi().
-    input: obj({ name: str(), instructions: opt(str()), model: opt(str()) }),
+    input: obj({
+      name: str(),
+      instructions: opt(str()),
+      model: opt(str()),
+      iconImage: opt(str()),
+    }),
     output: agent,
     write: true,
     pick: "agent",
   },
   {
     name: "agents_update",
-    description: "Update a saved Agent. Pass expectedVersion.",
+    description: "Update a saved Agent. Pass expectedVersion. iconImage as in agents_create.",
     cmd: ["agent", "update"],
     input: obj({
       ...id,
       expectedVersion: opt(num()),
       instructions: opt(str()),
       model: opt(str()),
+      iconImage: opt(str()),
     }),
     positional: ["id"],
     output: agent,
