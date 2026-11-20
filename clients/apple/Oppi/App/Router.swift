@@ -140,13 +140,6 @@ struct ModalPresentation {
     }
 }
 
-/// A navigation controller whose root screen can close without being popped
-/// or dismissed: the split shell's detail column shows its list instead.
-@MainActor
-protocol RouterRootClosing: UINavigationController {
-    func closeRoot()
-}
-
 /// A controller the router presents. It reports once UIKit has finished
 /// dismissing it, whatever caused the dismissal: swipe-down, `Router.finish`,
 /// a cleared binding, or the presenter going away.
@@ -159,7 +152,7 @@ protocol RouterModalContainer: UIViewController {
 /// It follows the app theme's color scheme, so the bar and the sheet chrome
 /// match the hosted content in light, dark, and system themes.
 final class RouterNavigationController: UINavigationController, RouterModalContainer,
-    UINavigationControllerDelegate, RouterRootClosing {
+    UINavigationControllerDelegate {
     var onDismissed: (() -> Void)?
     /// How the root screen closes when this stack is not presented: a split
     /// pane's stack closes its pane. Nil for a stack that never shows a root
@@ -387,9 +380,9 @@ enum Router {
     /// Closes `screen` deterministically, where SwiftUI `dismiss()` is not:
     /// pops it (and anything above it) when it was pushed, otherwise dismisses
     /// the modal it is the root of, including a presented navigation
-    /// controller's root, where `dismiss()` does nothing. The root of a shell
-    /// stack or a split pane's stack closes the way its stack defines
-    /// (`RouterRootClosing`): the shell shows its list, a pane closes.
+    /// controller's root, where `dismiss()` does nothing. The root of a side
+    /// pane's stack closes its pane (`RouterNavigationController.closeRoot`).
+    /// A shell stack's root is a place, which has nothing to close to.
     static func finish(_ screen: UIViewController) {
         if pop(screen) { return }
         let container = screen.navigationController ?? screen
@@ -397,7 +390,7 @@ enum Router {
             dismiss(container)
             return
         }
-        guard let stack = screen.navigationController as? RouterRootClosing else {
+        guard let stack = screen.navigationController as? RouterNavigationController else {
             assertionFailure("Router.finish on \(type(of: screen)), which is neither pushed nor presented")
             return
         }

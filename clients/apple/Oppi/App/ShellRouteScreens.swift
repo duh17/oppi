@@ -7,11 +7,7 @@ import UIKit
 /// the shell shows in their place.
 @MainActor
 enum ShellRouteScreens {
-    static func make(
-        _ route: ShellRoute,
-        placement: ShellRoutePlacement,
-        root: AppRootEnvironment
-    ) -> UIViewController {
+    static func make(_ route: ShellRoute, root: AppRootEnvironment) -> UIViewController {
         switch route {
         case .inbox:
             return SessionInboxViewController(root: root)
@@ -28,13 +24,7 @@ enum ShellRouteScreens {
         case .chatReader(let target):
             return ChatReaderViewController(target: target, root: root)
         case .workspaceConfiguration(let target):
-            let screen = WorkspaceSettingsViewController(
-                serverId: target.serverId,
-                workspace: target.workspace,
-                root: root
-            )
-            configure(screen, target: target, placement: placement)
-            return screen
+            return WorkspaceSettingsViewController(serverId: target.serverId, workspace: target.workspace, root: root)
         case .utility(let target):
             return utilityScreen(target, root: root)
         case .serverDetails(let target):
@@ -92,24 +82,10 @@ enum ShellRouteScreens {
 
     /// Newer content for the same screen (a refreshed workspace). The main
     /// pane's sidebar button is the stack's, not the screen's.
-    static func update(_ screen: UIViewController, route: ShellRoute, placement: ShellRoutePlacement) {
+    static func update(_ screen: UIViewController, route: ShellRoute) {
         if let detail = screen as? WorkspaceDetailViewController, case .workspace(let target) = route {
             detail.update(workspace: target.workspace)
-        } else if let settings = screen as? WorkspaceSettingsViewController, case .workspaceConfiguration(let target) = route {
-            configure(settings, target: target, placement: placement)
         }
-    }
-
-    /// As the split detail root, Workspace Settings carries a Done that
-    /// returns the column to the workspace's sessions.
-    private static func configure(
-        _ screen: WorkspaceSettingsViewController,
-        target: WorkspaceNavTarget,
-        placement: ShellRoutePlacement
-    ) {
-        screen.onDone = placement == .splitDetailRoot ? { [navigation = screen.root.navigation] in
-            navigation.completeWorkspaceConfiguration(target)
-        } : nil
     }
 
     /// The workspace list beneath the compact stack.

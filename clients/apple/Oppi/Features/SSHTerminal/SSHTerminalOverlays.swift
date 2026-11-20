@@ -178,7 +178,9 @@ class SSHTerminalPillButton: UIButton {
 
 /// Back, bottom leading, then the main pane's sidebar button while the
 /// terminal's stack shows one (`MainPaneSidebarItem`). Back carries the
-/// attention dot while Herdr, Rex, or a blocked program wants you.
+/// attention dot while Herdr, Rex, or a blocked program wants you. Where
+/// leaving closes the terminal's pane instead of popping, it is Close (✕):
+/// a chevron only ever goes back within its own pane.
 final class SSHTerminalBackPill: UIView {
     let pill = SSHTerminalGlassPill()
     /// A circle: the glass is as wide as it is tall.
@@ -235,7 +237,16 @@ final class SSHTerminalBackPill: UIView {
     }
 
     /// `foreground` is the terminal's own text color when its theme sets one.
-    func apply(themeID: ThemeID, attentionPending: Bool, sidebar: MainPaneSidebarItem?, foreground: UIColor? = nil) {
+    /// `closes`: leaving closes the pane (or sheet) the terminal is the root of.
+    func apply(
+        themeID: ThemeID, attentionPending: Bool, closes: Bool = false, sidebar: MainPaneSidebarItem?, foreground: UIColor? = nil
+    ) {
+        let label = closes ? "Close" : "Back"
+        if button.accessibilityLabel != label {
+            button.showSymbol(UIImage(systemName: closes ? "xmark" : "chevron.backward"))
+            button.accessibilityLabel = label
+            button.largeContentTitle = label
+        }
         button.apply(tint: foreground ?? themeID.palette.ui.fg)
         sidebarButton.apply(tint: foreground ?? themeID.palette.ui.fg)
         sidebarButton.isHidden = sidebar == nil

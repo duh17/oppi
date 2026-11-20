@@ -41,7 +41,7 @@ struct StatusBarForwardingTests {
 
     /// The window's pane area, as the shell makes it.
     private func paneArea(_ root: AppRootEnvironment) -> WorkspacePaneArea {
-        let stack = ShellNavigationController(root: root, rootPlacement: .compactRoot)
+        let stack = ShellNavigationController(root: root)
         return WorkspacePaneArea(stack: stack, host: PaneHostController(primary: stack))
     }
 
@@ -84,7 +84,7 @@ struct StatusBarForwardingTests {
     }
 
     @Test func aShellStackFollowsItsTopScreen() {
-        let stack = ShellNavigationController(root: makeTestAppRoot(), rootPlacement: .compactRoot)
+        let stack = ShellNavigationController(root: makeTestAppRoot())
         let first = UIViewController()
         let second = UIViewController()
         stack.setViewControllers([first], animated: false)

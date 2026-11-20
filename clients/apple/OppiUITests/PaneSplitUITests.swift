@@ -199,8 +199,13 @@ final class PaneSplitUITests: XCTestCase, PreviewUITestCase {
     /// back from behind the zoomed Terminal instead of changing unseen.
     func testNavigatingTheMainPaneBehindAZoomBringsItBack() throws {
         try openChatInLandscape()
-        let toggleSidebar = app.buttons["workspace.split.sidebarToggle"]
-        if toggleSidebar.waitUntilExists(timeout: 5), toggleSidebar.label.localizedCaseInsensitiveContains("show") {
+        // The chat slides in over All Sessions, whose own sidebar button sits
+        // where the chat's Back lands: wait for the chat's, after its Back.
+        let back = app.buttons["chat.toolbar.back"]
+        let toggleSidebar = app.buttons["workspace.split.sidebarToggle"].firstMatch
+        XCTAssertTrue(waitFor(back.exists && back.isHittable && toggleSidebar.exists && toggleSidebar.frame.minX >= back.frame.maxX - 1),
+                      "The chat's push finished with its own sidebar button")
+        if toggleSidebar.label.localizedCaseInsensitiveContains("show") {
             toggleSidebar.tap()
         }
         let workspace = app.buttons["workspace.open.routes-workspace"]
@@ -830,46 +835,6 @@ final class PaneSplitUITests: XCTestCase, PreviewUITestCase {
         for _ in 0..<8 where !(panes.exists && panes.isHittable) { list.swipeUp() }
         XCTAssertTrue(panes.waitUntilExists(timeout: 5), "Settings lists Panes")
         panes.tap()
-    }
-
-    /// A session opened from Pinned in landscape, with the sidebar showing,
-    /// opens as a session row does: the sidebar slides away, the chat takes
-    /// the whole window with no empty column left where the sidebar was, and
-    /// it carries the sidebar toggle instead of a Back to Pinned.
-    func testASessionOpenedFromPinnedOpensAsASessionRowDoesInLandscape() throws {
-        guard UIDevice.current.userInterfaceIdiom == .pad else {
-            throw XCTSkip("The sidebar sits beside Pinned only on the iPad mini in landscape")
-        }
-        XCUIDevice.shared.orientation = .landscapeLeft
-        addTeardownBlock { @MainActor in XCUIDevice.shared.orientation = .portrait }
-        launchPreview(screen: "pane-restore", environment: ["PANE_RESTORE_PINS": "1"], colorScheme: "dark", ready: nil)
-        let pinnedRow = app.descendants(matching: .any)["workspace.pinned.open"]
-        XCTAssertTrue(pinnedRow.waitUntilExists(timeout: 10), "The sidebar offers Pinned")
-        pinnedRow.tap()
-        let list = app.collectionViews["pinned.list"]
-        let pin = list.descendants(matching: .any)[sessionRow].firstMatch
-        XCTAssertTrue(pin.waitUntilExists(timeout: 10), "Pinned lists the fixture chat")
-        XCTAssertTrue(pinnedRow.isHittable, "The sidebar shows beside Pinned")
-        hold()
-        attachScreenCapture("pinned-beside-sidebar")
-
-        pin.tap()
-        let window = app.windows.firstMatch
-        let timeline = app.collectionViews["chat.timeline"]
-        XCTAssertTrue(timeline.waitUntilExists(timeout: 10), "The chat opened")
-        XCTAssertTrue(waitFor(!pinnedRow.isHittable), "The sidebar went away")
-        XCTAssertTrue(waitFor(abs(timeline.frame.minX - window.frame.minX) < 2 && abs(timeline.frame.width - window.frame.width) < 2),
-                      "The chat fills the window: chat \(timeline.frame), window \(window.frame)")
-        let toggle = app.buttons["workspace.split.sidebarToggle"]
-        XCTAssertTrue(toggle.waitUntilExists(timeout: 5), "The chat carries the sidebar toggle")
-        XCTAssertFalse(app.navigationBars.buttons["BackButton"].exists, "No Back to Pinned")
-        hold()
-        attachScreenCapture("pinned-chat-open")
-
-        toggle.tap()
-        XCTAssertTrue(waitFor(pinnedRow.isHittable), "The toggle brings the sidebar back")
-        hold()
-        attachScreenCapture("pinned-chat-sidebar-back")
     }
 
     private func openChatInLandscape() throws {

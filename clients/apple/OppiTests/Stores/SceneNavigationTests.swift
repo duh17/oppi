@@ -258,34 +258,32 @@ struct SceneNavigationShellRoutingTests {
         navigation.openReferencedSession(locked)
         navigation.openChatReader(reader)
         navigation.openReferencedSession(other)
-        #expect(navigation.splitDetailColumn.pushed.map(\.route) == [.session(locked), .chatReader(reader), .session(other)])
+        #expect(navigation.splitDetailColumn.routes == [.inbox, .session(root), .session(locked), .chatReader(reader), .session(other)])
 
         #expect(!navigation.removeSessionRoute(serverId: "server-1", sessionId: "locked"))
-        #expect(navigation.splitDetailColumn.root == .session(root))
-        #expect(navigation.splitDetailColumn.pushed.map(\.route) == [.session(other)])
+        #expect(navigation.splitDetailColumn.routes == [.inbox, .session(root), .session(other)])
 
         navigation.openChatReader(reader)
         #expect(navigation.removeSessionRoute(serverId: "server-1", sessionId: "other"), "The reader was on top")
-        #expect(navigation.splitDetailColumn.pushed.isEmpty)
+        #expect(navigation.splitDetailColumn.routes == [.inbox, .session(root)])
     }
 
-    /// The split detail's root is the session itself: removing it clears the detail column, and the
-    /// screens pushed over it go with their root.
-    @Test func removingTheSplitDetailSessionClearsTheColumn() {
+    /// The split shows the same chats above its place as the compact stack does: removing one leaves the
+    /// place, and another session's chat pushed over it stays.
+    @Test func removingASplitChatLeavesItsPlaceAndAnotherSessionsChat() {
         let navigation = SceneNavigation()
         navigation.setWorkspaceNavigationPresentation(.split)
         let locked = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "locked", workspaceId: "w1")
+        let other = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "other", workspaceId: "w1")
         navigation.openWorkspaceSession(locked)
         #expect(navigation.removeSessionRoute(serverId: "server-1", sessionId: "locked"))
-        #expect(navigation.splitDetailColumn.rootIndex == nil)
-        #expect(navigation.splitDetailColumn.pushed.isEmpty)
+        #expect(navigation.splitDetailColumn.routes == [.inbox])
         #expect(navigation.showsAllSessionsRoot)
 
         navigation.openWorkspaceSession(locked)
-        navigation.openReferencedSession(WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "other", workspaceId: "w1"))
+        navigation.openReferencedSession(other)
         #expect(!navigation.removeSessionRoute(serverId: "server-1", sessionId: "locked"), "Another screen was on top")
-        #expect(navigation.splitDetailColumn.rootIndex == nil)
-        #expect(navigation.splitDetailColumn.pushed.isEmpty)
+        #expect(navigation.splitDetailColumn.routes == [.inbox, .session(other)])
     }
 
     @Test func referencedSessionPushesFromSplitChatAndSelfLinkIsNoOp() {
@@ -305,17 +303,16 @@ struct SceneNavigationShellRoutingTests {
 
         navigation.openReferencedSession(target)
 
-        #expect(navigation.splitDetailColumn.root == .session(source))
-        #expect(navigation.splitDetailColumn.pushed.count == 1)
+        #expect(navigation.splitDetailColumn.routes == [.inbox, .session(source), .session(target)])
         #expect(navigation.visibleSplitDiagnosticContext == WorkspaceStackDiagnosticContext(
             screen: "chat",
             sessionId: "target",
             workspaceId: "workspace-2"
         ))
         navigation.openReferencedSession(target)
-        #expect(navigation.splitDetailColumn.pushed.count == 1)
+        #expect(navigation.splitDetailColumn.pushed.count == 2)
         navigation.popShownStack(toDepth: navigation.splitDetailColumn.pushed.count - 1)
-        #expect(navigation.splitDetailColumn.root == .session(source))
+        #expect(navigation.splitDetailColumn.routes == [.inbox, .session(source)])
         #expect(navigation.visibleSplitDiagnosticContext == WorkspaceStackDiagnosticContext(
             screen: "chat",
             sessionId: "source",
@@ -358,10 +355,9 @@ struct SceneNavigationShellRoutingTests {
                 #expect(navigation.workspaceStackRouteElements.count == 1)
                 #expect(navigation.selectedWorkspaceFilter == nil)
             case .split:
-                #expect(navigation.splitDetailColumn.root == .session(source))
-                #expect(navigation.splitDetailColumn.pushed.count == 1)
+                #expect(navigation.splitDetailColumn.routes == [.inbox, .session(source), .linkedFile(file)])
                 navigation.popShownStack(toDepth: navigation.splitDetailColumn.pushed.count - 1)
-                #expect(navigation.splitDetailColumn.root == .session(source))
+                #expect(navigation.splitDetailColumn.routes == [.inbox, .session(source)])
             }
         }
     }
@@ -428,8 +424,7 @@ struct SceneNavigationShellRoutingTests {
 
         navigation.setWorkspaceNavigationPresentation(.split)
 
-        #expect(navigation.splitDetailColumn.root == .session(source))
-        #expect(navigation.splitDetailColumn.pushed.count == 1)
+        #expect(navigation.splitDetailColumn.routes == [.inbox, .session(source), .session(target)])
 
         navigation.setWorkspaceNavigationPresentation(.stack)
 
@@ -705,76 +700,64 @@ struct SceneNavigationShellRoutingTests {
         ))
     }
 
-    @Test func showSessionInboxInSplitClearsDetailTarget() {
-        let navigation = SceneNavigation()
-        navigation.setWorkspaceNavigationPresentation(.split)
-        navigation.openWorkspaceSession(WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1"))
-
-        navigation.showSessionInboxInSplit()
-
-        #expect(navigation.splitDetailColumn.rootIndex == nil)
-        #expect(navigation.splitColumnVisibility == .all)
+    /// Back means back: content opened from a place, or from other content, is pushed over the
+    /// screen it was opened from in both shells, and Back returns to that screen, also when the
+    /// window changed shell in between (a rotation on the iPad mini).
+    @Test func backReturnsToTheScreenContentWasOpenedFromInBothShellsAndAcrossARotation() {
+        let workspace = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
+        let chat = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "chat", workspaceId: "workspace-1")
+        let other = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "other", workspaceId: "workspace-1")
+        let folder = FileBrowserNavTarget(serverId: "server-1", workspaceId: "workspace-1", path: "notes/")
+        let file = WorkspaceLinkedFileNavTarget.workspaceFile(serverId: "server-1", workspaceId: "workspace-1", path: "notes/a.md")
+        typealias Row = (
+            journey: String, from: ShellRoute, start: (SceneNavigation) -> Void,
+            open: (SceneNavigation) -> Void, opened: ShellRoute
+        )
+        let rows: [Row] = [
+            ("All Sessions → chat", .inbox, { _ in }, { $0.openWorkspaceSession(chat) }, .session(chat)),
+            ("a workspace's list → chat", .workspace(workspace), { $0.openPlace(.sessions(workspace)) },
+             { $0.openWorkspaceSession(chat, workspace: workspace) }, .session(chat)),
+            ("Pinned → chat", .utility(.pinned), { $0.openPlace(.utility(.pinned)) },
+             { $0.openReferencedSession(chat) }, .session(chat)),
+            ("Agents → chat", .utility(.agents), { $0.openPlace(.utility(.agents)) },
+             { $0.openWorkspaceSession(chat) }, .session(chat)),
+            ("Schedules → a run's chat", .utility(.schedules), { $0.openPlace(.utility(.schedules)) },
+             { $0.openWorkspaceSession(chat) }, .session(chat)),
+            ("Pinned → folder", .utility(.pinned), { $0.openPlace(.utility(.pinned)) },
+             { $0.openWorkspaceFileBrowser(folder) }, .fileBrowser(folder)),
+            ("Pinned → file", .utility(.pinned), { $0.openPlace(.utility(.pinned)) },
+             { $0.openWorkspaceLinkedFile(file) }, .linkedFile(file)),
+            ("a workspace's list → Files", .workspace(workspace), { $0.openPlace(.sessions(workspace)) },
+             { $0.openWorkspaceFileBrowser(folder, workspace: workspace) }, .fileBrowser(folder)),
+            ("a workspace's list → Workspace Settings", .workspace(workspace), { $0.openPlace(.sessions(workspace)) },
+             { $0.openWorkspaceConfiguration(workspace) }, .workspaceConfiguration(workspace)),
+            ("a chat → a session link", .session(chat), { $0.openWorkspaceSession(chat) },
+             { $0.openReferencedSession(other) }, .session(other)),
+            ("a chat → a file link", .session(chat), { $0.openWorkspaceSession(chat) },
+             { $0.openReferencedWorkspaceLinkedFile(file, workspace: workspace, sourceSession: chat) }, .linkedFile(file)),
+        ]
+        for row in rows {
+            for opening in [WorkspaceNavigationPresentation.stack, .split] {
+                for back in [WorkspaceNavigationPresentation.stack, .split] {
+                    let navigation = readyNavigation()
+                    navigation.setWorkspaceNavigationPresentation(opening)
+                    row.start(navigation)
+                    row.open(navigation)
+                    navigation.setWorkspaceNavigationPresentation(back)
+                    let journey = "\(row.journey), opened in \(opening), Back in \(back)"
+                    #expect(Self.shown(navigation).last == row.opened, "\(journey): \(Self.shown(navigation))")
+                    navigation.popShownStack(toDepth: Self.shown(navigation).count - 2)
+                    #expect(Self.shown(navigation).last == row.from, "\(journey): \(Self.shown(navigation))")
+                }
+            }
+        }
     }
 
-    @Test func sessionOpenedFromSplitAllSessionsReturnsToAllSessionsOnInboxBack() {
-        let navigation = SceneNavigation()
-        let workspaceTarget = WorkspaceNavTarget(
-            serverId: "server-1",
-            workspace: makeTestWorkspace(id: "workspace-1")
-        )
-        let sessionTarget = WorkspaceSessionNavTarget(
-            serverId: "server-1",
-            sessionId: "session-1",
-            workspaceId: "workspace-1"
-        )
-        navigation.setWorkspaceNavigationPresentation(.split)
-
-        navigation.openWorkspaceSession(sessionTarget, workspace: workspaceTarget)
-
-        #expect(navigation.selectedWorkspaceFilter == nil)
-        #expect(navigation.splitDetailColumn.root == .session(sessionTarget))
-
-        navigation.showSessionInboxInSplit()
-
-        #expect(navigation.selectedWorkspaceFilter == nil)
-        #expect(navigation.splitDetailColumn.rootIndex == nil)
-        #expect(navigation.selectedWorkspaceFilter == nil)
-    }
-
-    @Test func sessionOpenedFromSplitWorkspaceReturnsToThatWorkspaceOnInboxBack() {
-        let navigation = SceneNavigation()
-        let workspaceTarget = WorkspaceNavTarget(
-            serverId: "server-1",
-            workspace: makeTestWorkspace(id: "workspace-1")
-        )
-        let sessionTarget = WorkspaceSessionNavTarget(
-            serverId: "server-1",
-            sessionId: "session-1",
-            workspaceId: "workspace-1"
-        )
-        navigation.setWorkspaceNavigationPresentation(.split)
-        navigation.openWorkspace(workspaceTarget)
-
-        navigation.openWorkspaceSession(sessionTarget, workspace: workspaceTarget)
-
-        #expect(navigation.selectedWorkspaceFilter == workspaceTarget)
-        #expect(navigation.splitDetailColumn.root == .session(sessionTarget))
-
-        navigation.showSessionInboxInSplit()
-
-        #expect(navigation.selectedWorkspaceFilter == workspaceTarget)
-        #expect(navigation.splitDetailColumn.rootIndex == nil)
-        #expect(navigation.selectedWorkspaceFilter == workspaceTarget)
-    }
-
-    @Test func openSessionUsesSplitDetailSelectionInSplitPresentation() {
-        let navigation = SceneNavigation()
-        let target = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
-        navigation.setWorkspaceNavigationPresentation(.split)
-
-        navigation.openWorkspaceSession(target)
-        #expect(navigation.splitDetailColumn.root == .session(target))
-        #expect(navigation.splitColumnVisibility == .detailOnly)
+    /// What a shell shows, root first: the compact stack above All Sessions, or the split's detail column.
+    private static func shown(_ navigation: SceneNavigation) -> [ShellRoute] {
+        navigation.workspaceNavigationPresentation == .split
+            ? navigation.splitDetailColumn.routes
+            : [.inbox] + navigation.workspaceStackRouteElements.map(ShellRoute.init)
     }
 
     @Test func controlSessionNeverReceivesWorkspaceFallback() {
@@ -862,7 +845,7 @@ struct SceneNavigationShellRoutingTests {
 
         navigation.openWorkspaceSession(sessionTarget, workspace: workspaceTarget)
 
-        #expect(navigation.splitDetailColumn.root == .session(
+        #expect(navigation.splitDetailColumn.routes.last == .session(
             WorkspaceSessionNavTarget(
                 serverId: "server-1",
                 sessionId: "session-1",
@@ -893,19 +876,7 @@ struct SceneNavigationShellRoutingTests {
         navigation.openWorkspaceSession(sessionTarget)
 
         #expect(navigation.splitColumnVisibility == .detailOnly)
-        #expect(navigation.splitDetailColumn.root == .session(sessionTarget))
-    }
-
-    @Test func fileBrowserUsesSplitDetailSelectionInSplitPresentation() {
-        let navigation = SceneNavigation()
-        let workspaceTarget = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
-        let fileTarget = FileBrowserNavTarget(serverId: "server-1", workspaceId: "workspace-1", path: "")
-        navigation.setWorkspaceNavigationPresentation(.split)
-
-        navigation.openWorkspaceFileBrowser(fileTarget, workspace: workspaceTarget)
-        #expect(navigation.selectedWorkspaceFilter == workspaceTarget)
-        #expect(navigation.splitDetailColumn.root == .fileBrowser(fileTarget))
-        #expect(navigation.splitColumnVisibility == .detailOnly)
+        #expect(navigation.splitDetailColumn.routes == [.inbox, .session(sessionTarget)])
     }
 
     @Test func columnDrillSurvivesStackToSplitSwap() {
@@ -927,29 +898,13 @@ struct SceneNavigationShellRoutingTests {
 
         navigation.setWorkspaceNavigationPresentation(.split)
 
-        guard case .fileBrowser(let restored) = navigation.splitDetailColumn.root else {
+        guard case .fileBrowser(let restored) = navigation.splitDetailColumn.routes.last else {
             Issue.record("file browser was not restored")
             return
         }
         #expect(restored.path.isEmpty)
         #expect(restored.columnDirectoryPath == "src/")
         #expect(restored.columnSelectedFile == selected)
-    }
-
-    @Test func linkedFileUsesDedicatedDestinationInSplitPresentation() {
-        let navigation = SceneNavigation()
-        let workspaceTarget = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
-        let fileTarget = WorkspaceLinkedFileNavTarget(
-            serverId: "server-1",
-            workspaceId: "workspace-1",
-            kind: .workspaceFile(path: "server/src/server.ts", fileName: "server.ts")
-        )
-        navigation.setWorkspaceNavigationPresentation(.split)
-
-        navigation.openWorkspaceLinkedFile(fileTarget, workspace: workspaceTarget)
-        #expect(navigation.selectedWorkspaceFilter == workspaceTarget)
-        #expect(navigation.splitDetailColumn.root == .linkedFile(fileTarget))
-        #expect(navigation.splitColumnVisibility == .detailOnly)
     }
 
     @Test func linkedFileTargetCarriesLineAnchorThroughNavigation() throws {
@@ -990,7 +945,7 @@ struct SceneNavigationShellRoutingTests {
 
         navigation.openWorkspaceLinkedFile(target)
 
-        #expect(navigation.splitDetailColumn.root == .linkedFile(target))
+        #expect(navigation.splitDetailColumn.routes.last == .linkedFile(target))
 
         navigation.setWorkspaceNavigationPresentation(.stack)
         #expect(navigation.workspaceStackRouteElements.count == 1)
@@ -1028,23 +983,6 @@ struct SceneNavigationShellRoutingTests {
         navigation.openWorkspaceLinkedFile(fileTarget)
 
         #expect(navigation.workspaceStackRouteElements.count == 2)
-    }
-
-    @Test func linkedFileOpenedFromSplitSessionPreservesSessionBackNavigation() {
-        let navigation = SceneNavigation()
-        let sessionTarget = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
-        let fileTarget = WorkspaceLinkedFileNavTarget(
-            serverId: "server-1",
-            workspaceId: "workspace-1",
-            kind: .workspaceFile(path: "notes/second.md", fileName: "second.md")
-        )
-        navigation.setWorkspaceNavigationPresentation(.split)
-
-        navigation.openWorkspaceSession(sessionTarget)
-        navigation.openWorkspaceLinkedFile(fileTarget)
-
-        #expect(navigation.splitDetailColumn.root == .session(sessionTarget))
-        #expect(navigation.splitDetailColumn.pushed.count == 1)
     }
 
     @Test func linkedFileOpenedFromSplitSessionSurvivesCompactRotation() {
@@ -1091,12 +1029,13 @@ struct SceneNavigationShellRoutingTests {
         let rootTarget = FileBrowserNavTarget(serverId: "server-1", workspaceId: "workspace-1", path: "")
         let childTarget = FileBrowserNavTarget(serverId: "server-1", workspaceId: "workspace-1", path: "notes/")
         navigation.setWorkspaceNavigationPresentation(.split)
+        navigation.openWorkspace(workspaceTarget)
 
         navigation.openWorkspaceFileBrowser(rootTarget, workspace: workspaceTarget)
         navigation.pushWorkspaceFileBrowser(childTarget)
         navigation.setWorkspaceNavigationPresentation(.stack)
 
-        #expect(navigation.workspaceStackRouteElements.count == 3)
+        #expect(navigation.workspaceStackRouteElements == [.workspace(workspaceTarget), .fileBrowser(rootTarget), .fileBrowser(childTarget)])
     }
 
     @Test func splitAllSessionsSessionKeepsAllSessionsOnCompactRotation() {
@@ -1146,13 +1085,13 @@ struct SceneNavigationShellRoutingTests {
 
         navigation.setWorkspaceNavigationPresentation(.split)
         #expect(navigation.selectedWorkspaceFilter == workspaceTarget)
-        #expect(navigation.splitDetailColumn.root == .session(
+        #expect(navigation.splitDetailColumn.routes == [.workspace(workspaceTarget), .session(
             WorkspaceSessionNavTarget(
                 serverId: "server-1",
                 sessionId: "session-1",
                 workspaceId: "workspace-1"
             )
-        ))
+        )])
         #expect(navigation.splitColumnVisibility == .detailOnly)
     }
 
@@ -1179,8 +1118,7 @@ struct SceneNavigationShellRoutingTests {
         navigation.setWorkspaceNavigationPresentation(.split)
 
         #expect(navigation.selectedWorkspaceFilter == workspaceTarget)
-        #expect(navigation.splitDetailColumn.root == .fileBrowser(rootTarget))
-        #expect(navigation.splitDetailColumn.pushed.count == 1)
+        #expect(navigation.splitDetailColumn.routes == [.workspace(workspaceTarget), .fileBrowser(rootTarget), .fileBrowser(childTarget)])
         #expect(navigation.splitColumnVisibility == .detailOnly)
     }
 
@@ -1420,17 +1358,6 @@ struct SceneNavigationShellRoutingTests {
         #expect(navigation.splitColumnVisibility == .all)
     }
 
-    @Test func workspaceConfigurationUsesSplitDetailSelectionInSplitPresentation() {
-        let navigation = SceneNavigation()
-        let workspaceTarget = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
-        navigation.setWorkspaceNavigationPresentation(.split)
-
-        navigation.openWorkspaceConfiguration(workspaceTarget)
-        #expect(navigation.selectedWorkspaceFilter == workspaceTarget)
-        #expect(navigation.splitDetailColumn.root == .workspaceConfiguration(workspaceTarget))
-        #expect(navigation.splitColumnVisibility == .all)
-    }
-
     @Test func splitWorkspaceConfigurationPreservesWorkspaceBackLayerOnCompactRotation() {
         let navigation = SceneNavigation()
         let workspaceTarget = WorkspaceNavTarget(
@@ -1458,7 +1385,7 @@ struct SceneNavigationShellRoutingTests {
         navigation.setWorkspaceNavigationPresentation(.split)
 
         #expect(navigation.selectedWorkspaceFilter == workspaceTarget)
-        #expect(navigation.splitDetailColumn.root == .workspaceConfiguration(workspaceTarget))
+        #expect(navigation.splitDetailColumn.routes == [.workspace(workspaceTarget), .workspaceConfiguration(workspaceTarget)])
         #expect(navigation.splitColumnVisibility == .all)
     }
 
@@ -1484,7 +1411,7 @@ struct SceneNavigationShellRoutingTests {
         let workspaceSession = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1", workspaceId: "workspace-1")
         navigation.openPlace(.sessions(workspace))
         navigation.openWorkspaceSession(workspaceSession, workspace: workspace)
-        #expect(navigation.splitDetailColumn.root == .session(workspaceSession))
+        #expect(navigation.splitDetailColumn.routes == [.workspace(workspace), .session(workspaceSession)])
         #expect(navigation.currentPlace == .sessions(workspace), "The chat keeps its workspace's row selected")
         navigation.openPlace(.allSessions)
         #expect(navigation.workspaceStackRouteElements.isEmpty)
@@ -1497,19 +1424,6 @@ struct SceneNavigationShellRoutingTests {
         #expect(navigation.currentPlace == .allSessions)
         navigation.openPlace(.allSessions)
         #expect(navigation.workspaceStackRouteElements.isEmpty)
-    }
-
-    @Test func completingWorkspaceConfigurationClearsMatchingSplitDetail() {
-        let navigation = SceneNavigation()
-        let workspaceTarget = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
-        navigation.setWorkspaceNavigationPresentation(.split)
-        navigation.openWorkspaceConfiguration(workspaceTarget)
-
-        navigation.completeWorkspaceConfiguration(workspaceTarget)
-
-        #expect(navigation.selectedWorkspaceFilter == workspaceTarget)
-        #expect(navigation.splitDetailColumn.rootIndex == nil)
-        #expect(navigation.splitDetailColumn.pushed.isEmpty)
     }
 
     @Test func utilitySelectionPreservesSplitColumnVisibility() {

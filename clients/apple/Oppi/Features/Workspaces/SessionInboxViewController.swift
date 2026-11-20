@@ -524,7 +524,7 @@ final class SessionInboxViewController: UIViewController {
     }
 
     private var currentCoverageKey: String {
-        "\(navigation.workspaceStackRouteElements.count):\(navigation.workspaceNavigationPresentation):\(navigation.sessionListCover.detailReplacesList)"
+        "\(navigation.workspaceStackRouteElements.count):\(navigation.workspaceNavigationPresentation):\(navigation.sessionListCover.splitListCovered)"
     }
 
     /// A covered screen stops reacting, and no update pass is guaranteed
@@ -542,7 +542,7 @@ final class SessionInboxViewController: UIViewController {
         SessionListSearchNavigationPersistence.isInboxCovered(
             isSplitPresentation: navigation.workspaceNavigationPresentation == .split,
             stackDepth: navigation.sessionListCover.stackDepth,
-            splitDetailReplacesList: navigation.sessionListCover.detailReplacesList
+            splitListCovered: navigation.sessionListCover.splitListCovered
         )
     }
 

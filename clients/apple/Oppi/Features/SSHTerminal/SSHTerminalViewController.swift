@@ -1127,7 +1127,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         )
         if rexPanesShown, headline != nil || progress != nil { attention.glyphFrame.rect = rexPill.button.glyphFrame.rect }
         backPill.apply(
-            themeID: themeID, attentionPending: attentionPending(), sidebar: mainPaneSidebarItem,
+            themeID: themeID, attentionPending: attentionPending(), closes: leavingClosesStack, sidebar: mainPaneSidebarItem,
             foreground: lastTerminalColors?.foreground.map(UIColor.init)
         )
         updateKeyboardBar(
@@ -1353,6 +1353,14 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         } else {
             Router.finish(self)
         }
+    }
+
+    /// `goBack` closes the stack's root instead of popping: the terminal is
+    /// its stack's first screen, or sits on the folder screen that only
+    /// connected it there (a side pane's terminal, or one in a sheet).
+    private var leavingClosesStack: Bool {
+        guard let stack = navigationController?.viewControllers, let index = stack.firstIndex(of: self) else { return false }
+        return index == 0 || (index == 1 && stack[0] is SSHTerminalFolderViewController)
     }
 
     /// VoiceOver's two-finger scrub goes back, as it would with a bar.

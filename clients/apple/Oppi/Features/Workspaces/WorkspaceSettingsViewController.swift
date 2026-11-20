@@ -52,11 +52,6 @@ final class WorkspaceSettingsViewController: ListScreenController<
     /// Oppi bar when it was pushed onto another screen. As a shell route it leaves through the
     /// `SceneNavigation` change that follows instead.
     var onLeave: (() -> Void)?
-    /// The split detail root's Done: returns the column to the workspace's
-    /// sessions. Nil elsewhere.
-    var onDone: (() -> Void)? {
-        didSet { setNeedsUpdateProperties() }
-    }
 
     /// The workspace's server once it is ready: the list has nothing to show
     /// before it.
@@ -69,7 +64,6 @@ final class WorkspaceSettingsViewController: ListScreenController<
     /// The compact Oppi bar, made once the workspace's server is ready.
     private var composer: GuidedControlComposerController?
     private weak var deleteAlert: UIAlertController?
-    private var doneItem: UIBarButtonItem?
     /// Bumped when a toggle's write ends, so its switch is redrawn from the
     /// stored value even where that value did not change (a cancelled unlock,
     /// a failed write).
@@ -171,7 +165,6 @@ final class WorkspaceSettingsViewController: ListScreenController<
         _ = (root.themeStore.mode, root.themeStore.manualThemeID, locks.isAuthenticating)
         collectionView.isHidden = !showsWorkspace
         showLockCover()
-        updateBar()
         updateComposer()
     }
 
@@ -285,19 +278,6 @@ final class WorkspaceSettingsViewController: ListScreenController<
     private func dismissPresentedModals() {
         deleteAlert?.dismiss(animated: false)
         deleteAlert = nil
-    }
-
-    private func updateBar() {
-        var leading: [UIBarButtonItem] = []
-        if showsWorkspace, let onDone {
-            let item = doneItem ?? UIBarButtonItem(systemItem: .done)
-            item.title = String(localized: "Done")
-            item.primaryAction = UIAction(title: String(localized: "Done")) { _ in onDone() }
-            item.accessibilityIdentifier = "workspace.edit.done"
-            doneItem = item
-            leading.append(item)
-        }
-        ListScreen.setBarItems(trailing: [], leading: leading, on: navigationItem)
     }
 
     // MARK: - Rows

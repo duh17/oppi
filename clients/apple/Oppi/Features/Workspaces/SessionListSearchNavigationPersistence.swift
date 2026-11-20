@@ -19,31 +19,30 @@ enum SessionListSearchNavigationPersistence {
         case searchPresentationChanged(Bool)
         /// Arm after a session is known to open, before the push, so a
         /// system dismiss that races the path update does not look like
-        /// Cancel. Also arm for split: the list is replaced, not covered,
-        /// and dismiss would otherwise look like Cancel.
+        /// Cancel.
         case willOpenDestination
         case coverageChanged(isCovered: Bool)
         case reset
     }
 
-    /// Compact inbox is covered by its stack. Split replaces the list with
-    /// chat, so a non-nil session/detail target is also coverage.
+    /// Compact inbox is covered by its stack; the split's list by a screen
+    /// pushed over it in the detail column.
     static func isInboxCovered(
         isSplitPresentation: Bool,
         stackDepth: Int,
-        splitDetailReplacesList: Bool = false
+        splitListCovered: Bool = false
     ) -> Bool {
         if isSplitPresentation {
-            return splitDetailReplacesList
+            return splitListCovered
         }
         return stackDepth > 0
     }
 
     static func isWorkspaceListCovered(
         stackDepth: Int,
-        splitDetailReplacesList: Bool = false
+        splitListCovered: Bool = false
     ) -> Bool {
-        if splitDetailReplacesList {
+        if splitListCovered {
             return true
         }
         return stackDepth > 1

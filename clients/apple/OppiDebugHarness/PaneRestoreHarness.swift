@@ -34,6 +34,9 @@ import UIKit
 /// `PANE_RESTORE_REX=1` saves one SSH host whose Rex is a fake one in process
 /// (`SSHTerminalRexListPreviewController.makeList`), so the launcher's Rex pane
 /// lists its sessions and opens one in the pane.
+/// `PANE_RESTORE_TERMINAL=1` opens a live terminal, over a channel with no host
+/// to dial, at the root of a pane beside the main pane once the shell is up,
+/// as the chat's Terminal button opens a connected one (`openBeside`).
 final class PaneRestorePreviewController: PreviewRootController {
     static let serverId = "sha256:pane-restore"
     static let offlineServerId = "sha256:pane-restore-mini"
@@ -103,6 +106,26 @@ final class PaneRestorePreviewController: PreviewRootController {
         root.opener.sceneDidBecomeActive()
         root.opener.launchDidFinish()
         keepChatsSeeded()
+        if ProcessInfo.processInfo.environment["PANE_RESTORE_TERMINAL"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                MainActor.assumeIsolated { self?.openTerminalBesideTheMainPane() }
+            }
+        }
+    }
+
+    private func openTerminalBesideTheMainPane() {
+        guard let host = Self.paneHost(in: self), let channel = try? SSHTerminalChannel() else { return }
+        let terminal = SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {}, hostLabel: "alex@mac-studio")
+        let entry = PaneStackEntry(
+            serverId: Self.serverId,
+            route: .local(PaneLocalScreen.terminal(workspaceId: ChatRoutesFixture.workspace.id).token)
+        )
+        host.openBeside(PaneOpenContent(entry: entry), kind: .terminal, from: host.panes.routedLeafID, screen: terminal)
+    }
+
+    private static func paneHost(in controller: UIViewController) -> PaneHostController? {
+        if let host = controller as? PaneHostController { return host }
+        return controller.children.lazy.compactMap { paneHost(in: $0) }.first
     }
 
     /// The shell builds its own chats; each gets the fixture timeline, which

@@ -80,16 +80,15 @@ extension WorkspaceDetailViewController {
         }
     }
 
-    /// Once per process. Split replaces this screen when a chat replaces the
-    /// detail root, so a screen-local flag cannot remember the launch hint.
+    /// Once per process. A change of shell can rebuild this screen, so a
+    /// screen-local flag cannot remember the launch hint.
     @MainActor
     private enum E2EWorkspaceLaunchHintGate {
         static var didCreateSession = false
     }
 
     func autoCreateE2ESessionIfRequested() async {
-        // Split replaces the detail root with the chat, so this screen is gone
-        // when Back returns here. A screen-local flag would create and open
+        // A rebuilt screen with a screen-local flag would create and open
         // another session, and the chat would look like it never left.
         guard !E2EWorkspaceLaunchHintGate.didCreateSession,
               !state.hasAutoCreatedE2ESession,

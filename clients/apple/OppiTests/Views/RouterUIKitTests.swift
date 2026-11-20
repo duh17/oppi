@@ -410,7 +410,7 @@ struct ShellStackRoutesTests {
     /// already in flight.
     @Test("a route update during the stack's own push waits for didShow and lands once")
     func ownPushDefersToDidShow() async throws {
-        let stack = ShellNavigationController(root: makeTestAppRoot(), rootPlacement: .compactRoot)
+        let stack = ShellNavigationController(root: makeTestAppRoot())
         stack.setRoutes([.inbox])
         let inbox = try #require(stack.viewControllers.first)
 
@@ -448,7 +448,7 @@ struct ShellStackRoutesTests {
     /// transition's own completion, which fires whether it completes or cancels.
     @Test("an own transition does not stop a later transition from applying routes")
     func ownTransitionDoesNotStrandALaterTransition() async throws {
-        let stack = ShellNavigationController(root: makeTestAppRoot(), rootPlacement: .compactRoot)
+        let stack = ShellNavigationController(root: makeTestAppRoot())
         stack.setRoutes([.inbox])
 
         let window = try makeShellWindow(root: stack)

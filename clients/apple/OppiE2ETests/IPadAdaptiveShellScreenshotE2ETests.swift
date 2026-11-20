@@ -157,7 +157,7 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
         XCTAssertEqual(iconButton.value as? String, "Code")
         tap(app.buttons["workspace.edit.save"], named: "workspace save button")
 
-        // Save returns to Workspace Settings; Done returns to the workspace.
+        // Save returns to Workspace Settings; Back returns to the workspace.
         XCTAssertTrue(
             app.descendants(matching: .any)["workspace.edit.list"].waitForExistence(timeout: 15),
             "Workspace Settings did not return after save"
@@ -255,8 +255,8 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
             "Workspace Settings did not appear"
         )
         XCTAssertTrue(
-            app.buttons["workspace.edit.done"].waitForExistence(timeout: 5),
-            "Workspace Settings should expose the split-detail Done action"
+            app.navigationBars.buttons["BackButton"].firstMatch.waitForExistence(timeout: 5),
+            "Workspace Settings is pushed over the workspace's sessions, with Back"
         )
     }
 
@@ -274,9 +274,13 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
             return
         }
 
-        let doneButton = app.buttons["workspace.edit.done"]
-        XCTAssertTrue(doneButton.waitForExistence(timeout: 5), "Workspace edit Done button missing")
-        tap(doneButton, named: "workspace edit done button", timeout: 1)
+        // Back from Details (when open), then from Workspace Settings.
+        for _ in 0..<2 where !sessionList.exists {
+            let backButton = app.navigationBars.buttons["BackButton"].firstMatch
+            XCTAssertTrue(backButton.waitForExistence(timeout: 5), "Workspace Settings Back button missing")
+            tap(backButton, named: "workspace settings back button", timeout: 1)
+            _ = sessionList.waitForExistence(timeout: 2)
+        }
 
         XCTAssertTrue(
             sessionList.waitForExistence(timeout: 10),

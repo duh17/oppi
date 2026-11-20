@@ -100,7 +100,6 @@ final class ChatBarItems {
         guard let chat, !isSuspended else { return }
         let navigationItem = chat.screen.navigationItem
         let joinsRail = SystemVerticalBar.traitIsActive(chat.traitCollection)
-        let usesCustomBack = chat.usesCustomChatBackButton
         let usesColumn = chat.opensPanelsBeside
         let palette = AppRootEnvironment.near(chat)?.themeStore.activeThemeID.palette
             ?? ThemeRuntimeState.currentPalette()
@@ -137,7 +136,7 @@ final class ChatBarItems {
         // the timeline. The rail session menu carries the name.
         navigationItem.title = joinsRail ? "" : chat.sessionDisplayName
         navigationItem.titleView = joinsRail ? nil : titleControl
-        navigationItem.hidesBackButton = usesCustomBack
+        navigationItem.hidesBackButton = true
         navigationItem.largeTitleDisplayMode = .never
 
         files.rail.accessibilityLabel = filesOpen ? "Close chat files" : ChatTopBarAction.files.accessibilityLabel
@@ -195,7 +194,7 @@ final class ChatBarItems {
             railSessionItem.image = chat.railSessionImage()
             railSessionItem.accessibilityValue = chat.sessionDisplayName
             var rail: [UIBarButtonItem] = []
-            if usesCustomBack { rail.append(keepsVisible(backItem)) }
+            rail.append(keepsVisible(backItem))
             rail.append(railSessionItem)
             for action in drawn {
                 if action == .context {
@@ -210,9 +209,8 @@ final class ChatBarItems {
             // them in declaration order from the top.
             setItems(back: nil, right: rail.reversed(), on: navigationItem)
         } else {
-            backButton.isHidden = !usesCustomBack
             applyTrailingGroup(drawn: drawn)
-            setItems(back: usesCustomBack ? leadingGroup : nil, right: [trailingGroup], on: navigationItem)
+            setItems(back: leadingGroup, right: [trailingGroup], on: navigationItem)
         }
 
         titleControl.onTap = { [weak chat] in chat?.presentRenameAlert() }
@@ -255,7 +253,7 @@ final class ChatBarItems {
     /// The glass circles before the title: Back, and the main pane's sidebar
     /// button (`MainPaneSidebarItem`).
     private func leadingItemCount(of chat: ChatViewController) -> Int {
-        (chat.usesCustomChatBackButton ? 1 : 0) + (chat.screen.navigationItem.mainPaneSidebarItem == nil ? 0 : 1)
+        1 + (chat.screen.navigationItem.mainPaneSidebarItem == nil ? 0 : 1)
     }
 
     /// What the bar keeps besides its buttons: the side margins, each leading

@@ -14,14 +14,9 @@ extension ChatViewController {
 
     // MARK: - Navigation
 
-    var usesCustomChatBackButton: Bool {
-        appNavigation.workspaceNavigationPresentation == .stack
-            || appNavigation.workspaceNavigationPresentation == .split
-    }
-
-    /// Back closes the chat's screen through the router: pushed (a shell
-    /// route, a quick action, a fork), it pops; as the split detail root, the
-    /// column shows its list. The bar controls go first: the outgoing bar
+    /// Back pops the chat's screen through the router: a shell route, a quick
+    /// action or a fork is always pushed over the screen it was opened from.
+    /// The bar controls go first: the outgoing bar
     /// keeps them on screen for most of the transition, where a second tap
     /// on Back would close the screen below too.
     func navigateBackFromChat() {

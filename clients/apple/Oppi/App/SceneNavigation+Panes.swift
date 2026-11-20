@@ -24,10 +24,8 @@ extension SceneNavigation {
     }
 
     /// The entry's content can open: its screen takes the entry's place. A
-    /// workspace's session list is a root, not a pushed screen, so it opens
-    /// as the workspace does. In the split shell a session that lands at the
-    /// bottom of the detail column becomes its root, as opening it from the
-    /// list makes it.
+    /// workspace's session list is a place, not a pushed screen, so it opens
+    /// as the workspace does.
     func resolvePaneEntry(_ entry: PaneStackEntry, with element: WorkspaceStackRouteElement) {
         if case .workspace(let target) = element {
             closePaneEntry(entry)
@@ -61,10 +59,8 @@ extension SceneNavigation {
     /// pushed from that chat (a reader, whose lock origin was fixed when it
     /// opened), up to the next session route: another session's chat is not
     /// under this lock, so it and what is over it stay. A `.paneEntry` for the
-    /// session counts as its route. In the split shell the detail column
-    /// clears when the session is its root: the screens pushed over a root go
-    /// with it. Returns true when the removed screens reached the top, so the
-    /// person was still in this session's screens.
+    /// session counts as its route. Returns true when the removed screens
+    /// reached the top, so the person was still in this session's screens.
     @discardableResult
     func removeSessionRoute(serverId: String, sessionId: String) -> Bool {
         func matches(_ target: WorkspaceSessionNavTarget) -> Bool {
@@ -93,15 +89,6 @@ extension SceneNavigation {
         for element in elements {
             if let target = session(of: element) { removing = matches(target) }
             if !removing { remaining.append(element) }
-        }
-        if workspaceNavigationPresentation == .split, let rootIndex = splitDetailColumn.rootIndex,
-           let root = session(of: elements[rootIndex]), matches(root) {
-            mediaOverlayYieldsToUserNavigation()
-            workspaceStackRouteElements = elements[..<rootIndex].filter { element in
-                if case .workspace = element { return true }
-                return false
-            }
-            return removing
         }
         if remaining.count != elements.count {
             mediaOverlayYieldsToUserNavigation()

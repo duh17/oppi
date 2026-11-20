@@ -505,7 +505,7 @@ final class WorkspaceDetailViewController: UIViewController {
             searchText: search.searchText,
             isSearchPresented: search.isSearchPresented,
             stackCount: navigation.workspaceStackRouteElements.count,
-            detailReplacesList: navigation.sessionListCover.detailReplacesList,
+            splitListCovered: navigation.sessionListCover.splitListCovered,
             pollingKey: currentPollingKey
         )
         if contentIsLive, pollingKey != current.pollingKey {
@@ -524,7 +524,7 @@ final class WorkspaceDetailViewController: UIViewController {
         if previous.isSearchPresented != current.isSearchPresented {
             applySearchNavigation(.searchPresentationChanged(current.isSearchPresented))
         }
-        if previous.stackCount != current.stackCount || previous.detailReplacesList != current.detailReplacesList {
+        if previous.stackCount != current.stackCount || previous.splitListCovered != current.splitListCovered {
             applySearchNavigation(.coverageChanged(isCovered: isSearchListCoveredByDestination))
         }
     }
@@ -555,13 +555,13 @@ final class WorkspaceDetailViewController: UIViewController {
         guard phase == .content, isSearchListCoveredByDestination else { return }
         applySearchNavigation(.coverageChanged(isCovered: true))
         observed?.stackCount = navigation.workspaceStackRouteElements.count
-        observed?.detailReplacesList = navigation.sessionListCover.detailReplacesList
+        observed?.splitListCovered = navigation.sessionListCover.splitListCovered
     }
 
     private var isSearchListCoveredByDestination: Bool {
         SessionListSearchNavigationPersistence.isWorkspaceListCovered(
             stackDepth: navigation.sessionListCover.stackDepth,
-            splitDetailReplacesList: navigation.sessionListCover.detailReplacesList
+            splitListCovered: navigation.sessionListCover.splitListCovered
         )
     }
 
@@ -715,7 +715,7 @@ extension WorkspaceDetailViewController {
         var searchText: String
         var isSearchPresented: Bool
         var stackCount: Int
-        var detailReplacesList: Bool
+        var splitListCovered: Bool
         var pollingKey: String
     }
 

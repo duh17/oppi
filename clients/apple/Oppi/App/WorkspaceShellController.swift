@@ -190,14 +190,10 @@ final class WorkspaceShellController: UIViewController {
     }
 
     private func makePaneArea() -> WorkspacePaneArea {
-        let stack = ShellNavigationController(root: root, rootPlacement: .compactRoot)
+        let stack = ShellNavigationController(root: root)
         let navigation = navigation
         stack.onRoutesPopped = { remaining in
             navigation.popShownStack(toDepth: remaining - 1)
-        }
-        // Only the split detail's root closes (`showSessionInboxInSplit`).
-        stack.onCloseRoot = {
-            navigation.showSessionInboxInSplit()
         }
         return WorkspacePaneArea(stack: stack, host: PaneHostController(primary: stack, panes: navigation.panes))
     }
@@ -286,7 +282,7 @@ final class WorkspaceSplitController: UISplitViewController, UISplitViewControll
 
     init(root: AppRootEnvironment) {
         self.root = root
-        sidebarStack = ShellNavigationController(root: root, rootPlacement: .splitSidebar)
+        sidebarStack = ShellNavigationController(root: root)
         super.init(style: .doubleColumn)
         delegate = self
         preferredSplitBehavior = .tile
@@ -362,7 +358,7 @@ final class WorkspaceSplitController: UISplitViewController, UISplitViewControll
         // empty; a new root laid out inside the columns' animation would
         // grow out of a corner with them.
         applyColumnVisibility(navigation.panes.fullScreenCell != nil ? .detailOnly : navigation.splitColumnVisibility)
-        area?.stack.setRoutes(navigation.splitDetailColumn.routes, rootPlacement: .splitDetailRoot)
+        area?.stack.setRoutes(navigation.splitDetailColumn.routes)
     }
 
     private func applyColumnVisibility(_ visibility: SplitColumnVisibility) {
@@ -526,7 +522,7 @@ final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDele
         // The corner cutouts the rounded foreground reveals show the theme,
         // never the bare window.
         view.backgroundColor = root.themeStore.backgroundColor
-        stack?.setRoutes([.inbox] + navigation.workspaceStackRouteElements.map(ShellRoute.init), rootPlacement: .compactRoot)
+        stack?.setRoutes([.inbox] + navigation.workspaceStackRouteElements.map(ShellRoute.init))
     }
 
     override func accessibilityPerformEscape() -> Bool {

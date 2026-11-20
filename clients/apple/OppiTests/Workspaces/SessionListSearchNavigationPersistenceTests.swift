@@ -135,14 +135,14 @@ struct SessionListSearchNavigationPersistenceTests {
             SessionListSearchNavigationPersistence.isInboxCovered(
                 isSplitPresentation: true,
                 stackDepth: 0,
-                splitDetailReplacesList: true
+                splitListCovered: true
             )
         )
         #expect(
             !SessionListSearchNavigationPersistence.isInboxCovered(
                 isSplitPresentation: true,
                 stackDepth: 0,
-                splitDetailReplacesList: false
+                splitListCovered: false
             )
         )
     }
@@ -153,7 +153,7 @@ struct SessionListSearchNavigationPersistenceTests {
         #expect(
             SessionListSearchNavigationPersistence.isWorkspaceListCovered(
                 stackDepth: 1,
-                splitDetailReplacesList: true
+                splitListCovered: true
             )
         )
     }

@@ -391,11 +391,11 @@ struct PinnedScreenTests {
         _ = await shell.scope.settle()
     }
 
-    /// In the landscape split a session opened from Pinned opens as a session
-    /// row does: the chat becomes the detail column's root with the sidebar
-    /// toggle (no Back to Pinned), the sidebar hides, and the chat takes the
-    /// whole window.
-    @Test func aSessionOpenedFromPinnedInTheSplitOpensAsASessionRowDoes() async throws {
+    /// In the landscape split a session opened from Pinned is pushed over
+    /// Pinned, as in portrait: Back returns to Pinned, the sidebar hides and
+    /// the chat, with the sidebar button, takes the whole window rather than
+    /// the frame it started its push in.
+    @Test func aSessionOpenedFromPinnedInTheSplitIsPushedOverPinned() async throws {
         let size = CGSize(width: 1133, height: 744)
         let shell = try await Self.makeShell(size: size, regular: true)
         defer { shell.end() }
@@ -410,13 +410,18 @@ struct PinnedScreenTests {
             return target.sessionId == "sess-review" && shell.split?.displayMode == .secondaryOnly
                 && shell.routedStack?.transitionCoordinator == nil
         }, "the chat opens with the sidebar hidden: \(shell.root.navigation.workspaceStackRouteElements)")
-        #expect(shell.root.navigation.workspaceStackRouteElements.count == 1, "the chat replaced Pinned: \(shell.root.navigation.workspaceStackRouteElements)")
-        // The column's root carries the sidebar toggle (`ChatRouteViewController`'s split detail root prefix).
-        #expect(shell.routedStack?.viewControllers.count == 1, "no Back to Pinned")
-        #expect(shell.routedStack?.viewControllers.first is ChatRouteViewController, "the chat is the column's root")
-        let host = try #require(shell.host)
-        let frame = host.view.convert(host.view.bounds, to: shell.window)
-        #expect(frame == CGRect(origin: .zero, size: size), "the chat's pane area fills the window: \(frame)")
+        #expect(shell.root.navigation.workspaceStackRouteElements.first == .utility(.pinned), "the chat sits on Pinned")
+        let stack = try #require(shell.routedStack)
+        #expect(stack.viewControllers.count == 2 && stack.viewControllers.first is PinnedViewController, "Back leads to Pinned")
+        let chat = try #require(stack.viewControllers.last as? ChatRouteViewController)
+        #expect(chat.navigationItem.mainPaneSidebarItem != nil, "the pushed chat keeps the sidebar button")
+        let frame = chat.view.convert(chat.view.bounds, to: shell.window)
+        #expect(frame == CGRect(origin: .zero, size: size), "the chat fills the window: \(frame)")
+
+        stack.popViewController(animated: false)
+        #expect(await shell.settles {
+            shell.root.navigation.workspaceStackRouteElements == [.utility(.pinned)] && shell.split?.displayMode == .oneBesideSecondary
+        }, "Back shows Pinned beside the sidebar again: \(shell.root.navigation.workspaceStackRouteElements)")
         _ = await shell.scope.settle()
     }
 
