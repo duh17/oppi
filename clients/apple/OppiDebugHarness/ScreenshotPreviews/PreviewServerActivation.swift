@@ -46,6 +46,10 @@ extension ConnectionCoordinator {
         if ProcessInfo.processInfo.environment["CHAT_ROUTES_GODOT"] != nil {
             capabilities.godot = .init(version: 1)
         }
+        // The pane-restore server keeps pins (`ChatRoutesURLProtocol` answers `/pins`).
+        if ProcessInfo.processInfo.environment["PANE_RESTORE_PINS"] == "1" {
+            capabilities.pins = .init(version: 3)
+        }
         return ServerInfo(
             name: "Preview",
             version: ServerReleaseVersion.minimumSupported,

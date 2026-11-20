@@ -388,6 +388,35 @@ struct PinnedScreenTests {
         _ = await shell.scope.settle()
     }
 
+    /// In the landscape split a session opened from Pinned opens as a session
+    /// row does: the chat becomes the detail column's root with the sidebar
+    /// toggle (no Back to Pinned), the sidebar hides, and the chat takes the
+    /// whole window.
+    @Test func aSessionOpenedFromPinnedInTheSplitOpensAsASessionRowDoes() async throws {
+        let size = CGSize(width: 1133, height: 744)
+        let shell = try await Self.makeShell(size: size, regular: true)
+        defer { shell.end() }
+        shell.root.navigation.openWorkspaceUtility(.pinned)
+        #expect(await shell.settles {
+            shell.cell("pin_Review000006") != nil && shell.split?.displayMode == .oneBesideSecondary
+        }, "Pinned shows beside the sidebar")
+
+        try shell.tap("pin_Review000006")
+        #expect(await shell.settles {
+            guard case .session(let target)? = shell.root.navigation.workspaceStackRouteElements.last else { return false }
+            return target.sessionId == "sess-review" && shell.split?.displayMode == .secondaryOnly
+                && shell.routedStack?.transitionCoordinator == nil
+        }, "the chat opens with the sidebar hidden: \(shell.root.navigation.workspaceStackRouteElements)")
+        #expect(shell.root.navigation.workspaceStackRouteElements.count == 1, "the chat replaced Pinned: \(shell.root.navigation.workspaceStackRouteElements)")
+        // The column's root carries the sidebar toggle (`ChatRouteViewController`'s split detail root prefix).
+        #expect(shell.routedStack?.viewControllers.count == 1, "no Back to Pinned")
+        #expect(shell.routedStack?.viewControllers.first is ChatRouteViewController, "the chat is the column's root")
+        let host = try #require(shell.host)
+        let frame = host.view.convert(host.view.bounds, to: shell.window)
+        #expect(frame == CGRect(origin: .zero, size: size), "the chat's pane area fills the window: \(frame)")
+        _ = await shell.scope.settle()
+    }
+
     /// A deleted session opens nothing: its tap offers Remove Pin.
     @Test func aDeletedSessionOffersRemoval() async throws {
         let shell = try await Self.makeShell(size: CGSize(width: 1133, height: 900), regular: true)
@@ -581,6 +610,20 @@ private struct ShellWindow {
 
     var pinned: PinnedViewController? {
         Self.first(PinnedViewController.self, in: controller)
+    }
+
+    var split: UISplitViewController? {
+        Self.first(UISplitViewController.self, in: controller)
+    }
+
+    /// The window's pane area, the split's detail column.
+    var host: PaneHostController? {
+        Self.first(PaneHostController.self, in: controller)
+    }
+
+    /// The routed stack inside the pane area.
+    var routedStack: ShellNavigationController? {
+        host.flatMap { Self.first(ShellNavigationController.self, in: $0) }
     }
 
     /// The sidebar row button with `identifier`, on screen.

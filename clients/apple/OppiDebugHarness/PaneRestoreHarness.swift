@@ -29,6 +29,8 @@ import UIKit
 /// `PANE_RESTORE_SEED=sessions-below` saves the home folder's `notebook` in a
 /// pane above the sessions, so a chat opened there and its Git panel sit in
 /// the lower pane.
+/// `PANE_RESTORE_PINS=1` makes the server keep pins: the sidebar offers
+/// Pinned, which lists the fixture chat, a folder, and a PDF.
 /// `PANE_RESTORE_REX=1` saves one SSH host whose Rex is a fake one in process
 /// (`SSHTerminalRexListPreviewController.makeList`), so the launcher's Rex pane
 /// lists its sessions and opens one in the pane.

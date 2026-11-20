@@ -631,8 +631,10 @@ final class SceneNavigation {
         return current
     }
 
-    /// Push a session referenced from the currently visible chat without
-    /// replacing its compact or split back stack. An exact self-link is a no-op.
+    /// Open a session from an in-app link (a chat's link, a Pinned session
+    /// card): from a chat it pushes, keeping the compact or split back stack;
+    /// elsewhere in the split it opens as a session row does. An exact
+    /// self-link is a no-op.
     func openReferencedSession(_ target: WorkspaceSessionNavTarget) {
         guard scopedLockAllows(Self.lockTarget(target), retry: {
             self.openReferencedSession(target)
@@ -642,8 +644,14 @@ final class SceneNavigation {
             return
         }
         if isSplit {
-            // Over the list the chat becomes the column's root.
-            if splitDetailColumn.rootIndex == nil {
+            // A link in a chat, or in a page over one, pushes and keeps that
+            // back stack. Anywhere else (a session list, Pinned's session
+            // cards, any screen at the column's root with nothing over it)
+            // the session opens as a session row does: the chat becomes the
+            // column's root, so it carries the sidebar toggle, not a Back to
+            // the screen it was picked from.
+            let column = splitDetailColumn
+            if column.rootIndex == nil || (column.pushed.isEmpty && column.visibility == .all) {
                 workspaceStackRouteElements = Self.workspaceLayer(selectedWorkspaceFilter) + [.session(target)]
             } else {
                 workspaceStackRouteElements.append(.session(target))

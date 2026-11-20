@@ -1093,6 +1093,15 @@ private final class ChatRoutesURLProtocol: URLProtocol {
         case ("GET", "/files/current") where (url.query ?? "").contains(".org"):
             contentType = "text/plain"
             body = Data(FileBrowserColumnFixture.gardenOrg.utf8)
+        case ("GET", "/pins"):
+            // The fixture chat, the home folder's notebook, and the field
+            // guide PDF, as the Pinned screen lists a server's pins.
+            body = Data(#"""
+            {"revision":3,"pins":[
+            {"id":"pin_RouteChat001","target":{"kind":"session","id":"chat-routes-session"},"createdAt":1,"status":"ok"},
+            {"id":"pin_Notebook0002","target":{"kind":"files","origin":"host","path":"~/notebook"},"createdAt":2,"status":"ok"},
+            {"id":"pin_FieldGuide03","target":{"kind":"file","origin":"host","path":"~/field-guide.pdf","line":null},"createdAt":3,"status":"ok"}]}
+            """#.utf8)
         case ("GET", "/skills/route-skill"):
             body = Self.json([
                 "skill": ["name": "route-skill", "description": "Routes through the panel", "path": "/tmp/oppi-chat-routes/.pi/skills/route-skill"],
