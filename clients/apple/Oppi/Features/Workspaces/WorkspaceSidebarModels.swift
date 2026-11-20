@@ -34,8 +34,10 @@ enum WorkspaceSidebarDisclosurePolicy {
     static let defaultExpanded = true
 }
 
-struct WorkspaceSidebarPrimaryUtilityItem: Equatable {
-    let target: WorkspaceUtilityNavTarget
+/// A sidebar row above the workspaces: a place, built in or a server plugin's
+/// entry. Picking it makes `place` the main pane's root (`SceneNavigation.openPlace`).
+struct WorkspaceSidebarPlace: Equatable {
+    let place: NavigationPlace
     let title: String
     let systemImage: String
     let accessibilityLabel: String
@@ -47,10 +49,29 @@ struct WorkspaceSidebarPrimaryUtilityItem: Equatable {
     var logo: String?
 }
 
-enum WorkspaceSidebarPrimaryUtilities {
-    static let items: [WorkspaceSidebarPrimaryUtilityItem] = [
+enum WorkspaceSidebarPlaces {
+    /// The built-in places. All Sessions is home, first whatever a plugin's order.
+    static let builtIn: [WorkspaceSidebarPlace] = [
         .init(
-            target: .agents,
+            place: .allSessions,
+            title: "All Sessions",
+            systemImage: "tray.full",
+            accessibilityLabel: "All Sessions",
+            accessibilityIdentifier: "workspace.allSessions.open",
+            accessibilityHint: "Lists every session on this server",
+            order: -.infinity
+        ),
+        .init(
+            place: .utility(.pinned),
+            title: "Pinned",
+            systemImage: "pin",
+            accessibilityLabel: "Pinned",
+            accessibilityIdentifier: "workspace.pinned.open",
+            accessibilityHint: "Opens your pinned sessions, folders, and files",
+            order: 5
+        ),
+        .init(
+            place: .utility(.agents),
             title: "Agents",
             systemImage: "person.crop.circle",
             accessibilityLabel: "Agents",
@@ -59,7 +80,7 @@ enum WorkspaceSidebarPrimaryUtilities {
             order: 10
         ),
         .init(
-            target: .schedules,
+            place: .utility(.schedules),
             title: "Schedules",
             systemImage: "clock",
             accessibilityLabel: "Schedules",
@@ -68,7 +89,7 @@ enum WorkspaceSidebarPrimaryUtilities {
             order: 20
         ),
         .init(
-            target: .extensions,
+            place: .utility(.extensions),
             title: "Extensions",
             systemImage: "shippingbox",
             accessibilityLabel: "Open Extensions",
@@ -77,7 +98,7 @@ enum WorkspaceSidebarPrimaryUtilities {
             order: 40
         ),
         .init(
-            target: .sshTerminal,
+            place: .utility(.sshTerminal),
             title: "Terminal",
             systemImage: "terminal",
             accessibilityLabel: "Open Terminal",
@@ -86,7 +107,7 @@ enum WorkspaceSidebarPrimaryUtilities {
             order: 60
         ),
         .init(
-            target: .rex,
+            place: .utility(.rex),
             title: "Rex",
             systemImage: "rectangle.split.3x1",
             accessibilityLabel: "Open Rex",
@@ -97,21 +118,29 @@ enum WorkspaceSidebarPrimaryUtilities {
         ),
     ]
 
-    /// `items` the server offers (`offers`, its feature switches), with its plugin entries that
-    /// have a sidebar row among them by `order`; an entry sorts after a native row of the same
-    /// order. The server lists only plugin entries whose feature is on. Rex also needs this
+    /// The sidebar's places, in `order`: the built-in ones this window's server offers (`offers`,
+    /// its feature switches) and its plugin entries that have a sidebar row; an entry sorts after
+    /// a built-in place of the same order. The server lists only plugin entries whose feature is
+    /// on. Pinned needs a server that keeps pins (`ServerConnection.pinsAvailable`), and Rex this
     /// device's Rex experiment.
     static func items(
         plugins: [PluginScreenSidebarEntry],
+        pinsAvailable: Bool,
         rexExperiment: Bool = SSHTerminalExperimentAccess.current.rex,
         offers: (ServerFeature) -> Bool
-    ) -> [WorkspaceSidebarPrimaryUtilityItem] {
-        let native = items
-            .filter { ($0.target.serverFeature.map(offers) ?? true) && ($0.target != .rex || rexExperiment) }
-            .map { (rank: 0, item: $0) }
+    ) -> [WorkspaceSidebarPlace] {
+        func isOffered(_ place: NavigationPlace) -> Bool {
+            guard case .utility(let utility) = place else { return true }
+            switch utility {
+            case .pinned: return pinsAvailable
+            case .rex: return rexExperiment && offers(.rex)
+            default: return utility.serverFeature.map(offers) ?? true
+            }
+        }
+        let native = builtIn.filter { isOffered($0.place) }.map { (rank: 0, item: $0) }
         let added = plugins.filter { $0.scopes.contains("server") }.map { entry in
-            (rank: 1, item: WorkspaceSidebarPrimaryUtilityItem(
-                target: .pluginScreen(entry.id),
+            (rank: 1, item: WorkspaceSidebarPlace(
+                place: .utility(.pluginScreen(entry.id)),
                 title: entry.title,
                 systemImage: entry.icon,
                 accessibilityLabel: "Open \(entry.title)",
@@ -123,20 +152,9 @@ enum WorkspaceSidebarPrimaryUtilities {
         return (native + added).sorted { ($0.item.order, $0.rank) < ($1.item.order, $1.rank) }.map(\.item)
     }
 
-    /// The server's pins, first among the destinations on a server that keeps
-    /// pins (`ServerConnection.pinsAvailable`); not part of `items`.
-    static let pinned = WorkspaceSidebarPrimaryUtilityItem(
-        target: .pinned,
-        title: "Pinned",
-        systemImage: "pin",
-        accessibilityLabel: "Pinned",
-        accessibilityIdentifier: "workspace.pinned.open",
-        accessibilityHint: "Opens your pinned sessions, folders, and files"
-    )
-
-    /// Pinned below New Workspace; not part of `items`.
-    static let appSettings = WorkspaceSidebarPrimaryUtilityItem(
-        target: .appSettings,
+    /// Pinned below New Workspace, outside the scrolling places.
+    static let appSettings = WorkspaceSidebarPlace(
+        place: .utility(.appSettings),
         title: "App Settings",
         systemImage: "gear",
         accessibilityLabel: "App Settings",

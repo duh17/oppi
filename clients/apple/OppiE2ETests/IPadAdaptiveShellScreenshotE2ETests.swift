@@ -399,14 +399,6 @@ final class IPadAdaptiveShellScreenshotE2ETests: E2ETestCase {
                 return
             }
 
-            let showWorkspacesButton = app.buttons["workspace.sidebar.showWorkspaces"]
-            if showWorkspacesButton.waitForExistence(timeout: 1) {
-                tap(showWorkspacesButton, named: "show workspaces button", timeout: 1)
-                if workspaceList.waitForExistence(timeout: 3) {
-                    return
-                }
-            }
-
             let backButton = app.navigationBars.buttons.firstMatch
             guard backButton.waitForExistence(timeout: 1) else { break }
             tap(backButton, named: "navigation back button", timeout: 1)

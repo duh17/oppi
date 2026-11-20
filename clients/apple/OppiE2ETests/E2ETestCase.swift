@@ -549,9 +549,10 @@ class E2ETestCase: XCTestCase {
 
         dismissExtensionSheetIfNeeded(timeout: 0.5)
         for _ in 0..<3 {
-            let showAllSessions = app.buttons["workspace.sidebar.showWorkspaces"]
-            if showAllSessions.exists {
-                tap(showAllSessions, named: "show all sessions button", timeout: 0.5)
+            // The split sidebar's All Sessions row; the drawer's opens only at All Sessions.
+            let showAllSessions = app.buttons["workspace.allSessions.open"]
+            if showAllSessions.exists, showAllSessions.isHittable {
+                tap(showAllSessions, named: "All Sessions sidebar row", timeout: 0.5)
             } else if let backButton = navigationBackButton() {
                 tap(backButton, named: "navigation back button", timeout: 0.5)
             } else {

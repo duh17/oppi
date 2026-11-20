@@ -631,7 +631,6 @@ final class WorkspaceDetailViewController: UIViewController {
             ),
             lockBadge: ScopedLockService.shared.badge(lockTarget),
             isNavigatingDeeper: isNavigatingDeeperInWorkspaceStack,
-            isSplit: navigation.workspaceNavigationPresentation == .split,
             gitStatus: connection.gitStatusStore.status(workspaceId: workspaceId, worktreeId: state.selectedWorktreeId)
         )
     }
@@ -707,7 +706,6 @@ extension WorkspaceDetailViewController {
         let lockBadge: ScopedLockState
         /// A destination is pushed over this list: no compose, now playing, or files.
         let isNavigatingDeeper: Bool
-        let isSplit: Bool
         /// The selected worktree's Git status, or nil while the shared store
         /// holds another checkout's (`GitStatusStore.status`).
         let gitStatus: GitStatus?
@@ -785,7 +783,6 @@ extension WorkspaceDetailViewController {
     struct BarState: Equatable {
         let joinsRail: Bool
         let showsSidebarToggle: Bool
-        let isSplit: Bool
         let showsBottomItems: Bool
         let showsNowPlaying: Bool
         let parksNowPlayingNextToCompose: Bool

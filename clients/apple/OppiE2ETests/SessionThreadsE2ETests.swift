@@ -854,8 +854,9 @@ final class SessionThreadsE2ETests: E2ETestCase {
         let marker = marker ?? app.buttons["workspace.sidebar.open"]
         for _ in 0..<4 {
             if marker.exists { return }
-            if app.buttons["workspace.sidebar.showWorkspaces"].exists {
-                app.buttons["workspace.sidebar.showWorkspaces"].tap()
+            let allSessions = app.buttons["workspace.allSessions.open"]
+            if allSessions.exists, allSessions.isHittable {
+                allSessions.tap()
             } else if app.navigationBars.buttons.element(boundBy: 0).exists {
                 app.navigationBars.buttons.element(boundBy: 0).tap()
             }

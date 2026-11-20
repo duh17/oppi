@@ -189,6 +189,16 @@ struct SplitDetailColumn: Equatable {
     }
 }
 
+/// Where the window is: a sidebar row, whose screen is the main pane's root.
+/// Content (a chat, a file, a page) opens on top of a place.
+enum NavigationPlace: Hashable {
+    /// All Sessions (nil), or one workspace's sessions.
+    case sessions(WorkspaceNavTarget?)
+    case utility(WorkspaceUtilityNavTarget)
+
+    static let allSessions = Self.sessions(nil)
+}
+
 /// A screen of the window's stack. The compact shell shows each above All
 /// Sessions; the split shell shows them through `SplitDetailColumn`.
 enum WorkspaceStackRouteElement: Hashable {
@@ -359,6 +369,23 @@ final class SceneNavigation {
             if workspaceNavigationPresentation == .stack, workspaceStackRouteElements.isEmpty {
                 selectedWorkspaceFilter = nil
             }
+        }
+    }
+
+    /// The place the window shows, which the sidebar highlights: the utility at the
+    /// split column's root, else the sessions it lists. The compact shell's drawer opens
+    /// only at All Sessions, where this is All Sessions.
+    var currentPlace: NavigationPlace {
+        if isSplit, case .utility(let utility) = splitDetailColumn.root { return .utility(utility) }
+        return .sessions(selectedWorkspaceFilter)
+    }
+
+    /// Makes `place` the main pane's root: a sidebar row's action.
+    func openPlace(_ place: NavigationPlace) {
+        switch place {
+        case .sessions(nil): showAllWorkspaceSessions()
+        case .sessions(let workspace?): openWorkspace(workspace)
+        case .utility(let utility): openWorkspaceUtility(utility)
         }
     }
 
@@ -929,18 +956,6 @@ final class SceneNavigation {
             workspaceStackRouteElements = [.workspace(target), .workspaceConfiguration(target)]
         } else {
             workspaceStackRouteElements.append(.workspaceConfiguration(target))
-        }
-    }
-
-    /// The split sidebar goes back to the workspace list; the detail column
-    /// stays.
-    func showWorkspaceListInSplitSidebar() {
-        guard isSplit else { return }
-        selectedTab = .workspaces
-        selectedWorkspaceFilter = nil
-        workspaceStackRouteElements.removeAll { element in
-            if case .workspace = element { return true }
-            return false
         }
     }
 

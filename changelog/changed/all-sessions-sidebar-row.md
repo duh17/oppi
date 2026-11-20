@@ -1,0 +1,1 @@
+- **Client:** **All Sessions** is the first row of the sidebar (the iPhone's drawer) and is highlighted while you are there; tap it to come back to every session from Agents, a workspace, or any other place. On iPad in landscape, a workspace's session list no longer has its own back chevron to All Sessions. See [Screen map](docs/usage.md#screen-map).

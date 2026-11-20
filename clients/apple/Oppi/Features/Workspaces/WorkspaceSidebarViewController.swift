@@ -3,14 +3,15 @@ import UIKit
 /// The workspace list: the split shell's primary column and the compact
 /// shell's drawer.
 ///
-/// A scrolling `UICollectionView` list holds the destinations, the Workspaces
-/// disclosure, and the workspace rows. New Workspace and App Settings sit in a
+/// A scrolling `UICollectionView` list holds the places (All Sessions first,
+/// then the built-in and plugin places by order), the Workspaces disclosure,
+/// and the workspace rows. New Workspace and App Settings sit in a
 /// second, non-scrolling list pinned below it. Everything reads
 /// `SceneNavigation` and the stores in `updateProperties()`: the selection a row
-/// paints is `SceneNavigation`'s, never the collection view's own. A store tick
+/// paints is `SceneNavigation.currentPlace`, never the collection view's own. A store tick
 /// reconfigures only the rows whose content changed.
 ///
-/// Destinations, the disclosure, state rows, and the footer are native list
+/// Places, the disclosure, state rows, and the footer are native list
 /// cells. The workspace row (`WorkspaceSidebarRowConfiguration`) draws the
 /// runtime icon, lock badge, status counts, and git line.
 final class WorkspaceSidebarViewController: UIViewController {
@@ -39,7 +40,7 @@ final class WorkspaceSidebarViewController: UIViewController {
 
     /// Fixed ids for everything but workspaces, which use the workspace id.
     private enum Item: Hashable {
-        case utility(WorkspaceUtilityNavTarget)
+        case place(NavigationPlace)
         case disclosure
         case workspace(String)
         case loading
@@ -66,8 +67,8 @@ final class WorkspaceSidebarViewController: UIViewController {
         }
     }
 
-    private struct UtilityRow: Equatable {
-        let item: WorkspaceSidebarPrimaryUtilityItem
+    private struct PlaceRow: Equatable {
+        let item: WorkspaceSidebarPlace
         let isSelected: Bool
     }
 
@@ -83,14 +84,14 @@ final class WorkspaceSidebarViewController: UIViewController {
     private struct Model {
         var mainItems: [Item] = []
         var footerItems: [Item] = []
-        var utilities: [WorkspaceUtilityNavTarget: UtilityRow] = [:]
+        var places: [NavigationPlace: PlaceRow] = [:]
         var workspaces: [String: WorkspaceRow] = [:]
         var workspacesExpanded = WorkspaceSidebarDisclosurePolicy.defaultExpanded
         var server: PairedServer?
 
         func contentDiffers(_ item: Item, from previous: Self) -> Bool {
             switch item {
-            case .utility(let target): utilities[target] != previous.utilities[target]
+            case .place(let place): places[place] != previous.places[place]
             case .workspace(let id): workspaces[id] != previous.workspaces[id]
             case .disclosure: workspacesExpanded != previous.workspacesExpanded
             default: false
@@ -216,23 +217,19 @@ final class WorkspaceSidebarViewController: UIViewController {
         model.server = server
         model.workspacesExpanded = defaults.workspacesExpanded
 
-        let selectionTarget = navigation.selectedWorkspaceFilter
-        func isUtilitySelected(_ target: WorkspaceUtilityNavTarget) -> Bool {
-            navigation.workspaceNavigationPresentation == .split
-                && navigation.splitDetailColumn.root == .utility(target)
-        }
+        let currentPlace = navigation.currentPlace
 
         // The pages the window's server offers, and its plugin entries.
         let connection = root.windowConnection
         let plugins = connection?.serverCapabilities?.pluginSidebar ?? []
-        // Pinned leads the destinations on a server that keeps pins.
-        let pinned = connection?.pinsAvailable == true ? [WorkspaceSidebarPrimaryUtilities.pinned] : []
-        let items = pinned + WorkspaceSidebarPrimaryUtilities.items(plugins: plugins, rexExperiment: defaults.rex) {
-            connection?.offers($0) ?? true
-        }
+        let items = WorkspaceSidebarPlaces.items(
+            plugins: plugins,
+            pinsAvailable: connection?.pinsAvailable == true,
+            rexExperiment: defaults.rex
+        ) { connection?.offers($0) ?? true }
         for item in items {
-            model.utilities[item.target] = UtilityRow(item: item, isSelected: isUtilitySelected(item.target))
-            model.mainItems.append(.utility(item.target))
+            model.places[item.place] = PlaceRow(item: item, isSelected: item.place == currentPlace)
+            model.mainItems.append(.place(item.place))
         }
         model.mainItems.append(.disclosure)
 
@@ -271,7 +268,7 @@ final class WorkspaceSidebarViewController: UIViewController {
                         target: target,
                         status: workspaceSessionStatus(workspaceId: workspace.id, connection: connection),
                         gitSummary: workspaceGitSummary(summaries[workspace.id]?.gitSummary),
-                        isSelected: selectionTarget == target,
+                        isSelected: currentPlace == .sessions(target),
                         lockBadge: ScopedLockService.shared.badge(
                             .workspace(serverId: serverId, workspaceId: workspace.id)
                         )
@@ -284,12 +281,9 @@ final class WorkspaceSidebarViewController: UIViewController {
         }
 
         if server != nil { model.footerItems.append(.newWorkspace) }
-        let appSettings = WorkspaceSidebarPrimaryUtilities.appSettings
-        model.utilities[appSettings.target] = UtilityRow(
-            item: appSettings,
-            isSelected: isUtilitySelected(appSettings.target)
-        )
-        model.footerItems.append(.utility(appSettings.target))
+        let appSettings = WorkspaceSidebarPlaces.appSettings
+        model.places[appSettings.place] = PlaceRow(item: appSettings, isSelected: appSettings.place == currentPlace)
+        model.footerItems.append(.place(appSettings.place))
         return model
     }
 
@@ -391,11 +385,11 @@ final class WorkspaceSidebarViewController: UIViewController {
         var isSelected = false
 
         switch item {
-        case .utility(let target):
-            guard let row = model.utilities[target] else { return }
+        case .place(let place):
+            guard let row = model.places[place] else { return }
             paintsSelection = true
             isSelected = row.isSelected
-            configureUtility(cell, row: row, palette: palette)
+            configurePlace(cell, row: row, palette: palette)
         case .disclosure:
             configureDisclosure(cell, palette: palette)
         case .workspace(let id):
@@ -443,7 +437,7 @@ final class WorkspaceSidebarViewController: UIViewController {
         cell.isAccessibilityElement = cell.element.isHidden && item != .unavailable
     }
 
-    private func configureUtility(_ cell: SidebarListCell, row: UtilityRow, palette: ThemePalette) {
+    private func configurePlace(_ cell: SidebarListCell, row: PlaceRow, palette: ThemePalette) {
         let item = row.item
         let tint = row.isSelected ? palette.blue : palette.fg
         var content = UIListContentConfiguration.cell()
@@ -571,12 +565,12 @@ final class WorkspaceSidebarViewController: UIViewController {
     /// A tap and accessibility activation run the same action.
     private func activate(_ item: Item) {
         switch item {
-        case .utility(let target):
-            navigation.openWorkspaceUtility(target)
+        case .place(let place):
+            navigation.openPlace(place)
             onSelect?()
         case .workspace(let id):
             guard let row = model.workspaces[id] else { return }
-            navigation.openWorkspace(row.target)
+            navigation.openPlace(.sessions(row.target))
             onSelect?()
         case .disclosure:
             animatesNextSnapshot = true

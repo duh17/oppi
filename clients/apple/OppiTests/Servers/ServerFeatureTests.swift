@@ -35,22 +35,29 @@ struct ServerFeatureTests {
         #expect(ServerFeature.allCases.filter(one.offers) == [.mcp])
     }
 
-    @Test("The sidebar lists only the pages the server offers, its plugin entries among them by order")
+    @Test("The sidebar lists All Sessions first, then the places the server offers and its plugin entries by order")
     func sidebarFollowsTheSwitches() {
         let plugins = [
             PluginScreenSidebarEntry(id: "acme.things", title: "Things", icon: "network", order: 50, scopes: ["server", "workspace"]),
+            // An entry ordered before every built-in place still comes after All Sessions.
+            PluginScreenSidebarEntry(id: "acme.early", title: "Early", icon: "network", order: -5, scopes: ["server"]),
             // A workspace-only entry opens from Workspace Settings, never the sidebar.
             PluginScreenSidebarEntry(id: "acme.local", title: "Local", icon: "network", order: 15, scopes: ["workspace"]),
         ]
-        let all = WorkspaceSidebarPrimaryUtilities.items(plugins: plugins, rexExperiment: true) { _ in true }
-        #expect(all.map(\.target) == [.agents, .schedules, .extensions, .pluginScreen("acme.things"), .sshTerminal, .rex])
-        #expect(all.first { $0.target == .pluginScreen("acme.things") }?.title == "Things")
-        #expect(WorkspaceSidebarPrimaryUtilities.items(plugins: [], rexExperiment: true) { _ in false }.isEmpty)
-        let terminalOnly = WorkspaceSidebarPrimaryUtilities.items(plugins: [], rexExperiment: true) { $0 == .terminal }
-        #expect(terminalOnly.map(\.target) == [.sshTerminal])
+        let all = WorkspaceSidebarPlaces.items(plugins: plugins, pinsAvailable: true, rexExperiment: true) { _ in true }
+        #expect(all.map(\.place) == [
+            .allSessions, .utility(.pluginScreen("acme.early")), .utility(.pinned), .utility(.agents), .utility(.schedules),
+            .utility(.extensions), .utility(.pluginScreen("acme.things")), .utility(.sshTerminal), .utility(.rex),
+        ])
+        #expect(all.first { $0.place == .utility(.pluginScreen("acme.things")) }?.title == "Things")
+        // Every switch off leaves home; a server without pins has no Pinned.
+        let plain = WorkspaceSidebarPlaces.items(plugins: [], pinsAvailable: false, rexExperiment: true) { _ in false }
+        #expect(plain.map(\.place) == [.allSessions])
+        let terminalOnly = WorkspaceSidebarPlaces.items(plugins: [], pinsAvailable: false, rexExperiment: true) { $0 == .terminal }
+        #expect(terminalOnly.map(\.place) == [.allSessions, .utility(.sshTerminal)])
         // Rex needs the server's switch and this device's experiment.
-        let rexOff = WorkspaceSidebarPrimaryUtilities.items(plugins: [], rexExperiment: false) { _ in true }
-        #expect(!rexOff.map(\.target).contains(.rex))
+        let rexOff = WorkspaceSidebarPlaces.items(plugins: [], pinsAvailable: true, rexExperiment: false) { _ in true }
+        #expect(!rexOff.map(\.place).contains(.utility(.rex)))
     }
 
     @Test("A new pane offers Terminal, Rex, Web Page and Godot only where the server does")

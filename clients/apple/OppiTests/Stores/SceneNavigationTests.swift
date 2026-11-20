@@ -1462,19 +1462,41 @@ struct SceneNavigationShellRoutingTests {
         #expect(navigation.splitColumnVisibility == .all)
     }
 
-    @Test func showWorkspaceListKeepsCurrentSplitDetail() {
-        let navigation = SceneNavigation()
-        let workspaceTarget = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
-        let sessionTarget = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
+    /// The sidebar highlights the current place, which content opened on top keeps,
+    /// and its All Sessions row makes All Sessions the detail column's root again.
+    @Test func theCurrentPlaceFollowsTheSidebarAndOutlastsContentOnTop() {
+        let navigation = readyNavigation()
+        let workspace = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
+        let session = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
         navigation.setWorkspaceNavigationPresentation(.split)
-        navigation.openWorkspace(workspaceTarget)
-        navigation.openWorkspaceSession(sessionTarget)
+        #expect(navigation.currentPlace == .allSessions)
 
-        navigation.showWorkspaceListInSplitSidebar()
+        navigation.openPlace(.utility(.agents))
+        #expect(navigation.currentPlace == .utility(.agents))
+        navigation.openWorkspaceSession(session)
+        #expect(navigation.currentPlace == .utility(.agents), "A chat opened from Agents sits on top of it")
 
-        #expect(navigation.selectedWorkspaceFilter == nil)
-        #expect(navigation.splitDetailColumn.root == .session(sessionTarget))
-        #expect(navigation.splitColumnVisibility == .detailOnly, "The chat still has the window")
+        navigation.openPlace(.allSessions)
+        #expect(navigation.currentPlace == .allSessions)
+        #expect(navigation.splitDetailColumn.root == .inbox)
+        #expect(navigation.splitColumnVisibility == .all)
+
+        let workspaceSession = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1", workspaceId: "workspace-1")
+        navigation.openPlace(.sessions(workspace))
+        navigation.openWorkspaceSession(workspaceSession, workspace: workspace)
+        #expect(navigation.splitDetailColumn.root == .session(workspaceSession))
+        #expect(navigation.currentPlace == .sessions(workspace), "The chat keeps its workspace's row selected")
+        navigation.openPlace(.allSessions)
+        #expect(navigation.workspaceStackRouteElements.isEmpty)
+        #expect(navigation.currentPlace == .allSessions)
+
+        // The compact shell lists utilities over All Sessions and highlights none of them.
+        navigation.setWorkspaceNavigationPresentation(.stack)
+        navigation.openPlace(.utility(.agents))
+        #expect(navigation.workspaceStackRouteElements == [.utility(.agents)])
+        #expect(navigation.currentPlace == .allSessions)
+        navigation.openPlace(.allSessions)
+        #expect(navigation.workspaceStackRouteElements.isEmpty)
     }
 
     @Test func completingWorkspaceConfigurationClearsMatchingSplitDetail() {
@@ -1501,8 +1523,8 @@ struct SceneNavigationShellRoutingTests {
         #expect(navigation.splitColumnVisibility == .all)
     }
 
-    @Test func sidebarPrimaryUtilitiesHaveDistinctIdentifiers() {
-        let items = WorkspaceSidebarPrimaryUtilities.items
+    @Test func sidebarPlacesHaveDistinctIdentifiers() {
+        let items = WorkspaceSidebarPlaces.builtIn + [WorkspaceSidebarPlaces.appSettings]
 
         #expect(Set(items.map(\.accessibilityIdentifier)).count == items.count)
     }

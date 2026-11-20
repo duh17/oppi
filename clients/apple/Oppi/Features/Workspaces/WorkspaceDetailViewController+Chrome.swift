@@ -61,7 +61,6 @@ extension WorkspaceDetailViewController {
         let bars = BarState(
             joinsRail: joinsRail,
             showsSidebarToggle: showsSidebarToggle,
-            isSplit: detail.isSplit,
             showsBottomItems: showsBottomItems,
             showsNowPlaying: detail.toolbar.showsNowPlayingPill,
             parksNowPlayingNextToCompose: detail.toolbar.parksNowPlayingNextToCompose,
@@ -117,10 +116,9 @@ extension WorkspaceDetailViewController {
         let tint = palette.ui.fg
         let railTint = SessionListBarItems.railTint(palette)
         sidebarToggle = bars.showsSidebarToggle ? WorkspaceSplitSidebarToggle.makeItem(root: root) : nil
-        var leading: [UIBarButtonItem] = sidebarToggle.map { [$0] } ?? []
+        let leading: [UIBarButtonItem] = sidebarToggle.map { [$0] } ?? []
         var trailing: [UIBarButtonItem] = []
         var bottom: [UIBarButtonItem] = []
-        let showWorkspaces = UIAction { [weak self] _ in self?.navigation.showWorkspaceListInSplitSidebar() }
         let openConfiguration = UIAction { [weak self] _ in self?.openWorkspaceConfiguration() }
         let openFiles: () -> Void = { [weak self] in self?.openWorkspaceFiles() }
         let openTerminal: () -> Void = { [weak self] in self?.openWorkspaceTerminal() }
@@ -129,18 +127,6 @@ extension WorkspaceDetailViewController {
             // The principal title is a wide custom view; the rail keeps the
             // system title and a labeled worktree glyph with the same menu.
             navigationItem.titleView = nil
-            if bars.isSplit {
-                // Split detail has no system Back.
-                let item = UIBarButtonItem(
-                    title: String(localized: "Workspaces"),
-                    image: UIImage(systemName: "sidebar.leading"),
-                    primaryAction: showWorkspaces
-                )
-                item.tintColor = railTint
-                item.accessibilityLabel = String(localized: "Show workspaces")
-                item.accessibilityIdentifier = "workspace.sidebar.showWorkspaces"
-                trailing.append(SessionListBarItems.railItem(item, priority: .navigation))
-            }
             if bars.showsBottomItems {
                 let compose = bottomBar.railCompose(showsDictation: bars.showsDictation, tint: railTint)
                 compose.isEnabled = !bars.isCreating
@@ -200,13 +186,6 @@ extension WorkspaceDetailViewController {
             }
         } else {
             navigationItem.titleView = titleButton
-            if bars.isSplit {
-                let item = UIBarButtonItem(image: UIImage(systemName: "chevron.left"), primaryAction: showWorkspaces)
-                item.tintColor = tint
-                item.accessibilityLabel = String(localized: "Show workspaces")
-                item.accessibilityIdentifier = "workspace.sidebar.showWorkspaces"
-                leading.append(SessionListBarItems.horizontalOnly(item))
-            }
             let configuration = UIBarButtonItem(
                 image: UIImage(systemName: "slider.horizontal.3"),
                 primaryAction: openConfiguration

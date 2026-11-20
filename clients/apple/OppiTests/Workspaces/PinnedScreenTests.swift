@@ -149,15 +149,15 @@ struct PinnedScreenTests {
 
     // MARK: The sidebar's Pinned row
 
-    /// Pinned leads the sidebar's destinations and opens the screen in the
-    /// detail column; the sidebar lists no pins of its own.
+    /// Pinned follows All Sessions at the top of the sidebar's places and opens
+    /// the screen in the detail column; the sidebar lists no pins of its own.
     @Test func theSidebarsPinnedRowOpensTheScreen() async throws {
         let shell = try await Self.makeShell(size: CGSize(width: 1133, height: 744), regular: true)
         defer { shell.end() }
         let sidebar = try #require(shell.sidebar)
         #expect(await shell.settles { shell.element("workspace.pinned.open", in: sidebar) != nil })
         let order = shell.elementOrder(in: sidebar)
-        #expect(order.first == "workspace.pinned.open", "Pinned comes first: \(order)")
+        #expect(Array(order.prefix(2)) == ["workspace.allSessions.open", "workspace.pinned.open"], "All Sessions, then Pinned: \(order)")
         #expect(!order.contains { $0.contains(".pin.") }, "the sidebar lists no pins: \(order)")
 
         try #require(shell.element("workspace.pinned.open", in: sidebar)).sendActions(for: .touchUpInside)
