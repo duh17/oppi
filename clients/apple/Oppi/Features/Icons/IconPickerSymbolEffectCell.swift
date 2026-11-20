@@ -1,6 +1,6 @@
 import UIKit
 
-/// The icon picker's Animation row, shown while an Agent's icon is a symbol:
+/// The icon picker's Animation row, shown while the icon is a symbol:
 /// the symbol on its tile playing the chosen effect (the preview is one of the
 /// two places an icon animates), "Animation" with the effect's name, and a
 /// menu of None and each `IconSymbolEffect`. The whole row is the one button
@@ -53,11 +53,13 @@ final class IconPickerSymbolEffectCell: UICollectionViewListCell {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    /// `symbol` is the chosen symbol and `effect` its effect; `choose` gets the
+    /// `symbol` is the chosen symbol and `effect` its effect; `ownPage` names
+    /// where else it plays (`IconPickerPurpose.ownPage`); `choose` gets the
     /// person's pick (nil for None).
     func configure(
         symbol: String,
         effect: IconSymbolEffect?,
+        ownPage: String,
         assetCache: IconAssetCache?,
         isEnabled: Bool,
         identifier: String,
@@ -83,7 +85,7 @@ final class IconPickerSymbolEffectCell: UICollectionViewListCell {
         button.accessibilityIdentifier = identifier
         button.accessibilityLabel = String(localized: "Animation")
         button.accessibilityValue = value
-        button.accessibilityHint = String(localized: "Chooses how the symbol animates on the Agent's page")
+        button.accessibilityHint = String(localized: "Chooses how the symbol animates on \(ownPage)")
         button.accessibilityTraits = isEnabled ? .button : [.button, .notEnabled]
     }
 

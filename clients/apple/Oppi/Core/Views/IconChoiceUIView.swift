@@ -9,10 +9,11 @@ import UIKit
 /// frame, which the tile fills, and redraws when artwork lands.
 ///
 /// An animated image shows its first frame and a symbol's effect does not play,
-/// like everywhere else in the app, unless the view is made with `animates`
-/// (the Agent detail screen and the icon picker): then they play while the view
-/// is in a window and Reduce Motion, Low Power Mode, and the system's Auto-Play
-/// Animated Images allow it. Only the chat timeline animates anything else.
+/// like everywhere else in the app, unless the view `animates` (the icon's own
+/// page, an Agent's or a workspace's, and the icon picker): then they play
+/// while the view is in a window and Reduce Motion, Low Power Mode, and the
+/// system's Auto-Play Animated Images allow it, with a sandbox workspace's lock
+/// mark kept over them. Only the chat timeline animates anything else.
 @MainActor
 final class IconChoiceUIView: UIView {
     enum Content: Equatable {
@@ -32,12 +33,28 @@ final class IconChoiceUIView: UIView {
     }
 
     private let frameSize: CGFloat
-    private let animates: Bool
+    /// Whether this view plays its icon; a row shared by the owner's page and
+    /// plain lists sets it per configuration.
+    var animates: Bool {
+        didSet {
+            guard animates != oldValue else { return }
+            if animates {
+                observeMotionPolicy()
+                startPlayingIfAllowed()
+            } else {
+                stopPlaying()
+                render()
+            }
+        }
+    }
     private let imageView = UIImageView()
     /// Over the tile while something plays: an animated image's frames, clipped
     /// to the tile, or a symbol running its effect.
     private let liveView = UIImageView()
+    /// A sandbox workspace's lock mark, over `liveView` while it plays.
+    private let markView = UIImageView()
     private var content: Content?
+    private var observesMotionPolicy = false
     private var themeID: ThemeID?
     private weak var assetCache: IconAssetCache?
     private var observers: [NSObjectProtocol] = []
@@ -61,7 +78,8 @@ final class IconChoiceUIView: UIView {
         liveView.clipsToBounds = true
         liveView.layer.cornerRadius = EntityIcon.tileCornerRadius(frameSize)
         liveView.layer.cornerCurve = .continuous
-        for view in [imageView, liveView] {
+        markView.isHidden = true
+        for view in [imageView, liveView, markView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
             NSLayoutConstraint.activate([
@@ -81,13 +99,18 @@ final class IconChoiceUIView: UIView {
             guard let content = view.content else { return }
             view.apply(content, assetCache: view.assetCache)
         }
-        if animates {
-            // Any of these turning off stops the icon on its still drawing;
-            // turning back on plays it again.
-            observe(UIAccessibility.reduceMotionStatusDidChangeNotification) { $0.motionPolicyChanged() }
-            observe(.NSProcessInfoPowerStateDidChange) { $0.motionPolicyChanged() }
-            observe(AccessibilitySettings.animatedImagesEnabledDidChangeNotification) { $0.motionPolicyChanged() }
-        }
+        if animates { observeMotionPolicy() }
+    }
+
+    /// Any of these turning off stops the icon on its still drawing; turning
+    /// back on plays it again. A view installs these the first time it animates,
+    /// so a list of still icons observes nothing.
+    private func observeMotionPolicy() {
+        guard !observesMotionPolicy else { return }
+        observesMotionPolicy = true
+        observe(UIAccessibility.reduceMotionStatusDidChangeNotification) { $0.motionPolicyChanged() }
+        observe(.NSProcessInfoPowerStateDidChange) { $0.motionPolicyChanged() }
+        observe(AccessibilitySettings.animatedImagesEnabledDidChangeNotification) { $0.motionPolicyChanged() }
     }
 
     @available(*, unavailable)
@@ -180,6 +203,7 @@ final class IconChoiceUIView: UIView {
     }
 
     private func motionPolicyChanged() {
+        guard animates else { return }
         if Self.motionAllowed {
             startPlayingIfAllowed()
         } else {
@@ -191,7 +215,7 @@ final class IconChoiceUIView: UIView {
     /// Where the content's image bytes come from, when it is an image icon.
     private var imageBytes: (() async throws -> Data)? {
         switch content {
-        case .choice(.image(let assetId)?, _, false):
+        case .choice(.image(let assetId)?, _, _):
             guard let assetCache else { return nil }
             return { try await assetCache.data(assetId: assetId) }
         case .importedImage(let data):
@@ -203,7 +227,7 @@ final class IconChoiceUIView: UIView {
 
     /// The symbol and the effect it plays, when the content is a symbol icon with one.
     private var symbolEffect: (name: String, effect: IconSymbolEffect)? {
-        guard case .choice(.symbol(let name, let effect?)?, _, false) = content,
+        guard case .choice(.symbol(let name, let effect?)?, _, _) = content,
               UIImage(systemName: name) != nil else { return nil }
         return (name, effect)
     }
@@ -225,6 +249,7 @@ final class IconChoiceUIView: UIView {
         liveView.contentMode = .center
         liveView.image = symbol
         liveView.isHidden = false
+        showSandboxMarkIfNeeded()
         switch effect {
         case .bounce:
             liveView.addSymbolEffect(.bounce, options: .repeat(.periodic(delay: 1.2)))
@@ -259,7 +284,15 @@ final class IconChoiceUIView: UIView {
             // Frames fill the tile edge to edge, like the still drawing.
             liveView.contentMode = .scaleAspectFill
             liveView.isHidden = false
+            showSandboxMarkIfNeeded()
         }
+    }
+
+    /// A sandbox workspace keeps its lock mark over what plays.
+    private func showSandboxMarkIfNeeded() {
+        guard case .choice(_, .workspace, true) = content else { return }
+        markView.image = EntityIcon.sandboxMark(frame: frameSize)
+        markView.isHidden = false
     }
 
     private func stopPlaying() {
@@ -268,6 +301,8 @@ final class IconChoiceUIView: UIView {
         liveView.removeAllSymbolEffects()
         liveView.image = nil
         liveView.isHidden = true
+        markView.image = nil
+        markView.isHidden = true
         isPlaying = false
     }
 

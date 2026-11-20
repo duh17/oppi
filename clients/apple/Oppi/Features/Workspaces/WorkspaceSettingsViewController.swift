@@ -409,6 +409,8 @@ final class WorkspaceSettingsViewController: ListScreenController<
             lock: locks.badge(lockTarget),
             colors: ComposerThemeColors(palette: palette),
             assetCache: connection?.iconAssetCache,
+            // The workspace's own page is where its icon plays.
+            animatesIcon: true,
             identifier: "workspace.edit.details"
         ) { [weak self] in self?.perform(.summary) }
     }

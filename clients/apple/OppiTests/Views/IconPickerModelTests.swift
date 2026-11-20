@@ -29,16 +29,9 @@ struct IconPickerModelTests {
         #expect(unavailable.isEmpty)
     }
 
-    @Test("purpose allows only its supported media")
-    func allowedMediaByPurpose() {
-        #expect(IconPickerPurpose.agent.allowedMedia == [.emoji, .genmoji, .symbol])
-        #expect(IconPickerPurpose.workspace.allowedMedia == [.emoji, .genmoji, .symbol])
-    }
-
     @Test("draft transitions do not mutate the committed value")
     func draftTransitionsDoNotCommit() {
         let model = IconPickerModel(
-            purpose: .workspace,
             savedValue: IconChoice.emoji("🧠"),
             defaultValue: .defaultValue
         )
@@ -63,7 +56,6 @@ struct IconPickerModelTests {
     ])
     func emojiValidation(example: (String, Bool)) {
         let model = IconPickerModel(
-            purpose: .agent,
             savedValue: IconChoice.defaultValue,
             defaultValue: .defaultValue
         )
@@ -83,7 +75,6 @@ struct IconPickerModelTests {
     @Test("custom input tracks an explicit selected emoji and clears for built-in choices")
     func customEmojiSelectionAndInputSynchronization() {
         let model = IconPickerModel(
-            purpose: .agent,
             savedValue: IconChoice.emoji("🧠"),
             defaultValue: .defaultValue,
             customChoice: Self.customChoice
@@ -108,7 +99,6 @@ struct IconPickerModelTests {
     @Test("a Genmoji input callback updates the draft without raw text")
     func genmojiSelectionHasDescriptionButNoRawText() {
         let model = IconPickerModel(
-            purpose: .agent,
             savedValue: .defaultValue,
             defaultValue: .defaultValue,
             customChoice: Self.customChoice
@@ -125,7 +115,6 @@ struct IconPickerModelTests {
     @Test("invalid custom input clears its selected state and blocks Save")
     func invalidCustomInputBlocksSaveWithoutStaleSelection() {
         let model = IconPickerModel(
-            purpose: .agent,
             savedValue: IconChoice.emoji("🧠"),
             defaultValue: .defaultValue,
             customChoice: Self.customChoice
@@ -145,7 +134,6 @@ struct IconPickerModelTests {
             contentDescription: "A smiling fox"
         )
         let model = IconPickerModel(
-            purpose: .agent,
             savedValue: existing,
             defaultValue: .defaultValue
         )
@@ -163,7 +151,6 @@ struct IconPickerModelTests {
     @Test("failed Genmoji upload retains the draft and permits retry")
     func failedGenmojiUploadRetainsDraft() async {
         let model = IconPickerModel(
-            purpose: .workspace,
             savedValue: IconChoice.defaultValue,
             defaultValue: .defaultValue
         )
@@ -189,7 +176,6 @@ struct IconPickerModelTests {
     @Test("failed persistence retains the prepared value and retries without another upload")
     func failedSaveRetainsPreparedGenmoji() async {
         let model = IconPickerModel(
-            purpose: .agent,
             savedValue: IconChoice.defaultValue,
             defaultValue: .defaultValue
         )
@@ -242,7 +228,6 @@ struct IconPickerModelTests {
     @Test("an imported image uploads once on Save and stays the saved choice")
     func importedImageUploadsOnceOnSave() async {
         let model = IconPickerModel(
-            purpose: .agent,
             savedValue: IconChoice.symbol("star"),
             defaultValue: .defaultValue,
             customChoice: Self.customChoice
@@ -280,7 +265,6 @@ struct IconPickerModelTests {
     func unavailableSymbolNeverCommits() async {
         var isAvailable = true
         let model = IconPickerModel(
-            purpose: .agent,
             savedValue: IconChoice.defaultValue,
             defaultValue: .defaultValue,
             valueValidation: { value in
@@ -308,7 +292,6 @@ struct IconPickerModelTests {
     @Test("workspace save failure preserves the selected draft for retry")
     func workspaceSaveFailurePreservesDraft() async {
         let model = IconPickerModel(
-            purpose: .workspace,
             savedValue: IconChoice.defaultValue,
             defaultValue: .defaultValue,
             customChoice: Self.customChoice
@@ -331,7 +314,6 @@ struct IconPickerModelTests {
     @Test("Default commits only through Save and exactly once")
     func defaultCommitsExactlyOnce() async {
         let model = IconPickerModel(
-            purpose: .workspace,
             savedValue: IconChoice.symbol("folder"),
             defaultValue: .defaultValue
         )

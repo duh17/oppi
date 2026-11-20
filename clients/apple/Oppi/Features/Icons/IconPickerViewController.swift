@@ -27,9 +27,10 @@ extension ModalPresentation {
     }
 }
 
-/// The icon and avatar picker an Agent and a workspace share: an Emoji or
-/// Genmoji chooser, an image import from Photos or Files where the source can
-/// upload one (an Agent), and a searchable grid of SF Symbols. Presented at the root
+/// The one icon picker, for an Agent's icon and a workspace's alike: an Emoji
+/// or Genmoji chooser, a symbol's Animation, an image import from Photos or
+/// Files, and a searchable grid of SF Symbols. Only the title and the symbol
+/// heading name the owner (`IconPickerPurpose`). Presented at the root
 /// of a router navigation controller (`ModalPresentation.iconPicker`), which
 /// gives it its bar: Cancel, and Save, which uploads a Genmoji if one was
 /// chosen and then commits the icon. A failed save shows its reason at the top
@@ -44,16 +45,23 @@ final class IconPickerViewController: ListScreenController<IconPickerViewControl
     struct Source {
         let purpose: IconPickerPurpose
         let savedValue: IconChoice
-        /// The prefix of every accessibility identifier, e.g. `agent.iconPicker`.
-        let accessibilityPrefix: String
         let assetCache: IconAssetCache?
-        /// Uploads a Genmoji the person chose and returns the icon that names it.
-        let prepareGenmoji: (Data, String) async throws -> IconChoice
-        /// Uploads an imported image's prepared bytes and returns the icon that
-        /// names it. Nil hides the import rows.
-        var prepareImage: ((Data) async throws -> IconChoice)? = nil
+        /// Stores a chosen Genmoji's or imported image's bytes (with their MIME
+        /// type) on the server the icon is saved to, and returns the asset.
+        let uploadAsset: (Data, String) async throws -> IconAssetRecord
         /// Persists the chosen icon. A throw keeps the picker open with the reason.
         let commit: (IconChoice) async throws -> Void
+
+        fileprivate var accessibilityPrefix: String { purpose.accessibilityPrefix }
+
+        @MainActor fileprivate func prepareGenmoji(_ data: Data, _ contentDescription: String) async throws -> IconChoice {
+            let asset = try await uploadAsset(data, NSAdaptiveImageGlyph.contentType.preferredMIMEType ?? "image/heic")
+            return .genmoji(assetId: asset.assetId, contentDescription: contentDescription)
+        }
+
+        @MainActor fileprivate func prepareImage(_ data: Data) async throws -> IconChoice {
+            .image(assetId: try await uploadAsset(data, IconImageImport.uploadContentType).assetId)
+        }
     }
 
     enum Section: Hashable, Sendable { case saveError, custom, symbolEffect, image, symbolSearch, symbols, saving }
@@ -93,7 +101,6 @@ final class IconPickerViewController: ListScreenController<IconPickerViewControl
     init(source: Source) {
         self.source = source
         model = IconPickerModel(
-            purpose: source.purpose,
             savedValue: source.savedValue,
             defaultValue: .defaultValue,
             customChoice: Self.customChoice,
@@ -163,21 +170,20 @@ final class IconPickerViewController: ListScreenController<IconPickerViewControl
             footer: "Use the Globe key to switch to the Emoji keyboard if needed.",
             items: model.validationMessage == nil ? [.chooser] : [.chooser, .validation]
         ))
-        if source.purpose.offersSymbolEffects, draftSymbol != nil {
+        let ownPage = source.purpose.ownPage
+        if draftSymbol != nil {
             sections.append(ListSection(
                 .symbolEffect,
-                footer: "Plays on the Agent’s page. Reduce Motion and Low Power Mode keep it still.",
+                footer: String(localized: "Plays on \(ownPage). Reduce Motion and Low Power Mode keep it still."),
                 items: [.symbolEffect]
             ))
         }
-        if source.prepareImage != nil {
-            sections.append(ListSection(
-                .image,
-                header: "Image",
-                footer: "Any photo works. An animated PNG, GIF, or WebP can be up to 1 MB; it plays here and on the Agent’s page.",
-                items: [.importPhotos, .importFiles]
-            ))
-        }
+        sections.append(ListSection(
+            .image,
+            header: "Image",
+            footer: String(localized: "Any photo works. An animated PNG, GIF, or WebP can be up to 1 MB; it plays here and on \(ownPage)."),
+            items: [.importPhotos, .importFiles]
+        ))
         sections.append(ListSection(
             .symbolSearch,
             header: source.purpose.symbolSectionTitle,
@@ -354,6 +360,7 @@ final class IconPickerViewController: ListScreenController<IconPickerViewControl
         cell.configure(
             symbol: draftSymbol.name,
             effect: draftSymbol.effect,
+            ownPage: source.purpose.ownPage,
             assetCache: source.assetCache,
             isEnabled: !model.isSaving,
             identifier: "\(source.accessibilityPrefix).symbolEffect"
@@ -498,27 +505,11 @@ extension IconPickerViewController {
         var errorDescription: String? { "Server is offline" }
     }
 
-    /// A Genmoji upload to `apiClient`'s server, as `Source.prepareGenmoji`.
-    static func uploadGenmoji(using apiClient: APIClient?) -> (Data, String) async throws -> IconChoice {
-        { data, contentDescription in
+    /// An icon asset upload to `apiClient`'s server, as `Source.uploadAsset`.
+    static func uploadAsset(using apiClient: APIClient?) -> (Data, String) async throws -> IconAssetRecord {
+        { data, contentType in
             guard let apiClient else { throw UploadError.serverOffline }
-            let asset = try await apiClient.uploadIconAsset(
-                data: data,
-                contentType: NSAdaptiveImageGlyph.contentType.preferredMIMEType ?? "image/heic"
-            )
-            return .genmoji(assetId: asset.assetId, contentDescription: contentDescription)
-        }
-    }
-
-    /// An imported image's upload to `apiClient`'s server, as `Source.prepareImage`.
-    static func uploadImage(using apiClient: APIClient?) -> (Data) async throws -> IconChoice {
-        { data in
-            guard let apiClient else { throw UploadError.serverOffline }
-            let asset = try await apiClient.uploadIconAsset(
-                data: data,
-                contentType: IconImageImport.uploadContentType
-            )
-            return .image(assetId: asset.assetId)
+            return try await apiClient.uploadIconAsset(data: data, contentType: contentType)
         }
     }
 

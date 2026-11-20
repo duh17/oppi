@@ -484,7 +484,7 @@ final class WorkspaceCreateViewController: ListScreenController<
             accessories = [.customView(configuration: .init(customView: icon, placement: .trailing()))]
             identifier = "workspace.create.icon"
             label = "Workspace icon"
-            value = WorkspaceIconPicker.description(model.icon)
+            value = IconPickerPurpose.workspace.description(model.icon)
             hint = "Opens the icon picker"
             action = { [weak self] in self?.showsIconPicker = true }
         case .showAdvanced:
@@ -705,7 +705,20 @@ final class WorkspaceCreateViewController: ListScreenController<
             presentation: .iconPicker(for: traitCollection),
             root: root,
             clear: { [weak self] in self?.showsIconPicker = false },
-            screen: { WorkspaceIconPicker.screen(editing: model) }
+            // A pick lands in the form; Create sends it with the workspace.
+            screen: {
+                .controller {
+                    IconPickerViewController(source: .init(
+                        purpose: .workspace,
+                        savedValue: model.icon,
+                        assetCache: model.oppiConnection?.iconAssetCache,
+                        uploadAsset: { data, contentType in
+                            try await model.uploadIconAsset(data: data, contentType: contentType)
+                        },
+                        commit: { model.icon = $0 }
+                    ))
+                }
+            }
         )
     }
 }

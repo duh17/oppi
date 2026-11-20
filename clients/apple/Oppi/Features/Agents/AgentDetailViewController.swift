@@ -326,14 +326,14 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
                 cell,
                 identifier: "agents.detail.icon",
                 label: "Icon",
-                value: AgentIconPicker.description(agent.definition.icon),
+                value: IconPickerPurpose.agent.description(agent.definition.icon),
                 hint: "Opens the Agent icon picker"
             ) { [weak self] in
                 self?.showsIconPicker = true
             }
             let assets = connection.iconAssetCache
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 6, leading: 0, bottom: 6, trailing: 0)) {
-                // The Agent's page is one of the two places an icon animates.
+                // The Agent's own page plays its icon, like the picker.
                 let icon = IconChoiceUIView(frameSize: 32, animates: true)
                 icon.apply(.choice(agent.definition.icon, purpose: .agent, sandbox: false), assetCache: assets)
                 icon.accessibilityIdentifier = "agents.detail.iconImage"
@@ -485,7 +485,17 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
             screen: {
                 .controller {
                     guard let agent else { preconditionFailure("The icon picker presents only with its Agent") }
-                    return AgentIconPicker.viewController(agent: agent, connection: connection, onSaved: saved)
+                    let apiClient = connection.apiClient
+                    return IconPickerViewController(source: .init(
+                        purpose: .agent,
+                        savedValue: agent.definition.icon,
+                        assetCache: connection.iconAssetCache,
+                        uploadAsset: IconPickerViewController.uploadAsset(using: apiClient),
+                        commit: { icon in
+                            guard let apiClient else { throw IconPickerViewController.offlineError }
+                            saved(try await apiClient.updateAgentIcon(agentId: agent.id, icon: icon))
+                        }
+                    ))
                 }
             }
         )

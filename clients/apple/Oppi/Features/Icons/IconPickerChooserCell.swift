@@ -12,7 +12,7 @@ final class IconPickerChooserCell: UICollectionViewListCell {
     }
 
     private let button = SettingsRowButton(type: .system)
-    /// The preview is one of the two places an icon animates.
+    /// The preview animates, like the icon's own page.
     private let iconView = IconChoiceUIView(frameSize: 36, animates: true)
     private let imageView = UIImageView()
     private let promptView = UIImageView(image: UIImage(systemName: "face.smiling"))

@@ -77,6 +77,8 @@ final class WorkspaceRowCell: UICollectionViewListCell {
     /// - Parameters:
     ///   - description: shown under the name; `nil` leaves the line out.
     ///   - server: the server's name, under the folder; `nil` leaves it out.
+    ///   - animatesIcon: plays an animated icon; only the workspace's own page
+    ///     (Workspace Settings) sets it, and lists keep the still drawing.
     ///   - customActions: what a swipe does, for VoiceOver's actions rotor.
     func configure(
         workspace: Workspace,
@@ -86,11 +88,13 @@ final class WorkspaceRowCell: UICollectionViewListCell {
         lock: ScopedLockState,
         colors: ComposerThemeColors,
         assetCache: IconAssetCache?,
+        animatesIcon: Bool = false,
         identifier: String,
         customActions: [UIAccessibilityCustomAction] = [],
         menu: UIMenu? = nil,
         action: @escaping () -> Void
     ) {
+        icon.animates = animatesIcon
         icon.apply(
             .choice(workspace.icon, purpose: .workspace, sandbox: workspace.runtime == .sandbox),
             assetCache: assetCache

@@ -467,18 +467,13 @@ final class WorkspaceCreateModel {
         }
     }
 
-    func uploadGenmoji(data: Data, contentDescription: String) async throws -> IconChoice {
+    /// Stores the icon picker's Genmoji or imported image on the server the
+    /// workspace is created on.
+    func uploadIconAsset(data: Data, contentType: String) async throws -> IconAssetRecord {
         guard let api = await preparedAPIClient() else {
             throw APIError.server(status: 503, message: "Server is offline")
         }
-        let asset = try await api.uploadIconAsset(
-            data: data,
-            contentType: NSAdaptiveImageGlyph.contentType.preferredMIMEType ?? "image/heic"
-        )
-        return .genmoji(
-            assetId: asset.assetId,
-            contentDescription: contentDescription
-        )
+        return try await api.uploadIconAsset(data: data, contentType: contentType)
     }
 
     /// Creates the workspace on the server and adds it to that server's store.

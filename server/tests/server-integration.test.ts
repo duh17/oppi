@@ -396,6 +396,58 @@ describe("Agent image icon round trip", () => {
   });
 });
 
+// ── A workspace's icon takes the same image and symbol effect as an Agent's ──
+
+describe("Workspace image and animated symbol icons", () => {
+  it("saves both through the app's routes and keeps the image only while referenced", async () => {
+    const upload = await fetch(`${baseUrl}/icon-assets`, {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream", Authorization: `Bearer ${token}` },
+      body: gifFixture({ width: 4, height: 4 }),
+    });
+    const { asset } = (await upload.json()) as { asset: { assetId: string } };
+    const image = { kind: "image", assetId: asset.assetId };
+    const workspaceIcon = async (id: string): Promise<unknown> =>
+      ((await (await get(`/workspaces/${id}`)).json()) as { workspace: { icon?: unknown } })
+        .workspace.icon;
+
+    const created = await post("/workspaces", { name: "Image icon", icon: image });
+    expect(created.status).toBe(201);
+    const { workspace } = (await created.json()) as { workspace: { id: string } };
+    expect(await workspaceIcon(workspace.id)).toEqual(image);
+
+    // A day and more later, the sweep keeps the asset a workspace names.
+    const removed = storage.cleanupUnreferencedIconAssets(new Set([asset.assetId]), {
+      now: Date.now() + 2 * 24 * 60 * 60 * 1000,
+    });
+    expect(removed).toEqual([]);
+    expect((await get(`/icon-assets/${asset.assetId}`)).status).toBe(200);
+
+    // The same asset cannot pose as a Genmoji, and an unknown effect is refused.
+    const asGenmoji = await put(`/workspaces/${workspace.id}`, {
+      icon: { kind: "genmoji", assetId: asset.assetId, contentDescription: "Orbit" },
+    });
+    expect(asGenmoji.status).toBe(400);
+    const badEffect = await put(`/workspaces/${workspace.id}`, {
+      icon: { kind: "symbol", name: "folder", effect: "spin" },
+    });
+    expect(badEffect.status).toBe(400);
+    expect(await workspaceIcon(workspace.id)).toEqual(image);
+
+    // Once an animated symbol replaces it, the image is no longer kept.
+    const symbol = { kind: "symbol", name: "folder", effect: "bounce" };
+    const updated = await put(`/workspaces/${workspace.id}`, { icon: symbol });
+    expect(updated.status).toBe(200);
+    expect(await workspaceIcon(workspace.id)).toEqual(symbol);
+    expect(
+      storage.cleanupUnreferencedIconAssets(new Set([asset.assetId]), {
+        now: Date.now() + 2 * 24 * 60 * 60 * 1000,
+      }),
+    ).toEqual([asset.assetId]);
+    expect((await del(`/workspaces/${workspace.id}`)).status).toBeLessThan(300);
+  });
+});
+
 // ── Image icons set from a host file by the CLI and the control tools ──
 
 describe("--icon-image", () => {

@@ -300,6 +300,12 @@ enum EntityIcon {
         lock.draw(at: CGPoint(x: mark.midX - lock.size.width / 2, y: mark.midY - lock.size.height / 2))
     }
 
+    /// A sandbox workspace's mark alone, in a clear `frame`-point square, for a
+    /// view that lays it over a playing icon.
+    static func sandboxMark(frame: CGFloat) -> UIImage {
+        raster(frame) { rect in drawSandboxMark(in: rect) }.withRenderingMode(.alwaysOriginal)
+    }
+
     /// Where a sandbox workspace's mark draws in a frame: max(11, frame * 0.34)
     /// points against the bottom-trailing corner, the corner main let it overhang.
     /// A raster cannot draw past its bounds, so this is as far out as it reaches.

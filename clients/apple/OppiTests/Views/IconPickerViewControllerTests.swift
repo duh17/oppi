@@ -21,13 +21,13 @@ struct IconPickerViewControllerTests {
         #expect(!harness.save.isEnabled, "nothing changed yet")
         symbol.sendActions(for: .touchUpInside)
         #expect(await waitForMainActorCondition { harness.save.isEnabled })
-        #expect(harness.button("test.picker.symbol.folder")?.accessibilityValue == "Selected")
+        #expect(harness.button("agent.iconPicker.symbol.folder")?.accessibilityValue == "Selected")
 
         harness.tapSave()
-        let error = try await harness.waitForButton("test.picker.saveError")
+        let error = try await harness.waitForButton("agent.iconPicker.saveError")
         #expect(error.accessibilityLabel?.contains("Save error: Couldn’t save. offline") == true)
         #expect(harness.save.isEnabled, "the choice is kept so the save can be retried")
-        #expect(harness.button("test.picker.symbol.folder")?.accessibilityValue == "Selected")
+        #expect(harness.button("agent.iconPicker.symbol.folder")?.accessibilityValue == "Selected")
         #expect(harness.presented.presentedViewController != nil)
 
         error.sendActions(for: .touchUpInside)
@@ -51,7 +51,7 @@ struct IconPickerViewControllerTests {
         #expect(await waitForMainActorCondition {
             harness.view.layoutIfNeeded()
             let shown = harness.symbolIdentifiers()
-            return shown.contains("test.picker.symbol.arrow.triangle.branch") && shown.count < allSymbols
+            return shown.contains("agent.iconPicker.symbol.arrow.triangle.branch") && shown.count < allSymbols
         })
 
         field.text = "no-such-icon"
@@ -68,9 +68,26 @@ struct IconPickerViewControllerTests {
         let committed = Committed()
         let harness = try Harness(saved: .emoji("🦊"), commit: { await committed.record($0) })
         defer { harness.hide() }
-        let chooser = try await harness.waitForButton("test.picker.emojiGenmoji")
+        let chooser = try await harness.waitForButton("agent.iconPicker.emojiGenmoji")
         #expect(chooser.accessibilityValue == "Emoji 🦊")
         #expect(!harness.save.isEnabled, "the saved icon is not a change")
+    }
+
+    /// One picker for every owner: a workspace's icon offers the same image
+    /// import and symbol Animation as an Agent's.
+    @Test("every owner's picker offers image import and a symbol's Animation", arguments: [
+        IconPickerPurpose.agent, .workspace,
+    ])
+    func sameSectionsForEveryOwner(purpose: IconPickerPurpose) async throws {
+        let harness = try Harness(purpose: purpose, saved: .symbol("folder", effect: .bounce), commit: { _ in })
+        defer { harness.hide() }
+        let prefix = purpose.accessibilityPrefix
+        let animation = try await harness.waitForButton("\(prefix).symbolEffect")
+        #expect(animation.accessibilityValue == "Bounce")
+        _ = try await harness.waitForButton("\(prefix).importPhotos")
+        _ = try await harness.waitForButton("\(prefix).importFiles")
+        _ = try await harness.waitForButton("\(prefix).emojiGenmoji")
+        #expect(try await harness.symbolButton("folder").accessibilityValue == "Selected")
     }
 }
 
@@ -94,17 +111,22 @@ private final class Harness {
     let window: UIWindow
     let presented: UIViewController
     let picker: IconPickerViewController
+    let prefix: String
 
     var view: UIView { picker.view }
     var save: UIBarButtonItem { picker.navigationItem.rightBarButtonItem ?? UIBarButtonItem() }
 
-    init(saved: IconChoice = .defaultValue, commit: @escaping (IconChoice) async throws -> Void) throws {
+    init(
+        purpose: IconPickerPurpose = .agent,
+        saved: IconChoice = .defaultValue,
+        commit: @escaping (IconChoice) async throws -> Void
+    ) throws {
+        prefix = purpose.accessibilityPrefix
         picker = IconPickerViewController(source: .init(
-            purpose: .agent,
+            purpose: purpose,
             savedValue: saved,
-            accessibilityPrefix: "test.picker",
             assetCache: nil,
-            prepareGenmoji: { _, _ in throw StubError.offline },
+            uploadAsset: { _, _ in throw StubError.offline },
             commit: commit
         ))
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
@@ -126,7 +148,7 @@ private final class Harness {
     }
 
     func symbolButton(_ name: String) async throws -> UIButton {
-        try await waitForButton("test.picker.symbol.\(name)")
+        try await waitForButton("\(prefix).symbol.\(name)")
     }
 
     func waitForButton(_ identifier: String) async throws -> UIButton {
@@ -147,13 +169,15 @@ private final class Harness {
 
     func symbolIdentifiers() -> [String] {
         guard let list = collectionView() else { return [] }
+        let symbolPrefix = "\(prefix).symbol."
         return list.visibleCells.compactMap { cell in
-            cell.allButtons().first { $0.accessibilityIdentifier?.hasPrefix("test.picker.symbol.") == true }?.accessibilityIdentifier
+            cell.allButtons().first { $0.accessibilityIdentifier?.hasPrefix(symbolPrefix) == true }?.accessibilityIdentifier
         }
     }
 
     func searchField() -> UITextField? {
-        collectionView()?.visibleCells.lazy.compactMap { $0.firstField("test.picker.symbolSearch") }.first
+        let identifier = "\(prefix).symbolSearch"
+        return collectionView()?.visibleCells.lazy.compactMap { $0.firstField(identifier) }.first
     }
 
     private func collectionView() -> UICollectionView? {

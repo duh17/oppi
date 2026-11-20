@@ -155,7 +155,7 @@ final class WorkspaceDetailsViewController: ListScreenController<
             assetCache: connection.iconAssetCache,
             identifier: "workspace.edit.icon",
             label: String(localized: "Workspace icon"),
-            value: WorkspaceIconPicker.description(icon),
+            value: IconPickerPurpose.workspace.description(icon),
             hint: String(localized: "Opens the icon picker")
         ) { [weak self] in self?.showsIconPicker = true }
     }
@@ -272,12 +272,14 @@ final class WorkspaceDetailsViewController: ListScreenController<
             clear: { [weak self] in self?.showsIconPicker = false },
             screen: {
                 .controller {
-                    WorkspaceIconPicker.viewController(
-                        icon: model.draft.icon,
-                        apiClient: apiClient,
+                    // A pick lands in the draft; this page's Save sends it.
+                    IconPickerViewController(source: .init(
+                        purpose: .workspace,
+                        savedValue: model.draft.icon,
                         assetCache: assetCache,
+                        uploadAsset: IconPickerViewController.uploadAsset(using: apiClient),
                         commit: { model.setIcon($0) }
-                    )
+                    ))
                 }
             }
         )

@@ -7,25 +7,12 @@ import UIKit
 
 // MARK: - Purpose and state
 
-enum IconPickerMedia: Hashable, Sendable {
-    case emoji
-    case genmoji
-    case symbol
-}
-
+/// Whose icon the picker edits. An Agent's and a workspace's icon are the same
+/// primitive with the same picker: these name the owner, and nothing else
+/// differs.
 enum IconPickerPurpose: Sendable {
     case agent
     case workspace
-
-    var allowedMedia: Set<IconPickerMedia> {
-        [.emoji, .genmoji, .symbol]
-    }
-
-    /// Only an Agent's icon animates (on its page and here), so only an
-    /// Agent's symbol takes an effect.
-    var offersSymbolEffects: Bool {
-        self == .agent
-    }
 
     var title: String {
         switch self {
@@ -38,6 +25,40 @@ enum IconPickerPurpose: Sendable {
         switch self {
         case .agent: return "Agent Symbols"
         case .workspace: return "Workspace Symbols"
+        }
+    }
+
+    /// The prefix of every identifier in the picker, e.g. `agent.iconPicker.save`.
+    var accessibilityPrefix: String {
+        switch self {
+        case .agent: return "agent.iconPicker"
+        case .workspace: return "workspace.iconPicker"
+        }
+    }
+
+    /// The one page where the icon animates, besides the picker.
+    var ownPage: String {
+        switch self {
+        case .agent: return String(localized: "the Agent’s page")
+        case .workspace: return String(localized: "the workspace’s page")
+        }
+    }
+
+    /// The icon's spoken value on its owner's page.
+    func description(_ value: IconChoice) -> String {
+        switch AgentIconContent.resolve(value) {
+        case .text(let emoji): return "Emoji \(emoji)"
+        case .symbol(let name):
+            let label = IconSymbolCatalog.label(for: name) ?? "SF Symbol"
+            guard case .symbol(_, let effect?) = value else { return label }
+            return "\(label), \(effect.title)"
+        case .genmoji(_, let contentDescription): return contentDescription
+        case .image: return "Image"
+        case .fallback:
+            switch self {
+            case .agent: return "Default"
+            case .workspace: return "Default workspace icon"
+            }
         }
     }
 }
@@ -67,7 +88,6 @@ enum IconPickerCustomChoice: Equatable, Sendable {
 
 @MainActor @Observable
 final class IconPickerModel<Value: Equatable & Sendable> {
-    let purpose: IconPickerPurpose
     let defaultValue: Value
     private let customChoice: (Value) -> IconPickerCustomChoice?
     private let valueValidation: (Value) -> String?
@@ -80,13 +100,11 @@ final class IconPickerModel<Value: Equatable & Sendable> {
     private(set) var isSaving = false
 
     init(
-        purpose: IconPickerPurpose,
         savedValue: Value,
         defaultValue: Value,
         customChoice: @escaping (Value) -> IconPickerCustomChoice? = { _ in nil },
         valueValidation: @escaping (Value) -> String? = { _ in nil }
     ) {
-        self.purpose = purpose
         self.savedValue = savedValue
         self.defaultValue = defaultValue
         self.customChoice = customChoice
@@ -127,7 +145,6 @@ final class IconPickerModel<Value: Equatable & Sendable> {
 
     @discardableResult
     func selectEmoji(_ rawValue: String, transform: (String) -> Value) -> Bool {
-        guard purpose.allowedMedia.contains(.emoji) else { return false }
         customInputText = rawValue
         switch AgentIconValue.classify(rawValue) {
         case .emoji(let emoji):
@@ -146,7 +163,6 @@ final class IconPickerModel<Value: Equatable & Sendable> {
 
     @discardableResult
     func selectGenmoji(data: Data, contentDescription: String) -> Bool {
-        guard purpose.allowedMedia.contains(.genmoji) else { return false }
         let description = contentDescription.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !data.isEmpty, !description.isEmpty, description.unicodeScalars.count <= 256 else {
             selectedCustomChoice = nil
@@ -161,8 +177,7 @@ final class IconPickerModel<Value: Equatable & Sendable> {
         return true
     }
 
-    /// An imported image's prepared bytes; the picker offers import only where
-    /// its source can upload one.
+    /// An imported image's prepared bytes.
     @discardableResult
     func selectImage(data: Data) -> Bool {
         guard !data.isEmpty else { return false }
@@ -175,7 +190,7 @@ final class IconPickerModel<Value: Equatable & Sendable> {
 
     func save(
         prepareGenmoji: (Data, String) async throws -> Value,
-        prepareImage: ((Data) async throws -> Value)?,
+        prepareImage: (Data) async throws -> Value,
         commit: (Value) async throws -> Void
     ) async -> Bool {
         guard hasChanges, !isSaving else { return false }
@@ -201,9 +216,6 @@ final class IconPickerModel<Value: Equatable & Sendable> {
                 // commit the same asset instead of uploading duplicate bytes.
                 draft = .value(value)
             case .image(let data):
-                // An image draft exists only where the picker offered import,
-                // which it does only with an upload.
-                guard let prepareImage else { preconditionFailure("an image draft without an image upload") }
                 value = try await prepareImage(data)
                 draft = .value(value)
             }

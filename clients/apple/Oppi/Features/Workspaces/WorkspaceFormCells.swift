@@ -158,10 +158,12 @@ final class WorkspaceTextEditorCell: UICollectionViewListCell, UITextViewDelegat
 /// activation, and `app.buttons[id]` all open the picker. Like
 /// `SettingsIndexRowCell` its labels paint the row and the button is its one
 /// accessible element; the picker opens as a sheet, so there is no chevron.
+/// Only Workspace Details shows it, which is the workspace's own page, so its
+/// icon plays.
 final class WorkspaceIconRowCell: UICollectionViewListCell {
     private let button = SettingsRowButton(type: .system)
     private let titleLabel = UILabel()
-    private let icon = IconChoiceUIView(frameSize: 32)
+    private let icon = IconChoiceUIView(frameSize: 32, animates: true)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
