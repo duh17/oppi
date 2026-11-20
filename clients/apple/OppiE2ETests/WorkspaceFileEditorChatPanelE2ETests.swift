@@ -15,14 +15,14 @@ final class WorkspaceFileEditorChatPanelE2ETests: E2ETestCase {
 
     override func seedE2EFixtures() throws {
         directoryName = "000-oppi-wfe-chat-\(UUID().uuidString.prefix(8).lowercased())"
-        let directory = URL(fileURLWithPath: "/tmp", isDirectory: true).appendingPathComponent(directoryName)
+        let directory = try E2ELabServerContext.workspaceDirectory().appendingPathComponent(directoryName)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try Data("# Notes\nfirst line\n".utf8).write(to: directory.appendingPathComponent(Self.filename))
     }
 
     override func tearDownWithError() throws {
-        if !directoryName.isEmpty {
-            try? FileManager.default.removeItem(atPath: "/tmp/\(directoryName)")
+        if !directoryName.isEmpty, let workspace = try? E2ELabServerContext.workspaceDirectory() {
+            try? FileManager.default.removeItem(at: workspace.appendingPathComponent(directoryName))
         }
         try super.tearDownWithError()
     }
@@ -31,7 +31,7 @@ final class WorkspaceFileEditorChatPanelE2ETests: E2ETestCase {
         dismissExtensionSheetIfNeeded(timeout: 3)
         tap(app.buttons.matching(identifier: "chat.toolbar.files").firstMatch, named: "chat Files", timeout: 10)
         // The panel is the checkout's file browser, and this harness mounts the
-        // workspace at /tmp: one listing of it is truncated and lists entries in
+        // workspace at a per-run folder: one listing of it is truncated and lists entries in
         // filesystem order, so the browser's search — fed by the whole file index
         // — is what finds the fixture whatever else the mount holds. The fixture
         // directory's name is unique, so its file is the only result.

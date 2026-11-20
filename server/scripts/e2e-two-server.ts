@@ -12,7 +12,7 @@
  *
  * Exit: a failed test keeps the second server's data dir (`[two-server] preserving failure data`) for
  * debugging; every other end, including SIGTERM (exit 143) and SIGINT (130), stops the test run, the
- * second server and the approver and removes the fixture and data dirs, which hold the second server's tokens.
+ * second server and the approver and removes the fixture, workspace and data dirs (the fixture and data dirs hold the second server's tokens).
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:http";
@@ -30,6 +30,9 @@ const dataDir = await mkdtemp(join(tmpdir(), "oppi-e2e-second-"));
 // /tmp, like e2e.sh's run dir: the UI test runner reads it by the path in its environment.
 const fixtureDir = await mkdtemp("/tmp/oppi-e2e-two-server-");
 const fixturePath = join(fixtureDir, "fixture.json");
+// The second server's workspace mount: its own empty folder, like e2e.sh's. Never /tmp itself,
+// where a stray `.pi/` makes every session start wait on Pi's project-trust prompt.
+const workspaceDir = await mkdtemp("/tmp/oppi-e2e-two-server-workspace-");
 const name = "Offline E2E";
 let second: ChildProcess | undefined;
 let first: ChildProcess | undefined;
@@ -115,6 +118,7 @@ function cleanup(keepData: boolean): Promise<void> {
     for (const helper of helpers) helper.kill("SIGTERM");
     approver?.kill("SIGTERM");
     await rm(fixtureDir, { recursive: true, force: true });
+    await rm(workspaceDir, { recursive: true, force: true });
     await stopSecond();
     if (keepData) console.error(`[two-server] preserving failure data: ${dataDir}`);
     else await rm(dataDir, { recursive: true, force: true });
@@ -184,10 +188,13 @@ try {
   await run("node", ["--input-type=module", "-e", `
     const response = await fetch(process.env.E2E_BASE_URL + "/workspaces", {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + process.env.E2E_ACCESS_TOKEN },
-      body: JSON.stringify({ name: "Offline E2E Workspace", hostMount: "/tmp" }),
+      body: JSON.stringify({ name: "Offline E2E Workspace", hostMount: process.env.E2E_WORKSPACE_DIR }),
     });
     if (!response.ok) throw Error("Second E2E workspace seed failed: " + response.status + " " + await response.text());
-  `], { ...env, NODE_TLS_REJECT_UNAUTHORIZED: "0", E2E_BASE_URL: `https://127.0.0.1:${secondPort}`, E2E_ACCESS_TOKEN: access });
+  `], {
+    ...env, NODE_TLS_REJECT_UNAUTHORIZED: "0", E2E_BASE_URL: `https://127.0.0.1:${secondPort}`, E2E_ACCESS_TOKEN: access,
+    E2E_WORKSPACE_DIR: workspaceDir,
+  });
   secondHost = process.env.E2E_APP_HOST || "127.0.0.1";
   await new Promise<void>((ok, fail) => control.once("error", fail).listen(0, "127.0.0.1", ok));
   const address = control.address();

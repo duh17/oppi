@@ -17,8 +17,9 @@ final class WriteCurrentFileNavigationE2ETests: E2ETestCase {
 
     private func verifyCurrentWriteNavigation(emptyWrite: Bool) throws {
         let token = UUID().uuidString.lowercased()
-        let currentPath = "/tmp/oppi-write-current-\(token).md"
-        let childPath = "/tmp/oppi-write-child-\(token).md"
+        let workspace = try E2ELabServerContext.workspaceDirectory()
+        let currentPath = workspace.appendingPathComponent("oppi-write-current-\(token).md").path
+        let childPath = workspace.appendingPathComponent("oppi-write-child-\(token).md").path
         let currentMarker = "CURRENT FILE BYTES \(token)"
         let childMarker = "CHILD FILE BYTES \(token)"
         let recordedMarker = "RECORDED WRITE ARGUMENT \(token)"

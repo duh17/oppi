@@ -16,9 +16,9 @@ final class WorkspaceFileEditorE2ETests: E2ETestCase {
     nonisolated private static let filename = "notes.md"
     nonisolated private static let original = "# Notes\r\nfirst line\r\nlast line without newline"
 
-    /// The harness's standard launch: auto-open `e2e-workspace` (host mount
-    /// `/tmp`) without creating a chat session. The fixture is a directory
-    /// under `/tmp` that sorts first in the file list.
+    /// The harness's standard launch: auto-open `e2e-workspace` (its per-run
+    /// host folder) without creating a chat session. The fixture is a directory
+    /// in that folder that sorts first in the file list.
     override var e2eRequiresFreshLaunch: Bool { true }
     override var e2eAutoCreatesSessionOnLaunch: Bool { false }
 
@@ -31,15 +31,15 @@ final class WorkspaceFileEditorE2ETests: E2ETestCase {
     override func seedE2EFixtures() throws {
         guard !skipSeed else { return }
         directoryName = "000-oppi-wfe-\(UUID().uuidString.prefix(8).lowercased())"
-        let directory = URL(fileURLWithPath: "/tmp", isDirectory: true).appendingPathComponent(directoryName)
+        let directory = try E2ELabServerContext.workspaceDirectory().appendingPathComponent(directoryName)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         filePath = directory.appendingPathComponent(Self.filename).path
         try Data(Self.original.utf8).write(to: URL(fileURLWithPath: filePath))
     }
 
     override func tearDownWithError() throws {
-        if !directoryName.isEmpty {
-            try? FileManager.default.removeItem(atPath: "/tmp/\(directoryName)")
+        if !directoryName.isEmpty, let workspace = try? E2ELabServerContext.workspaceDirectory() {
+            try? FileManager.default.removeItem(at: workspace.appendingPathComponent(directoryName))
         }
         try super.tearDownWithError()
     }

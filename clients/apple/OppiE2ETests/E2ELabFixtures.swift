@@ -667,6 +667,17 @@ enum E2ELabServerContext {
         return contents
     }
 
+    /// Host folder of `e2e-workspace`, from `TEST_RUNNER_OPPI_E2E_WORKSPACE`:
+    /// e2e.sh makes an empty one per run. Fixtures the server must read go here.
+    static func workspaceDirectory() throws -> URL {
+        guard let path = ProcessInfo.processInfo.environment["OPPI_E2E_WORKSPACE"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !path.isEmpty else {
+            throw E2ELabAPIError.missingWorkspaceDirectory
+        }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
     static func readInviteURLWithSource() throws -> (url: String, source: String) {
         if let invite = runDirectoryFile("invite.txt") {
             return (invite, "run-dir")
@@ -862,6 +873,7 @@ private final class E2ELabHTTPResultBox: @unchecked Sendable {
 private enum E2ELabAPIError: Error, CustomStringConvertible {
     case invalidInvite
     case missingDeviceToken
+    case missingWorkspaceDirectory
     case missingHTTPResponse
     case httpStatus(Int, String)
     case timeout(String)
@@ -875,6 +887,8 @@ private enum E2ELabAPIError: Error, CustomStringConvertible {
             return "E2E invite URL did not contain a valid signed payload"
         case .missingDeviceToken:
             return "E2E device token file is empty"
+        case .missingWorkspaceDirectory:
+            return "OPPI_E2E_WORKSPACE is not set; run the suite through clients/apple/scripts/e2e.sh"
         case .missingHTTPResponse:
             return "Missing HTTP response"
         case .httpStatus(let status, let body):

@@ -352,6 +352,12 @@ RUN_DIR=$(mktemp -d /tmp/oppi-e2e-run-XXXXXX)
 INVITE_FILE="$RUN_DIR/invite.txt"
 DEVICE_TOKEN_FILE="$RUN_DIR/device-token.txt"
 BOOTSTRAP_CREDENTIAL_FILE="$RUN_DIR/bootstrap-device.json"
+# The e2e-workspace host mount: an empty folder per run, handed to the UI test
+# runner as TEST_RUNNER_OPPI_E2E_WORKSPACE for the suites that seed files in it.
+# Never a shared folder such as /tmp: any stray `.pi/` there makes every session
+# start wait on Pi's project-trust prompt, and harness posts get HTTP 409.
+# Kept apart from RUN_DIR so sessions cannot read the pairing tokens.
+E2E_WORKSPACE_DIR=$(mktemp -d /tmp/oppi-e2e-workspace-XXXXXX)
 # Isolated Pi auth.json + settings.json for the DeepSeek lane (inside RUN_DIR).
 MODEL_LANE_DIR=""
 SERVER_PID=""
@@ -390,7 +396,7 @@ cleanup() {
         echo "[e2e] Tearing down Docker server..."
         docker compose -f "$COMPOSE_FILE" down -v --timeout 10 2>/dev/null || true
     fi
-    rm -rf "$RUN_DIR"
+    rm -rf "$RUN_DIR" "$E2E_WORKSPACE_DIR"
     echo "[e2e] Cleanup complete."
 }
 trap cleanup EXIT
@@ -615,12 +621,14 @@ if missing:
 echo "[e2e] Server exposes required focused stream capabilities"
 
 # Create workspace. Do not send defaultModel: Pi settings own the default.
+# Docker resolves the host mount inside the container, so make the same path there.
+$NATIVE_MODE || docker exec oppi-e2e mkdir -p "$E2E_WORKSPACE_DIR"
 WS_RESPONSE=$(curl -fsS "${CURL_TLS_ARGS[@]}" "${E2E_BASE_URL}/workspaces" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer ${DEVICE_TOKEN}" \
-    -d "{\"name\": \"e2e-workspace\", \"hostMount\": \"/tmp\"}")
+    -d "{\"name\": \"e2e-workspace\", \"hostMount\": \"$E2E_WORKSPACE_DIR\"}")
 WS_ID=$(echo "$WS_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['workspace']['id'])")
-echo "[e2e] Created workspace: $WS_ID"
+echo "[e2e] Created workspace: $WS_ID at $E2E_WORKSPACE_DIR"
 
 # ── 5. Generate invite URL for the app (AFTER workspace creation) ──
 # This issues a fresh pairing token that the iOS app will consume.
@@ -675,6 +683,7 @@ E2E_SCHEME="${E2E_BASE_URL%%:*}"
 APP_DEVICE_TOKEN="$DEVICE_TOKEN"
 set +e
 TEST_RUNNER_OPPI_E2E_RUN_DIR="$RUN_DIR" \
+TEST_RUNNER_OPPI_E2E_WORKSPACE="$E2E_WORKSPACE_DIR" \
 E2E_PORT="$E2E_PORT" \
 E2E_SCHEME="$E2E_SCHEME" \
 PI_E2E_INVITE_URL="$INVITE_PAYLOAD" \

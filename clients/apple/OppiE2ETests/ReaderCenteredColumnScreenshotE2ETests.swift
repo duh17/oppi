@@ -75,7 +75,8 @@ final class ReaderCenteredColumnScreenshotE2ETests: E2ETestCase {
     /// reader, as a person reaches it.
     private func openFixtureInFullScreenReader() throws -> (prose: XCUIElement, table: XCUIElement) {
         let token = UUID().uuidString.prefix(8).lowercased()
-        let path = "/tmp/oppi-reader-column-\(token).md"
+        let path = try E2ELabServerContext.workspaceDirectory()
+            .appendingPathComponent("oppi-reader-column-\(token).md").path
         try Self.fixture.write(toFile: path, atomically: true, encoding: .utf8)
         addTeardownBlock { try? FileManager.default.removeItem(atPath: path) }
 
