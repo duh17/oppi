@@ -16,6 +16,7 @@ import type {
   ExtensionUISurfaceActionDefinition,
   ExtensionUISurfaceAtom,
   ExtensionUISurfaceCompositeKind,
+  ExtensionUISurfaceHeader,
   ExtensionUISurfaceNode,
   ExtensionUISurfaceNodeAction,
   ExtensionUISurfacePanelHints,
@@ -290,11 +291,57 @@ function state(value: unknown): ExtensionUISurfaceState {
   return { kind, ...(title ? { title } : {}), ...(message ? { message } : {}) };
 }
 
+/** An action id every reference names: a node's tap, a section's actions, a pending.disabled. */
 function actionRef(value: unknown, actions: Record<string, unknown>): string {
   const actionId = stableId(value);
   if (!Object.hasOwn(actions, actionId))
     throw new SurfaceShapeError(`action "${actionId}" is not in the surface's action table`);
   return actionId;
+}
+
+/** The optimistic state an action declares, in the action table or on one node's tap. */
+function pendingState(
+  value: unknown,
+  actions: Record<string, unknown>,
+): ExtensionUISurfaceActionDefinition["pending"] {
+  if (!isRecord(value)) throw new SurfaceShapeError("an action's pending state is not an object");
+  const disabled =
+    value.disabled === undefined
+      ? undefined
+      : list(value.disabled, EXTENSION_UI_SURFACE_MAX_ACTIONS, "pending.disabled").map((entry) =>
+          actionRef(entry, actions),
+        );
+  return {
+    ...(value.title === undefined
+      ? {}
+      : { title: text(value.title, EXTENSION_UI_SURFACE_MAX_TITLE_CHARS) }),
+    ...(disabled ? { disabled } : {}),
+  };
+}
+
+/** A surface's or a section's header: a title, and a subtitle if it has one. */
+function headerOf(value: unknown, owner: string): ExtensionUISurfaceHeader {
+  if (!isRecord(value)) throw new SurfaceShapeError(`${owner} header is not an object`);
+  return {
+    title: text(value.title, EXTENSION_UI_SURFACE_MAX_TITLE_CHARS, true),
+    ...(value.subtitle === undefined
+      ? {}
+      : { subtitle: text(value.subtitle, EXTENSION_UI_SURFACE_MAX_TITLE_CHARS) }),
+  };
+}
+
+/** A cell of either table shape: null, a finite number, or a string (empty allowed) up to the cap. */
+function cell(value: unknown): string | number | null {
+  if (value === null) return null;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new SurfaceShapeError("a numeric cell is not finite");
+    return value;
+  }
+  if (typeof value !== "string")
+    throw new SurfaceShapeError("a cell is not a string, number, or null");
+  if (Array.from(value).length > EXTENSION_UI_SURFACE_MAX_CELL_CHARS)
+    throw new SurfaceShapeError(`a cell exceeds ${EXTENSION_UI_SURFACE_MAX_CELL_CHARS} characters`);
+  return value;
 }
 
 /** A node's link: a URL with a scheme, as long as a node's text may be. */
@@ -337,23 +384,7 @@ function nodeAction(
       throw new SurfaceShapeError("an action value is not a string, number, or boolean");
     }
   }
-  let pending: ExtensionUISurfaceNodeAction["pending"];
-  if (value.pending !== undefined) {
-    if (!isRecord(value.pending))
-      throw new SurfaceShapeError("a node action's pending state is not an object");
-    const disabled =
-      value.pending.disabled === undefined
-        ? undefined
-        : list(value.pending.disabled, EXTENSION_UI_SURFACE_MAX_ACTIONS, "pending.disabled").map(
-            (entry) => actionRef(entry, actions),
-          );
-    pending = {
-      ...(value.pending.title === undefined
-        ? {}
-        : { title: text(value.pending.title, EXTENSION_UI_SURFACE_MAX_TITLE_CHARS) }),
-      ...(disabled ? { disabled } : {}),
-    };
-  }
+  const pending = value.pending === undefined ? undefined : pendingState(value.pending, actions);
   return {
     id: actionRef(value.id, actions),
     ...(values ? { values } : {}),
@@ -590,16 +621,7 @@ function node(
       if (columns.length === 0) throw new SurfaceShapeError("a table has no columns");
       const rows = list(value.rows, EXTENSION_UI_SURFACE_MAX_ITEMS, "table rows").map((row) => {
         if (!isRecord(row)) throw new SurfaceShapeError("a table row is not an object");
-        const cells = list(row.cells, columns.length, "table cells").map((cell) => {
-          if (cell === null) return null;
-          if (typeof cell === "number") {
-            if (!Number.isFinite(cell)) throw new SurfaceShapeError("a numeric cell is not finite");
-            return cell;
-          }
-          if (typeof cell !== "string")
-            throw new SurfaceShapeError("a cell is not a string, number, or null");
-          return text(cell, EXTENSION_UI_SURFACE_MAX_CELL_CHARS, true);
-        });
+        const cells = list(row.cells, columns.length, "table cells").map((entry) => cell(entry));
         const rowActions =
           row.actions === undefined
             ? undefined
@@ -826,12 +848,9 @@ function pillOf(
 
 function actionIds(value: unknown, actions: Record<string, unknown>): string[] | undefined {
   if (value === undefined || value === null) return undefined;
-  return list(value, EXTENSION_UI_SURFACE_MAX_ACTIONS, "composite actions").map((id) => {
-    const actionId = stableId(id);
-    if (!Object.hasOwn(actions, actionId))
-      throw new SurfaceShapeError(`action "${actionId}" is not in the surface's action table`);
-    return actionId;
-  });
+  return list(value, EXTENSION_UI_SURFACE_MAX_ACTIONS, "composite actions").map((id) =>
+    actionRef(id, actions),
+  );
 }
 
 function compositeBase(
@@ -839,24 +858,19 @@ function compositeBase(
   actions: Record<string, unknown>,
 ): {
   id: string;
-  header: { title: string; subtitle?: string };
+  header: ExtensionUISurfaceHeader;
   state: ExtensionUISurfaceState;
   actions?: string[];
   fallback: { text: string };
   tone?: ExtensionUISurfaceTone;
 } {
-  if (!isRecord(value.header)) throw new SurfaceShapeError("a composite header is not an object");
+  const header = headerOf(value.header, "a composite");
   if (!isRecord(value.fallback))
     throw new SurfaceShapeError("a composite fallback is not an object");
   const ids = actionIds(value.actions, actions);
   return {
     id: stableId(value.id),
-    header: {
-      title: text(value.header.title, EXTENSION_UI_SURFACE_MAX_TITLE_CHARS, true),
-      ...(value.header.subtitle === undefined
-        ? {}
-        : { subtitle: text(value.header.subtitle, EXTENSION_UI_SURFACE_MAX_TITLE_CHARS) }),
-    },
+    header,
     state: state(value.state),
     ...(ids ? { actions: ids } : {}),
     fallback: {
@@ -885,16 +899,7 @@ function blocksSection(
   if (value.state !== undefined && !isRecord(value.state))
     throw new SurfaceShapeError("a composite state is not an object");
   const ids = actionIds(value.actions, actions);
-  let header: { title: string; subtitle?: string } | undefined;
-  if (value.header !== undefined) {
-    if (!isRecord(value.header)) throw new SurfaceShapeError("a composite header is not an object");
-    header = {
-      title: text(value.header.title, EXTENSION_UI_SURFACE_MAX_TITLE_CHARS, true),
-      ...(value.header.subtitle === undefined
-        ? {}
-        : { subtitle: text(value.header.subtitle, EXTENSION_UI_SURFACE_MAX_TITLE_CHARS) }),
-    };
-  }
+  const header = value.header === undefined ? undefined : headerOf(value.header, "a composite");
   return {
     composite: "blocks",
     id: stableId(value.id),
@@ -985,25 +990,10 @@ function section(
         if (!isRecord(row)) throw new SurfaceShapeError("a row is not an object");
         if (!isRecord(row.cells)) throw new SurfaceShapeError("a row's cells are not an object");
         const cells: Record<string, string | number | null> = {};
-        for (const [columnId, cell] of Object.entries(row.cells)) {
+        for (const [columnId, entry] of Object.entries(row.cells)) {
           if (!columnIds.has(columnId))
             throw new SurfaceShapeError(`a cell names unknown column "${columnId}"`);
-          if (cell === null) {
-            cells[columnId] = null;
-            continue;
-          }
-          if (typeof cell === "number") {
-            if (!Number.isFinite(cell)) throw new SurfaceShapeError("a numeric cell is not finite");
-            cells[columnId] = cell;
-            continue;
-          }
-          if (typeof cell !== "string")
-            throw new SurfaceShapeError("a cell is not a string, number, or null");
-          if (Array.from(cell).length > EXTENSION_UI_SURFACE_MAX_CELL_CHARS)
-            throw new SurfaceShapeError(
-              `a cell exceeds ${EXTENSION_UI_SURFACE_MAX_CELL_CHARS} characters`,
-            );
-          cells[columnId] = cell;
+          cells[columnId] = cell(entry);
         }
         const rowActions = actionIds(row.actions, actions);
         return {
@@ -1067,30 +1057,8 @@ function actionTable(value: unknown): Record<string, ExtensionUISurfaceActionDef
   for (const [id, entry] of entries) {
     stableId(id);
     if (!isRecord(entry)) throw new SurfaceShapeError("an action is not an object");
-    let pending: ExtensionUISurfaceActionDefinition["pending"];
-    if (entry.pending !== undefined) {
-      if (!isRecord(entry.pending))
-        throw new SurfaceShapeError("an action's pending state is not an object");
-      const disabled =
-        entry.pending.disabled === undefined
-          ? undefined
-          : list(entry.pending.disabled, EXTENSION_UI_SURFACE_MAX_ACTIONS, "pending.disabled").map(
-              (disabledId) => {
-                const actionId = stableId(disabledId);
-                if (!Object.hasOwn(value, actionId))
-                  throw new SurfaceShapeError(
-                    `pending.disabled names unknown action "${actionId}"`,
-                  );
-                return actionId;
-              },
-            );
-      pending = {
-        ...(entry.pending.title === undefined
-          ? {}
-          : { title: text(entry.pending.title, EXTENSION_UI_SURFACE_MAX_TITLE_CHARS) }),
-        ...(disabled ? { disabled } : {}),
-      };
-    }
+    // A pending state may disable any action in the table, declared before this one or after.
+    const pending = entry.pending === undefined ? undefined : pendingState(entry.pending, value);
     actions[id] = {
       title: text(entry.title, EXTENSION_UI_SURFACE_MAX_TITLE_CHARS, true),
       ...(entry.role === undefined
@@ -1109,7 +1077,7 @@ function validateSurface(value: unknown): ExtensionUISurface {
   if (!isRecord(value.placement)) throw new SurfaceShapeError("placement is not an object");
   const kind = oneOf(["strip", "panel"] as const, value.placement.kind);
   const panel = value.panel === undefined ? undefined : panelHints(value.panel);
-  if (!isRecord(value.header)) throw new SurfaceShapeError("the surface header is not an object");
+  const header = headerOf(value.header, "the surface");
   if (!isRecord(value.fallback))
     throw new SurfaceShapeError("the surface fallback is not an object");
   const actions = actionTable(value.actions);
@@ -1157,12 +1125,7 @@ function validateSurface(value: unknown): ExtensionUISurface {
     ...(panel ? { panel } : {}),
     lifecycle,
     ...(timeoutAt === undefined ? {} : { timeoutAt }),
-    header: {
-      title: text(value.header.title, EXTENSION_UI_SURFACE_MAX_TITLE_CHARS, true),
-      ...(value.header.subtitle === undefined
-        ? {}
-        : { subtitle: text(value.header.subtitle, EXTENSION_UI_SURFACE_MAX_TITLE_CHARS) }),
-    },
+    header,
     ...(pill ? { pill } : {}),
     sections,
     actions,

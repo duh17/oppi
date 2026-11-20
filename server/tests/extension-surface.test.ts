@@ -193,6 +193,48 @@ describe("extension surface validation", () => {
     expect(problemOf(surface)).toMatch(/not in the surface's action table/);
   });
 
+  it("keeps the surface's and a composite's header, and refuses malformed ones", () => {
+    const surface = surfaceOf(validSurface()) as ExtensionUISurface;
+    expect(surface.header).toEqual({ title: "web → prod", subtitle: "Deploying 4f2c1ab" });
+    expect(surface.sections[0].header).toEqual({
+      title: "Deploying 4f2c1ab",
+      subtitle: "main → production",
+    });
+
+    const untitled = validSurface();
+    untitled.header = { subtitle: "Deploying 4f2c1ab" };
+    expect(problemOf(untitled)).toBe("a required string is missing");
+    const flat = validSurface();
+    flat.header = "web → prod";
+    expect(problemOf(flat)).toBe("the surface header is not an object");
+    const blankSection = validSurface();
+    sectionOf(blankSection).header = { title: " " };
+    expect(problemOf(blankSection)).toBe("a string field is empty");
+    const flatSection = validSurface();
+    sectionOf(flatSection).header = "Deploying";
+    expect(problemOf(flatSection)).toBe("a composite header is not an object");
+  });
+
+  it("keeps an action's pending state, and refuses one that is malformed or names an unknown action", () => {
+    const surface = surfaceOf(validSurface()) as ExtensionUISurface;
+    expect(surface.actions.retry.pending).toEqual({ title: "Retrying…", disabled: ["retry"] });
+
+    const unknown = validSurface();
+    (unknown.actions as Record<string, Record<string, unknown>>).retry.pending = {
+      disabled: ["retry", "ghost"],
+    };
+    expect(problemOf(unknown)).toBe('action "ghost" is not in the surface\'s action table');
+    const flat = validSurface();
+    (flat.actions as Record<string, Record<string, unknown>>).retry.pending = "Retrying…";
+    expect(problemOf(flat)).toBe("an action's pending state is not an object");
+  });
+
+  it("refuses a dataTable row action that is not in the surface's action table", () => {
+    const surface = tableSurface();
+    (sectionOf(surface).rows as Array<Record<string, unknown>>)[0].actions = ["ghost"];
+    expect(problemOf(surface)).toBe('action "ghost" is not in the surface\'s action table');
+  });
+
   it("refuses a composite the slice does not draw", () => {
     expect(surfaceOf(fixtures["unknown-composite.json"])).toBeUndefined();
     expect(problemOf(fixtures["unknown-composite.json"])).toMatch(/not one of/);

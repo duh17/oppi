@@ -345,6 +345,49 @@ describe("blocks validation", () => {
     ).toContain("characters");
   });
 
+  it("accepts an empty table cell, as a dataTable does", () => {
+    const value = withBody({
+      type: "table",
+      id: "gates",
+      columns: ["Gate", "Note"],
+      rows: [{ id: "build", cells: ["Build", ""] }],
+    });
+    expect(problemOf(value)).toBeUndefined();
+    const section = (surfaceOf(value) as ExtensionUISurface).sections[0];
+    if (section.composite !== "blocks" || section.body.type !== "table")
+      throw new Error("expected a table body");
+    expect(section.body.rows[0].cells).toEqual(["Build", ""]);
+    expect(
+      problemOf(
+        withBody({ type: "table", id: "gates", columns: ["Gate"], rows: [{ cells: [true] }] }),
+      ),
+    ).toBe("a cell is not a string, number, or null");
+  });
+
+  it("keeps a tree section's header and a node action's pending state, and refuses malformed ones", () => {
+    const surface = surfaceOf(panel()) as ExtensionUISurface;
+    const section = surface.sections[0];
+    if (section.composite !== "blocks" || section.body.type !== "stack")
+      throw new Error("expected a stack body");
+    expect(section.header).toEqual({ title: "Gates", subtitle: "2 of 4" });
+    expect(JSON.stringify(section.body)).toContain('"pending":{"title":"Retrying…"}');
+
+    const untitled = panel();
+    (untitled.sections as Array<Record<string, unknown>>)[0].header = { subtitle: "2 of 4" };
+    expect(problemOf(untitled)).toBe("a required string is missing");
+    const flat = panel();
+    (flat.sections as Array<Record<string, unknown>>)[0].header = "Gates";
+    expect(problemOf(flat)).toBe("a composite header is not an object");
+
+    const button = (pending: unknown): Record<string, unknown> =>
+      withBody({ type: "button", id: "retry", title: "Retry", action: { id: "retry", pending } });
+    expect(surfaceOf(button({ title: "Retrying…", disabled: ["retry", "notify"] }))).toBeDefined();
+    expect(problemOf(button({ disabled: ["ghost"] }))).toBe(
+      'action "ghost" is not in the surface\'s action table',
+    );
+    expect(problemOf(button("Retrying…"))).toBe("an action's pending state is not an object");
+  });
+
   it(`caps a node's declared values one below the ${EXTENSION_UI_SURFACE_MAX_ACTION_VALUES} a tap may carry`, () => {
     const values = (count: number): Record<string, number> =>
       Object.fromEntries(Array.from({ length: count }, (_, index) => [`k${index}`, index]));
