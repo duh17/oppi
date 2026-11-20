@@ -371,7 +371,7 @@ final class AssistantMarkdownSegmentApplier {
         }
     }
 
-    /// Chat folds a long table behind "Show all N rows"; the reader and export
+    /// Chat folds a long table behind "Show N more rows"; the reader and export
     /// render every row. The hint lets the table plan its columns for the width it
     /// will be laid out at instead of redrawing once it has one.
     private func configureTableChrome(
@@ -808,7 +808,7 @@ final class AssistantMarkdownSegmentApplier {
         // A table kept as a view here may still have gained rows: the old tail,
         // which the flush that started the next block may have finished, and
         // any table still open. Once frozen a table is not applied again until
-        // the message settles, so its rows and "Show all N rows" would lag.
+        // the message settles, so its rows and "Show N more rows" would lag.
         applyOpenTables(segments, from: min(oldSigs.count - 1, openSegmentStart), upTo: commonPrefix, config: config)
 
         // Earlier prefix views are already configured. Skip re-assigning them.

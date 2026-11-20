@@ -1,10 +1,10 @@
 import XCTest
 
 /// Markdown tables on the `markdown-tables` preview, driven as a user would:
-/// the Show all bar under a table cut at the card's edge or folded behind
-/// "Show all 40 rows", the full-screen viewer it opens, and that viewer's
-/// header. The preview holds one live-renderer message; unit tests own the
-/// layout numbers.
+/// the chip on the trailing edge of a table whose columns run past it, the
+/// "Show 20 more rows" bar under a folded one, the full-screen viewer each
+/// opens, and that viewer's header. The preview holds one live-renderer
+/// message; unit tests own the layout numbers.
 @MainActor
 final class MarkdownTablesUITests: XCTestCase {
     private var app: XCUIApplication!
@@ -30,44 +30,51 @@ final class MarkdownTablesUITests: XCTestCase {
 
     private func scrollUntilHittable(_ element: XCUIElement) {
         let scroll = app.scrollViews["markdownTables.scroll"]
-        for _ in 0 ..< 8 where !element.isHittable {
+        for _ in 0 ..< 16 where !element.isHittable {
             scroll.swipeUp(velocity: .slow)
         }
         XCTAssertTrue(element.isHittable, "\(element) never became hittable")
     }
 
-    private func showAllBar(_ label: String) -> XCUIElement {
+    private func rowsBar(_ label: String) -> XCUIElement {
         app.buttons.matching(NSPredicate(
             format: "identifier == 'markdown.table.showAll' AND label == %@", label
         )).firstMatch
     }
 
-    /// The bar under each cut or folded table sits below its last row: nothing
-    /// it says covers a cell (a pill over the rows once hid the last row's values).
-    func testShowAllBarNeverCoversTheRows() {
-        for label in ["Show all 11 columns", "Show all 40 rows"] {
-            let bar = showAllBar(label)
-            scrollUntilHittable(bar)
-            let tables = app.descendants(matching: .any).matching(identifier: "markdown.table").allElementsBoundByIndex
-            guard let table = tables.first(where: { $0.frame.insetBy(dx: -1, dy: -1).contains(bar.frame) }) else {
-                return XCTFail("No table holds the bar \(label) at \(bar.frame): \(tables.map(\.frame))")
-            }
-            let rows = table.descendants(matching: .textView).allElementsBoundByIndex
-                + table.descendants(matching: .cell).allElementsBoundByIndex
-            XCTAssertFalse(rows.isEmpty, "\(label): the table's rows are visible to the test")
-            for row in rows where row.frame.width > 1 {
-                XCTAssertLessThanOrEqual(row.frame.maxY, bar.frame.minY + 0.5, "\(label) covers \(row.frame)")
-            }
+    private func columnsChip(_ label: String) -> XCUIElement {
+        app.buttons.matching(NSPredicate(
+            format: "identifier == 'markdown.table.moreColumns' AND label == %@", label
+        )).firstMatch
+    }
+
+    private func table(holding element: XCUIElement) -> XCUIElement? {
+        app.descendants(matching: .any).matching(identifier: "markdown.table").allElementsBoundByIndex
+            .first { $0.frame.insetBy(dx: -1, dy: -1).contains(element.frame) }
+    }
+
+    /// The rows bar sits below the last row: nothing it says covers a cell (a
+    /// pill over the rows once hid the last row's values).
+    func testRowsBarNeverCoversTheRows() {
+        let bar = rowsBar("Show 20 more rows")
+        scrollUntilHittable(bar)
+        guard let table = table(holding: bar) else {
+            return XCTFail("No table holds the rows bar at \(bar.frame)")
+        }
+        let rows = table.descendants(matching: .textView).allElementsBoundByIndex
+            + table.descendants(matching: .cell).allElementsBoundByIndex
+        XCTAssertFalse(rows.isEmpty, "The table's rows are visible to the test")
+        for row in rows where row.frame.width > 1 {
+            XCTAssertLessThanOrEqual(row.frame.maxY, bar.frame.minY + 0.5, "The bar covers \(row.frame)")
         }
     }
 
-    /// The viewer's body, once the bar has opened it.
-    private func openViewer(from label: String) -> XCUIElement {
-        let bar = showAllBar(label)
-        scrollUntilHittable(bar)
-        bar.tap()
+    /// The viewer's body, once a chip or bar has opened it.
+    private func openViewer(from control: XCUIElement) -> XCUIElement {
+        scrollUntilHittable(control)
+        control.tap()
         let body = app.descendants(matching: .any)["fullScreen.markdownTable.body"]
-        XCTAssertTrue(body.waitUntilExists(timeout: 6), "\(label) should open the full-screen table")
+        XCTAssertTrue(body.waitUntilExists(timeout: 6), "\(control) should open the full-screen table")
         return body
     }
 
@@ -75,8 +82,31 @@ final class MarkdownTablesUITests: XCTestCase {
         body.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch
     }
 
-    func testCutTableNamesItsColumnsInTheBarThatOpensTheViewer() {
-        let body = openViewer(from: "Show all 11 columns")
+    /// The chip on a cut table's edge goes away once the rows scroll to the last
+    /// column, comes back on the way back, and opens the viewer.
+    func testEdgeChipFollowsTheSidewaysScrollAndOpensTheViewer() throws {
+        let first = app.buttons.matching(identifier: "markdown.table.moreColumns").firstMatch
+        scrollUntilHittable(first)
+        let table = try XCTUnwrap(table(holding: first), "No table holds the chip at \(first.frame)")
+        let chip = table.buttons["markdown.table.moreColumns"]
+        XCTAssertTrue(chip.label.hasPrefix("Show all "), chip.label)
+        for _ in 0 ..< 10 where chip.exists {
+            table.swipeLeft()
+        }
+        XCTAssertFalse(chip.exists, "At the last column nothing is past the edge")
+        for _ in 0 ..< 10 where !chip.exists {
+            table.swipeRight()
+        }
+        XCTAssertTrue(chip.waitUntilExists(timeout: 2), "Scrolling back brings the chip back")
+        chip.tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["fullScreen.markdownTable.body"].waitUntilExists(timeout: 6),
+            "The chip opens the full-screen table"
+        )
+    }
+
+    func testCutTableChipOpensEveryColumn() {
+        let body = openViewer(from: columnsChip("Show all 11 columns"))
         // Every column is in the viewer, the last one a swipe away.
         XCTAssertTrue(cell("Endpoint", in: body).waitUntilExists(timeout: 3))
         XCTAssertTrue(cell("runbookDocumentationPath", in: body).exists)
@@ -85,7 +115,7 @@ final class MarkdownTablesUITests: XCTestCase {
     /// A table shorter than the screen starts below the bar, not under its
     /// Back button (the grid once took no inset when it could not scroll).
     func testShortTableHeaderSitsBelowTheBarInTheViewer() {
-        let body = openViewer(from: "Show all 11 columns")
+        let body = openViewer(from: columnsChip("Show all 11 columns"))
         let header = cell("Endpoint", in: body)
         XCTAssertTrue(header.waitUntilExists(timeout: 3))
         let bar = app.navigationBars.firstMatch
@@ -94,8 +124,8 @@ final class MarkdownTablesUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["11 columns \u{00B7} 3 rows"].exists, "The caption counts what the table holds")
     }
 
-    func testLongTableFoldsAndShowAllOpensEveryRow() {
-        let body = openViewer(from: "Show all 40 rows")
+    func testLongTableFoldsAndTheRowsBarOpensEveryRow() {
+        let body = openViewer(from: rowsBar("Show 20 more rows"))
         XCTAssertTrue(cell("Item", in: body).waitUntilExists(timeout: 3), "The header row is in the viewer")
         let lastRow = cell("item-40", in: body)
         let scroll = app.scrollViews["fullScreen.markdownTable.scroll"]
@@ -105,7 +135,7 @@ final class MarkdownTablesUITests: XCTestCase {
         XCTAssertTrue(lastRow.isHittable, "Scrolling reaches the 40th row")
     }
 
-    /// A table that fits has no bar; a long press offers View Full Screen.
+    /// A table that fits wears no control; a long press offers View Full Screen.
     func testFittingTableOpensFullScreenFromItsLongPressMenu() {
         let cell = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Qualification'")).firstMatch
         scrollUntilHittable(cell)
@@ -120,7 +150,7 @@ final class MarkdownTablesUITests: XCTestCase {
     }
 
     func testViewerOffersCopyAsTSVAndMarkdown() {
-        _ = openViewer(from: "Show all 40 rows")
+        _ = openViewer(from: rowsBar("Show 20 more rows"))
         let copy = app.buttons["fullscreen-code.copy"]
         XCTAssertTrue(copy.waitUntilExists(timeout: 3))
         copy.tap()

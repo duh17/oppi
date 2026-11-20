@@ -311,14 +311,6 @@ struct MarkdownTableColumnLayoutTests {
         }
     }
 
-    @Test func hiddenColumnCountCountsColumnsPastTheVisibleEdge() {
-        let edges: [CGFloat] = [100, 220, 340, 460]
-        #expect(MarkdownTableColumnLayout.hiddenColumnCount(trailingEdges: edges, visibleMaxX: 370) == 1)
-        #expect(MarkdownTableColumnLayout.hiddenColumnCount(trailingEdges: edges, visibleMaxX: 300) == 2, "A cut column counts")
-        #expect(MarkdownTableColumnLayout.hiddenColumnCount(trailingEdges: edges, visibleMaxX: 460) == 0)
-        #expect(MarkdownTableColumnLayout.hiddenColumnCount(trailingEdges: edges, visibleMaxX: 50) == 4)
-    }
-
     @Test func trailingEdgesFollowTheDrawnLayouts() {
         let grid = MarkdownTableColumnLayout.gridTrailingEdges(columnWidths: [50, 60])
         #expect(grid == [58, 126])
@@ -1119,16 +1111,20 @@ struct NativeTableFitAndChromeTests {
         timelineAllViews(in: table).compactMap { $0 as? TableOverflowOverlayView }.first
     }
 
-    private func showAllBar(in table: NativeTableBlockView) -> UIButton? {
+    private func rowsBar(in table: NativeTableBlockView) -> UIButton? {
         timelineAllViews(in: table).compactMap { $0 as? UIButton }.first {
             $0.accessibilityIdentifier == "markdown.table.showAll" && !$0.isHidden && $0.superview?.isHidden == false
         }
     }
 
-    /// A cut table names every column in the bar under its rows, so nothing it
-    /// says covers a cell. The bar is decided by the plan: scrolling sideways moves
-    /// only the fade, never the table's height.
-    @Test func cutTableOffersItsColumnsBelowTheRowsAndOnlyTheFadeFollowsTheScroll() throws {
+    private func columnsChip(in table: NativeTableBlockView) -> TableMoreColumnsButton? {
+        timelineAllViews(in: table).compactMap { $0 as? TableMoreColumnsButton }.first { !$0.isHidden }
+    }
+
+    /// A cut table names its columns on the trailing edge, where the rows scroll
+    /// to them, never in a bar under the rows. The chip follows the scroll and
+    /// never changes the table's height.
+    @Test func cutTableOffersItsColumnsOnTheTrailingEdgeAndTheChipFollowsTheScroll() throws {
         let host = Host(width: 320)
         let wide = Self.wideTable()
         host.table.apply(headers: wide.headers, rows: wide.rows, palette: ThemeRuntimeState.currentPalette())
@@ -1136,24 +1132,53 @@ struct NativeTableFitAndChromeTests {
 
         let scroll = try #require(timelineAllScrollViews(in: host.table).first { !($0 is UITextView) })
         let overlay = try #require(overlay(in: host.table))
-        let bar = try #require(showAllBar(in: host.table))
-        #expect(scroll.contentSize.width > scroll.bounds.width + TableChrome.cutThreshold, "Fixture must be cut")
-        #expect(bar.accessibilityLabel == "Show all 5 columns")
-        #expect(bar.accessibilityTraits.contains(.button))
-        #expect(bar.accessibilityHint?.isEmpty == false)
-        let rowsBottom = tableCellFrames(in: host.table).map(\.maxY).max() ?? 0
-        #expect(bar.convert(bar.bounds, to: host.table).minY >= rowsBottom - 0.5, "The bar sits under the last row")
+        let chip = try #require(columnsChip(in: host.table))
+        #expect(scroll.contentSize.width > scroll.bounds.width + 24, "Fixture must be cut")
+        #expect(rowsBar(in: host.table) == nil, "Cut columns put no bar under the rows")
+        #expect(chip.accessibilityLabel == "Show all 5 columns")
+        #expect(chip.accessibilityIdentifier == "markdown.table.moreColumns")
+        #expect(chip.accessibilityTraits.contains(.button))
+        #expect(chip.accessibilityHint?.isEmpty == false)
+        let chipFrame = chip.convert(chip.bounds, to: scroll)
+        #expect(abs(chipFrame.maxX - (scroll.bounds.maxX - 4)) <= 1, "The chip sits on the trailing edge")
         #expect(overlay.isCueVisible)
+
+        let chipCenter = chip.convert(CGPoint(x: chip.bounds.midX, y: chip.bounds.midY), to: overlay)
+        #expect(overlay.hitTest(chipCenter, with: nil) === chip, "The chip takes its tap")
+        #expect(
+            overlay.hitTest(CGPoint(x: overlay.bounds.maxX - 2, y: overlay.bounds.maxY - 2), with: nil) == nil,
+            "The fade takes no touches; the table underneath keeps scrolling and selecting"
+        )
 
         scroll.contentOffset.x = scroll.contentSize.width - scroll.bounds.width
         #expect(!overlay.isCueVisible, "Nothing is hidden at the right end")
+        #expect(columnsChip(in: host.table) == nil, "The chip leaves with the fade")
         #expect(abs(host.layout(at: 320) - height) <= 1, "Scrolling never changes the table's height")
-        #expect(showAllBar(in: host.table) != nil, "The bar stays while the rows scroll")
-        #expect(overlay.frame == scroll.frame, "The fade covers the scroller and takes no space of its own")
-        #expect(
-            overlay.hitTest(CGPoint(x: overlay.bounds.maxX - 2, y: overlay.bounds.midY), with: nil) == nil,
-            "The fade takes no touches; the table underneath keeps scrolling and selecting"
-        )
+        #expect(overlay.frame == scroll.frame, "The overlay covers the scroller and takes no space of its own")
+
+        scroll.contentOffset.x = 0
+        #expect(columnsChip(in: host.table) != nil, "Scrolling back brings the chip back")
+    }
+
+    /// Each direction gets its own affordance: folded rows the bar under the
+    /// card, columns past the edge the chip on it. The chip counts columns that
+    /// start under the fade or past it; a partly shown one is not counted.
+    @Test func overflowNamesFoldedRowsAndCutColumnsSeparately() {
+        // Columns 0-100, 100-220, 220-340, 340-460; the content ends at 470.
+        let edges: [CGFloat] = [100, 220, 340, 460]
+        func resolve(shown: Int, total: Int, visibleMaxX: CGFloat) -> TableOverflow {
+            TableOverflow.resolve(shownRows: shown, totalRows: total, trailingEdges: edges, visibleMaxX: visibleMaxX, contentWidth: 470)
+        }
+
+        #expect(resolve(shown: 5, total: 5, visibleMaxX: 470) == TableOverflow(moreRows: nil, moreColumns: nil), "Neither")
+        #expect(resolve(shown: 20, total: 30, visibleMaxX: 470) == TableOverflow(moreRows: 10, moreColumns: nil), "Rows only")
+        #expect(resolve(shown: 5, total: 5, visibleMaxX: 250) == TableOverflow(moreRows: nil, moreColumns: 2), "Columns only")
+        #expect(resolve(shown: 20, total: 30, visibleMaxX: 250) == TableOverflow(moreRows: 10, moreColumns: 2), "Both")
+
+        #expect(resolve(shown: 5, total: 5, visibleMaxX: 240).moreColumns == 2, "A column starting under the fade is unseen")
+        #expect(resolve(shown: 5, total: 5, visibleMaxX: 440).moreColumns == 0, "Only the last column is cut, partly in view")
+        #expect(resolve(shown: 5, total: 5, visibleMaxX: 462).moreColumns == nil, "Padding past the edge is not a column")
+        #expect(resolve(shown: 5, total: 5, visibleMaxX: 100).moreColumns == 3)
     }
 
     /// A device report: this table scrolled sideways in a 342 pt chat column
@@ -1174,7 +1199,8 @@ struct NativeTableFitAndChromeTests {
 
         let scroll = try #require(timelineAllScrollViews(in: host.table).first { !($0 is UITextView) })
         #expect(scroll.contentSize.width <= scroll.bounds.width + 0.5, "Fits: \(scroll.contentSize.width) in \(scroll.bounds.width)")
-        #expect(showAllBar(in: host.table) == nil)
+        #expect(rowsBar(in: host.table) == nil)
+        #expect(columnsChip(in: host.table) == nil)
         let cells = visibleTableCells(in: host.table)
         let timings = cells.filter { timelineRenderedText(of: $0).hasSuffix(" ms") }
         #expect(timings.count == 7)
@@ -1185,7 +1211,7 @@ struct NativeTableFitAndChromeTests {
         #expect(!cellIsSingleLine(header), "The long header wraps instead")
     }
 
-    @Test func tableThatFitsShowsNoFadeAndNoBar() throws {
+    @Test func tableThatFitsShowsNoFadeNoChipAndNoBar() throws {
         let host = Host(width: 390)
         host.table.apply(
             headers: [[.text("Name")], [.text("Role")]],
@@ -1195,10 +1221,11 @@ struct NativeTableFitAndChromeTests {
         host.layout(at: 390)
         let overlay = try #require(overlay(in: host.table))
         #expect(!overlay.isCueVisible)
-        #expect(showAllBar(in: host.table) == nil)
+        #expect(columnsChip(in: host.table) == nil)
+        #expect(rowsBar(in: host.table) == nil)
     }
 
-    @Test func narrowingATableUntilItNoLongerFitsAddsTheBarAndWideningRemovesIt() throws {
+    @Test func narrowingATableUntilItNoLongerFitsAddsTheChipAndWideningRemovesIt() throws {
         let host = Host(width: 390)
         host.table.apply(
             headers: [[.text("Name")], [.text("Role")], [.text("Team")], [.text("Region")]],
@@ -1208,41 +1235,35 @@ struct NativeTableFitAndChromeTests {
         let fitting = host.layout(at: 390)
         let overlay = try #require(overlay(in: host.table))
         #expect(!overlay.isCueVisible)
-        #expect(showAllBar(in: host.table) == nil)
+        #expect(columnsChip(in: host.table) == nil)
 
         let narrow = host.layout(at: 160)
         #expect(overlay.isCueVisible, "At 160pt the columns cannot stay readable, so the table scrolls and says so")
-        #expect(showAllBar(in: host.table)?.accessibilityLabel == "Show all 4 columns")
-        #expect(abs(host.table.bounds.height - narrow) <= 1, "The measured height includes the bar")
+        #expect(columnsChip(in: host.table)?.accessibilityLabel == "Show all 4 columns")
+        #expect(rowsBar(in: host.table) == nil)
+        #expect(abs(host.table.bounds.height - narrow) <= 1)
         host.layout(at: 390)
         #expect(!overlay.isCueVisible)
-        #expect(showAllBar(in: host.table) == nil)
+        #expect(columnsChip(in: host.table) == nil)
         #expect(abs(host.table.bounds.height - fitting) <= 1)
     }
 
-    /// A table cut by its padding alone hides no column, so the bar stays away.
-    /// Folded and cut, it names both.
-    @Test func barNamesWhatTheCardDoesNotShow() {
-        let card = UIView()
-        let scroll = UIScrollView()
-        card.addSubview(scroll)
-        let chrome = TableChrome(card: card, scrollView: scroll, open: {}, copy: { _ in })
-        chrome.install {}
-        let palette = ThemeRuntimeState.currentPalette()
-        let cut = TableChrome.cutThreshold
+    /// Folded and cut, a table wears both: the chip on its edge names the
+    /// columns, the bar under its rows names only the rows.
+    @Test func foldedCutTableWearsTheChipAndTheRowsBar() throws {
+        let host = Host(width: 320)
+        host.table.rowFoldLimit = NativeTableBlockView.chatFoldRowLimit
+        let wide = Self.wideTable()
+        host.table.apply(headers: wide.headers, rows: Array(repeating: wide.rows[0], count: 26), palette: ThemeRuntimeState.currentPalette())
+        host.layout(at: 320)
 
-        _ = chrome.update(shownRows: 3, totalRows: 3, columns: 4, overflow: cut - 1, palette: palette)
-        #expect(!chrome.showsFooter, "Padding past the edge is not a column")
-        #expect(chrome.update(shownRows: 3, totalRows: 3, columns: 4, overflow: cut + 1, palette: palette))
-        #expect(chrome.showsFooter)
-        #expect(TableShowAllBar.title(foldedRows: nil, cutColumns: 4) == "Show all 4 columns")
-        #expect(TableShowAllBar.title(foldedRows: 30, cutColumns: nil) == "Show all 30 rows")
-        #expect(TableShowAllBar.title(foldedRows: 30, cutColumns: 11) == "Show all 30 rows · 11 columns")
+        #expect(columnsChip(in: host.table)?.accessibilityLabel == "Show all 5 columns")
+        #expect(rowsBar(in: host.table)?.accessibilityLabel == "Show 6 more rows")
     }
 
     // MARK: Fold
 
-    @Test func longTableFoldsBehindShowAllRowsAndCopiesEveryRow() throws {
+    @Test func longTableFoldsBehindShowMoreRowsAndCopiesEveryRow() throws {
         let rows = (1 ... 30).map { ["item-\($0)", "value \($0)"] }
         let folded = Host(width: 390)
         folded.table.rowFoldLimit = NativeTableBlockView.chatFoldRowLimit
@@ -1256,7 +1277,7 @@ struct NativeTableFitAndChromeTests {
         let button = try #require(timelineAllViews(in: folded.table).compactMap { $0 as? UIButton }.first {
             $0.accessibilityIdentifier == "markdown.table.showAll"
         })
-        #expect(button.accessibilityLabel == "Show all 30 rows")
+        #expect(button.accessibilityLabel == "Show 10 more rows")
         #expect(!button.isHidden)
 
         // Twenty rows are drawn, the rest only behind the button.
@@ -1273,7 +1294,7 @@ struct NativeTableFitAndChromeTests {
             palette: ThemeRuntimeState.currentPalette()
         )
         let twentyHeight = twenty.layout(at: 390)
-        #expect(abs(foldedHeight - (twentyHeight + TableShowAllBar.height)) <= 1)
+        #expect(abs(foldedHeight - (twentyHeight + TableMoreRowsBar.height)) <= 1)
         #expect(abs(folded.table.bounds.height - foldedHeight) <= 1)
 
         // Copy and the viewer take every row.
@@ -1292,7 +1313,7 @@ struct NativeTableFitAndChromeTests {
             palette: ThemeRuntimeState.currentPalette()
         )
         atLimit.layout(at: 390)
-        #expect(showAllBar(in: atLimit.table) == nil)
+        #expect(rowsBar(in: atLimit.table) == nil)
 
         let reader = Host(width: 390)
         reader.table.rowFoldLimit = nil
@@ -1302,7 +1323,7 @@ struct NativeTableFitAndChromeTests {
             palette: ThemeRuntimeState.currentPalette()
         )
         reader.layout(at: 390)
-        #expect(showAllBar(in: reader.table) == nil)
+        #expect(rowsBar(in: reader.table) == nil)
         #expect(timelineAllTextViews(in: reader.table).map(timelineRenderedText).joined().contains("row-60"))
     }
 
@@ -1321,12 +1342,12 @@ struct NativeTableFitAndChromeTests {
         let footer = try #require(timelineAllViews(in: host.table).compactMap { $0 as? UIButton }.first {
             $0.accessibilityIdentifier == "markdown.table.showAll"
         })
-        #expect(footer.accessibilityLabel == "Show all 21 rows")
-        #expect(abs(host.table.bounds.height - (heightAtTwenty + TableShowAllBar.height)) <= 1)
+        #expect(footer.accessibilityLabel == "Show 1 more row")
+        #expect(abs(host.table.bounds.height - (heightAtTwenty + TableMoreRowsBar.height)) <= 1)
 
         host.table.apply(headers: [[.text("Item")]], rows: rows(25), palette: palette)
         host.layout(at: 390)
-        #expect(footer.accessibilityLabel == "Show all 25 rows")
+        #expect(footer.accessibilityLabel == "Show 5 more rows")
         // Copy takes every row, the hidden ones included.
         #expect(host.table.tableText(.tsv).split(separator: "\n").count == 26)
     }

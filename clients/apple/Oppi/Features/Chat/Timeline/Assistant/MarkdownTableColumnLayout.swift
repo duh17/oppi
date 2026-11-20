@@ -289,12 +289,6 @@ enum MarkdownTableColumnLayout {
         return edges
     }
 
-    /// How many columns reach past the visible right edge, whether wholly hidden
-    /// or cut. The cue says "more columns", and a cut column is one.
-    static func hiddenColumnCount(trailingEdges: [CGFloat], visibleMaxX: CGFloat) -> Int {
-        trailingEdges.reduce(0) { $0 + ($1 > visibleMaxX + 1 ? 1 : 0) }
-    }
-
     /// Right edge of each column of `plan` as drawn, in content coordinates.
     @MainActor
     static func trailingEdges(for plan: Plan, gutters: Gutters) -> [CGFloat] {
@@ -346,18 +340,6 @@ struct TablePlanning {
         let available = width > 0 ? width : (plannedWidth ?? hint.flatMap { $0 > 0 ? $0 : nil })
         plannedWidth = available
         return plan(availableWidth: available, displayScale: displayScale)
-    }
-
-    /// How far the plan on screen reaches past the width it was planned for: the
-    /// part of the table cut at rest, before any sideways scroll. Zero until the
-    /// table is planned for a width.
-    var overflow: CGFloat {
-        guard let rendered, let plannedWidth else { return 0 }
-        let contentWidth = switch rendered.presentation {
-        case .grid: MarkdownTableColumnLayout.gridContentWidth(columnWidths: rendered.columnWidths, gutters: rendered.gutters)
-        case .clip: natural.totalWidth
-        }
-        return max(0, contentWidth - plannedWidth)
     }
 
     /// The plan for a new `width`, or nil when the table is not drawn yet, the

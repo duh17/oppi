@@ -152,7 +152,7 @@ struct MarkdownTablePerfBench {
     }
 
     /// Chat folds a table past 20 rows, so after row 20 a chat tick only updates
-    /// "Show all N rows". `.staticReader` never folds: it streams every row, which
+    /// "Show N more rows". `.staticReader` never folds: it streams every row, which
     /// keeps the per-row cost of a long table measured.
     private func reportStream(shape: Shape, name: String, mode: ContentRenderingMode = .staticReader) {
         let content = Self.message(rows: 200, columns: 8, shape: shape, tag: "stream-\(name)")

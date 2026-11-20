@@ -4,13 +4,15 @@ import UIKit
 // MARK: - Markdown Tables Preview
 
 /// `SCREENSHOT_SCREEN=markdown-tables`: one assistant message with the table
-/// shapes chat meets, drawn by the live markdown renderer at the window's width:
-/// a short benchmark table (4 columns, 3 rows) that is just too wide for a phone
+/// shapes chat meets, drawn by the live markdown renderer at the window's width.
+/// It opens with four overflow shapes: a 5-column plan whose columns run past
+/// the edge, a small table that fits, a 25-row two-column table folded at 20,
+/// and a test report both too wide and too long. Then a short benchmark table (4 columns, 3 rows) that is just too wide for a phone
 /// in portrait, a prose table that fits by wrapping, an 8-column table of numbers
 /// with right-aligned delimiters, a wide table that scrolls sideways at any device
 /// width, phone to 13-inch iPad (the planner wraps prose but never breaks a word,
 /// so its long header words force the scroll), a 40-row table folded behind
-/// "Show all 40 rows", and cells with inline code and bold.
+/// "Show 20 more rows", and cells with inline code and bold.
 final class MarkdownTablesPreviewController: PreviewRootController {
     init(root: AppRootEnvironment) {
         super.init(
@@ -25,7 +27,68 @@ final class MarkdownTablesPreviewController: PreviewRootController {
 
     private static var message: String {
         let longRows = (1 ... 40).map { "| item-\($0) | value \($0) | \($0 % 3 == 0 ? "done" : "open") |" }
+        let settings = [
+            "Auto-Save", "Read Aloud voice", "Message Text Size", "Code font", "Wrap long lines", "Show thinking",
+            "Haptics", "Keep screen awake", "Sound on finish", "Default model", "Thinking level", "Live Activity",
+            "Notifications", "App Lock", "Lock after", "Incognito by default", "Spell check", "Smart quotes",
+            "Send with Return", "Dictation language", "Theme", "App icon", "Pane width", "New pane side", "Experiments",
+        ]
+        let defaults = [
+            "On", "Ava", "Default", "SF Mono", "Off", "Collapsed", "On", "Off", "On", "Server default", "Medium",
+            "On", "Mentions only", "Off", "5 minutes", "Off", "On", "Off", "Off", "English (US)", "Night", "Default",
+            "Half", "Right", "None",
+        ]
+        let settingRows = zip(settings, defaults).map { "| \($0) | \($1) |" }
+        let suites = [
+            "MarkdownTableColumnLayoutTests", "MarkdownTableStreamingGateTests", "MarkdownTableGridTests",
+            "AssistantMarkdownSegmentTests", "ChatTimelineScrollTests", "ComposerPolicyTests", "PaneHostControllerTests",
+            "ScenePanesTreeTests", "RouterPresentationTests", "SessionListEntriesTests", "GitStatusStoreTests",
+            "ServerRouteControllerTests", "FocusedSessionStreamBinderTests", "ReaderTraceTests", "BookReaderBodyTests",
+            "DocumentEditOwnerTests", "TaskSourceEditTests", "SSHTerminalRegistryTests", "RexSessionConnectionTests",
+            "LiveVoiceCallCenterTests", "AISharingConsentTests", "ThemeContrastTests", "EntityIconTests",
+            "LoadStateContentTests", "ListScreenControllerTests", "ScheduleListTests", "QuickSessionModelTests",
+            "FileSuggestionRankerTests",
+        ]
+        let suiteRows = suites.enumerated().map { index, suite in
+            let tests = 12 + (index * 7) % 41
+            let failed = index % 9 == 4 ? 1 : 0
+            let skipped = index % 5 == 2 ? 2 : 0
+            let median = 0.4 + Double((index * 13) % 37) / 10
+            return "| \(suite) | \(tests) | \(tests - failed - skipped) | \(failed) | \(skipped) | \(String(format: "%.1f s", median)) | \(String(format: "%.1f s", median * 2.3)) | iPhone 17 Pro | shard-\(index % 4 + 1) |"
+        }
         return """
+        The plan, in landing order:
+
+        | # | Slice | What changes | Risk | Depends on |
+        | --- | --- | --- | --- | --- |
+        | N1 | All Sessions row in the sidebar | One row above the workspaces opens every session across servers | Low | — |
+        | N2 | Sidebar button belongs to the main pane | The button moves from the window bar into the primary pane's bar, so a split never shows two | Medium | — |
+        | N3 | Back means back (needs N2) | Back pops the stack it was pushed on instead of replacing the root | High: 97 navigation tests pin the old behaviour | N2 |
+        | N4 | One `open` function (needs N3) | Every entry point routes through one function that picks the pane | High | N3 |
+        | N5 | Side content through the same function | Files, Git, and the browser open beside the chat through it | Medium | N4 |
+        | N6 (later) | Terminal becomes a routed screen | The terminal gets a route and stops presenting itself | Medium | N4 |
+        | N7 (later) | Every pane's stack in one tree | Restore and rotation rebuild panes from one tree | High | N6 |
+
+        The defaults:
+
+        | Mode | Shortcut |
+        | --- | --- |
+        | Plan | ⌘1 |
+        | Build | ⌘2 |
+        | Review | ⌘3 |
+
+        Every setting and its default:
+
+        | Setting | Default |
+        | --- | --- |
+        \(settingRows.joined(separator: "\n"))
+
+        Last night's unit run, by suite:
+
+        | Suite | Tests | Passed | Failed | Skipped | Median duration | p95 duration | Simulator | Shard |
+        | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+        \(suiteRows.joined(separator: "\n"))
+
         Parse times, median of 50 runs:
 
         | Input | comrak, parse only | Oppi tonight, full pipeline | swift-cmark alone |

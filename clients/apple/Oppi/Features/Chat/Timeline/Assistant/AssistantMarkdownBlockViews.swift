@@ -789,7 +789,8 @@ extension NativeCodeBlockView: UITextViewDelegate {
 /// (pixel-aligned via tab stops). Grid mode is used when a column's natural
 /// width exceeds the readable clamp, or when wrapping lets a too-wide table fit
 /// the viewport (`MarkdownTableColumnLayout.plan`); a table that cannot fit
-/// scrolls sideways. `TableChrome` adds the trailing fade and the Show all bar.
+/// scrolls sideways. `TableChrome` adds the trailing fade with its column chip
+/// and the bar under folded rows.
 final class NativeTableBlockView: UIView {
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private var reviewCommentSourceContext: ReviewCommentSourceContext?
@@ -867,7 +868,7 @@ final class NativeTableBlockView: UIView {
     private var tableLabelContentConstraints: [NSLayoutConstraint] = []
     private var gridViewContentConstraints: [NSLayoutConstraint] = []
 
-    /// The trailing fade over the scroller and the Show all bar under it.
+    /// The trailing fade and column chip over the scroller, and the rows bar under it.
     private lazy var chrome = TableChrome(
         card: cardView,
         scrollView: scrollView,
@@ -882,14 +883,14 @@ final class NativeTableBlockView: UIView {
     /// Every row, drawn or not: what copy and the full-screen viewer take.
     private var fullRows: [[[MarkdownInline]]] = []
     static let chatFoldRowLimit = 20
-    /// Rows past this many fold behind "Show all N rows"; nil never folds.
+    /// Rows past this many fold behind "Show N more rows"; nil never folds.
     var rowFoldLimit: Int?
     /// The width the owner expects to lay this table out at, used until the view
     /// has a width of its own, so it is not drawn for one width and then redrawn.
     var availableWidthHint: CGFloat?
 
     /// Where the table is drawn. In a message (chat, a document) it can fold and
-    /// be cut, and the bar under the rows opens the viewer. The viewer is the
+    /// be cut, and the column chip and the rows bar open the viewer. The viewer is the
     /// table's whole page: every row, always the grid, its card centered, and a
     /// cell's text selectable with a long press.
     enum Surface { case message, viewer }
@@ -959,7 +960,7 @@ final class NativeTableBlockView: UIView {
 
     /// A long press on a table whose text is not selectable: View Full Screen and
     /// the copy actions. Every table can open full screen this way, not only one
-    /// whose bar offers it.
+    /// whose chip or bar offers it: a table that fits wears no control for it.
     private lazy var tableMenu = UIContextMenuInteraction(delegate: self)
 
     override init(frame: CGRect) {
@@ -1054,7 +1055,22 @@ final class NativeTableBlockView: UIView {
 
     private func updateOverflowCue() {
         let visible = scrollView.bounds.width
-        chrome.updateCue(visibleMaxX: scrollView.contentOffset.x + visible, contentWidth: currentContentWidth(), trailingEdges: columnTrailingEdges)
+        chrome.updateCue(
+            visibleMaxX: scrollView.contentOffset.x + visible,
+            contentWidth: currentContentWidth(),
+            trailingEdges: columnTrailingEdges,
+            headerCenter: headerRowCenter
+        )
+    }
+
+    /// The header row's vertical middle, from the top of the rows: where the
+    /// column chip sits.
+    private var headerRowCenter: CGFloat {
+        if isWrapMode, let layout = gridView.layout, let origin = layout.rowOrigins.first, let height = layout.rowHeights.first {
+            return origin + height / 2
+        }
+        let font = measuredFonts?.bold ?? AppFont.messageBody
+        return tableLabel.textContainerInset.top + font.lineHeight / 2
     }
 
     /// UIScrollView has no useful intrinsic height. Measure the active table
@@ -1174,6 +1190,7 @@ final class NativeTableBlockView: UIView {
         let viewer = surface == .viewer
         planning.drawsGridOnly = viewer
         planning.gutters = viewer ? .viewer : .message
+        chrome.offersViewer = !viewer
         cardLeading.isActive = !viewer
         cardCentered.isActive = viewer
         updateGridInteractivity()
@@ -1292,16 +1309,10 @@ final class NativeTableBlockView: UIView {
         if updateChrome(palette: palette) { notifyHeightMayHaveChanged() }
     }
 
-    /// Shows the Show all bar when rows are folded or the planned columns are cut
-    /// at rest. Returns whether the bar appeared or went away.
+    /// Shows the rows bar while rows are folded. Returns whether the bar
+    /// appeared or went away.
     private func updateChrome(palette: ThemePalette) -> Bool {
-        chrome.update(
-            shownRows: currentRows.count,
-            totalRows: fullRows.count,
-            columns: planning.natural.columnWidths.count,
-            overflow: surface == .viewer ? 0 : planning.overflow,
-            palette: palette
-        )
+        chrome.update(shownRows: currentRows.count, totalRows: fullRows.count, palette: palette)
     }
 
     private func render(_ plan: MarkdownTableColumnLayout.Plan, palette: ThemePalette, force: Bool, keptRows: Int?) {
@@ -1317,21 +1328,14 @@ final class NativeTableBlockView: UIView {
 
     /// The viewport changed: redraw if the columns plan differently for `width`,
     /// and say so, because wrapped rows are as tall as the columns are narrow.
-    /// The same plan can be cut by a different amount at another width, so the
-    /// bar is checked even when the columns hold.
+    /// The column chip follows in `layoutSubviews`; it takes no height.
     @discardableResult
     private func replanIfNeeded(forWidth width: CGFloat) -> Bool {
-        guard let palette = currentPalette else { return false }
-        var changed = false
-        if let plan = planning.replan(forWidth: width, displayScale: traitCollection.displayScale) {
-            render(plan, palette: palette, force: true, keptRows: nil)
-            changed = true
-        }
-        if updateChrome(palette: palette) {
-            notifyHeightMayHaveChanged()
-            changed = true
-        }
-        return changed
+        guard let palette = currentPalette,
+              let plan = planning.replan(forWidth: width, displayScale: traitCollection.displayScale)
+        else { return false }
+        render(plan, palette: palette, force: true, keptRows: nil)
+        return true
     }
 
     /// A touched cell mounts its text view for links and selection. In a

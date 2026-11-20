@@ -3096,6 +3096,28 @@
     "Show %@ more" : {
 
     },
+    "Show %lld more rows" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Show %lld more row"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Show %lld more rows"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "Show all %lld columns" : {
       "localizations" : {
         "en" : {
@@ -3117,9 +3139,6 @@
           }
         }
       }
-    },
-    "Show all %lld rows" : {
-
     },
     "Show less" : {
 

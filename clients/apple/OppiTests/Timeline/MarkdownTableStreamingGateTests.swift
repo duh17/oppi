@@ -176,7 +176,7 @@ struct MarkdownTableStreamingGateTests {
         let showAll = try #require(timelineAllViews(in: table).compactMap { $0 as? UIButton }.first {
             $0.accessibilityIdentifier == "markdown.table.showAll"
         })
-        #expect(showAll.accessibilityLabel == "Show all 25 rows")
+        #expect(showAll.accessibilityLabel == "Show 5 more rows")
     }
 
     private func markdownSource(headers: [[MarkdownInline]], rows: [[[MarkdownInline]]]) -> String {

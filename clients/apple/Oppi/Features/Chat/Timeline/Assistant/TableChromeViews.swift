@@ -1,17 +1,66 @@
 import UIKit
 
-/// The "this table continues" fade drawn over a markdown table card's trailing
-/// edge while columns reach past it. It only draws: `NativeTableBlockView` feeds
-/// it the scroll position, so it follows the scroll without touching the table's
-/// layout, and every touch goes to the table underneath.
+/// How a markdown table card shows less than its table, in each direction.
 ///
-/// Nothing that can be read sits over the rows: a pill there hid the cut
-/// column's label at the top and the last row's values at the bottom. What the
-/// table holds past the edge is named in the bar under the rows (`TableShowAllBar`).
+/// Rows fold behind the bar under the card: "Show 5 more rows". Columns that
+/// run past the trailing edge are named on that edge, where the rows scroll to
+/// them: a fade and a "+3 ›" chip. A card can need neither, either, or both.
+/// `TableChrome` resolves this on every apply and every sideways scroll.
+struct TableOverflow: Equatable {
+    /// Rows the card does not draw; nil when it draws every row.
+    var moreRows: Int?
+    /// Columns that start at or past the trailing edge's fade, wholly unseen;
+    /// nil when no column reaches past the edge. Zero when the only one cut is
+    /// partly in view: the chip then shows its chevron alone.
+    var moreColumns: Int?
+
+    /// How wide the fade over the trailing edge is.
+    static let fadeWidth: CGFloat = 36
+
+    /// - Parameters:
+    ///   - shownRows: rows drawn in the card.
+    ///   - totalRows: rows in the table.
+    ///   - trailingEdges: the right edge of each column, in scroller content coordinates.
+    ///   - visibleMaxX: the right edge of what the scroller shows, in the same coordinates.
+    ///   - contentWidth: how wide the scroller's content is.
+    static func resolve(
+        shownRows: Int,
+        totalRows: Int,
+        trailingEdges: [CGFloat],
+        visibleMaxX: CGFloat,
+        contentWidth: CGFloat
+    ) -> Self {
+        let moreRows = totalRows > shownRows ? totalRows - shownRows : nil
+        // The table's own padding past the edge is not a column.
+        let cut = contentWidth - visibleMaxX > 1 && trailingEdges.contains { $0 > visibleMaxX + 1 }
+        guard cut else { return Self(moreRows: moreRows, moreColumns: nil) }
+        // A column starts where the one before it ends; one starting under the
+        // fade shows nothing readable.
+        let fadeStart = visibleMaxX - fadeWidth
+        let unseen = trailingEdges.dropLast().filter { $0 >= fadeStart }.count
+        return Self(moreRows: moreRows, moreColumns: unseen)
+    }
+}
+
+/// What sits over a markdown table card's trailing edge while columns run past
+/// it: a fade, and the chip that names them and opens the table full screen.
+/// `TableChrome` feeds it the scroll position, so it follows the scroll without
+/// touching the table's layout. Every touch but the chip's goes to the table
+/// underneath.
+///
+/// The chip sits on the header row, the row that names columns. It stays
+/// inside the fade, whose text is already unreadable: a wider pill once hid the
+/// label of the column it said was cut.
 final class TableOverflowOverlayView: UIView {
     private let fadeView = TableTrailingFadeView()
+    /// "+3 ›": opens the table full screen.
+    let moreColumnsButton = TableMoreColumnsButton()
+    private lazy var buttonCenterY = moreColumnsButton.centerYAnchor.constraint(equalTo: topAnchor)
     /// Whether the fade is showing.
     private(set) var isCueVisible = false
+    /// Whether the chip shows with the fade: off on the full-screen viewer,
+    /// which already shows the whole table.
+    var offersViewer = true
 
     /// The overlay sits exactly over the scroller, so its layout pass is the
     /// scroller's resize: the owner refreshes the cue from it.
@@ -20,53 +69,147 @@ final class TableOverflowOverlayView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         isOpaque = false
-        isUserInteractionEnabled = false
         isAccessibilityElement = false
         fadeView.translatesAutoresizingMaskIntoConstraints = false
         fadeView.alpha = 0
+        fadeView.isUserInteractionEnabled = false
+        moreColumnsButton.translatesAutoresizingMaskIntoConstraints = false
+        moreColumnsButton.alpha = 0
+        moreColumnsButton.isHidden = true
         addSubview(fadeView)
+        addSubview(moreColumnsButton)
 
         NSLayoutConstraint.activate([
             fadeView.topAnchor.constraint(equalTo: topAnchor),
             fadeView.bottomAnchor.constraint(equalTo: bottomAnchor),
             fadeView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            fadeView.widthAnchor.constraint(equalToConstant: Self.fadeWidth),
+            fadeView.widthAnchor.constraint(equalToConstant: TableOverflow.fadeWidth),
+            moreColumnsButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            buttonCenterY,
         ])
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    static let fadeWidth: CGFloat = 36
-
     private var appliedColor: UIColor?
 
-    /// Called on every table apply, streaming ticks included: a color it already
-    /// drew is skipped.
+    /// Called on every table apply, streaming ticks included: a palette it
+    /// already drew is skipped.
     func apply(palette: ThemePalette) {
+        moreColumnsButton.apply(palette: palette)
         guard palette.ui.bgDark != appliedColor else { return }
         appliedColor = palette.ui.bgDark
         fadeView.apply(color: palette.ui.bgDark)
     }
 
     /// - Parameters:
-    ///   - hiddenColumns: columns that reach past the visible right edge.
-    ///   - canScrollRight: whether the table has more to scroll to on the right.
-    func update(hiddenColumns: Int, canScrollRight: Bool) {
-        let visible = canScrollRight && hiddenColumns > 0
+    ///   - moreColumns: the columns past the edge (`TableOverflow.moreColumns`).
+    ///   - totalColumns: every column, for the chip's spoken label.
+    ///   - headerCenter: the header row's vertical middle, from the scroller's top.
+    func update(moreColumns: Int?, totalColumns: Int, headerCenter: CGFloat) {
+        buttonCenterY.constant = headerCenter
+        if let moreColumns { moreColumnsButton.show(more: moreColumns, of: totalColumns) }
+        let visible = moreColumns != nil
         guard visible != isCueVisible else { return }
         isCueVisible = visible
-        let changes = { self.fadeView.alpha = visible ? 1 : 0 }
+        let showsButton = visible && offersViewer
+        if showsButton { moreColumnsButton.isHidden = false }
+        let changes = {
+            self.fadeView.alpha = visible ? 1 : 0
+            self.moreColumnsButton.alpha = showsButton ? 1 : 0
+        }
+        let settle: (Bool) -> Void = { _ in
+            // Hidden, not only transparent, so VoiceOver and touches skip it.
+            self.moreColumnsButton.isHidden = !(self.isCueVisible && self.offersViewer)
+        }
         guard window != nil, !UIAccessibility.isReduceMotionEnabled else {
             changes()
+            settle(true)
             return
         }
-        UIView.animate(withDuration: 0.15, delay: 0, options: [.allowUserInteraction, .beginFromCurrentState], animations: changes)
+        UIView.animate(withDuration: 0.15, delay: 0, options: [.allowUserInteraction, .beginFromCurrentState], animations: changes, completion: settle)
+    }
+
+    /// Only the chip takes touches; the rows under the fade keep scrolling and
+    /// selecting.
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        guard !moreColumnsButton.isHidden, moreColumnsButton.alpha > 0 else { return false }
+        return moreColumnsButton.point(inside: convert(point, to: moreColumnsButton), with: event)
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
         onLayout?()
+    }
+}
+
+/// The chip on a table card's trailing edge: "+3 ›" when three columns are
+/// unseen, "›" when only a partly shown one is cut. VoiceOver reads "Show all
+/// 5 columns". A tap opens the table full screen.
+final class TableMoreColumnsButton: UIButton {
+    private var count: Int?
+    private var palette: ThemePalette?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        accessibilityIdentifier = "markdown.table.moreColumns"
+        accessibilityTraits = .button
+        accessibilityHint = String(localized: "Opens table full screen")
+        // Its text follows Dynamic Type; the chip grows with it.
+        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (button: Self, _: UITraitCollection) in
+            button.setNeedsUpdateConfiguration()
+        }
+        configurationUpdateHandler = { [weak self] button in
+            guard let self, let palette else { return }
+            button.configuration = Self.configuration(count: count, palette: palette)
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func apply(palette: ThemePalette) {
+        guard self.palette?.uiCache !== palette.uiCache else { return }
+        self.palette = palette
+        setNeedsUpdateConfiguration()
+    }
+
+    func show(more: Int, of total: Int) {
+        accessibilityLabel = String(localized: "Show all \(total) columns")
+        let count = more > 0 ? more : nil
+        guard count != self.count else { return }
+        self.count = count
+        setNeedsUpdateConfiguration()
+    }
+
+    private static func configuration(count: Int?, palette: ThemePalette) -> UIButton.Configuration {
+        var configuration = UIButton.Configuration.plain()
+        configuration.cornerStyle = .capsule
+        configuration.baseForegroundColor = palette.ui.blue
+        configuration.background.backgroundColor = palette.ui.bgHighlight
+        configuration.background.strokeColor = palette.ui.mdCodeBlockBorder.withAlphaComponent(0.5)
+        configuration.background.strokeWidth = 1
+        let font = AppFont.scaledSystem(13, .semibold, relativeTo: .footnote, maximumPointSize: 20)
+        configuration.image = UIImage(systemName: "chevron.right")
+        configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(font: font, scale: .small)
+        configuration.imagePlacement = .trailing
+        configuration.imagePadding = 2
+        if let count {
+            var attributes = AttributeContainer()
+            attributes.font = font
+            configuration.attributedTitle = AttributedString(count.formatted(.number.sign(strategy: .always())), attributes: attributes)
+        }
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 3, leading: count == nil ? 6 : 8, bottom: 3, trailing: 6)
+        return configuration
+    }
+
+    /// The chip draws smaller than a finger: its touch area is at least 44pt
+    /// each way.
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        let dx = min(0, bounds.width - 44) / 2
+        let dy = min(0, bounds.height - 44) / 2
+        return bounds.insetBy(dx: dx, dy: dy).contains(point)
     }
 }
 
@@ -112,11 +255,11 @@ extension TableCopyFormat {
     }
 }
 
-/// The bar at the foot of a table card that shows less than the whole table:
-/// "Show all 30 rows" when it folded its long body, "Show all 4 columns" when
-/// its columns are cut at the card's edge, "Show all 30 rows · 11 columns" for
-/// both. A tap opens the table full screen; a long press offers the copy menu.
-final class TableShowAllBar: UIView {
+/// The bar at the foot of a table card that folded its long body: "Show 10
+/// more rows". A tap opens the table full screen; a long press offers the copy
+/// menu. Columns past the edge never put a bar here: the chip on the edge
+/// names them.
+final class TableMoreRowsBar: UIView {
     /// Fixed so the bar adds the same height whatever the text size.
     static let height: CGFloat = 40
 
@@ -155,19 +298,8 @@ final class TableShowAllBar: UIView {
         button.menu = menu
     }
 
-    /// The bar's title: the rows when the body is folded, the columns when they
-    /// are cut, or both.
-    static func title(foldedRows: Int?, cutColumns: Int?) -> String {
-        switch (foldedRows, cutColumns) {
-        case let (rows?, columns?):
-            String(localized: "Show all \(rows) rows") + " · " + String(localized: "\(columns) columns")
-        case let (rows?, nil):
-            String(localized: "Show all \(rows) rows")
-        case let (nil, columns?):
-            String(localized: "Show all \(columns) columns")
-        case (nil, nil):
-            ""
-        }
+    static func title(moreRows: Int) -> String {
+        String(localized: "Show \(moreRows) more rows")
     }
 
     private var applied: (title: String, color: UIColor)?
@@ -178,7 +310,7 @@ final class TableShowAllBar: UIView {
         divider.backgroundColor = palette.ui.comment.withAlphaComponent(0.25)
         var configuration = UIButton.Configuration.plain()
         configuration.baseForegroundColor = palette.ui.blue
-        configuration.image = UIImage(systemName: "arrow.up.left.and.arrow.down.right")
+        configuration.image = UIImage(systemName: "chevron.down")
         configuration.imagePadding = 6
         configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(
             pointSize: 11, weight: .semibold
@@ -192,35 +324,42 @@ final class TableShowAllBar: UIView {
     }
 }
 
-/// What a markdown table card wears besides its rows: the trailing fade over the
-/// scroller and, when the card shows less than the whole table, the
-/// `TableShowAllBar` under it.
+/// What a markdown table card wears besides its rows, for both ways it can show
+/// less than its table (`TableOverflow`): the fade and chip over the scroller's
+/// trailing edge while columns run past it, and the `TableMoreRowsBar` under
+/// the rows while they are folded.
 ///
 /// `NativeTableBlockView` owns the rows and hands this the facts: how many rows
-/// are shown of how many, whether its columns are cut at rest, and where the
-/// scroller is. This installs the fade and the bar in the card, and keeps the
-/// scroller's bottom edge on the bar while it shows. The fade is an overlay, so
-/// it takes no layout; the bar adds `footerHeight`, which the table's measured
-/// height includes.
+/// are shown of how many, and where the scroller is. This installs the overlay
+/// and the bar in the card, and keeps the scroller's bottom edge on the bar
+/// while it shows. The overlay takes no layout; the bar adds `footerHeight`,
+/// which the table's measured height includes. Columns never change the
+/// height, so a sideways scroll never moves the chat.
 @MainActor
 final class TableChrome {
     private let card: UIView
     private let scrollView: UIScrollView
     private let overlay = TableOverflowOverlayView()
-    private let footer = TableShowAllBar()
+    private let footer = TableMoreRowsBar()
     private var scrollBottomToCard: NSLayoutConstraint?
     private var scrollBottomToFooter: NSLayoutConstraint?
     private let open: () -> Void
     private let copy: (TableCopyFormat) -> Void
-
-    /// Columns that reach at most this far past the card's edge are its padding,
-    /// not a column the reader is missing: the bar does not offer them.
-    static let cutThreshold: CGFloat = 24
+    /// The facts the last apply and the last scroll reported.
+    private var rows = (shown: 0, total: 0)
+    private var columns = (trailingEdges: [CGFloat](), visibleMaxX: CGFloat(0), contentWidth: CGFloat(0))
 
     /// Whether the bar shows.
     private(set) var showsFooter = false
 
-    var footerHeight: CGFloat { showsFooter ? TableShowAllBar.height : 0 }
+    var footerHeight: CGFloat { showsFooter ? TableMoreRowsBar.height : 0 }
+
+    /// Whether the chip on the trailing edge opens the viewer. Off on the
+    /// viewer itself; the fade still shows there.
+    var offersViewer: Bool {
+        get { overlay.offersViewer }
+        set { overlay.offersViewer = newValue }
+    }
 
     init(card: UIView, scrollView: UIScrollView, open: @escaping () -> Void, copy: @escaping (TableCopyFormat) -> Void) {
         self.card = card
@@ -234,6 +373,7 @@ final class TableChrome {
     /// other three edges. `onScrollerResize` runs when the scroller changes size.
     func install(onScrollerResize: @escaping () -> Void) {
         overlay.onLayout = onScrollerResize
+        overlay.moreColumnsButton.addAction(UIAction { [open] _ in open() }, for: .touchUpInside)
         card.addSubview(overlay)
         card.addSubview(footer)
         overlay.translatesAutoresizingMaskIntoConstraints = false
@@ -260,19 +400,14 @@ final class TableChrome {
         ])
     }
 
-    /// Called on every table apply, streaming ticks included, and whenever the
-    /// table is planned for a new width. `overflow` is how far the planned columns
-    /// reach past the card at rest, never the scroll position, so the bar comes
-    /// and goes with the plan and not while the rows scroll. Returns whether the
-    /// bar appeared or went away, so the table can invalidate its height.
-    func update(shownRows: Int, totalRows: Int, columns: Int, overflow: CGFloat, palette: ThemePalette) -> Bool {
+    /// Called on every table apply, streaming ticks included. Returns whether
+    /// the bar appeared or went away, so the table can invalidate its height.
+    func update(shownRows: Int, totalRows: Int, palette: ThemePalette) -> Bool {
         overlay.apply(palette: palette)
-        let title = TableShowAllBar.title(
-            foldedRows: totalRows > shownRows ? totalRows : nil,
-            cutColumns: overflow > Self.cutThreshold ? columns : nil
-        )
-        let shows = !title.isEmpty
-        if shows { footer.apply(title: title, palette: palette) }
+        rows = (shownRows, totalRows)
+        let moreRows = resolve().moreRows
+        if let moreRows { footer.apply(title: TableMoreRowsBar.title(moreRows: moreRows), palette: palette) }
+        let shows = moreRows != nil
         guard shows != showsFooter else { return false }
         showsFooter = shows
         footer.isHidden = !shows
@@ -281,13 +416,21 @@ final class TableChrome {
         return true
     }
 
-    /// Shows the fade while the content (`contentWidth`) reaches further right
-    /// than the scroller shows, past `visibleMaxX`.
-    func updateCue(visibleMaxX: CGFloat, contentWidth: CGFloat, trailingEdges: [CGFloat]) {
+    /// Shows the fade and the chip while columns reach past `visibleMaxX`, the
+    /// right edge of what the scroller shows. Runs on every sideways scroll.
+    func updateCue(visibleMaxX: CGFloat, contentWidth: CGFloat, trailingEdges: [CGFloat], headerCenter: CGFloat) {
         guard visibleMaxX > 0 else { return }
-        overlay.update(
-            hiddenColumns: MarkdownTableColumnLayout.hiddenColumnCount(trailingEdges: trailingEdges, visibleMaxX: visibleMaxX),
-            canScrollRight: contentWidth - visibleMaxX > 1
+        columns = (trailingEdges, visibleMaxX, contentWidth)
+        overlay.update(moreColumns: resolve().moreColumns, totalColumns: trailingEdges.count, headerCenter: headerCenter)
+    }
+
+    private func resolve() -> TableOverflow {
+        TableOverflow.resolve(
+            shownRows: rows.shown,
+            totalRows: rows.total,
+            trailingEdges: columns.trailingEdges,
+            visibleMaxX: columns.visibleMaxX,
+            contentWidth: columns.contentWidth
         )
     }
 }
