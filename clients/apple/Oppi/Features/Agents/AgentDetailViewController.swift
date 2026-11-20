@@ -333,8 +333,8 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
             }
             let assets = connection.iconAssetCache
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 6, leading: 0, bottom: 6, trailing: 0)) {
-                // The Agent's page is one of the two places an animated image icon plays.
-                let icon = IconChoiceUIView(size: 24, frameSize: 24, animatesImage: true)
+                // The Agent's page is one of the two places an icon animates.
+                let icon = IconChoiceUIView(frameSize: 32, animates: true)
                 icon.apply(.choice(agent.definition.icon, purpose: .agent, sandbox: false), assetCache: assets)
                 icon.accessibilityIdentifier = "agents.detail.iconImage"
                 let row = ControlRowViews.stack([

@@ -476,7 +476,7 @@ final class WorkspaceCreateViewController: ListScreenController<
             content.text = "Icon"
             content.textProperties.color = palette.ui.fg
             // The picker opens as a sheet, so the row carries no disclosure chevron.
-            let icon = IconChoiceUIView(size: 22, frameSize: 32)
+            let icon = IconChoiceUIView(frameSize: 32)
             icon.apply(
                 .choice(model.icon, purpose: .workspace, sandbox: false),
                 assetCache: model.oppiConnection?.iconAssetCache

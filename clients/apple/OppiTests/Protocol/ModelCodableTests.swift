@@ -712,6 +712,7 @@ struct IconChoiceCodableTests {
             .defaultValue,
             .emoji("🧘"),
             .symbol("checkmark.shield"),
+            .symbol("sparkles", effect: .wiggle),
             .genmoji(assetId: assetId, contentDescription: "A smiling fox"),
             .image(assetId: assetId),
         ]

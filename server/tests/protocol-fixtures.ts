@@ -215,6 +215,16 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
       },
     },
   },
+  state_icon_symbol_effect: {
+    type: "state",
+    session: {
+      ...TEST_SESSION,
+      launch: {
+        ...TEST_SESSION_LAUNCH,
+        agentIcon: { kind: "symbol", name: "sparkles", effect: "bounce" },
+      },
+    },
+  },
   session_ended: {
     type: "session_ended",
     reason: "Process exited with code 0",
@@ -977,6 +987,16 @@ const SERVER_MESSAGE_COMPATIBILITY_EXAMPLES = {
       launch: { ...TEST_SESSION_LAUNCH, agentIcon: { kind: "animated", version: 2 } },
     },
   },
+  state_icon_symbol_effect_future: {
+    type: "state",
+    session: {
+      ...TEST_SESSION,
+      launch: {
+        ...TEST_SESSION_LAUNCH,
+        agentIcon: { kind: "symbol", name: "sparkles", effect: "spin-forever" },
+      },
+    },
+  },
 } as const;
 
 assertNoOverlappingFixtureKeys(
@@ -998,10 +1018,12 @@ const SERVER_MESSAGE_ORDER = [
   "state_icon_emoji",
   "state_icon_genmoji",
   "state_icon_image",
+  "state_icon_symbol_effect",
   "state_program_status_future",
   "session_summary_program_status_future",
   "state_icon_malformed",
   "state_icon_future",
+  "state_icon_symbol_effect_future",
   "session_ended",
   "session_deleted",
   "stop_requested",
@@ -1193,6 +1215,14 @@ const APP_EVENT_CANONICAL_EXAMPLES = {
       agentIcon: { kind: "image", assetId: `ia_${"B".repeat(43)}` },
     },
   },
+  session_summary_icon_symbol_effect: {
+    type: "session_summary",
+    ...appEventSessionBase,
+    summary: {
+      ...appEventSummary,
+      agentIcon: { kind: "symbol", name: "sparkles", effect: "bounce" },
+    },
+  },
   session_deleted: { type: "session_deleted", ...appEventSessionBase },
   session_ended: { type: "session_ended", ...appEventSessionBase, reason: "completed" },
   stop_requested: { type: "stop_requested", ...appEventSessionBase, source: "user" },
@@ -1322,6 +1352,14 @@ const APP_EVENT_COMPATIBILITY_EXAMPLES = {
     ...appEventSessionBase,
     summary: { ...appEventSummary, agentIcon: { kind: "animated", version: 2 } },
   },
+  session_summary_icon_symbol_effect_future: {
+    type: "session_summary",
+    ...appEventSessionBase,
+    summary: {
+      ...appEventSummary,
+      agentIcon: { kind: "symbol", name: "sparkles", effect: "spin-forever" },
+    },
+  },
 } as const;
 
 assertNoOverlappingFixtureKeys(
@@ -1341,9 +1379,11 @@ const APP_EVENT_MESSAGE_ORDER = [
   "session_summary_icon_emoji",
   "session_summary_icon_genmoji",
   "session_summary_icon_image",
+  "session_summary_icon_symbol_effect",
   "session_summary_program_status_future",
   "session_summary_icon_malformed",
   "session_summary_icon_future",
+  "session_summary_icon_symbol_effect_future",
   "session_deleted",
   "session_ended",
   "stop_requested",

@@ -20,6 +20,12 @@ extension Notification.Name {
 
 /// The one owner of entity artwork.
 ///
+/// An Agent, Pi, or workspace icon sits in one tile: a rounded square in the
+/// theme's tint that fills the frame it is asked for, with a symbol, an emoji,
+/// a Genmoji, or the Pi mark centred on it and an imported image filling it
+/// edge to edge. Every kind has the same shape and size in a given place, and
+/// the tint follows the theme (the raster cache keys on it).
+///
 /// `image` draws now and never waits: a Genmoji or an imported image (its first
 /// frame) comes from the server's icon cache
 /// when it is decoded, and until then the fallback symbol draws and the load
@@ -29,8 +35,14 @@ extension Notification.Name {
 /// fetch. Every image is drawn always-original, so a `UIMenu` keeps its colors.
 @MainActor
 enum EntityIcon {
-    /// An SF Symbol or emoji takes 0.78 of the box it is asked for.
+    /// A provider's or server's symbol takes 0.78 of the box it is asked for.
     private static let glyphShare: CGFloat = 0.78
+    /// On a tile, a symbol's point size, an emoji's font size, and a Genmoji's
+    /// or the Pi mark's box, as shares of the tile's side.
+    private static let tileSymbolShare: CGFloat = 0.5
+    private static let tileEmojiShare: CGFloat = 0.6
+    private static let tileArtworkShare: CGFloat = 0.72
+    private static let tileCornerShare: CGFloat = 0.26
     private static let sandboxMarkShare: CGFloat = 0.34
     private static let sandboxMarkMinimum: CGFloat = 11
 
@@ -87,10 +99,70 @@ enum EntityIcon {
         return image
     }
 
-    /// The box that draws a glyph `pointSize` tall, for a view that lays its icons
-    /// out by the glyph rather than by the box.
-    static func box(forGlyph pointSize: CGFloat) -> CGFloat {
-        pointSize / glyphShare
+    // MARK: - Tile
+
+    /// The tile's corner radius for a `side`-point tile (continuous corners).
+    static func tileCornerRadius(_ side: CGFloat) -> CGFloat {
+        side * tileCornerShare
+    }
+
+    /// The tile's colour: the theme's blue, translucent, so it reads on a card,
+    /// a page, a pill, and a menu alike.
+    static func tileColor(_ palette: ThemeUIKitPalette = ThemeRuntimeState.currentUIKitPalette()) -> UIColor {
+        palette.blue.withAlphaComponent(0.16)
+    }
+
+    /// A symbol in the tile's tint, at the size the tile draws it, for a view
+    /// that plays the symbol's effect over `tile(side:)`.
+    static func tileSymbol(_ name: String, side: CGFloat) -> UIImage? {
+        UIImage(
+            systemName: name,
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: side * tileSymbolShare, weight: .medium)
+        )?.withTintColor(ThemeRuntimeState.currentUIKitPalette().blue, renderingMode: .alwaysOriginal)
+    }
+
+    /// The empty tile, for a view that draws live content over it.
+    static func tile(side: CGFloat) -> UIImage {
+        raster(side) { rect in fillTile(rect) }
+    }
+
+    /// An image on the tile, filling it edge to edge: an imported picture before
+    /// it is stored, drawn like a stored one.
+    static func tile(side: CGFloat, filledWith artwork: UIImage) -> UIImage {
+        raster(side) { rect in drawFilling(artwork, in: rect) }
+    }
+
+    private static func tilePath(_ rect: CGRect) -> UIBezierPath {
+        UIBezierPath(roundedRect: rect, cornerRadius: tileCornerRadius(rect.width))
+    }
+
+    private static func fillTile(_ rect: CGRect) {
+        tileColor().setFill()
+        tilePath(rect).fill()
+    }
+
+    /// The tile, then `artwork` aspect-filled and clipped to it, so a
+    /// transparent image keeps the tile behind it.
+    private static func drawFilling(_ artwork: UIImage, in rect: CGRect) {
+        fillTile(rect)
+        guard let context = UIGraphicsGetCurrentContext() else { return }
+        context.saveGState()
+        tilePath(rect).addClip()
+        artwork.draw(in: aspectFill(artwork.size, in: rect))
+        context.restoreGState()
+    }
+
+    /// The tile with `content` centred on it.
+    private static func tiled(_ side: CGFloat, content: (CGRect) -> Void) -> UIImage {
+        raster(side) { rect in
+            fillTile(rect)
+            content(rect)
+        }
+    }
+
+    private static func tiledSymbol(_ name: String, side: CGFloat) -> UIImage? {
+        guard let symbol = tileSymbol(name, side: side) else { return nil }
+        return tiled(side) { rect in drawCentred(symbol, in: rect) }
     }
 
     // MARK: - Drawing
@@ -103,7 +175,8 @@ enum EntityIcon {
     ) -> (image: UIImage, isFinal: Bool) {
         switch entity {
         case .pi:
-            return (PiAvatarRenderer.render(size: frame), true)
+            let mark = PiAvatarRenderer.render(size: frame * tileArtworkShare)
+            return (tiled(frame) { rect in drawCentred(mark, in: rect) }, true)
         case .server(_, let badge):
             return (symbol(badge.symbolName, size: frame) ?? UIImage(), true)
         case .provider(let provider):
@@ -131,29 +204,38 @@ enum EntityIcon {
         box: CGFloat,
         assets: IconAssetCache?
     ) -> (image: UIImage, isFinal: Bool) {
+        let fallbackTile = tiledSymbol(fallback, side: box) ?? tile(side: box)
         switch AgentIconContent.resolve(choice) {
         case .symbol(let name):
-            return (symbol(name, size: box) ?? symbol(fallback, size: box) ?? UIImage(), true)
+            // A symbol's effect plays only in `IconChoiceUIView` with `animates`.
+            return (tiledSymbol(name, side: box) ?? fallbackTile, true)
         case .text(let emoji):
-            return (centred(emoji, in: box, font: .systemFont(ofSize: box * glyphShare)), true)
+            let font = UIFont.systemFont(ofSize: box * tileEmojiShare)
+            return (tiled(box) { rect in drawCentred(emoji, font: font, in: rect) }, true)
         case .genmoji(let assetId, _), .image(let assetId):
             // An animated image draws its first frame here; only
-            // `IconChoiceUIView` with `animatesImage` plays it.
+            // `IconChoiceUIView` with `animates` plays it.
             if let assets, let artwork = assets.cachedImage(assetId: assetId, size: artworkSize(box)) {
                 let image = raster(box) { rect in
-                    artwork.draw(in: aspectFit(artwork.size, in: rect))
+                    if case .image = choice {
+                        drawFilling(artwork, in: rect)
+                    } else {
+                        fillTile(rect)
+                        let inner = contentRect(inFrame: rect.width, content: rect.width * tileArtworkShare)
+                        artwork.draw(in: aspectFit(artwork.size, in: inner))
+                    }
                 }
                 return (image, true)
             }
             // No cache can load it, or this cache's load already failed: the
             // fallback is final.
             guard let assets, !assets.hasFailedLoad(assetId: assetId) else {
-                return (symbol(fallback, size: box) ?? UIImage(), true)
+                return (fallbackTile, true)
             }
             startLoad(assetId: assetId, size: artworkSize(box), assets: assets)
-            return (symbol(fallback, size: box) ?? UIImage(), false)
+            return (fallbackTile, false)
         case .fallback:
-            return (symbol(fallback, size: box) ?? UIImage(), true)
+            return (fallbackTile, true)
         }
     }
 
@@ -257,18 +339,20 @@ enum EntityIcon {
         font: UIFont,
         color: UIColor? = nil
     ) -> UIImage {
-        raster(size) { rect in
-            var attributes: [NSAttributedString.Key: Any] = [.font: font]
-            if let color {
-                attributes[.foregroundColor] = color
-            }
-            let string = text as NSString
-            let textSize = string.size(withAttributes: attributes)
-            string.draw(
-                at: CGPoint(x: rect.midX - textSize.width / 2, y: rect.midY - textSize.height / 2),
-                withAttributes: attributes
-            )
+        raster(size) { rect in drawCentred(text, font: font, color: color, in: rect) }
+    }
+
+    private static func drawCentred(_ text: String, font: UIFont, color: UIColor? = nil, in rect: CGRect) {
+        var attributes: [NSAttributedString.Key: Any] = [.font: font]
+        if let color {
+            attributes[.foregroundColor] = color
         }
+        let string = text as NSString
+        let textSize = string.size(withAttributes: attributes)
+        string.draw(
+            at: CGPoint(x: rect.midX - textSize.width / 2, y: rect.midY - textSize.height / 2),
+            withAttributes: attributes
+        )
     }
 
     /// Centred at its own size, in the rect its caller's content box gives it.
@@ -280,6 +364,18 @@ enum EntityIcon {
     private static func aspectFit(_ content: CGSize, in rect: CGRect) -> CGRect {
         guard content.width > 0, content.height > 0 else { return rect }
         let scale = min(rect.width / content.width, rect.height / content.height)
+        let size = CGSize(width: content.width * scale, height: content.height * scale)
+        return CGRect(
+            x: rect.midX - size.width / 2,
+            y: rect.midY - size.height / 2,
+            width: size.width,
+            height: size.height
+        )
+    }
+
+    private static func aspectFill(_ content: CGSize, in rect: CGRect) -> CGRect {
+        guard content.width > 0, content.height > 0 else { return rect }
+        let scale = max(rect.width / content.width, rect.height / content.height)
         let size = CGSize(width: content.width * scale, height: content.height * scale)
         return CGRect(
             x: rect.midX - size.width / 2,

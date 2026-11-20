@@ -110,8 +110,10 @@ struct AppEventMessageTests {
                 contentDescription: "A smiling fox"
             )),
             ("session_summary_icon_image", .image(assetId: "ia_" + String(repeating: "B", count: 43))),
+            ("session_summary_icon_symbol_effect", .symbol("sparkles", effect: .bounce)),
             ("session_summary_icon_malformed", .defaultValue),
             ("session_summary_icon_future", .defaultValue),
+            ("session_summary_icon_symbol_effect_future", .symbol("sparkles")),
         ]
 
         for (key, expected) in cases {

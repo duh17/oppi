@@ -1035,8 +1035,9 @@ struct IconAssetCacheTests {
         #expect(await counter.value() == 1)
     }
 
-    private func genmoji(_ assetId: String) -> IconChoiceUIView.Content {
-        .choice(.genmoji(assetId: assetId, contentDescription: "Glyph"), purpose: .agent, sandbox: false)
+    /// An image icon: its artwork fills the tile, so the icon reads as the artwork's colour.
+    private func storedImage(_ assetId: String) -> IconChoiceUIView.Content {
+        .choice(.image(assetId: assetId), purpose: .agent, sandbox: false)
     }
 
     private func shownImage(_ icon: IconChoiceUIView) -> UIImage? {
@@ -1111,11 +1112,11 @@ struct IconAssetCacheTests {
                 return (secondImage, NSObject())
             }
         )
-        let icon = IconChoiceUIView(size: 24, frameSize: 24)
+        let icon = IconChoiceUIView(frameSize: 24)
 
-        icon.apply(genmoji(firstID), assetCache: cache)
+        icon.apply(storedImage(firstID), assetCache: cache)
         for _ in 0..<50 where await gate.requestedIDs().isEmpty { await Task.yield() }
-        icon.apply(genmoji(secondID), assetCache: cache)
+        icon.apply(storedImage(secondID), assetCache: cache)
         for _ in 0..<50 where !(await gate.requestedIDs()).contains(secondID) { await Task.yield() }
         await gate.succeed(secondID, data: Data([2]))
         for _ in 0..<50 where !shows(icon, mostly: .systemPink) { try await Task.sleep(for: .milliseconds(10)) }
@@ -1140,11 +1141,11 @@ struct IconAssetCacheTests {
             fetch: { try await newGate.wait(for: $0) },
             decode: { _, _ in (newImage, NSObject()) }
         )
-        let icon = IconChoiceUIView(size: 24, frameSize: 24)
+        let icon = IconChoiceUIView(frameSize: 24)
 
-        icon.apply(genmoji(assetID), assetCache: oldCache)
+        icon.apply(storedImage(assetID), assetCache: oldCache)
         for _ in 0..<50 where await oldGate.requestedIDs().isEmpty { await Task.yield() }
-        icon.apply(genmoji(assetID), assetCache: newCache)
+        icon.apply(storedImage(assetID), assetCache: newCache)
         for _ in 0..<50 where await newGate.requestedIDs().isEmpty { await Task.yield() }
         await newGate.succeed(assetID, data: Data([2]))
         for _ in 0..<50 where !shows(icon, mostly: .systemPink) { try await Task.sleep(for: .milliseconds(10)) }
@@ -1156,15 +1157,13 @@ struct IconAssetCacheTests {
         #expect(!shows(icon, mostly: .systemGreen))
     }
 
-    /// A cache keeps a failed asset failed, and a cleared cache (a reconnect)
-    /// gives it another chance.
     /// An animating view asks for an image's bytes while its first frame loads:
-    /// one fetch serves both, and the bytes stay for the next view. A Genmoji's
-    /// bytes only draw, so they are not kept.
+    /// one fetch serves both, and the bytes stay for the next view and the next
+    /// draw size. A Genmoji's bytes only draw, so they are not kept.
     @Test func imageBytesShareTheDrawFetchAndStayButGenmojiBytesDoNot() async throws {
         let png = try imageIOHEIFFixture(width: 32, height: 32, visible: true, type: .png)
         let heic = try imageIOHEIFFixture(width: 32, height: 32, visible: true)
-        for (data, expectedFetches) in [(png, 1), (heic, 3)] {
+        for (data, expectedFetches) in [(png, 1), (heic, 4)] {
             let counter = IconAssetFetchCounter()
             let cache = IconAssetCache(fetch: { _ in
                 await counter.increment()
@@ -1177,10 +1176,13 @@ struct IconAssetCacheTests {
             _ = try await (drawn, bytes)
             _ = try await cache.data(assetId: assetId)
             _ = try await cache.data(assetId: assetId)
+            _ = try await cache.image(assetId: assetId, size: 64)
             #expect(await counter.value() == expectedFetches)
         }
     }
 
+    /// A cache keeps a failed asset failed, and a cleared cache (a reconnect)
+    /// gives it another chance.
     @Test func aFailedAssetIsNotFetchedAgainUntilTheCacheIsCleared() async throws {
         let assetId = "ia_" + String(repeating: "E", count: 43)
         let counter = IconAssetFetchCounter()
@@ -1282,29 +1284,6 @@ struct AgentIconPresentationTests {
         #expect(AgentIconValue.classify(String(repeating: "a", count: 129)) == .invalid(.tooLong))
         #expect(AgentIconValue.classify("😀" + String(repeating: "‍😀", count: 64)) == .invalid(.tooLong))
         #expect(AgentIconValue.classify("not/a/symbol") == .invalid(.malformed))
-    }
-
-    @Test func scaledIconContentNeverExceedsItsLayoutBox() {
-        let size = AgentIconSizingPolicy.contentSize(
-            baseSize: 20,
-            scaledSize: 40,
-            frameSize: 24
-        )
-
-        #expect(size <= 24)
-        #expect(size == 18.72)
-    }
-
-    @Test func titleBarContentKeepsItsReadableTargetInsideTheFixedSlot() {
-        #expect(AgentIconSizingPolicy.titleSlotSize == 24)
-        #expect(AgentIconSizingPolicy.titleVisualEnvelope == 22)
-
-        let ordinarySize = AgentIconSizingPolicy.titleTextSize(for: 20)
-        let largeDynamicTypeSize = AgentIconSizingPolicy.titleTextSize(for: 32)
-
-        #expect(ordinarySize >= 20)
-        #expect(ordinarySize <= 21)
-        #expect(largeDynamicTypeSize == 21)
     }
 
     @Test func ordinaryAndAgentSessionIdentityUseTheCorrectPresentation() {

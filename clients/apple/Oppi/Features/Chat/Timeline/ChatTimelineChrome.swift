@@ -58,10 +58,8 @@ enum ChatTimelineChromeOverlap {
 /// flashes it.
 final class ChatEmptyStateView: UIView {
     private static let side: CGFloat = 112
-    private let piTile = UIView()
-    /// The mark fills its frame, so it sits inside the tile with a margin.
-    private let piIcon = IconChoiceUIView(size: side * 0.68, frameSize: side * 0.68)
-    private let agentIcon = IconChoiceUIView(size: 64, frameSize: side)
+    /// The Pi mark or the Agent's icon, on its tile.
+    private let icon = IconChoiceUIView(frameSize: side)
     private var top: NSLayoutConstraint?
     private var bottom: NSLayoutConstraint?
     private var shownSessionID: String?
@@ -82,22 +80,10 @@ final class ChatEmptyStateView: UIView {
         backgroundColor = .clear
         let area = UILayoutGuide()
         addLayoutGuide(area)
-        piTile.layer.cornerRadius = Self.side * 0.32
-        piTile.layer.cornerCurve = .continuous
-        piTile.isAccessibilityElement = true
-        piTile.accessibilityTraits = .image
-        piTile.accessibilityLabel = PiAvatar.accessibilityLabel
-        // The hero agent icon scales optically like the chat's other agent marks.
-        agentIcon.transform = CGAffineTransform(
-            scaleX: ChatAgentIconStyle.heroVisualScale,
-            y: ChatAgentIconStyle.heroVisualScale
-        )
-        agentIcon.isAccessibilityElement = true
-        agentIcon.accessibilityTraits = .image
-        for view in [piTile, piIcon, agentIcon] {
-            view.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(view)
-        }
+        icon.isAccessibilityElement = true
+        icon.accessibilityTraits = .image
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(icon)
         // Inside the timeline's safe area and then the bars' overlap, as the
         // hosted SwiftUI empty state laid it out.
         let top = area.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor)
@@ -108,14 +94,8 @@ final class ChatEmptyStateView: UIView {
             top, bottom,
             area.leadingAnchor.constraint(equalTo: leadingAnchor),
             area.trailingAnchor.constraint(equalTo: trailingAnchor),
-            piTile.centerXAnchor.constraint(equalTo: area.centerXAnchor),
-            piTile.centerYAnchor.constraint(equalTo: area.centerYAnchor),
-            piTile.widthAnchor.constraint(equalToConstant: Self.side),
-            piTile.heightAnchor.constraint(equalToConstant: Self.side),
-            piIcon.centerXAnchor.constraint(equalTo: piTile.centerXAnchor),
-            piIcon.centerYAnchor.constraint(equalTo: piTile.centerYAnchor),
-            agentIcon.centerXAnchor.constraint(equalTo: area.centerXAnchor),
-            agentIcon.centerYAnchor.constraint(equalTo: area.centerYAnchor),
+            icon.centerXAnchor.constraint(equalTo: area.centerXAnchor),
+            icon.centerYAnchor.constraint(equalTo: area.centerYAnchor),
         ])
     }
 
@@ -137,23 +117,16 @@ final class ChatEmptyStateView: UIView {
         )
         if key != appliedIcon {
             appliedIcon = key
-            let colors = ComposerThemeColors(palette: themeID.palette)
             switch key.identity {
             case .globalAvatar:
-                piTile.backgroundColor = colors.comment.withAlphaComponent(0.10)
-                piIcon.apply(.piAvatar)
-                piTile.isHidden = false
-                piIcon.isHidden = false
-                agentIcon.isHidden = true
+                icon.apply(.piAvatar)
+                icon.accessibilityLabel = PiAvatar.accessibilityLabel
             case .agent(let content):
-                agentIcon.apply(
+                icon.apply(
                     .choice(key.icon, purpose: .agent, sandbox: false),
                     assetCache: configuration.iconAssetCache
                 )
-                agentIcon.accessibilityLabel = content.accessibilityDescription
-                piTile.isHidden = true
-                piIcon.isHidden = true
-                agentIcon.isHidden = false
+                icon.accessibilityLabel = content.accessibilityDescription
             }
         }
 

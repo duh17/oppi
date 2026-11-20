@@ -29,7 +29,10 @@ enum AgentIconPicker {
     static func description(_ value: IconChoice) -> String {
         switch AgentIconContent.resolve(value) {
         case .text(let emoji): return "Emoji \(emoji)"
-        case .symbol(let name): return IconSymbolCatalog.label(for: name) ?? "SF Symbol"
+        case .symbol(let name):
+            let label = IconSymbolCatalog.label(for: name) ?? "SF Symbol"
+            guard case .symbol(_, let effect?) = value else { return label }
+            return "\(label), \(effect.title)"
         case .genmoji(_, let contentDescription): return contentDescription
         case .image: return "Image"
         case .fallback: return "Default"

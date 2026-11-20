@@ -88,17 +88,13 @@ final class IconAssetCache {
     }
 
     /// An image asset's bytes as the server stores them, for a view that plays
-    /// an animated image. Shares a fetch already under way for the same asset;
-    /// a failure throws and is not kept.
+    /// an animated image and for every draw: the kept copy of an image's, or one
+    /// fetch however many callers ask at the same time, so a second draw size
+    /// fetches nothing. A failure throws and is not kept.
     func data(assetId: String) async throws -> Data {
         if let cached = rawData.object(forKey: assetId as NSString) {
             return cached as Data
         }
-        return try await bytes(assetId: assetId)
-    }
-
-    /// The asset's bytes, fetched once however many callers ask at the same time.
-    private func bytes(assetId: String) async throws -> Data {
         if let load = byteLoads[assetId] {
             return try await load.value
         }
@@ -175,7 +171,7 @@ final class IconAssetCache {
         let decode = self.decode
         let task = Task { @MainActor [weak self] in
             guard let self else { throw CancellationError() }
-            let data = try await bytes(assetId: assetId)
+            let data = try await self.data(assetId: assetId)
             try Task.checkCancellation()
 
             // Remote Agent/workspace bytes are untrusted even after the
@@ -261,6 +257,10 @@ final class IconAssetCache {
     // adaptive-image semantics are supplied by the official iOS/iPadOS picker as
     // NSAdaptiveImageGlyph.imageContent and are not authenticated by either this
     // decoder or the server parser.
+    /// The most frames an icon may hold: a HEIF's few representations, or an
+    /// animated image's frames, bounded like the server's 600.
+    static let maxFrameCount = 600
+
     static func decodeRemoteIcon(
         data: Data,
         size: CGFloat
@@ -276,10 +276,8 @@ final class IconAssetCache {
             throw APIError.server(status: 422, message: "Icon asset is not a decodable icon image")
         }
 
-        // A HEIF holds a few representations; an animated image one per frame,
-        // bounded like the server's 600.
         let representationCount = CGImageSourceGetCount(source)
-        guard (1...600).contains(representationCount),
+        guard (1...maxFrameCount).contains(representationCount),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
                 as? [CFString: Any],
               let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,

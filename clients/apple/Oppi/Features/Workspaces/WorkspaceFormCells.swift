@@ -161,7 +161,7 @@ final class WorkspaceTextEditorCell: UICollectionViewListCell, UITextViewDelegat
 final class WorkspaceIconRowCell: UICollectionViewListCell {
     private let button = SettingsRowButton(type: .system)
     private let titleLabel = UILabel()
-    private let icon = IconChoiceUIView(size: 22, frameSize: 32)
+    private let icon = IconChoiceUIView(frameSize: 32)
 
     override init(frame: CGRect) {
         super.init(frame: frame)

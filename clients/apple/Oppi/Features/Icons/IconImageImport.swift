@@ -34,7 +34,7 @@ enum IconImageImport {
             case .undecodable:
                 String(localized: "This file isn’t an image Oppi can read.")
             case .animatedTooLarge:
-                String(localized: "Animated images can be at most 1 MB and 1,024 pixels on a side. Choose a smaller one.")
+                String(localized: "Animated images can be at most 1 MB, 1,024 pixels on a side, and 600 frames. Choose a smaller one.")
             case .blankFirstFrame:
                 String(localized: "This image’s first frame is empty, so it would show as a blank icon. Choose another one.")
             }
@@ -62,7 +62,8 @@ enum IconImageImport {
         }
 
         if CGImageSourceGetCount(source) > 1, animatedTypes.contains(where: { type.conforms(to: $0) }) {
-            guard data.count <= maxUploadBytes, fitsAnimatedDimension(source) else { throw .animatedTooLarge }
+            guard data.count <= maxUploadBytes, fitsAnimatedDimension(source),
+                  CGImageSourceGetCount(source) <= IconAssetCache.maxFrameCount else { throw .animatedTooLarge }
             guard CGImageSourceCreateImageAtIndex(source, 0, nil) != nil else { throw .undecodable }
             return data
         }

@@ -26,6 +26,10 @@ describe("IconChoice", () => {
       { kind: "image", assetId: ` ia_${"a".repeat(43)} ` },
       { kind: "image", assetId: `ia_${"a".repeat(43)}` },
     ],
+    [
+      { kind: "symbol", name: "sparkles", effect: "wiggle" },
+      { kind: "symbol", name: "sparkles", effect: "wiggle" },
+    ],
   ])("validates tagged icon %#", (input, expected) => {
     expect(validateIconChoice(input)).toEqual(expected);
   });
@@ -39,6 +43,9 @@ describe("IconChoice", () => {
       "contentDescription",
     ],
     [{ kind: "image", assetId: "../../etc/passwd" }, "assetId"],
+    [{ kind: "symbol", name: "sparkles", effect: "spin" }, "icon.effect"],
+    [{ kind: "symbol", name: "sparkles", effect: null }, "icon.effect"],
+    [{ kind: "emoji", value: "🧘", effect: "bounce" }, "unexpected field"],
     [
       { kind: "image", assetId: `ia_${"a".repeat(43)}`, contentDescription: "x" },
       "unexpected field",

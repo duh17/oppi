@@ -81,24 +81,17 @@ struct EntityIconTests {
         #expect(wide.maxX == 36, "the mark sits against the frame's corner")
         #expect(wide.maxY == 36)
 
-        // The Guided pill draws a 12 pt icon in a 16 pt canvas; a row draws its
-        // content box whole (IconChoiceUIView passes box(forGlyph: 24) = 30.77).
+        // The Guided pill draws a 12 pt icon in a 16 pt canvas.
         #expect(EntityIcon.contentRect(inFrame: 16, content: 12) == CGRect(x: 2, y: 2, width: 12, height: 12))
-        let rowGlyph = EntityIcon.box(forGlyph: 24)
-        #expect(EntityIcon.contentRect(inFrame: 36, content: rowGlyph).width == rowGlyph)
-        #expect(EntityIcon.contentRect(inFrame: 36, content: rowGlyph).minX == (36 - rowGlyph) / 2)
     }
 
-    /// Main had two rules, and the content box is how each caller keeps its own:
-    /// a row draws its glyph as large as it does plain, and the Guided pill steps
-    /// a 12 pt icon back inside a 16 pt canvas to make room for the mark.
-    @Test func eachCallerKeepsItsGlyphSizeWhenTheMarkAppears() {
-        // A row: the content box is what draws, not the frame.
-        let rowGlyph = EntityIcon.box(forGlyph: 24)
+    /// The content box is how each caller keeps its own size: the Guided pill
+    /// steps a 12 pt icon back inside a 16 pt canvas to make room for the mark.
+    @Test func eachCallerKeepsItsTileSizeWhenTheMarkAppears() {
         let rowSandbox = EntityIcon.image(
             .workspace(.symbol("square.grid.2x2"), sandbox: true),
             size: 36,
-            contentSize: rowGlyph
+            contentSize: 36
         )
         let narrower = EntityIcon.image(
             .workspace(.symbol("square.grid.2x2"), sandbox: true),
@@ -125,9 +118,44 @@ struct EntityIconTests {
         defaults.set(PiIconStyle.monochrome.rawValue, forKey: key)
         let monochrome = EntityIcon.image(.pi, size: 22)
         #expect(png(monochrome) != png(color))
-        #expect(png(monochrome) == png(PiAvatarRenderer.render(size: 22, style: .monochrome)))
         defaults.set(PiIconStyle.color.rawValue, forKey: key)
         #expect(png(EntityIcon.image(.pi, size: 22)) == png(color))
+    }
+
+    // MARK: - Tile
+
+    /// Every Agent icon kind, Pi included, is the same rounded tile: its edge
+    /// midpoints are painted and its corners are clear, so a list of mixed
+    /// icons lines up in one shape.
+    @Test func everyKindSharesOneRoundedTile() throws {
+        let entities: [IconEntity] = [
+            .agent(nil), .agent(.emoji("🦊")), .agent(.symbol("checkmark.shield")),
+            .agent(.symbol("sparkles", effect: .bounce)), .pi, .workspace(.symbol("hammer"), sandbox: false),
+        ]
+        for entity in entities {
+            let grid = pixelGrid(EntityIcon.image(entity, size: 36))
+            let edge = grid.pixels[1 * grid.width + grid.width / 2]
+            let corner = grid.pixels[0]
+            #expect(edge.a > 0, "\(entity) paints the tile to its top edge")
+            #expect(corner.a == 0, "\(entity) leaves the rounded corner clear")
+        }
+    }
+
+    /// An image fills its tile edge to edge, clipped to the same rounded corners.
+    @Test func imageFillsTheTileEdgeToEdge() async throws {
+        let assetId = "ia_" + String(repeating: "T", count: 43)
+        let cache = IconAssetCache(
+            fetch: { _ in Data([1, 2, 3]) },
+            decode: { _, _ in (Self.solid(.systemPink, side: 8), NSObject()) }
+        )
+        let entity = IconEntity.agent(.image(assetId: assetId))
+        let generation = EntityIcon.loadGeneration
+        _ = EntityIcon.image(entity, size: 36, assets: cache)
+        try await waitForLoad(since: generation)
+        let grid = pixelGrid(EntityIcon.image(entity, size: 36, assets: cache))
+        let edge = grid.pixels[1 * grid.width + grid.width / 2]
+        #expect(edge.r > 200 && edge.g < 120, "the image reaches the tile's edge: \(edge)")
+        #expect(grid.pixels[0].a == 0, "the image is clipped to the tile's corner")
     }
 
     // MARK: - Genmoji

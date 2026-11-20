@@ -736,7 +736,7 @@ private final class WeekBlockView: UIControl {
         if case .entry = block.content {} else {
             // A narrow column keeps the count whole: one icon at most.
             for badge in Self.unique(badges).prefix(isTall ? 4 : 1) {
-                let icon = badge.iconView(size: 10, frameSize: 13, assetCache: assetCache)
+                let icon = badge.iconView(frameSize: 13, assetCache: assetCache)
                 icon.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
                 head.append(icon)
             }
@@ -878,7 +878,7 @@ private final class WeekRunListController: UIViewController {
             name.lineBreakMode = .byTruncatingTail
             name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             var parts: [UIView] = [time]
-            if let badge = badges[index] { parts.append(badge.iconView(size: 15, frameSize: 20, assetCache: assetCache)) }
+            if let badge = badges[index] { parts.append(badge.iconView(frameSize: 20, assetCache: assetCache)) }
             parts += [name, ControlRowViews.spacer()]
             if let cost = item.cost {
                 let label = ControlRowViews.label(SessionFormatting.costString(cost), style: .subheadline, color: palette.ui.comment, lines: 1)

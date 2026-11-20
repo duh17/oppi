@@ -63,8 +63,8 @@ struct ScheduleRowBadge: Hashable {
     }
 
     @MainActor
-    func iconView(size: CGFloat, frameSize: CGFloat, assetCache: IconAssetCache?) -> IconChoiceUIView {
-        let view = IconChoiceUIView(size: size, frameSize: frameSize)
+    func iconView(frameSize: CGFloat, assetCache: IconAssetCache?) -> IconChoiceUIView {
+        let view = IconChoiceUIView(frameSize: frameSize)
         view.apply(.choice(icon, purpose: isAgent ? .agent : .workspace, sandbox: sandbox), assetCache: assetCache)
         return view
     }
@@ -177,7 +177,7 @@ enum ScheduleCalendarRowViews {
         let style = ScheduleCalendarOutcomeStyle(item.outcome, palette: palette)
         var line: [UIView] = []
         if let badge = context.badge {
-            line.append(badge.iconView(size: 15, frameSize: 20, assetCache: context.assetCache))
+            line.append(badge.iconView(frameSize: 20, assetCache: context.assetCache))
         }
         let title = ControlRowViews.label(item.name, style: .body, color: palette.ui.fgDim, lines: 1)
         title.lineBreakMode = .byTruncatingTail
@@ -425,7 +425,7 @@ enum ScheduleCalendarRowViews {
     ) -> UIView? {
         var parts: [UIView] = []
         if let badge {
-            parts.append(badge.iconView(size: 12, frameSize: 15, assetCache: assetCache))
+            parts.append(badge.iconView(frameSize: 15, assetCache: assetCache))
             if includesName {
                 let name = ControlRowViews.label(badge.name, style: .caption1, color: palette.ui.fgDim, lines: 1)
                 name.lineBreakMode = .byTruncatingTail
@@ -481,7 +481,7 @@ enum ScheduleCalendarRowViews {
         var head: [UIView] = [glyph(style, palette: palette, textStyle: .body), title]
         if !context.isAccessibilitySize {
             for badge in badges.prefix(4) {
-                head.append(badge.iconView(size: 14, frameSize: 18, assetCache: context.assetCache))
+                head.append(badge.iconView(frameSize: 18, assetCache: context.assetCache))
             }
         }
         head.append(ControlRowViews.spacer())

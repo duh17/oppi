@@ -12,8 +12,8 @@ final class IconPickerChooserCell: UICollectionViewListCell {
     }
 
     private let button = SettingsRowButton(type: .system)
-    /// The preview is one of the two places an animated image plays.
-    private let iconView = IconChoiceUIView(size: 28, frameSize: 36, animatesImage: true)
+    /// The preview is one of the two places an icon animates.
+    private let iconView = IconChoiceUIView(frameSize: 36, animates: true)
     private let imageView = UIImageView()
     private let promptView = UIImageView(image: UIImage(systemName: "face.smiling"))
     private let titleLabel = UILabel()

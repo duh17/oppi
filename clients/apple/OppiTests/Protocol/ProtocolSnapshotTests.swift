@@ -254,8 +254,11 @@ struct ProtocolSnapshotTests {
                 contentDescription: "A smiling fox"
             )),
             ("state_icon_image", .image(assetId: "ia_" + String(repeating: "B", count: 43))),
+            ("state_icon_symbol_effect", .symbol("sparkles", effect: .bounce)),
             ("state_icon_malformed", .defaultValue),
             ("state_icon_future", .defaultValue),
+            // An effect this build does not know keeps the symbol, still.
+            ("state_icon_symbol_effect_future", .symbol("sparkles")),
         ]
 
         for (key, expected) in cases {

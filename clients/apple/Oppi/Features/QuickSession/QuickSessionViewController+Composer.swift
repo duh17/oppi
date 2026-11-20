@@ -84,6 +84,9 @@ extension QuickSessionViewController: ChatComposerSource {
         return ComposerActionRow(leading: agents, trailing: toolbar.trailing)
     }
 
+    /// Pi's and every Agent's tile in the Agent list: one size, so the rows line up.
+    private static let agentPickerIconSide: CGFloat = 28
+
     /// The action row's Agent list: Pi, then the server's saved Agents.
     private var agentPickerRows: [ComposerOptionRow] {
         let assets = model.selectedServerIconAssetCache
@@ -92,7 +95,7 @@ extension QuickSessionViewController: ChatComposerSource {
                 id: Self.piRowID,
                 title: "Pi",
                 subtitle: nil,
-                icon: EntityIcon.image(.pi, size: 22),
+                icon: EntityIcon.image(.pi, size: Self.agentPickerIconSide),
                 isSelected: model.selectedAgentId == nil,
                 accessibilityIdentifier: "quickSession.agent.pi",
                 accessibilityLabel: "Pi"
@@ -104,7 +107,7 @@ extension QuickSessionViewController: ChatComposerSource {
                     id: agent.id,
                     title: agent.name,
                     subtitle: agent.description,
-                    icon: EntityIcon.image(.agent(agent.icon), size: 16, assets: assets),
+                    icon: EntityIcon.image(.agent(agent.icon), size: Self.agentPickerIconSide, assets: assets),
                     isSelected: model.selectedAgentId == agent.id,
                     accessibilityIdentifier: "quickSession.agent.\(agent.id)",
                     accessibilityLabel: agent.name

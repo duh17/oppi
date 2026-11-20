@@ -48,7 +48,6 @@ enum QuickSessionPickerContent: Equatable {
 struct QuickSessionPickerStyle {
     var width: CGFloat
     var maxHeight: CGFloat
-    var iconSize: CGFloat
     var iconFrame: CGFloat
     var titleStyle: UIFont.TextStyle
     var titleWeight: UIFont.Weight
@@ -64,7 +63,6 @@ struct QuickSessionPickerStyle {
     static let workspace = Self(
         width: 320,
         maxHeight: 430,
-        iconSize: 18,
         iconFrame: 30,
         titleStyle: .body,
         titleWeight: .regular,
@@ -80,7 +78,6 @@ struct QuickSessionPickerStyle {
     static let worktree = Self(
         width: 260,
         maxHeight: 320,
-        iconSize: 12,
         iconFrame: 22,
         titleStyle: .subheadline,
         titleWeight: .semibold,
@@ -97,8 +94,7 @@ struct QuickSessionPickerStyle {
     static let agent = Self(
         width: 280,
         maxHeight: 320,
-        iconSize: 16,
-        iconFrame: 22,
+        iconFrame: 28,
         titleStyle: .subheadline,
         titleWeight: .semibold,
         checkmarkStyle: .subheadline,
@@ -327,7 +323,7 @@ private final class QuickSessionPickerRowButton: UIButton {
         pressedOverlay.layer.cornerCurve = .continuous
         pressedOverlay.isHidden = true
 
-        let icon = IconChoiceUIView(size: style.iconSize, frameSize: style.iconFrame)
+        let icon = IconChoiceUIView(frameSize: style.iconFrame)
         icon.apply(row.icon, assetCache: row.iconAssetCache)
         let title = UILabel()
         title.text = row.title

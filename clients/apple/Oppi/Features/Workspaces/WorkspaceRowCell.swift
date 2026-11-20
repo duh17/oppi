@@ -12,7 +12,7 @@ import UIKit
 /// large text sizes each wraps and the row grows; the icon keeps its size.
 final class WorkspaceRowCell: UICollectionViewListCell {
     private let button = SettingsRowButton(type: .system)
-    private let icon = IconChoiceUIView(size: 24, frameSize: 36)
+    private let icon = IconChoiceUIView(frameSize: 36)
     private let nameLabel = UILabel()
     private let lockLabel = UILabel()
     private let descriptionLabel = UILabel()

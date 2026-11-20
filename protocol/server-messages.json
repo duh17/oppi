@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Canonical ServerMessage JSON — updated by npm run protocol:fixtures:update",
     "generated": "static",
-    "messageCount": 80
+    "messageCount": 82
   },
   "messages": {
     "connected": {
@@ -598,6 +598,64 @@
         ]
       }
     },
+    "state_icon_symbol_effect": {
+      "type": "state",
+      "session": {
+        "id": "test-session-1",
+        "workspaceId": "ws-1",
+        "workspaceName": "My Workspace",
+        "name": "Test Session",
+        "status": "ready",
+        "createdAt": 1739750400000,
+        "lastActivity": 1739750460000,
+        "programStatus": {
+          "state": "blocked",
+          "kind": "question",
+          "message": "Which database?",
+          "since": 1739750455000
+        },
+        "model": "anthropic/claude-sonnet-4-20250514",
+        "messageCount": 5,
+        "tokens": {
+          "input": 1500,
+          "output": 800,
+          "cacheRead": 250,
+          "cacheWrite": 100
+        },
+        "cost": 0.012,
+        "changeStats": {
+          "mutatingToolCalls": 3,
+          "filesChanged": 6,
+          "changedFiles": [
+            "src/main.ts",
+            "README.md"
+          ],
+          "changedFilesOverflow": 4
+        },
+        "contextTokens": 2300,
+        "contextWindow": 200000,
+        "lastMessage": "I've updated the README with the new API docs.",
+        "thinkingLevel": "high",
+        "launch": {
+          "source": "agent",
+          "agentId": "agent-reviewer",
+          "agentVersion": 4,
+          "agentIcon": {
+            "kind": "symbol",
+            "name": "sparkles",
+            "effect": "bounce"
+          },
+          "parentSessionId": "parent-session-1",
+          "status": "accepted",
+          "requestedAt": 1739750399000,
+          "completedAt": 1739750400000
+        },
+        "piSessionFile": "/tmp/pi-sessions/abc123.jsonl",
+        "piSessionFiles": [
+          "/tmp/pi-sessions/abc123.jsonl"
+        ]
+      }
+    },
     "state_program_status_future": {
       "type": "state",
       "session": {
@@ -803,6 +861,64 @@
           "agentIcon": {
             "kind": "animated",
             "version": 2
+          },
+          "parentSessionId": "parent-session-1",
+          "status": "accepted",
+          "requestedAt": 1739750399000,
+          "completedAt": 1739750400000
+        },
+        "piSessionFile": "/tmp/pi-sessions/abc123.jsonl",
+        "piSessionFiles": [
+          "/tmp/pi-sessions/abc123.jsonl"
+        ]
+      }
+    },
+    "state_icon_symbol_effect_future": {
+      "type": "state",
+      "session": {
+        "id": "test-session-1",
+        "workspaceId": "ws-1",
+        "workspaceName": "My Workspace",
+        "name": "Test Session",
+        "status": "ready",
+        "createdAt": 1739750400000,
+        "lastActivity": 1739750460000,
+        "programStatus": {
+          "state": "blocked",
+          "kind": "question",
+          "message": "Which database?",
+          "since": 1739750455000
+        },
+        "model": "anthropic/claude-sonnet-4-20250514",
+        "messageCount": 5,
+        "tokens": {
+          "input": 1500,
+          "output": 800,
+          "cacheRead": 250,
+          "cacheWrite": 100
+        },
+        "cost": 0.012,
+        "changeStats": {
+          "mutatingToolCalls": 3,
+          "filesChanged": 6,
+          "changedFiles": [
+            "src/main.ts",
+            "README.md"
+          ],
+          "changedFilesOverflow": 4
+        },
+        "contextTokens": 2300,
+        "contextWindow": 200000,
+        "lastMessage": "I've updated the README with the new API docs.",
+        "thinkingLevel": "high",
+        "launch": {
+          "source": "agent",
+          "agentId": "agent-reviewer",
+          "agentVersion": 4,
+          "agentIcon": {
+            "kind": "symbol",
+            "name": "sparkles",
+            "effect": "spin-forever"
           },
           "parentSessionId": "parent-session-1",
           "status": "accepted",

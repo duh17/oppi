@@ -887,11 +887,7 @@ extension ChatViewController {
     func railSessionImage() -> UIImage {
         switch assistantIdentityPresentation {
         case .agent:
-            EntityIcon.image(
-                .agent(session?.launch?.agentIcon),
-                size: AgentIconSizingPolicy.titleTextMinimum,
-                assets: connection.iconAssetCache
-            )
+            EntityIcon.image(.agent(session?.launch?.agentIcon), size: 22, assets: connection.iconAssetCache)
         case .globalAvatar:
             EntityIcon.image(.pi, size: 22)
         }

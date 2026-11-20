@@ -5,7 +5,8 @@ import Foundation
 enum IconChoice: Sendable, Equatable, Hashable {
     case defaultValue
     case emoji(String)
-    case symbol(String)
+    /// An SF Symbol, with the effect it plays where icons animate.
+    case symbol(String, effect: IconSymbolEffect? = nil)
     case genmoji(assetId: String, contentDescription: String)
     /// An image the person imported (PNG, APNG, GIF, or WebP), stored on the server.
     case image(assetId: String)
@@ -23,12 +24,32 @@ enum IconChoice: Sendable, Equatable, Hashable {
             return "Default icon"
         case .emoji(let value):
             return "Emoji \(value)"
-        case .symbol(let name):
+        case .symbol(let name, _):
             return "SF Symbol \(name.replacingOccurrences(of: ".", with: " "))"
         case .genmoji(_, let contentDescription):
             return contentDescription
         case .image:
             return "Image icon"
+        }
+    }
+}
+
+/// The SF Symbols effects a symbol icon can loop: the ones that read as an idle
+/// loop on any symbol. The wire values are the server's `IconSymbolEffect`.
+enum IconSymbolEffect: String, Sendable, Codable, CaseIterable {
+    case bounce
+    case pulse
+    case breathe
+    case wiggle
+    case rotate
+
+    var title: String {
+        switch self {
+        case .bounce: "Bounce"
+        case .pulse: "Pulse"
+        case .breathe: "Breathe"
+        case .wiggle: "Wiggle"
+        case .rotate: "Rotate"
         }
     }
 }
@@ -40,8 +61,9 @@ extension IconChoice {
             return ["kind": "default"]
         case .emoji(let value):
             return ["kind": "emoji", "value": .string(value)]
-        case .symbol(let name):
-            return ["kind": "symbol", "name": .string(name)]
+        case .symbol(let name, let effect):
+            guard let effect else { return ["kind": "symbol", "name": .string(name)] }
+            return ["kind": "symbol", "name": .string(name), "effect": .string(effect.rawValue)]
         case .genmoji(let assetId, let contentDescription):
             return [
                 "kind": "genmoji",
@@ -56,7 +78,7 @@ extension IconChoice {
 
 extension IconChoice: Codable {
     private enum CodingKeys: String, CodingKey {
-        case kind, value, name, assetId, contentDescription
+        case kind, value, name, effect, assetId, contentDescription
     }
 
     private enum Kind: String, Codable {
@@ -90,7 +112,9 @@ extension IconChoice: Codable {
                 self = .defaultValue
                 return
             }
-            self = .symbol(normalized)
+            // An effect this build does not know draws the symbol still.
+            let effect = (try? container.decodeIfPresent(String.self, forKey: .effect)).flatMap(IconSymbolEffect.init(rawValue:))
+            self = .symbol(normalized, effect: effect)
         case .genmoji:
             guard let assetId = try? container.decode(String.self, forKey: .assetId),
                   let contentDescription = try? container.decode(String.self, forKey: .contentDescription),
@@ -122,9 +146,10 @@ extension IconChoice: Codable {
         case .emoji(let value):
             try container.encode(Kind.emoji, forKey: .kind)
             try container.encode(value, forKey: .value)
-        case .symbol(let name):
+        case .symbol(let name, let effect):
             try container.encode(Kind.symbol, forKey: .kind)
             try container.encode(name, forKey: .name)
+            try container.encodeIfPresent(effect, forKey: .effect)
         case .genmoji(let assetId, let contentDescription):
             try container.encode(Kind.genmoji, forKey: .kind)
             try container.encode(assetId, forKey: .assetId)

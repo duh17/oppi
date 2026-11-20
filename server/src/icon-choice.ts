@@ -1,9 +1,16 @@
-import type { IconChoice } from "./types/icon.js";
+import type { IconChoice, IconSymbolEffect } from "./types/icon.js";
 import { isRecord } from "./json-shape.js";
 
 export const DEFAULT_ICON_CHOICE: IconChoice = Object.freeze({ kind: "default" });
 export const ICON_ASSET_ID_PATTERN = /^ia_[A-Za-z0-9_-]{43}$/;
 export const ICON_CONTENT_DESCRIPTION_MAX_SCALARS = 256;
+export const ICON_SYMBOL_EFFECTS: readonly IconSymbolEffect[] = [
+  "bounce",
+  "pulse",
+  "breathe",
+  "wiggle",
+  "rotate",
+];
 
 const SF_SYMBOL_NAME_PATTERN = /^[A-Za-z0-9.-]+$/;
 const ICON_TEXT_MAX_SCALARS = 128;
@@ -42,12 +49,17 @@ export function validateIconChoice(
     }
 
     case "symbol": {
-      assertAllowedKeys(value, new Set(["kind", "name"]), "icon");
+      assertAllowedKeys(value, new Set(["kind", "name", "effect"]), "icon");
       const name = requireBoundedString(value.name, "icon.name", ICON_TEXT_MAX_SCALARS);
       if (!SF_SYMBOL_NAME_PATTERN.test(name)) {
         throw new Error("icon.name must be an SF Symbol name");
       }
-      return { kind: "symbol", name };
+      if (value.effect === undefined) return { kind: "symbol", name };
+      const effect = ICON_SYMBOL_EFFECTS.find((candidate) => candidate === value.effect);
+      if (!effect) {
+        throw new Error(`icon.effect must be one of ${ICON_SYMBOL_EFFECTS.join(", ")}`);
+      }
+      return { kind: "symbol", name, effect };
     }
 
     case "genmoji": {
@@ -102,7 +114,7 @@ export function formatIconChoice(value: IconChoice | undefined): string {
     case "emoji":
       return `emoji ${value.value}`;
     case "symbol":
-      return `symbol ${value.name}`;
+      return value.effect ? `symbol ${value.name} (${value.effect})` : `symbol ${value.name}`;
     case "genmoji":
       return `Genmoji ${value.contentDescription}`;
     case "image":

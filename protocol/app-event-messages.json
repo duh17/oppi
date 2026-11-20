@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Canonical AppEventMessage JSON — updated by npm run protocol:fixtures:update",
     "generated": "static",
-    "messageCount": 29
+    "messageCount": 31
   },
   "messages": {
     "app_events_connected": {
@@ -335,6 +335,43 @@
         "pendingAskCount": 0
       }
     },
+    "session_summary_icon_symbol_effect": {
+      "type": "session_summary",
+      "sessionId": "sess-1",
+      "workspaceId": "ws-1",
+      "emittedAt": 1791650100000,
+      "summary": {
+        "id": "sess-1",
+        "workspaceId": "ws-1",
+        "workspaceName": "Workspace One",
+        "name": "Test session",
+        "status": "ready",
+        "createdAt": 1791650000000,
+        "lastActivity": 1791650010000,
+        "model": "anthropic/claude-sonnet-4-20250514",
+        "messageCount": 1,
+        "tokens": {
+          "input": 10,
+          "output": 5,
+          "cacheRead": 0,
+          "cacheWrite": 0
+        },
+        "cost": 0.001,
+        "firstMessage": "Hello",
+        "agentId": "agent-reviewer",
+        "agentIcon": {
+          "kind": "symbol",
+          "name": "sparkles",
+          "effect": "bounce"
+        },
+        "programStatus": {
+          "state": "done",
+          "message": "Test session",
+          "since": 1791650009000
+        },
+        "pendingAskCount": 0
+      }
+    },
     "session_summary_program_status_future": {
       "type": "session_summary",
       "sessionId": "sess-1",
@@ -435,6 +472,43 @@
         "agentIcon": {
           "kind": "animated",
           "version": 2
+        },
+        "programStatus": {
+          "state": "done",
+          "message": "Test session",
+          "since": 1791650009000
+        },
+        "pendingAskCount": 0
+      }
+    },
+    "session_summary_icon_symbol_effect_future": {
+      "type": "session_summary",
+      "sessionId": "sess-1",
+      "workspaceId": "ws-1",
+      "emittedAt": 1791650100000,
+      "summary": {
+        "id": "sess-1",
+        "workspaceId": "ws-1",
+        "workspaceName": "Workspace One",
+        "name": "Test session",
+        "status": "ready",
+        "createdAt": 1791650000000,
+        "lastActivity": 1791650010000,
+        "model": "anthropic/claude-sonnet-4-20250514",
+        "messageCount": 1,
+        "tokens": {
+          "input": 10,
+          "output": 5,
+          "cacheRead": 0,
+          "cacheWrite": 0
+        },
+        "cost": 0.001,
+        "firstMessage": "Hello",
+        "agentId": "agent-reviewer",
+        "agentIcon": {
+          "kind": "symbol",
+          "name": "sparkles",
+          "effect": "spin-forever"
         },
         "programStatus": {
           "state": "done",

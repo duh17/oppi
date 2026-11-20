@@ -79,7 +79,7 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func savedAgentBadgeLoadsGenmojiWithoutPiIdentity() async throws {
+    @Test func savedAgentBadgeLoadsArtworkWithoutPiIdentity() async throws {
         let assetId = "ia_" + UUID().uuidString.replacingOccurrences(of: "-", with: "") + String(repeating: "A", count: 11)
         let fetchCounter = IconAssetFetchCounterForTimeline()
         let expectedImage = UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4)).image { context in
@@ -97,7 +97,8 @@ struct AssistantTimelineRowContentViewTests {
         badge.configure(
             sessionId: "saved-agent-avatar-notification",
             agentId: "agent-1",
-            agentIcon: .genmoji(assetId: assetId, contentDescription: "Agent glyph"),
+            // An image fills its tile, so the badge reads as the artwork's colour.
+            agentIcon: .image(assetId: assetId),
             iconAssetCache: cache
         )
 
@@ -106,7 +107,7 @@ struct AssistantTimelineRowContentViewTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(showsPinkArtwork(imageView.image))
-        #expect(badge.accessibilityLabel == "Saved Agent, Agent glyph")
+        #expect(badge.accessibilityLabel == "Saved Agent, Image icon")
         #expect(await fetchCounter.recordedIDs() == [assetId])
     }
 
@@ -169,7 +170,7 @@ struct AssistantTimelineRowContentViewTests {
         #expect(await gate.recordedIDs() == [firstId])
         // The asset that arrived late belongs to the icon the badge no longer shows.
         let imageView = try #require(badge.subviews.compactMap { $0 as? UIImageView }.first)
-        #expect(imageView.image?.pngData() == EntityIcon.image(.agent(.emoji("🧘")), size: 36).pngData())
+        #expect(imageView.image?.pngData() == EntityIcon.image(.agent(.emoji("🧘")), size: 18).pngData())
     }
 
     @MainActor

@@ -56,9 +56,9 @@ final class IconPickerViewController: ListScreenController<IconPickerViewControl
         let commit: (IconChoice) async throws -> Void
     }
 
-    enum Section: Hashable, Sendable { case saveError, custom, image, symbolSearch, symbols, saving }
+    enum Section: Hashable, Sendable { case saveError, custom, symbolEffect, image, symbolSearch, symbols, saving }
     enum Item: Hashable, Sendable {
-        case saveError, chooser, validation, importPhotos, importFiles, search, noResults, symbol(String), saving
+        case saveError, chooser, validation, symbolEffect, importPhotos, importFiles, search, noResults, symbol(String), saving
     }
 
     private let source: Source
@@ -98,7 +98,7 @@ final class IconPickerViewController: ListScreenController<IconPickerViewControl
             defaultValue: .defaultValue,
             customChoice: Self.customChoice,
             valueValidation: { value in
-                guard case .symbol(let name) = value, !IconSymbolCatalog.isAvailable(name) else { return nil }
+                guard case .symbol(let name, _) = value, !IconSymbolCatalog.isAvailable(name) else { return nil }
                 return "The selected SF Symbol is unavailable on this device."
             }
         )
@@ -163,6 +163,13 @@ final class IconPickerViewController: ListScreenController<IconPickerViewControl
             footer: "Use the Globe key to switch to the Emoji keyboard if needed.",
             items: model.validationMessage == nil ? [.chooser] : [.chooser, .validation]
         ))
+        if source.purpose.offersSymbolEffects, draftSymbol != nil {
+            sections.append(ListSection(
+                .symbolEffect,
+                footer: "Plays on the Agent’s page. Reduce Motion and Low Power Mode keep it still.",
+                items: [.symbolEffect]
+            ))
+        }
         if source.prepareImage != nil {
             sections.append(ListSection(
                 .image,
@@ -198,9 +205,10 @@ final class IconPickerViewController: ListScreenController<IconPickerViewControl
                 AnyHashable(model.isSaving),
             ])
         case .validation: AnyHashable(model.validationMessage)
+        case .symbolEffect: AnyHashable([AnyHashable(model.draft), AnyHashable(model.isSaving)])
         case .search, .importPhotos, .importFiles: AnyHashable(model.isSaving)
         case .noResults: AnyHashable(searchText)
-        case .symbol(let name): AnyHashable([model.draft == .value(.symbol(name)), model.isSaving])
+        case .symbol(let name): AnyHashable([draftSymbol?.name == name, model.isSaving])
         case .saving: AnyHashable(0)
         }
     }
@@ -230,7 +238,7 @@ final class IconPickerViewController: ListScreenController<IconPickerViewControl
     ) -> NSCollectionLayoutSection? {
         switch section {
         case .symbols: Self.symbolGrid(environment)
-        case .custom: Self.listSection(environment, headers: false, footers: true)
+        case .custom, .symbolEffect: Self.listSection(environment, headers: false, footers: true)
         case .image: Self.listSection(environment, headers: true, footers: true)
         case .symbolSearch: Self.listSection(environment, headers: true, footers: false)
         case .saveError, .saving: nil
@@ -327,11 +335,12 @@ final class IconPickerViewController: ListScreenController<IconPickerViewControl
     }
     private lazy var symbolCell = UICollectionView.CellRegistration<IconPickerSymbolCell, Item> { [weak self] cell, _, item in
         guard let self, case .symbol(let name) = item else { return }
-        let value = IconChoice.symbol(name)
+        // Another symbol keeps the effect chosen for the last one.
+        let value = IconChoice.symbol(name, effect: draftSymbol?.effect)
         cell.configure(
             symbolName: name,
             label: IconSymbolCatalog.label(for: name) ?? name,
-            isSelected: model.draft == .value(value),
+            isSelected: draftSymbol?.name == name,
             isEnabled: !model.isSaving,
             identifier: "\(source.accessibilityPrefix).symbol.\(name)"
         ) { [weak self] in
@@ -340,10 +349,29 @@ final class IconPickerViewController: ListScreenController<IconPickerViewControl
         }
     }
 
+    private lazy var symbolEffectRow = UICollectionView.CellRegistration<IconPickerSymbolEffectCell, Item> { [weak self] cell, _, _ in
+        guard let self, let draftSymbol else { return }
+        cell.configure(
+            symbol: draftSymbol.name,
+            effect: draftSymbol.effect,
+            assetCache: source.assetCache,
+            isEnabled: !model.isSaving,
+            identifier: "\(source.accessibilityPrefix).symbolEffect"
+        ) { [weak self] effect in
+            self?.select(.symbol(draftSymbol.name, effect: effect))
+        }
+    }
+
+    /// The symbol the draft holds, and its effect.
+    private var draftSymbol: (name: String, effect: IconSymbolEffect?)? {
+        guard case .value(.symbol(let name, let effect)) = model.draft else { return nil }
+        return (name, effect)
+    }
+
     /// The page's own cells are registered before the first row is dequeued; the
     /// kit paints the theme's card behind the ones that are list cells.
     override func prepareRegistrations() {
-        _ = (saveErrorRow, validationRow, noResultsRow, savingRow, chooserRow, searchRow, symbolCell)
+        _ = (saveErrorRow, validationRow, noResultsRow, savingRow, chooserRow, symbolEffectRow, searchRow, symbolCell)
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
@@ -358,6 +386,8 @@ final class IconPickerViewController: ListScreenController<IconPickerViewControl
             return collectionView.dequeueConfiguredReusableCell(using: savingRow, for: indexPath, item: item)
         case .chooser:
             return collectionView.dequeueConfiguredReusableCell(using: chooserRow, for: indexPath, item: item)
+        case .symbolEffect:
+            return collectionView.dequeueConfiguredReusableCell(using: symbolEffectRow, for: indexPath, item: item)
         case .search:
             return collectionView.dequeueConfiguredReusableCell(using: searchRow, for: indexPath, item: item)
         case .symbol:

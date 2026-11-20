@@ -284,7 +284,7 @@ struct IconPickerModelTests {
             savedValue: IconChoice.defaultValue,
             defaultValue: .defaultValue,
             valueValidation: { value in
-                guard case .symbol(let name) = value, !isAvailable else { return nil }
+                guard case .symbol(let name, _) = value, !isAvailable else { return nil }
                 return "The SF Symbol \(name) is unavailable on this device."
             }
         )

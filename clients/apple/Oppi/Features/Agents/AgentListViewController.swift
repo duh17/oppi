@@ -168,9 +168,9 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
             ListScreen.buttonRow(cell, identifier: "agents.row.pi", label: "Pi", value: "Global Pi configuration") { [weak self] in
                 self?.openPi()
             }
-            cell.contentConfiguration = ControlViewContent(insets: .init(top: 4, leading: 0, bottom: 4, trailing: 0)) {
+            cell.contentConfiguration = ControlViewContent(insets: Self.rowInsets) {
                 Self.row(
-                    icon: Self.tile(EntityIcon.image(.pi, size: 22), size: 22, padding: 8, radius: 10, palette: palette),
+                    icon: Self.icon(.piAvatar),
                     title: "Pi",
                     badge: nil,
                     subtitle: "Global Pi configuration",
@@ -191,7 +191,7 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
                 self?.openAgent(agent.id)
             }
             let assets = root.windowConnectionOrStandIn.iconAssetCache
-            cell.contentConfiguration = ControlViewContent(insets: .init(top: 4, leading: 0, bottom: 4, trailing: 0)) {
+            cell.contentConfiguration = ControlViewContent(insets: Self.rowInsets) {
                 let badge = ControlStatusPill()
                 badge.apply(
                     text: "v\(agent.version)",
@@ -200,14 +200,6 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
                     palette: palette,
                     monospacedDigit: true
                 )
-                let icon = UIImageView(image: EntityIcon.image(
-                    .agent(agent.icon),
-                    size: 22,
-                    assets: assets
-                ))
-                icon.contentMode = .center
-                icon.widthAnchor.constraint(equalToConstant: 30).isActive = true
-                icon.heightAnchor.constraint(equalToConstant: 30).isActive = true
                 let updated = UILabel()
                 updated.text = agent.updatedAt.relativeString()
                 updated.font = UIFont.scaled(.caption2, monospacedDigits: true)
@@ -215,7 +207,7 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
                 updated.textColor = palette.ui.comment
                 updated.setContentCompressionResistancePriority(.required, for: .horizontal)
                 return Self.row(
-                    icon: icon,
+                    icon: Self.icon(.choice(agent.icon, purpose: .agent, sandbox: false), assets: assets),
                     title: agent.name,
                     badge: badge,
                     subtitle: description,
@@ -243,27 +235,17 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
         let text = ControlRowViews.stack([titleRow, caption], spacing: 4, alignment: .leading)
         var views: [UIView] = [icon, text, ControlRowViews.spacer()]
         if let trailing { views.append(trailing) }
-        return ControlRowViews.stack(views, axis: .horizontal, spacing: 12, alignment: .center)
+        return ControlRowViews.stack(views, axis: .horizontal, spacing: 14, alignment: .center)
     }
 
-    /// An image on a rounded highlight tile (Pi's avatar).
-    static func tile(_ image: UIImage, size: CGFloat, padding: CGFloat, radius: CGFloat, palette: ThemePalette) -> UIView {
-        let tile = UIView()
-        tile.backgroundColor = palette.ui.bgHighlight
-        tile.layer.cornerRadius = radius
-        tile.layer.cornerCurve = .continuous
-        let imageView = UIImageView(image: image)
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        tile.addSubview(imageView)
-        NSLayoutConstraint.activate([
-            imageView.widthAnchor.constraint(equalToConstant: size),
-            imageView.heightAnchor.constraint(equalToConstant: size),
-            imageView.topAnchor.constraint(equalTo: tile.topAnchor, constant: padding),
-            imageView.bottomAnchor.constraint(equalTo: tile.bottomAnchor, constant: -padding),
-            imageView.leadingAnchor.constraint(equalTo: tile.leadingAnchor, constant: padding),
-            imageView.trailingAnchor.constraint(equalTo: tile.trailingAnchor, constant: -padding),
-        ])
-        return tile
+    /// Room above and below each row, so the tiles and two-line captions breathe.
+    private static let rowInsets = NSDirectionalEdgeInsets(top: 12, leading: 0, bottom: 12, trailing: 0)
+
+    /// Pi's and every Agent's icon in the list: one 36 pt tile.
+    private static func icon(_ content: IconChoiceUIView.Content, assets: IconAssetCache? = nil) -> IconChoiceUIView {
+        let icon = IconChoiceUIView(frameSize: 36)
+        icon.apply(content, assetCache: assets)
+        return icon
     }
 
     // MARK: - Actions

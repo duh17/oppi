@@ -165,8 +165,10 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
         case .identity:
             ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent {
+                let mark = IconChoiceUIView(frameSize: 56)
+                mark.apply(.piAvatar)
                 let identity = ControlRowViews.stack([
-                    AgentListViewController.tile(EntityIcon.image(.pi, size: 32), size: 32, padding: 12, radius: 14, palette: palette),
+                    mark,
                     ControlRowViews.label("Pi", style: .title2, weight: .bold, color: palette.ui.fg, lines: 1),
                 ], axis: .horizontal, spacing: 14, alignment: .center)
                 identity.isAccessibilityElement = true

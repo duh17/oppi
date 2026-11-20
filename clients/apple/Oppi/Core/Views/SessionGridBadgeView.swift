@@ -18,10 +18,6 @@ final class SessionGridBadgeView: UIView {
         didSet { updateIfNeeded() }
     }
 
-    var agentVisualScale: CGFloat = 1 {
-        didSet { updateIfNeeded() }
-    }
-
     var iconAssetCache: IconAssetCache? {
         didSet {
             guard iconAssetCache !== oldValue else { return }
@@ -89,15 +85,13 @@ final class SessionGridBadgeView: UIView {
         sessionId: String,
         agentId: String?,
         agentIcon: IconChoice?,
-        iconAssetCache: IconAssetCache?,
-        agentVisualScale: CGFloat = 1
+        iconAssetCache: IconAssetCache?
     ) {
         isConfiguring = true
         self.sessionId = sessionId
         self.agentId = agentId
         self.agentIcon = agentIcon
         self.iconAssetCache = iconAssetCache
-        self.agentVisualScale = agentVisualScale
         isConfiguring = false
         updateIfNeeded()
     }
@@ -127,22 +121,15 @@ final class SessionGridBadgeView: UIView {
             accessibilityLabel = "Saved Agent, \(content.accessibilityDescription)"
             identity = "agent:\(content)"
         }
-        imageView.transform = switch presentation {
-        case .agent:
-            CGAffineTransform(scaleX: agentVisualScale, y: agentVisualScale)
-        case .globalAvatar:
-            .identity
-        }
-
         let applied = "\(sessionId):\(ThemeRuntimeState.currentThemeID().rawValue):\(identity)"
         guard applied != lastApplied else { return }
         lastApplied = applied
 
         switch presentation {
         case .agent:
-            imageView.image = EntityIcon.image(.agent(agentIcon), size: 36, assets: iconAssetCache)
+            imageView.image = EntityIcon.image(.agent(agentIcon), size: 18, assets: iconAssetCache)
         case .globalAvatar:
-            imageView.image = EntityIcon.image(.pi, size: 36)
+            imageView.image = EntityIcon.image(.pi, size: 18)
         }
     }
 }

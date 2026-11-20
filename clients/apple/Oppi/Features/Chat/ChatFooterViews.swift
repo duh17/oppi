@@ -689,14 +689,8 @@ final class ChatJumpToBottomView: UIView {
 /// the tap, the menu, and accessibility.
 final class ChatTitleView: UIView {
     weak var chat: ChatViewController?
-    /// The Pi mark on its rounded tile, or the session's Agent icon.
-    private let piTile = UIView()
-    /// The mark fills its frame, so it sits inside the 20 pt tile with a margin.
-    private let piIcon = IconChoiceUIView(size: 14, frameSize: 14)
-    private let agentIcon = IconChoiceUIView(
-        size: AgentIconSizingPolicy.titleTextMinimum,
-        frameSize: AgentIconSizingPolicy.titleSlotSize
-    )
+    /// The Pi mark or the session's Agent icon, on its tile.
+    private let avatarIcon = IconChoiceUIView(frameSize: 22)
     private let nameLabel = ExtensionChromeFont.label(.subheadline, .semibold)
     private let costLabel = UILabel()
     private let mirror = TerminalMirrorIndicatorUIView()
@@ -718,10 +712,6 @@ final class ChatTitleView: UIView {
         super.init(frame: .zero)
         clipsToBounds = true
         isUserInteractionEnabled = false
-        piTile.layer.cornerRadius = 20 * 0.32
-        piTile.layer.cornerCurve = .continuous
-        piIcon.translatesAutoresizingMaskIntoConstraints = false
-        piTile.addSubview(piIcon)
         nameLabel.lineBreakMode = .byTruncatingTail
         nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         costLabel.font = UIFont.scaled(.caption2, monospacedDigits: true)
@@ -734,7 +724,7 @@ final class ChatTitleView: UIView {
             label.setContentCompressionResistancePriority(.required, for: .horizontal)
             label.setContentHuggingPriority(.required, for: .horizontal)
         }
-        let row = UIStackView(arrangedSubviews: [piTile, agentIcon, nameLabel, costLabel, mirror, durableLabel])
+        let row = UIStackView(arrangedSubviews: [avatarIcon, nameLabel, costLabel, mirror, durableLabel])
         row.axis = .horizontal
         row.alignment = .center
         row.spacing = 6
@@ -753,10 +743,6 @@ final class ChatTitleView: UIView {
             column.trailingAnchor.constraint(equalTo: trailingAnchor),
             row.widthAnchor.constraint(lessThanOrEqualTo: column.widthAnchor),
             subtitleLabel.widthAnchor.constraint(lessThanOrEqualTo: column.widthAnchor),
-            piIcon.topAnchor.constraint(equalTo: piTile.topAnchor, constant: 3),
-            piIcon.bottomAnchor.constraint(equalTo: piTile.bottomAnchor, constant: -3),
-            piIcon.leadingAnchor.constraint(equalTo: piTile.leadingAnchor, constant: 3),
-            piIcon.trailingAnchor.constraint(equalTo: piTile.trailingAnchor, constant: -3),
             maxWidth,
         ])
     }
@@ -800,15 +786,11 @@ final class ChatTitleView: UIView {
         )
         guard avatar != appliedAvatar else { return }
         appliedAvatar = avatar
-        let colors = ComposerThemeColors(palette: palette)
-        let isAgent = if case .agent = avatar.identity { true } else { false }
-        piTile.isHidden = isAgent
-        agentIcon.isHidden = !isAgent
-        if isAgent {
-            agentIcon.apply(.choice(avatar.icon, purpose: .agent, sandbox: false), assetCache: assetCache)
-        } else {
-            piTile.backgroundColor = colors.comment.withAlphaComponent(0.10)
-            piIcon.apply(.piAvatar)
+        switch avatar.identity {
+        case .agent:
+            avatarIcon.apply(.choice(avatar.icon, purpose: .agent, sandbox: false), assetCache: assetCache)
+        case .globalAvatar:
+            avatarIcon.apply(.piAvatar)
         }
     }
 }

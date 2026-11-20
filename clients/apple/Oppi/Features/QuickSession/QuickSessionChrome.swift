@@ -44,10 +44,10 @@ final class QuickSessionPillButton: UIButton {
     let style: Style
 
     /// `iconFrame` is the icon's square; a symbol-only pill keeps its glyph's own size.
-    init(style: Style = .pill, iconSize: CGFloat? = nil, iconFrame: CGFloat? = nil, minimumWidth: CGFloat = 0) {
+    init(style: Style = .pill, iconFrame: CGFloat? = nil, minimumWidth: CGFloat = 0) {
         self.style = style
         let isBar = style == .bar
-        iconView = IconChoiceUIView(size: iconSize ?? (isBar ? 20 : 12), frameSize: iconFrame ?? (isBar ? 26 : 16))
+        iconView = IconChoiceUIView(frameSize: iconFrame ?? (isBar ? 26 : 16))
         super.init(frame: .zero)
         if isBar {
             isPointerInteractionEnabled = true

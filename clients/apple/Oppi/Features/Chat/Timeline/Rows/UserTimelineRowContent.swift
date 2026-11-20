@@ -181,10 +181,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
     private let agentHeaderStack = UIStackView()
     /// The sender's identity: its saved Agent's emoji, symbol, or Genmoji, or the
     /// global avatar. The same view the chat title and the empty chat draw it with.
-    private let agentIconView = IconChoiceUIView(
-        size: UserTimelineRowContentView.agentCardIconSize,
-        frameSize: UserTimelineRowContentView.agentCardIconSize
-    )
+    private let agentIconView = IconChoiceUIView(frameSize: UserTimelineRowContentView.agentCardIconSize)
     /// Keeps the mark level with the sender's name instead of centred on the
     /// header's two text lines; it takes the title stack's height, so the header
     /// is no taller than its text.
@@ -678,16 +675,10 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         switch card.senderIdentity {
         case .globalAvatar:
             agentIconView.apply(.piAvatar)
-            agentIconView.transform = .identity
         case .agent:
             agentIconView.apply(
                 .choice(icon, purpose: .agent, sandbox: false),
                 assetCache: currentConfiguration.iconAssetCache
-            )
-            // Agent artwork carries more internal whitespace than the Pi mark.
-            agentIconView.transform = CGAffineTransform(
-                scaleX: ChatAgentIconStyle.compactVisualScale,
-                y: ChatAgentIconStyle.compactVisualScale
             )
         }
         agentIconShowsSender = true
@@ -707,7 +698,6 @@ final class UserTimelineRowContentView: UIView, UIContentView {
             // request running, under whatever this row draws next.
             agentIconShowsSender = false
             agentIconView.apply(.piAvatar)
-            agentIconView.transform = .identity
         }
         agentChevronView.image = nil
         agentChevronView.isHidden = true

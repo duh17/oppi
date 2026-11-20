@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 @testable import Oppi
 
 /// The animation rule for image icons: an icon view plays an animated image only
-/// when it was made to (`animatesImage`, the Agent page and the icon picker), and
+/// when it was made to (`animates`, the Agent page and the icon picker), and
 /// stops when it leaves its window. Everywhere else it draws the first frame.
 @Suite("Icon image animation")
 @MainActor
@@ -19,8 +19,8 @@ struct IconChoiceUIViewAnimationTests {
         window.isHidden = false
         defer { hideTestWindow(window) }
 
-        let still = IconChoiceUIView(size: 48, frameSize: 64)
-        let playing = IconChoiceUIView(size: 48, frameSize: 64, animatesImage: true)
+        let still = IconChoiceUIView(frameSize: 64)
+        let playing = IconChoiceUIView(frameSize: 64, animates: true)
         for (index, view) in [still, playing].enumerated() {
             view.translatesAutoresizingMaskIntoConstraints = false
             window.addSubview(view)

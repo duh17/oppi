@@ -21,6 +21,12 @@ enum IconPickerPurpose: Sendable {
         [.emoji, .genmoji, .symbol]
     }
 
+    /// Only an Agent's icon animates (on its page and here), so only an
+    /// Agent's symbol takes an effect.
+    var offersSymbolEffects: Bool {
+        self == .agent
+    }
+
     var title: String {
         switch self {
         case .agent: return "Agent Icon"
