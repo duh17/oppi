@@ -1,0 +1,1 @@
+- **Server:** A saved Agent can set `resources.noSessionHistory: true` to stop its durable sessions, their forks, and the children they spawn (whatever Agent a child runs as) from reading other sessions through `history://` or `agent://`, whether from `read` or a codemode script.

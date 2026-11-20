@@ -177,6 +177,151 @@ describe("internal URLs through the durable read tool", () => {
     expect(results[10]!.text).toContain("plain file still reads");
   }, 30_000);
 
+  it("refuses history:// and agent:// to a saved Agent with noSessionHistory, from read and codemode alike", async () => {
+    const f = await fixture([]);
+    const agent = f.storage.getAgentDefinitionStore().createAgent({
+      name: "Sealed",
+      resources: { noSessionHistory: true },
+      sessionDefaults: { tools: ["read", "codemode"] },
+    });
+    const sealed = f.create("Sealed", f.workspace.id);
+    sealed.launch = {
+      status: "launching",
+      requestedAt: 1,
+      agentId: agent.id,
+      agentVersion: agent.version,
+    } as NonNullable<typeof sealed.launch>;
+    f.storage.saveSession(sealed);
+    const ordinary = f.create("Ordinary", f.workspace.id);
+    const script = [
+      'for (const path of ["history://", "agent://"]) {',
+      "  try { await tools.read({ path }); console.log(`${path} READ`); }",
+      "  catch (error) { console.log(String(error)); }",
+      "}",
+    ].join("\n");
+    f.faux.setResponses([
+      read("history://"),
+      read("agent://"),
+      read("proc://"),
+      fauxAssistantMessage([fauxToolCall("codemode", { code: script })], {
+        stopReason: "toolUse",
+      }),
+      fauxAssistantMessage("SEALED-DONE"),
+      read("history://"),
+      read(`history://${sealed.id}`),
+      fauxAssistantMessage("ORDINARY-DONE"),
+    ]);
+    await f.manager.startSession(sealed.id, f.workspace);
+    await f.manager.startSession(ordinary.id, f.workspace);
+    await f.turn(sealed.id, "look");
+    await f.turn(ordinary.id, "look");
+
+    const [history, agentList, proc] = await f.reads(sealed.id);
+    expect(history).toEqual({
+      isError: true,
+      text: expect.stringContaining("history:// is turned off for this Agent's sessions."),
+    });
+    expect(agentList).toEqual({
+      isError: true,
+      text: expect.stringContaining("agent:// is turned off for this Agent's sessions."),
+    });
+    // Other schemes keep working.
+    expect(proc!.text).not.toContain("turned off");
+    const codemode = (
+      (await f.manager.runCommand(sealed.id, { type: "get_messages" })) as Array<{
+        role: string;
+        toolName?: string;
+        content?: Array<{ type: string; text?: string }>;
+      }>
+    )
+      .filter((m) => m.role === "toolResult" && m.toolName === "codemode")
+      .map((m) => (m.content ?? []).map((part) => part.text ?? "").join(""));
+    expect(codemode).toHaveLength(1);
+    expect(codemode[0]).toContain("history:// is turned off for this Agent's sessions.");
+    expect(codemode[0]).toContain("agent:// is turned off for this Agent's sessions.");
+    expect(codemode[0]).not.toContain("READ");
+
+    // A session without the setting still reads the sealed one's transcript.
+    const [list, transcript] = await f.reads(ordinary.id);
+    expect(list).toMatchObject({ isError: false });
+    expect(list!.text).toContain(sealed.id);
+    expect(transcript).toMatchObject({ isError: false });
+    expect(transcript!.text).toContain("SEALED-DONE");
+  }, 30_000);
+
+  it("keeps noSessionHistory on a sealed session's children, also one launched as another Agent", async () => {
+    const f = await fixture([]);
+    const agents = f.storage.getAgentDefinitionStore();
+    const sealedAgent = agents.createAgent({
+      name: "Sealed",
+      resources: { noSessionHistory: true },
+    });
+    const open = agents.createAgent({ name: "Open" });
+    const parent = f.create("Sealed", f.workspace.id);
+    parent.launch = {
+      status: "launching",
+      requestedAt: 1,
+      agentId: sealedAgent.id,
+      agentVersion: sealedAgent.version,
+    } as NonNullable<typeof parent.launch>;
+    f.storage.saveSession(parent);
+    const step: FauxResponseStep = (transcript) => {
+      const last = transcript.messages.findLast((message) => message.role !== "system")!;
+      if (last.role === "toolResult")
+        return fauxAssistantMessage(last.toolName === "read" ? "CHILD-DONE" : "PARENT-DONE");
+      const text = JSON.stringify(last.content);
+      if (text.includes("CHILD_TASK"))
+        return fauxAssistantMessage(
+          [
+            fauxToolCall("read", { path: "history://" }),
+            fauxToolCall("read", { path: "agent://" }),
+          ],
+          { stopReason: "toolUse" },
+        );
+      if (text.includes("Delegate"))
+        return fauxAssistantMessage(
+          [
+            fauxToolCall("subagent", {
+              action: "spawn",
+              name: "Plain",
+              task: "CHILD_TASK plain",
+              wait: true,
+            }),
+            fauxToolCall("subagent", {
+              action: "spawn",
+              name: "Other",
+              task: "CHILD_TASK other",
+              agent: open.id,
+              wait: true,
+            }),
+          ],
+          { stopReason: "toolUse" },
+        );
+      return fauxAssistantMessage("NOTED");
+    };
+    f.faux.setResponses(Array.from({ length: 20 }, () => step));
+    await f.manager.startSession(parent.id, f.workspace);
+    await f.turn(parent.id, "Delegate");
+
+    for (const name of ["Plain", "Other"]) {
+      const child = f.storage.listSessions().find((session) => session.name === name);
+      expect(child?.launch?.parentSessionId, name).toBe(parent.id);
+      await f.manager.startSession(child!.id, f.workspace);
+      const results = await f.reads(child!.id);
+      expect(results, name).toEqual([
+        {
+          isError: true,
+          text: expect.stringContaining("history:// is turned off for this Agent's sessions."),
+        },
+        {
+          isError: true,
+          text: expect.stringContaining("agent:// is turned off for this Agent's sessions."),
+        },
+      ]);
+    }
+    expect(f.storage.listSessions().find((s) => s.name === "Other")?.launch?.agentId).toBe(open.id);
+  }, 30_000);
+
   it("reads a background job's live output and lists jobs through proc://", async () => {
     const f = await fixture([]);
     const session = f.create("Jobs", f.workspace.id);

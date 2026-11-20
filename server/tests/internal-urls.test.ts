@@ -30,8 +30,13 @@ bindOppiHost({
   files: { ls: noTool, find: noTool, grep: noTool, internalUrls },
 } as unknown as Parameters<typeof bindOppiHost>[0]);
 
+// A conversation no saved Agent launched: no Oppi agent document.
 const read = (path: string, api: Partial<ToolExecutionApi> = {}) =>
-  internalUrls.read({ path }, api as ToolExecutionApi, context);
+  internalUrls.read(
+    { path },
+    { snapshot: async () => undefined, ...api } as ToolExecutionApi,
+    context,
+  );
 const textOf = async (path: string, api?: Partial<ToolExecutionApi>) => {
   const result = await read(path, api);
   return result?.output?.map((part) => (part.type === "text" ? part.text : "")).join("");

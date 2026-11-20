@@ -121,7 +121,13 @@ const AGENT_DEFINITION_KEYS = new Set([
   "launchConstraints",
 ]);
 const INSTRUCTION_KEYS = new Set(["mode", "text"]);
-const RESOURCE_KEYS = new Set(["agentsFiles", "noContextFiles", "skillPaths", "extensionIds"]);
+const RESOURCE_KEYS = new Set([
+  "agentsFiles",
+  "noContextFiles",
+  "skillPaths",
+  "extensionIds",
+  "noSessionHistory",
+]);
 const AGENTS_FILE_KEYS = new Set(["path", "content"]);
 const SESSION_DEFAULT_KEYS = new Set([
   "model",
@@ -604,6 +610,11 @@ function validateResources(value: unknown): AgentDefinition["resources"] | undef
       : {}),
     ...(value.extensionIds !== undefined
       ? { extensionIds: validateStringArray(value.extensionIds, "resources.extensionIds") }
+      : {}),
+    ...(value.noSessionHistory !== undefined
+      ? {
+          noSessionHistory: validateBoolean(value.noSessionHistory, "resources.noSessionHistory"),
+        }
       : {}),
   };
 }

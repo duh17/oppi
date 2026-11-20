@@ -46,6 +46,8 @@ export type OppiAgentState = {
   resources?: DurableAgentResources;
   /** False when the Agent's instructions replace the prompt: no `project_context` section. */
   projectContext?: false;
+  /** False when the Agent turns off `history://` and `agent://` reads (`resources.noSessionHistory`). */
+  sessionHistory?: false;
   /**
    * An exact Extension selection: owner plugins' extensions by name, MCP and codemode or not,
    * and the names of selected Extensions the session runs without (no durable version), for its
@@ -457,6 +459,11 @@ export function resolveDurableAgent(input: DurableAgentInput): {
         ...(resources ? { resources } : {}),
         ...(saved.definition.instructions?.mode === "replace"
           ? { projectContext: false as const }
+          : {}),
+        // Sticky: a sealed parent's child stays sealed whatever Agent it launches as.
+        ...(saved.definition.resources?.noSessionHistory === true ||
+        input.inherited?.sessionHistory === false
+          ? { sessionHistory: false as const }
           : {}),
         ...(selection
           ? {

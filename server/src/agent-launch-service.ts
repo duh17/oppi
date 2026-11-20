@@ -33,6 +33,8 @@ export interface AgentDefinition {
     skillPaths?: string[];
     /** Omitted inherits Pi discovery; an array is the Agent's exact Extension selection. */
     extensionIds?: string[];
+    /** True turns off `history://` and `agent://` reads for the Agent's sessions and their children. */
+    noSessionHistory?: boolean;
   };
   sessionDefaults?: {
     model?: string;

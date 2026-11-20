@@ -1,6 +1,7 @@
 import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
 import type { ConversationId, Harness, ToolExecutionApi } from "@earendil-works/pi-durable";
+import { OppiAgentDoc } from "./durable-agent.js";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import {
   oppiHost,
@@ -327,7 +328,11 @@ const BUILT_IN_READERS: ReadonlyMap<string, SchemeReader> = new Map<string, Sche
 
 /** A reader of the caller's sessions, through the runtime's view bound to the call's environment. */
 function sessionReader(read: typeof readHistory): SchemeReader {
-  return (target, api) => {
+  return async (target, api, context) => {
+    // A saved Agent may turn these off; its children and forks inherit the doc.
+    const launched = await api.snapshot(OppiAgentDoc, api.conversationId, context);
+    if (launched?.sessionHistory === false)
+      throw new Error(`${target.scheme}:// is turned off for this Agent's sessions.`);
     const reading = oppiHost().sessions(api.env)?.reading;
     if (!reading)
       throw new Error(`${target.scheme}:// needs an Oppi session, and this call has none.`);

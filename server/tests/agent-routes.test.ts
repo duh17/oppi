@@ -835,6 +835,32 @@ describe("agent routes", () => {
     }
   });
 
+  it("validates, keeps across partial updates, and clears resources.noSessionHistory", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-session-history-"));
+    const store = new AgentDefinitionStore(dataDir);
+    try {
+      expect(() =>
+        store.createAgent({ name: "Bad", resources: { noSessionHistory: "yes" } } as never),
+      ).toThrow("resources.noSessionHistory must be a boolean");
+      const agent = store.createAgent({
+        name: "Sealed",
+        resources: { noSessionHistory: true, skillPaths: [".pi/skills/a"] },
+      });
+      expect(agent.definition.resources).toEqual({
+        noSessionHistory: true,
+        skillPaths: [".pi/skills/a"],
+      });
+      // A patch of another resources key merges over the stored ones.
+      const merged = store.updateAgent(agent.id, { resources: { skillPaths: [] } });
+      expect(merged?.definition.resources).toEqual({ noSessionHistory: true, skillPaths: [] });
+      const cleared = store.updateAgent(agent.id, { resources: { noSessionHistory: null } });
+      expect(cleared?.definition.resources).toEqual({ skillPaths: [] });
+    } finally {
+      store.close();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("updates, persists, returns, and clears a saved Agent icon", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-icon-routes-"));
     const store = new AgentDefinitionStore(dataDir);
