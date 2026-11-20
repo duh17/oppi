@@ -3,7 +3,10 @@ import UIKit
 /// Pinned (route `.utility(.pinned)`): the window server's pins in two
 /// sections, each in its saved order. Sessions come first as wide cards;
 /// every other pin (games, web pages, folders, files, panels) is a tile in a
-/// grid, as many across as fit.
+/// grid, as many across as fit. Where two tiles don't fit at their 160 pt
+/// minimum (a Slide Over or other narrow window), those pins draw as the
+/// File Browser's pin rows instead, and the tiles come back as the screen
+/// widens.
 ///
 /// A session card is the session lists' own row (`SessionListEntryConfiguration`),
 /// so it shows the session's live status; a tap opens its chat as a session
@@ -39,11 +42,16 @@ final class PinnedViewController: UIViewController {
     private enum ItemContent: Equatable {
         /// A session this device has, drawn as the session lists draw it.
         case session(SessionListRowContent, pin: PinsSection.Row)
-        /// A session pin that is gone or not loaded here, or a thread or a
-        /// session list: a plain row among the session cards.
-        case sessionPlace(PinsSection.Row, kind: PinKind)
+        /// A pin as the File Browser's pin row (`PinsSection.configureRow`):
+        /// a session pin that is gone or not loaded here, a thread or a
+        /// session list, and every other pin while tiles don't fit.
+        case row(PinsSection.Row)
         /// Any other pin: a tile.
         case tile(PinTileView.Content, pin: PinsSection.Row)
+
+        var isTile: Bool {
+            if case .tile = self { true } else { false }
+        }
     }
 
     private let root: AppRootEnvironment
@@ -53,6 +61,8 @@ final class PinnedViewController: UIViewController {
     private var sections: [Section: [String]] = [:]
     private var themeID: ThemeID?
     private var display = SessionRowDisplay.standard
+    /// The places draw as rows: the screen is too narrow for two tiles.
+    private var placesAsRows = false
     private let previews = PinPreviewStore()
     /// The window server's pins; a new section when the window's server changes.
     private var pinsSection: PinsSection?
@@ -120,6 +130,18 @@ final class PinnedViewController: UIViewController {
         section()?.refresh()
         previews.refresh()
         setNeedsUpdateProperties()
+    }
+
+    /// The places switch between tiles and rows as the width crosses two
+    /// tiles' minimum: a Slide Over resize, a pane or column resize, a rotation.
+    override func viewWillLayoutSubviews() {
+        super.viewWillLayoutSubviews()
+        let width = view.bounds.inset(by: view.safeAreaInsets).width
+        let asRows = Self.tileColumns(width: width) < 2
+        guard asRows != placesAsRows else { return }
+        placesAsRows = asRows
+        collectionView.collectionViewLayout.invalidateLayout()
+        applySnapshot(section()?.content()?.rows ?? [], restyle: false)
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -206,21 +228,27 @@ final class PinnedViewController: UIViewController {
             snapshot.appendItems(ids, toSection: section)
         }
         let existing = Set(dataSource.snapshot().itemIdentifiers)
-        let changed = snapshot.itemIdentifiers.filter { id in
-            existing.contains(id) && (restyle || items[id] != nextItems[id])
+        let kept = snapshot.itemIdentifiers.filter(existing.contains)
+        // A pin that turns from a tile into a row (or back) needs the other cell.
+        let reformed = kept.filter { items[$0]?.isTile != nextItems[$0]?.isTile }
+        let changed = kept.filter { id in
+            !reformed.contains(id) && (restyle || items[id] != nextItems[id])
         }
+        snapshot.reloadItems(reformed)
         snapshot.reconfigureItems(changed)
         items = nextItems
         sections = nextSections
-        dataSource.apply(snapshot, animatingDifferences: collectionView.window != nil)
+        dataSource.apply(snapshot, animatingDifferences: collectionView.window != nil && reformed.isEmpty)
     }
 
     /// A session this device has (and the server still has) draws as its
-    /// session row; another session pin as a plain row; anything else as a tile.
+    /// session row; another session pin as a pin row; anything else as a
+    /// tile, or a pin row while tiles don't fit.
     private func content(
         for pin: Pin, kind: PinKind, row: PinsSection.Row, connection: ServerConnection?, serverId: String?
     ) -> ItemContent {
         guard kind == .sessions else {
+            if placesAsRows { return .row(row) }
             // The list read already says whether the target is there; a gone pin reads nothing.
             let preview = pin.isGone ? nil : connection.flatMap { connection in
                 serverId.flatMap { previews.preview(for: pin.target, serverId: $0, connection: connection, checksPresence: false) }
@@ -228,7 +256,7 @@ final class PinnedViewController: UIViewController {
             return .tile(PinTileView.Content.make(place: Self.place(pin, row: row), kind: kind, preview: preview, palette: palette), pin: row)
         }
         guard let connection, case .session(let sessionId) = pin.target, !row.isGone,
-              let session = Self.session(sessionId, in: connection) else { return .sessionPlace(row, kind: kind) }
+              let session = Self.session(sessionId, in: connection) else { return .row(row) }
         let workspaceName = session.workspaceId.flatMap { id in
             connection.workspaceStore.workspaces.first { $0.id == id }?.name
         }
@@ -330,7 +358,7 @@ final class PinnedViewController: UIViewController {
     private func makeLayout() -> UICollectionViewLayout {
         UICollectionViewCompositionalLayout { [weak self] index, environment in
             guard let self else { return nil }
-            if dataSource?.sectionIdentifier(for: index) == .places {
+            if dataSource?.sectionIdentifier(for: index) == .places, !placesAsRows {
                 return tileSection(environment)
             }
             var configuration = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
@@ -346,14 +374,28 @@ final class PinnedViewController: UIViewController {
         }
     }
 
-    /// Tiles at least 160 points wide, as many across as fit (two on an
-    /// iPhone, four on an iPad mini), on the inset grouped list's margins.
+    private static let tileSpacing = 14.0
+
+    /// The inset grouped list's side margin at `width`.
+    private static func tileMargin(width: Double) -> Double {
+        width >= 600 ? 20 : 16
+    }
+
+    /// How many tiles at least 160 points wide fit across `width`: two on
+    /// an iPhone, four on an iPad mini; fewer than two draws rows instead.
+    static func tileColumns(width: Double) -> Int {
+        let usable = width - tileMargin(width: width) * 2
+        return Int((usable + tileSpacing) / (160 + tileSpacing))
+    }
+
+    /// Tiles as many across as fit, on the inset grouped list's margins.
     private func tileSection(_ environment: NSCollectionLayoutEnvironment) -> NSCollectionLayoutSection {
         let width = environment.container.effectiveContentSize.width
-        let margin = width >= 600 ? 20.0 : 16.0
-        let spacing = 14.0
+        let margin = Self.tileMargin(width: width)
+        let spacing = Self.tileSpacing
         let usable = width - margin * 2
-        let columns = max(2, Int((usable + spacing) / (160 + spacing)))
+        // The width the screen measured can differ from the layout's by a safe area; one tile is the least.
+        let columns = max(1, Self.tileColumns(width: width))
         let tileWidth = ((usable - spacing * Double(columns - 1)) / Double(columns)).rounded(.down)
         let height = PinTileView.height(forWidth: tileWidth, traits: environment.traitCollection)
         let item = NSCollectionLayoutItem(layoutSize: .init(widthDimension: .absolute(tileWidth), heightDimension: .absolute(height)))
@@ -422,8 +464,8 @@ final class PinnedViewController: UIViewController {
             // cell adds the pin's own accessories and actions.
             cell.accessories = section.accessories(for: row, palette: palette)
             cell.accessibilityCustomActions = section.accessibilityActions(row)
-        case .sessionPlace(let row, let kind):
-            configureSessionPlace(cell, row: row, kind: kind, palette: palette)
+        case .row(let row):
+            PinsSection.configureRow(cell, row: row, palette: palette)
             section.decorate(cell, row: row, palette: palette)
         case .tile:
             break
@@ -439,25 +481,6 @@ final class PinnedViewController: UIViewController {
         cell.remove = { [weak section] in section?.removeWhileEditing(row.id) }
         cell.accessibilityLabel = content.accessibilityLabel
         cell.accessibilityCustomActions = section.accessibilityActions(row)
-    }
-
-    /// A session pin not shown as its session row: its kind's symbol, name,
-    /// and why it can't open, dimmed when it is gone.
-    private func configureSessionPlace(_ cell: UICollectionViewListCell, row: PinsSection.Row, kind: PinKind, palette: ThemePalette) {
-        var content = UIListContentConfiguration.subtitleCell()
-        content.image = UIImage(systemName: kind.symbol)
-        content.imageProperties.tintColor = row.isGone ? palette.ui.comment : palette.ui.blue
-        content.imageProperties.reservedLayoutSize = CGSize(width: 28, height: 28)
-        content.text = row.title
-        content.textProperties.color = row.isGone ? palette.ui.comment : palette.ui.fg
-        content.textProperties.numberOfLines = 1
-        content.secondaryText = row.detail
-        content.secondaryTextProperties.font = UIFont.preferredFont(forTextStyle: .caption1)
-        content.secondaryTextProperties.color = palette.ui.comment
-        content.secondaryTextProperties.numberOfLines = 1
-        content.textToSecondaryTextVerticalPadding = 2
-        cell.contentConfiguration = content
-        cell.accessories = []
     }
 
     /// A session row's own controls: the row opens its chat. It draws no

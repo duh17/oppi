@@ -22,6 +22,8 @@ class PinsSection {
         let detail: String?
         /// A file's icon; nil for a folder.
         let icon: FileIcon?
+        /// Its kind's symbol, drawn where there is no file icon.
+        let symbol: String
         let isDirectory: Bool
         /// Not there (a deleted session or game too), or its workspace is
         /// gone: dimmed, and a tap offers Remove Pin.
@@ -140,6 +142,7 @@ class PinsSection {
             title: pin.displayName(names),
             detail: isOff && !pin.isGone ? String(localized: "Godot Pane is off") : pin.subtitle(names),
             icon: filePath.map(FileIcon.forPath),
+            symbol: pin.kind?.symbol ?? "pin",
             isDirectory: pin.kind == .folders,
             isGone: pin.isGone,
             isOff: isOff,
@@ -213,6 +216,32 @@ class PinsSection {
     /// Rename, Unpin, and the pane items, as actions; none while editing.
     func accessibilityActions(_ row: Row) -> [UIAccessibilityCustomAction]? {
         row.isEditing ? nil : accessibilityActions(pinId: row.id)
+    }
+
+    /// A pin as a list row, as the File Browser's listing draws its folders
+    /// and files: the file's icon or the kind's symbol, the name over its
+    /// second line, and a chevron while it opens. One that is gone or off
+    /// here is dimmed. The list keeps its own background; `decorate` adds
+    /// the pin's parts.
+    static func configureRow(_ cell: UICollectionViewListCell, row: Row, palette: ThemePalette) {
+        let dimmed = row.isGone || row.isOff
+        var content = UIListContentConfiguration.subtitleCell()
+        if let icon = row.icon, !row.isGone {
+            FileBrowserViewController.setListIcon(icon, on: &content)
+        } else {
+            content.image = UIImage(systemName: row.icon?.symbolName ?? row.symbol)
+            content.imageProperties.tintColor = dimmed || row.icon != nil ? palette.ui.comment : palette.ui.blue
+            content.imageProperties.reservedLayoutSize = CGSize(width: 24, height: 24)
+        }
+        content.text = row.title
+        content.textProperties.font = UIFont.preferredFont(forTextStyle: .body)
+        content.textProperties.color = dimmed ? palette.ui.comment : palette.ui.fg
+        content.secondaryText = row.detail
+        content.secondaryTextProperties.font = UIFont.preferredFont(forTextStyle: .caption2)
+        content.secondaryTextProperties.color = palette.ui.comment
+        content.textToSecondaryTextVerticalPadding = 2
+        cell.contentConfiguration = content
+        cell.accessories = !dimmed && !row.isEditing ? [.disclosureIndicator()] : []
     }
 
     /// Adds a pin row's own parts to a list cell that is its own

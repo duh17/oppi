@@ -1550,7 +1550,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
                 )
             } else {
                 var content = UIListContentConfiguration.subtitleCell()
-                setListIcon(icon, on: &content)
+                Self.setListIcon(icon, on: &content)
                 content.text = file.name
                 content.textProperties.font = UIFont.preferredFont(forTextStyle: .body)
                 content.textProperties.color = fg
@@ -1589,7 +1589,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
                 )
             } else {
                 var content = UIListContentConfiguration.subtitleCell()
-                setListIcon(icon, on: &content)
+                Self.setListIcon(icon, on: &content)
                 content.attributedText = title
                 content.textProperties.numberOfLines = 1
                 content.secondaryText = result.directory
@@ -1637,7 +1637,8 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         cell.accessibilityElements = [content]
     }
 
-    private func setListIcon(_ icon: FileIcon, on content: inout UIListContentConfiguration) {
+    /// A file's icon as a listing row draws it (a pin row too).
+    static func setListIcon(_ icon: FileIcon, on content: inout UIListContentConfiguration) {
         content.image = icon.uiImage(pointSize: 12)
         content.imageProperties.tintColor = icon.color
         content.imageProperties.maximumSize = CGSize(width: 20, height: 20)
@@ -1709,44 +1710,27 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     }
 
     /// A pin drawn as the listing draws its folders and files: the tree's
-    /// row in the column, the list's row with its chevron otherwise.
+    /// row in the column, the pin list row (`PinsSection.configureRow`) otherwise.
     private func configurePin(_ cell: UICollectionViewListCell, row: FileBrowserPinsSection.Row) {
         let palette = palette
-        let tint = row.isGone || !row.isDirectory ? palette.ui.comment : palette.ui.blue
-        let color = row.isGone ? palette.ui.comment : palette.ui.fg
-        let opens = !row.isGone && !row.isEditing
-        if appliedLayout?.isColumn == true {
-            configureTreeRow(
-                cell,
-                image: Self.treeSymbol(row.icon?.symbolName ?? "folder.fill"),
-                tint: tint,
-                title: NSAttributedString(string: row.title, attributes: [.font: Self.font(.callout, .regular), .foregroundColor: color]),
-                subtitle: row.detail.map { NSAttributedString(string: $0) },
-                trailingText: nil,
-                trailingColor: palette.ui.comment,
-                showsChevron: opens,
-                isSelected: false
-            )
+        guard appliedLayout?.isColumn == true else {
+            PinsSection.configureRow(cell, row: row, palette: palette)
+            applyListBackground(to: cell)
             return
         }
-        var content = UIListContentConfiguration.subtitleCell()
-        if let icon = row.icon, !row.isGone {
-            setListIcon(icon, on: &content)
-        } else {
-            content.image = UIImage(systemName: row.icon?.symbolName ?? "folder.fill")
-            content.imageProperties.tintColor = tint
-            content.imageProperties.reservedLayoutSize = CGSize(width: 24, height: 24)
-        }
-        content.text = row.title
-        content.textProperties.font = UIFont.preferredFont(forTextStyle: .body)
-        content.textProperties.color = color
-        content.secondaryText = row.detail
-        content.secondaryTextProperties.font = UIFont.preferredFont(forTextStyle: .caption2)
-        content.secondaryTextProperties.color = palette.ui.comment
-        content.textToSecondaryTextVerticalPadding = 2
-        cell.contentConfiguration = content
-        cell.accessories = opens ? [.disclosureIndicator()] : []
-        applyListBackground(to: cell)
+        let tint = row.isGone || !row.isDirectory ? palette.ui.comment : palette.ui.blue
+        let color = row.isGone ? palette.ui.comment : palette.ui.fg
+        configureTreeRow(
+            cell,
+            image: Self.treeSymbol(row.icon?.symbolName ?? row.symbol),
+            tint: tint,
+            title: NSAttributedString(string: row.title, attributes: [.font: Self.font(.callout, .regular), .foregroundColor: color]),
+            subtitle: row.detail.map { NSAttributedString(string: $0) },
+            trailingText: nil,
+            trailingColor: palette.ui.comment,
+            showsChevron: !row.isGone && !row.isEditing,
+            isSelected: false
+        )
     }
 
     /// The list's theme page; a touched row shows the system highlight.

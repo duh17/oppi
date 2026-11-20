@@ -218,6 +218,54 @@ struct PinnedScreenTests {
         _ = await shell.scope.settle()
     }
 
+    /// Too narrow for two 160 pt tiles (365 pt and under on a phone's
+    /// margins), the places draw as the File Browser's pin rows, with the
+    /// tiles' identifiers, actions, and taps. Widening the window brings the
+    /// tiles back and narrowing it turns them into rows again, in Edit too.
+    @Test func placesTurnIntoPinRowsWhereTwoTilesDontFit() async throws {
+        let shell = try await Self.makeShell(size: CGSize(width: 365, height: 874), regular: false)
+        defer { shell.end() }
+        var opened: [AppOpenRequest] = []
+        shell.root.opener._openRequestObserverForTesting = { request in
+            opened.append(request)
+            return true
+        }
+        shell.root.navigation.openWorkspaceUtility(.pinned)
+        #expect(await shell.settles { shell.cell("pin_Notebook0001") is UICollectionViewListCell })
+        let row = try #require(shell.cell("pin_Notebook0001") as? UICollectionViewListCell)
+        #expect((row.contentConfiguration as? UIListContentConfiguration)?.text == "notebook")
+        #expect(row.accessibilityIdentifier == "pinned.pin.~/notebook")
+        #expect(row.accessibilityTraits.contains(.button))
+        let rowActions = row.accessibilityCustomActions?.map(\.name)
+        #expect(shell.items(in: .places).allSatisfy { shell.cell($0) == nil || shell.cell($0) is UICollectionViewListCell })
+
+        for id in ["pin_SwordLab0007", "pin_GodotDocs010"] { try shell.tap(id) }
+        let docs = try #require(URL(string: "https://docs.example.invalid/en/stable/"))
+        #expect(opened == [
+            .pane(PaneLink(server: shell.serverId, route: .godot(project: "sword-lab-3fa9c2b1")), sourceServerID: shell.serverId),
+            .pane(PaneLink(server: shell.serverId, route: .browser(docs)), sourceServerID: shell.serverId),
+        ], "a row opens as its tile does")
+
+        shell.window.frame.size.width = 366
+        #expect(await shell.settles { shell.cell("pin_Notebook0001") is PinTileCell }, "two tiles fit at 366 pt")
+        let tile = try #require(shell.cell("pin_Notebook0001"))
+        #expect(tile.accessibilityIdentifier == "pinned.pin.~/notebook")
+        #expect(tile.accessibilityCustomActions?.map(\.name) == rowActions)
+
+        let screen = try #require(shell.pinned)
+        let list = try #require(shell.list(in: screen))
+        let edit = try #require(screen.navigationItem.rightBarButtonItems?.first { $0.accessibilityIdentifier == "pinned.edit" })
+        edit.primaryAction?.performWithSender(nil, target: nil)
+        #expect(await shell.settles { list.isEditing })
+        shell.window.frame.size.width = 365
+        #expect(await shell.settles { shell.cell("pin_Notebook0001") is UICollectionViewListCell }, "rows again at 365 pt")
+        #expect(list.isEditing && edit.title == "Done", "the switch keeps Edit")
+        let editingRow = try #require(shell.cell("pin_Notebook0001") as? UICollectionViewListCell)
+        #expect(editingRow.accessories.count >= 2, "an editing row shows its delete and reorder controls")
+        edit.primaryAction?.performWithSender(nil, target: nil)
+        _ = await shell.scope.settle()
+    }
+
     /// A tile shows what it opens: a PDF's first page with its page count
     /// and size, a folder's item count (hidden items aside) and first items.
     /// Coming back reads the PDF's version again but not its bytes when it
