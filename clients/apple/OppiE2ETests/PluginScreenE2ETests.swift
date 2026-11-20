@@ -190,6 +190,19 @@ final class PluginScreenE2ETests: E2ETestCase {
         try findEntry()
         let workspaceId = try e2eWorkspaceId()
         let name = "e2e-\(UUID().uuidString.prefix(6).lowercased())"
+        // Removing the server leaves `{"mcpServers":{}}` behind, and any project `.pi/` makes
+        // every later session start in this workspace wait on Pi's trust prompt (HTTP 409 for
+        // the suites after this one), so put the folder back as it was, even after a failure.
+        // The runner shares the host filesystem with the `--native` server; a Docker server keeps
+        // its own copy of the folder, which this cannot reach.
+        let piFolder = try E2ELabServerContext.workspaceDirectory().appendingPathComponent(".pi")
+        let mcpFile = piFolder.appendingPathComponent("mcp.json")
+        let piFolderExisted = FileManager.default.fileExists(atPath: piFolder.path)
+        let mcpFileExisted = FileManager.default.fileExists(atPath: mcpFile.path)
+        addTeardownBlock {
+            if !mcpFileExisted { try? FileManager.default.removeItem(at: mcpFile) }
+            if !piFolderExisted { try? FileManager.default.removeItem(at: piFolder) }
+        }
 
         let open = app.buttons["workspace.open.e2e-workspace"]
         if !(open.exists && open.isHittable) { tap(app.buttons["workspace.sidebar.open"], named: "workspace sidebar button") }
