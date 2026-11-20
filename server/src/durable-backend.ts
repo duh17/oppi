@@ -505,7 +505,6 @@ export class DurableBackend implements AgentBackend {
               ),
               install: (extension) => host.runtime.installExtension(extension),
               uninstall: (extension) => host.runtime.uninstallExtension(extension),
-              namespaces: (namespaces) => host.runtime.setMcpNamespaces(session.id, namespaces),
               metrics: options.metrics,
             });
           });
@@ -688,7 +687,7 @@ export class DurableBackend implements AgentBackend {
             }
           : {
               extensions: {
-                add: [...builtIns, ...packageExtensions, ...(mcp ? [mcp.selection] : [])],
+                add: [...builtIns, ...packageExtensions, ...(mcp?.selection ?? [])],
                 // The host default selection includes all three.
                 remove: [
                   ...(spawn ? [] : [host.runtime.sessionsExtension]),
@@ -729,7 +728,7 @@ export class DurableBackend implements AgentBackend {
             ...created.change,
             cwd,
             // MCP offers its tools, codemode, and tool search when it attaches, before a prompt.
-            extensions: [...created.change.extensions, ...(mcp ? [mcp.selection] : [])],
+            extensions: [...created.change.extensions, ...(mcp?.selection ?? [])],
           }
         : {
             extensions: [...host.runtime.controlExtensions],

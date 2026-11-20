@@ -25,11 +25,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { CodingTools } from "./coding-tools.js";
-import {
-  CODEMODE_TOOL_NAME,
-  createCodemodeExtension,
-  type CodemodeNamespace,
-} from "@earendil-works/pi-durable/codemode";
+import { CODEMODE_TOOL_NAME, createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -1591,43 +1587,20 @@ export class DurableHarness {
       };
     },
   });
-  /** Each open session's MCP servers with tools, as codemode namespaces (`setMcpNamespaces`). */
-  private readonly mcpNamespaces = new Map<string, readonly CodemodeNamespace[]>();
   /**
    * pi-durable's own `codemode`, one extension for every durable session: scripts call the
    * conversation's tools as nested calls and resume after a restart without running finished
    * calls again. The script VM has no host access; every effect is a nested tool call, which runs
    * in the session's execution env (the Gondolin VM for a sandbox session). No `models.*`, as
-   * classic Pi's codemode. MCP servers are namespaces (`describeNamespace()`), read at each script
-   * start and prompt render from the open sessions' servers (`codemodeNamespaces`).
-   * Every workspace session
+   * classic Pi's codemode. MCP servers are namespaces (`describeNamespace()`): each server's
+   * extension in `durable-mcp.ts` declares its own. Every workspace session
    * selects it; whether it offers the tool is the Pi Tools setting's and MCP's, and its prompt
    * section, which declares the tools scripts can call, renders only in a request that offers it.
    */
   readonly codemode: Extension = offeredSectionsOnly(
-    codemodeExtension(this.codemodeSandbox, () => this.codemodeNamespaces()),
+    createCodemodeExtension({ sandbox: this.codemodeSandbox, models: false }),
     CODEMODE_TOOL_NAME,
   );
-
-  /** `sessionId`'s MCP servers with tools as codemode namespaces; undefined when its MCP closes. */
-  setMcpNamespaces(sessionId: string, namespaces: readonly CodemodeNamespace[] | undefined): void {
-    if (namespaces) this.mcpNamespaces.set(sessionId, namespaces);
-    else this.mcpNamespaces.delete(sessionId);
-  }
-
-  /**
-   * Every open session's MCP servers, one namespace per tool name prefix (the first session's
-   * when two configure a server of one name differently). The codemode extension is one for every
-   * session; a prefix only matters for the tools a conversation has, and a namespace carries only
-   * the owner's configured description.
-   */
-  private codemodeNamespaces(): CodemodeNamespace[] {
-    const byPrefix = new Map<string, CodemodeNamespace>();
-    for (const namespaces of this.mcpNamespaces.values())
-      for (const namespace of namespaces)
-        if (!byPrefix.has(namespace.prefix)) byPrefix.set(namespace.prefix, namespace);
-    return [...byPrefix.values()];
-  }
 
   /**
    * @param builtInDir Oppi's built-in plugin root; a test points it at a copy to reload.
@@ -2123,20 +2096,6 @@ export class DurableHarness {
     await this.codemodeSandbox.close();
     await this.pluginHost?.close();
   }
-}
-
-/** pi-durable's codemode without `models.*`, with namespaces read at each use. */
-function codemodeExtension(
-  sandbox: CodemodeSandbox,
-  namespaces: () => readonly CodemodeNamespace[],
-): Extension {
-  return createCodemodeExtension({
-    sandbox,
-    models: false,
-    get namespaces() {
-      return namespaces();
-    },
-  });
 }
 
 /** `extension` whose prompt sections render only in a request that offers the tool `tool`. */

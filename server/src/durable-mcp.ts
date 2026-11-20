@@ -5,20 +5,22 @@
  * a pi-durable registry cannot load. This module keeps Pi's config, connections, credentials,
  * naming, and result conversion, and only replaces the glue:
  *
- * - One pi-durable extension per session, `oppi.mcp/<sessionId>`, rebuilt and reinstalled in
- *   place whenever a server's tool list changes. Conversations store extension and tool
- *   names, so a reinstall reaches the next request while running calls finish on old code.
+ * - One pi-durable extension per server, `oppi.mcp/<sessionId>/<server>`, with the server's
+ *   tools, rebuilt and reinstalled in place whenever its tool list changes, and one per session,
+ *   `oppi.mcp/<sessionId>`, with `tool_search`, the resource tools, and the `mcp_servers`
+ *   section. Conversations store extension and tool names, so a reinstall reaches the next
+ *   request while running calls finish on old code.
  * - Exposure as in Pi (default `codemode`). Every tool but a `hidden` one is appended to the
  *   conversation's explicit tool list, so codemode scripts can call it. `direct` tools are
  *   offered to the model; `codemode` and `deferred` ones are pi-durable `deferred` tools, not
  *   offered until `tool_search` returns them in `control.addTools`, which pi-durable commits
  *   with the round. As Pi does, a `codemode` server turns codemode on (unless `mcp.json` sets
  *   `autoEnableCodemode: false`) and a `deferred` one turns `tool_search` on.
- * - Each connected server is a codemode namespace (`describeNamespace()`), reported through
- *   `options.namespaces` to the one codemode extension of every durable session. A namespace
- *   carries only the owner's configured `description`, never the server's own instructions
- *   (the session's `mcp_servers` section has those): the extension is shared, and a sandbox
- *   server's instructions are guest-written text.
+ * - Each server's extension declares its codemode namespace (`mcp__<server>`), installed and
+ *   selected at open, before the server has tools, so the `codemode` section lists it from the
+ *   first request and stays the same as servers connect. Its one-line description is the
+ *   owner's configured `description`; the server's own instructions are returned only by
+ *   `describeNamespace()`.
  * - A tool reruns after a crash only when the server marks it read-only or idempotent.
  * - A server reached only through codemode connects at its first call, not at session start:
  *   `mcp-tool-cache.ts` keeps the last list it reported, and the session builds the server's
@@ -44,6 +46,7 @@ import {
   section,
   type Conversation,
   type Extension,
+  type ToolNamespace,
   type ToolRegistration,
 } from "@earendil-works/pi-durable";
 import { createLogger } from "./logger.js";
@@ -58,7 +61,7 @@ import {
   type PiMcpInternals,
   type ToolSearchDocument,
 } from "./pi-mcp-internals.js";
-import { CODEMODE_TOOL_NAME, type CodemodeNamespace } from "@earendil-works/pi-durable/codemode";
+import { CODEMODE_TOOL_NAME } from "@earendil-works/pi-durable/codemode";
 import type { SandboxMcpOptions } from "./sandbox-mcp.js";
 import type { Session } from "./types.js";
 
@@ -74,6 +77,8 @@ type ToolPolicy = NonNullable<NonNullable<Session["launch"]>["tools"]>;
 
 interface Server {
   entry: McpServerEntry;
+  /** Its tools and codemode namespace; none when every configured exposure is `hidden`. */
+  extension?: Extension;
   /** The `McpToolCache` key of this entry's config. */
   key: string;
   /** Only codemode reaches its tools, so a cached list serves them and the connect can wait. */
@@ -119,8 +124,6 @@ export interface DurableMcpOptions {
   toolCache: McpToolCache;
   install: (extension: Extension) => void;
   uninstall: (extension: Extension) => void;
-  /** This session's servers with tools (connected or cached) as codemode namespaces; undefined once it closes. */
-  namespaces: (namespaces: readonly CodemodeNamespace[] | undefined) => void;
   metrics?: ServerTelemetry;
 }
 
@@ -155,6 +158,23 @@ function replayOf(definition: ToolDefinition): "safe" | "unsafe" {
 
 function firstLine(text: string): string {
   return text.split("\n", 1)[0] ?? "";
+}
+
+/**
+ * A server's codemode namespace. Its description, shown in the `codemode` section, comes from
+ * config only, so the section does not change when the server connects or sends instructions.
+ */
+function namespaceOf(
+  internals: PiMcpInternals,
+  entry: McpServerEntry,
+  instructions: string | undefined,
+): ToolNamespace {
+  const summary = firstLine(entry.config.description?.trim() ?? "").trim();
+  return {
+    name: internals.mcpNamespace(entry.name),
+    description: summary || `Tools of the MCP server "${entry.name}".`,
+    ...(instructions ? { instructions } : {}),
+  };
 }
 
 /**
@@ -305,8 +325,6 @@ export class DurableMcp {
   private readonly configErrors: string[];
   /** Tool names the conversation offers once it attaches: codemode and tool search as needed. */
   private readonly discoveryTools: string[];
-  /** Servers with tools, connected or cached, by name, as codemode namespaces. */
-  private readonly namespaces = new Map<string, CodemodeNamespace>();
   private conversation?: Conversation;
   private startup?: Promise<void>;
   private waitedForStartup = false;
@@ -353,7 +371,7 @@ export class DurableMcp {
       loaded.errors,
       loaded.autoEnableCodemode !== false,
     );
-    mcp.publish();
+    for (const extension of mcp.selection) options.install(extension);
     return mcp;
   }
 
@@ -415,6 +433,9 @@ export class DurableMcp {
         : []),
     ];
     this.extension = this.buildExtension();
+    for (const server of this.servers)
+      if ([...configuredExposures(server.entry)].some((exposure) => exposure !== "hidden"))
+        server.extension = this.buildServerExtension(server);
     if (configErrors.length > 0) {
       recordMcpConnect(options.metrics, {
         sessionId: options.sessionId,
@@ -424,9 +445,12 @@ export class DurableMcp {
     }
   }
 
-  /** The extension to select on the conversation; the same name across reinstalls. */
-  get selection(): Extension {
-    return this.extension;
+  /** The extensions to select on the conversation: the session's, then each server's; the same names across reinstalls. */
+  get selection(): Extension[] {
+    return [
+      this.extension,
+      ...this.servers.flatMap((server) => (server.extension ? [server.extension] : [])),
+    ];
   }
 
   /**
@@ -542,8 +566,7 @@ export class DurableMcp {
     if (this.closed) return;
     this.closed = true;
     this.live.mcp = undefined;
-    this.options.namespaces(undefined);
-    this.options.uninstall(this.extension);
+    for (const extension of this.selection) this.options.uninstall(extension);
     await Promise.allSettled(this.servers.map((server) => server.connection?.close()));
   }
 
@@ -634,7 +657,12 @@ export class DurableMcp {
   /** Build the servers' tools from their snapshots; publish and offer once for all of them. */
   private registerTools(servers: readonly Server[]): void {
     if (this.closed) return;
-    for (const server of servers) this.setTools(server);
+    for (const server of servers) {
+      this.setTools(server);
+      if (!server.extension) continue;
+      server.extension = this.buildServerExtension(server);
+      this.options.install(server.extension);
+    }
     this.syncResourceTools();
     this.publish();
     this.offerTools(this.enabledToolNames());
@@ -649,13 +677,6 @@ export class DurableMcp {
       ...(description ? { description } : {}),
       ...(snapshot.instructions ? { instructions: snapshot.instructions } : {}),
     };
-    // Tool names are `mcp__<server>__<tool>` with the server name sanitized like the namespace.
-    this.namespaces.set(server, {
-      name: namespace.name,
-      ...(description ? { description } : {}),
-      prefix: `${namespace.name}__`,
-    });
-    this.options.namespaces([...this.namespaces.values()]);
     const current = new Map<string, Registered>();
     // Like Pi: every tool whose name sanitizes to the same name gets the hash suffix, so which
     // one keeps the plain name does not depend on the order of the list.
@@ -747,6 +768,16 @@ export class DurableMcp {
     ];
   }
 
+  private buildServerExtension(server: Server): Extension {
+    return {
+      name: `${this.extensionName}/${server.entry.name}`,
+      namespace: namespaceOf(this.internals, server.entry, server.snapshot?.instructions),
+      tools: [...(this.serverTools.get(server.entry.name)?.values() ?? [])].map(
+        (item) => item.tool,
+      ),
+    };
+  }
+
   /** Every tool the policy permits: offered when `direct`, else callable by scripts and loadable. */
   private enabledToolNames(): string[] {
     return this.registered()
@@ -754,11 +785,12 @@ export class DurableMcp {
       .map((item) => item.tool.name);
   }
 
+  /** The session's extension: `tool_search`, the resource tools, and the `mcp_servers` section. */
   private buildExtension(): Extension {
     return {
       name: this.extensionName,
       tools: [
-        ...this.registered().map((item) => item.tool),
+        ...this.resourceTools.map((item) => item.tool),
         ...(this.toolSearch ? [this.toolSearch] : []),
       ],
       sections: [liveServersSection(this.live)],

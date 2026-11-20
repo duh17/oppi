@@ -373,7 +373,6 @@ describe("durable tool policy, as Pi's createAgentSession", () => {
         toolCache: new McpToolCache(mcpToolCachePath(agentDir), "host"),
         install: () => {},
         uninstall: () => {},
-        namespaces: () => {},
       });
 
     expect(await open({ noTools: "all" })).toBeUndefined();

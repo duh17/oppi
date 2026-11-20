@@ -297,9 +297,14 @@ describe("server durable MCP (host)", () => {
     await prompt(f.manager, f.session.id, "Echo hi");
     const pinned = install.mock.calls
       .map(([extension]) => extension)
-      .filter((extension) => extension.name === `oppi.mcp/${f.session.id}`);
-    // Tools and the server section, from after the servers connected.
-    expect(pinned.at(-1)?.tools?.map((tool) => tool.name)).toContain("mcp__echo__echo");
+      .filter((extension) => extension.name.startsWith(`oppi.mcp/${f.session.id}`));
+    // The echo server's tools, from after the servers connected.
+    expect(
+      pinned
+        .filter((extension) => extension.name === `oppi.mcp/${f.session.id}/echo`)
+        .at(-1)
+        ?.tools?.map((tool) => tool.name),
+    ).toContain("mcp__echo__echo");
     const mcp = new WeakRef((await opened.mock.results[0]!.value)!);
     const backend = new WeakRef(await created.mock.results[0]!.value);
     for (const spy of [install, opened, created]) {
@@ -376,6 +381,44 @@ describe("server durable MCP (host)", () => {
     await prompt(restarted, f.session.id, "Echo again");
     expect(read(marker)).toContain('call echo {"text":"again"}');
     expect((await toolResults(restarted, f.session.id)).at(-1)).toContain("echo:again");
+  }, 30_000);
+
+  it("lists each server as its own codemode namespace, also one that never connects, and scripts find its tools by namespace", async () => {
+    writeMcpJson(agentDir, {
+      echo: echoServer(join(agentDir, "echo.marker"), {
+        description: "Echo text back.\nA second line the prompt leaves out.",
+      }),
+      down: { command: join(agentDir, "missing-mcp-server") },
+    });
+    const prompts: string[] = [];
+    const f = await fixture([
+      (context) => {
+        prompts.push(JSON.stringify(context));
+        return fauxAssistantMessage(
+          [
+            fauxToolCall("codemode", {
+              code: [
+                'const echo = await describeNamespace("mcp__echo");',
+                'const found = await searchTools("text", { namespace: "mcp__echo" });',
+                'const down = await describeNamespace("mcp__down");',
+                "console.log(JSON.stringify({ echo: echo.tools, found: found.map((tool) => tool.name), down: down.tools }));",
+              ].join("\n"),
+            }),
+          ],
+          { stopReason: "toolUse" },
+        );
+      },
+      fauxAssistantMessage("NAMESPACES_DONE"),
+    ]);
+    await f.manager.startSession(f.session.id, f.workspace);
+    await prompt(f.manager, f.session.id, "Which MCP namespaces are there?");
+
+    // The configured description's first line, or a fixed one: never what a connection reports.
+    expect(prompts[0]).toContain("## mcp__echo\\nEcho text back.");
+    expect(prompts[0]).not.toContain("A second line the prompt leaves out.");
+    expect(prompts[0]).toContain('## mcp__down\\nTools of the MCP server \\"down\\".');
+    const result = (await toolResults(f.manager, f.session.id)).at(-1);
+    expect(result).toContain('{\\"echo\\":[\\"mcp__echo__echo\\"],\\"found\\":[\\"mcp__echo__echo\\"],\\"down\\":[]}');
   }, 30_000);
 
   it("follows Pi's tool policy: an allow list naming codemode lets scripts reach MCP tools, never direct or excluded ones", async () => {
@@ -780,7 +823,6 @@ describe("DurableMcp tool offers", () => {
       toolCache: new McpToolCache(mcpToolCachePath(agentDir), "host"),
       install: () => {},
       uninstall: () => {},
-      namespaces: () => {},
     });
   }
 
