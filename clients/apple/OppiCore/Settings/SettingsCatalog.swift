@@ -238,21 +238,6 @@ enum SettingsCatalog {
 
     // MARK: - Terminal
 
-    /// What the Terminal page lists: Rex's panes for every saved host, or the saved
-    /// hosts themselves. A device choice, kept as `SSHTerminalPageMode`'s raw value;
-    /// nothing stored (the empty default) means the page falls back to the first mode
-    /// its experiments allow, so a stored value is always someone's choice.
-    static let terminalPageMode = SettingDeclaration<String>(
-        id: "settings.terminal.pageMode",
-        key: AppPreferenceStore.Terminal.pageModeKey,
-        storage: .device(perServer: false),
-        default: AppPreferenceStore.Terminal.pageModeDefault,
-        copy: SettingCopy(
-            title: String(localized: "Terminal Page"),
-            footer: String(localized: "What the Terminal page lists. Rex shows every saved host's panes, one tap from that terminal; Shell shows the saved hosts. Chosen with the page's own mode button, and Rex is offered only while its experiment is on.")
-        )
-    )
-
     /// What a tap on the terminal does when it opens nothing and no program takes
     /// the click: raise the keyboard, or leave typing to the bar's button.
     static let terminalTapMode = SettingDeclaration<AppPreferenceStore.Terminal.TapMode>(
@@ -486,7 +471,6 @@ enum SettingsCatalog {
         keepAwakeAfterActivity.descriptor,
         openLinks.descriptor,
         piIcon.descriptor,
-        terminalPageMode.descriptor,
         terminalTapMode.descriptor,
         terminalFindsTailnetRex.descriptor,
         experimentRex.descriptor,

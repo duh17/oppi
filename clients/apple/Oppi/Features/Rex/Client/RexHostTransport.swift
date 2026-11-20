@@ -221,9 +221,9 @@ final class RexHostTransport: RexTransport {
     }
 
     func openData(
-        inboundFlow: SSHPTYInboundFlow?, onEvent: @escaping @Sendable (RexSocketEvent) -> Void
+        _ endpoint: RexEndpoint, inboundFlow: SSHPTYInboundFlow?, onEvent: @escaping @Sendable (RexSocketEvent) -> Void
     ) async throws -> any RexSocket {
-        try await link.open(.data, inboundFlow: inboundFlow, onEvent: onEvent)
+        try await link.open(endpoint, inboundFlow: inboundFlow, onEvent: onEvent)
     }
 
     func openStream(command: String, inboundFlow: SSHPTYInboundFlow?, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {

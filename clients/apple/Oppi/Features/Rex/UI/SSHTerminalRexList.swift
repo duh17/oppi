@@ -1,10 +1,10 @@
 import UIKit
 
-/// One Rex session on the Terminal tab: its name, where it is working (the
-/// focused pane's folder), how many windows and panes it has, how many of them
-/// wait on you, and the status that leads them (the same rollup a thread uses,
-/// so a blocked pane wins over a working one). A tap opens it; its disclosure
-/// lists its panes.
+/// One Rex session on the Rex screen, drawn as the small heading over its
+/// panes' card: its name, where it is working (the focused pane's folder), how
+/// many windows and panes it has, how many of them wait on you, and the status
+/// that leads them (the same rollup a thread uses, so a blocked pane wins over
+/// a working one). A tap opens it; its chevron folds its panes away.
 struct SSHTerminalRexListSession: Hashable, Sendable {
     let sessionID: String
     let title: String
@@ -14,13 +14,13 @@ struct SSHTerminalRexListSession: Hashable, Sendable {
     /// The last component of the focused pane's folder.
     let folder: String?
     let status: SSHTerminalOverviewRow.Status
-    /// The pane rows are showing under it.
+    /// The pane rows are showing under it: every session's do until it is folded.
     let isExpanded: Bool
 
     /// Rex can be asked to rename or close it (the row offers those).
     let manages: Bool
 
-    init(_ session: RexSnapshot.Session, expanded: Bool = false, manages: Bool = false) {
+    init(_ session: RexSnapshot.Session, collapsed: Bool = false, manages: Bool = false) {
         self.manages = manages
         let panes = session.windows.flatMap(\.panes)
         sessionID = session.sessionID
@@ -31,22 +31,14 @@ struct SSHTerminalRexListSession: Hashable, Sendable {
         needsYou = session.needsYou
         status = SessionStatusRollup(root: nil, others: statuses).headline.map { .known($0) } ?? .none
         folder = session.openingPane?.folderName
-        isExpanded = expanded && !panes.isEmpty
+        isExpanded = !collapsed
     }
-
-    /// There are panes to show under it.
-    var hasPanes: Bool { paneCount > 0 }
 
     /// "3 panes", "1 pane", "2 windows · 3 panes" with more than one window,
     /// and "· 2 need you" after it while panes wait.
     var summary: String {
         let panes = RexSnapshot.paneSummary(panes: paneCount, needsYou: needsYou)
         return windowCount > 1 ? "\(windowCount) windows \u{00B7} " + panes : panes
-    }
-
-    /// The line under the name: the folder it works in, then the counts.
-    var detail: String {
-        [folder, summary].compactMap { $0 }.joined(separator: " \u{00B7} ")
     }
 
     /// What the row says to VoiceOver: the session, its folder, its panes, and who waits.
@@ -62,7 +54,9 @@ struct SSHTerminalRexListPane: Hashable, Sendable {
     let sessionID: String
     let blockID: String
     let name: String
-    /// The terminal's title when it says more than the name, then the folder.
+    /// The folder the pane works in, with the home folder as `~`.
+    let folder: String?
+    /// The terminal's title when it says more than the name.
     let detail: String?
     let icon: SSHTerminalPaneIcon
     let status: SSHTerminalOverviewRow.Status
@@ -80,8 +74,8 @@ struct SSHTerminalRexListPane: Hashable, Sendable {
         sessionID = session.sessionID
         blockID = pane.blockID
         name = pane.displayName
-        let title = pane.title.flatMap { $0.isEmpty || $0 == pane.displayName ? nil : $0 }
-        detail = [title, pane.folderName].compactMap { $0 }.joined(separator: " \u{00B7} ").nilIfEmpty
+        folder = pane.folderPath
+        detail = pane.title.flatMap { $0.isEmpty || $0 == pane.displayName ? nil : $0 }
         icon = SSHTerminalPaneIcon(program: pane.program)
         status = pane.status.map { .known($0) } ?? .none
         needsYou = pane.status?.isBlocked == true
@@ -90,13 +84,9 @@ struct SSHTerminalRexListPane: Hashable, Sendable {
     }
 
     var accessibilityLabel: String {
-        [name, windowName.map { "in window \($0)" }, detail, activity, needsYou ? "needs you" : nil]
+        [name, windowName.map { "in window \($0)" }, detail, folder, activity, needsYou ? "needs you" : nil]
             .compactMap { $0 }.joined(separator: ", ")
     }
-}
-
-private extension String {
-    var nilIfEmpty: String? { isEmpty ? nil : self }
 }
 
 extension RexSnapshot.Pane {
@@ -107,6 +97,17 @@ extension RexSnapshot.Pane {
               let path = SSHTerminalWorkingDirectory.path(from: pwd) ?? SSHTerminalWorkingDirectory.normalize(pwd)
         else { return nil }
         return path == "/" ? "/" : (path as NSString).lastPathComponent
+    }
+
+    /// The whole folder, with a home folder (`/Users/<name>` or
+    /// `/home/<name>`) written as `~`, as a shell prompt writes it.
+    var folderPath: String? {
+        guard let pwd,
+              let path = SSHTerminalWorkingDirectory.path(from: pwd) ?? SSHTerminalWorkingDirectory.normalize(pwd)
+        else { return nil }
+        let parts = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count >= 3, parts[0].isEmpty, parts[1] == "Users" || parts[1] == "home", !parts[2].isEmpty else { return path }
+        return (["~"] + parts.dropFirst(3)).joined(separator: "/")
     }
 
     /// What the pane's icon starts from (`RexSessionState.program`): the
@@ -168,8 +169,8 @@ struct SSHTerminalRexListState: Equatable {
     /// A stream failure from the monitor, under which the last snapshot stays.
     var failure: String?
     var needsYou = 0
-    /// The sessions showing their panes.
-    var expanded: Set<String> = []
+    /// The sessions folded away, their panes hidden.
+    var collapsed: Set<String> = []
     /// Rex can be changed from here: sessions can be made, renamed, and closed.
     var canManage = false
     /// A change is in flight, and why the last one failed.
@@ -177,23 +178,49 @@ struct SSHTerminalRexListState: Equatable {
     var manageFailure: String?
 }
 
+/// A run of a Rex's rows drawn together: its heading, the card of what it
+/// says about its connection, and for each session a small heading over a card
+/// of its panes. The Rex screen makes one list section of each.
+struct SSHTerminalRexListGroup: Hashable, Sendable {
+    enum Style: Hashable, Sendable {
+        /// Rows on the page's background: the Rex's heading, a session's heading.
+        case heading
+        /// Rows in a card.
+        case card
+    }
+
+    let id: String
+    let style: Style
+    let rows: [SSHTerminalRexListRow]
+}
+
 extension SSHTerminalRexListRow {
-    /// The host's heading, then its rows: the connection first (connecting,
-    /// failed, or waiting for a tap), why Rex cannot be read, and then the
-    /// sessions. A host Rex has not answered for yet shows Loading.
+    /// Every row, in order: what `groups` lays out.
     static func rows(hostName: String, state: SSHTerminalRexListState) -> [Self] {
-        var rows: [Self] = [.init(id: "header", kind: .header(name: hostName, needsYou: state.needsYou))]
-        var connection: [Self] = []
+        groups(hostName: hostName, state: state).flatMap(\.rows)
+    }
+
+    /// The Rex's heading; then a card with the connection (connecting, failed,
+    /// or waiting for a tap), why Rex cannot be read, and anything Rex refused;
+    /// then each session's heading over the card of its panes, unless the
+    /// session is folded. A Rex not answered yet shows Loading.
+    static func groups(hostName: String, state: SSHTerminalRexListState) -> [SSHTerminalRexListGroup] {
+        var groups = [SSHTerminalRexListGroup(
+            id: "heading", style: .heading,
+            rows: [.init(id: "header", kind: .header(name: hostName, needsYou: state.needsYou))]
+        )]
+        var status: [Self] = []
         if state.connecting {
-            connection.append(.init(id: "connecting", kind: .placeholder(state.opening ? "Opening\u{2026}" : "Connecting\u{2026}")))
+            status.append(.init(id: "connecting", kind: .placeholder(state.opening ? "Opening\u{2026}" : "Connecting\u{2026}")))
         }
         if let failure = state.connectFailure {
-            connection.append(.init(id: "failure", kind: .failure(failure)))
+            status.append(.init(id: "failure", kind: .failure(failure)))
         }
-        if state.needsTap { connection.append(.init(id: "tap", kind: .tapToConnect)) }
+        if state.needsTap { status.append(.init(id: "tap", kind: .tapToConnect)) }
+        let connection = status
         // Why Rex cannot be read, with what to do about it; any other failure
-        // shows as it came. A host with no Rex on it is not a failure: the page lists
-        // every saved host, so it keeps one muted line and nothing to open.
+        // shows as it came. A host with no Rex on it is not a failure: the screen
+        // lists every saved host, so it keeps one muted line and nothing to open.
         var reasons: [Self] = []
         if state.absence == .notInstalled {
             reasons.append(.init(id: "reason", kind: .placeholder(String(localized: "No Rex on this host."))))
@@ -212,46 +239,52 @@ extension SSHTerminalRexListRow {
         if let failure = state.manageFailure {
             reasons.append(.init(id: "action", kind: .failure(failure)))
         }
-        rows += connection + reasons
-        if state.absence?.givesUp == true { return rows }
-        guard let snapshot = state.snapshot else {
-            if connection.isEmpty, reasons.isEmpty { rows.append(.init(id: "loading", kind: .placeholder("Loading\u{2026}"))) }
-            return rows
+        status += reasons
+        func finish() -> [SSHTerminalRexListGroup] {
+            status.isEmpty ? groups : [groups[0], .init(id: "status", style: .card, rows: status)] + groups.dropFirst()
         }
-        // No sessions is the one place a section offers to make one: everywhere else
-        // New Session is the heading's ⋯ and the page's ＋.
+        if state.absence?.givesUp == true { return finish() }
+        guard let snapshot = state.snapshot else {
+            if connection.isEmpty, reasons.isEmpty { status.append(.init(id: "loading", kind: .placeholder("Loading\u{2026}"))) }
+            return finish()
+        }
+        // No sessions is the one place a Rex offers to make one: everywhere else
+        // New Session is the heading's ⋯ and the page's ＋. A change in flight is a
+        // progress line beside the sessions it is changing.
         if snapshot.sessions.isEmpty {
             if state.canManage || state.managing {
-                rows.append(.init(id: "new", kind: .newSession(busy: state.managing)))
+                status.append(.init(id: "new", kind: .newSession(busy: state.managing)))
             } else {
-                rows.append(.init(id: "empty", kind: .placeholder("No Rex sessions.")))
+                status.append(.init(id: "empty", kind: .placeholder("No Rex sessions.")))
             }
+        } else if state.managing {
+            status.append(.init(id: "new", kind: .newSession(busy: true)))
         }
         for session in snapshot.sessions {
-            let expanded = state.expanded.contains(session.sessionID)
-            rows.append(.init(id: "session|" + session.sessionID, kind: .session(.init(session, expanded: expanded, manages: state.canManage))))
-            guard expanded else { continue }
-            // A session with several windows groups its panes under each window's name.
+            let row = SSHTerminalRexListSession(session, collapsed: state.collapsed.contains(session.sessionID), manages: state.canManage)
+            groups.append(.init(id: "session|" + session.sessionID, style: .heading, rows: [.init(id: "session|" + session.sessionID, kind: .session(row))]))
+            guard row.isExpanded else { continue }
+            var panes: [Self] = []
+            // A session with several windows names each window over its panes.
             let namesWindows = session.windows.count > 1
             for (index, window) in session.windows.enumerated() {
                 let windowName = window.label.flatMap { $0.isEmpty ? nil : $0 } ?? "Window \(index + 1)"
                 if namesWindows {
-                    rows.append(.init(id: "window|\(session.sessionID)|\(window.windowID)", kind: .window(id: window.windowID, name: windowName)))
+                    panes.append(.init(id: "window|\(session.sessionID)|\(window.windowID)", kind: .window(id: window.windowID, name: windowName)))
                 }
                 for pane in window.panes {
-                    rows.append(.init(
+                    panes.append(.init(
                         id: "pane|\(session.sessionID)|\(pane.blockID)",
                         kind: .pane(.init(pane, session: session, window: window, windowName: namesWindows ? windowName : nil))
                     ))
                 }
             }
+            if panes.isEmpty {
+                panes.append(.init(id: "nopanes|" + session.sessionID, kind: .placeholder(String(localized: "No panes"))))
+            }
+            groups.append(.init(id: "panes|" + session.sessionID, style: .card, rows: panes))
         }
-        // A change in flight is a progress line, not an action: the row is only the
-        // "Working…" note beside the sessions it is changing.
-        if !snapshot.sessions.isEmpty, state.managing {
-            rows.append(.init(id: "new", kind: .newSession(busy: true)))
-        }
-        return rows
+        return finish()
     }
 }
 
@@ -268,7 +301,7 @@ extension SSHTerminalRexFollower {
             absence: monitor.absence,
             failure: monitor.failure,
             needsYou: monitor.needsAttention,
-            expanded: expandedSessions,
+            collapsed: collapsedSessions,
             canManage: monitor.canManage,
             managing: managing,
             manageFailure: manageFailure
@@ -314,9 +347,11 @@ final class SSHTerminalRexListActionCell: SSHTerminalOverviewCell {
     }
 }
 
-/// A session row: two buttons, as the host row is (its own text drawn in a
+/// A session's heading over its panes' card: the session's name on the
+/// page's background, its status, its ⊕, and the chevron that folds the card.
+/// Its parts are buttons, as the host row's are (its own text drawn in a
 /// button, not in a list content configuration, which would make the cell one
-/// element): the row (identifier, label, value; a touch and VoiceOver's
+/// element): the name (identifier, label, value; a touch and VoiceOver's
 /// activation both open the session) and its disclosure, which shows or hides
 /// the panes. A test finds `app.buttons[id]` and `app.buttons[id + ".disclosure"]`.
 /// The row's custom actions carry what a swipe has, and the disclosure, so
@@ -363,21 +398,15 @@ final class SSHTerminalRexListSessionCell: SSHTerminalOverviewCell {
         let palette = themeID.palette
         var conf = UIButton.Configuration.plain()
         conf.title = session.title
-        conf.subtitle = session.detail
         conf.titleAlignment = .leading
+        conf.titleLineBreakMode = .byTruncatingTail
         conf.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer {
             var out = $0
-            out.font = .preferredFont(forTextStyle: .body)
-            out.foregroundColor = palette.ui.fg
-            return out
-        }
-        conf.subtitleTextAttributesTransformer = UIConfigurationTextAttributesTransformer {
-            var out = $0
-            out.font = .preferredFont(forTextStyle: .footnote)
+            out.font = UIFont.scaled(.subheadline, .semibold)
             out.foregroundColor = palette.ui.comment
             return out
         }
-        conf.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0)
+        conf.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 0, bottom: 2, trailing: 0)
         rowButton.configuration = conf
         rowButton.accessibilityIdentifier = identifier
         rowButton.accessibilityLabel = session.accessibilityLabel
@@ -388,14 +417,21 @@ final class SSHTerminalRexListSessionCell: SSHTerminalOverviewCell {
         performAction = open
         rowButton.addAction(open, for: .touchUpInside)
 
-        var accessories = statusAccessories(for: session.status, themeID: themeID)
+        // The heading's name lines up with its card's rows, so its status is the
+        // label alone, in its colour, with no status mark before the name.
+        var accessories: [UICellAccessory] = []
+        if case .known(let kind) = session.status, let label = session.status.label {
+            accessories.append(.label(text: label, options: .init(
+                tintColor: kind.tint(themeID.appTheme), font: .preferredFont(forTextStyle: .caption1)
+            )))
+        }
         var custom = actions
         // The session's own ⊕: a new pane in it, opened in a terminal of its own.
         if let newPane {
             var plus = UIButton.Configuration.plain()
-            plus.image = UIImage(systemName: "plus", withConfiguration: UIImage.SymbolConfiguration(textStyle: .footnote))
-            plus.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 10, bottom: 12, trailing: 6)
-            plus.baseForegroundColor = palette.ui.blue
+            plus.image = UIImage(systemName: "plus.circle", withConfiguration: UIImage.SymbolConfiguration(textStyle: .body))
+            plus.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 6)
+            plus.baseForegroundColor = palette.ui.comment
             newPaneButton.configuration = plus
             newPaneButton.accessibilityIdentifier = identifier + ".newPane"
             newPaneButton.accessibilityLabel = String(localized: "New Pane")
@@ -418,29 +454,24 @@ final class SSHTerminalRexListSessionCell: SSHTerminalOverviewCell {
         }
         if let toggleAction { disclosure.removeAction(toggleAction, for: .touchUpInside) }
         toggleAction = nil
-        if session.hasPanes {
-            var chevron = UIButton.Configuration.plain()
-            chevron.image = UIImage(systemName: "chevron.right", withConfiguration: UIImage.SymbolConfiguration(textStyle: .footnote, scale: .small))
-            chevron.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 8)
-            chevron.baseForegroundColor = palette.ui.comment
-            disclosure.configuration = chevron
-            disclosure.transform = session.isExpanded ? CGAffineTransform(rotationAngle: .pi / 2) : .identity
-            disclosure.accessibilityIdentifier = identifier + ".disclosure"
-            disclosure.accessibilityValue = session.isExpanded ? "Expanded" : "Collapsed"
-            let flip = UIAction { _ in toggle() }
-            toggleAction = flip
-            disclosure.addAction(flip, for: .touchUpInside)
-            accessories.append(.customView(configuration: .init(customView: disclosure, placement: .trailing())))
-            custom.append(UIAccessibilityCustomAction(name: session.isExpanded ? "Hide Panes" : "Show Panes") { _ in
-                toggle()
-                return true
-            })
-            // On screen the ⊕ sits before the chevron, and VoiceOver follows the
-            // screen. A session with no panes still offers its ⊕.
-            accessibilityElements = newPane == nil ? [rowButton, disclosure] : [rowButton, newPaneButton, disclosure]
-        } else {
-            accessibilityElements = newPane == nil ? [rowButton] : [rowButton, newPaneButton]
-        }
+        var chevron = UIButton.Configuration.plain()
+        chevron.image = UIImage(systemName: "chevron.down", withConfiguration: UIImage.SymbolConfiguration(textStyle: .footnote).applying(UIImage.SymbolConfiguration(weight: .semibold)))
+        chevron.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 0)
+        chevron.baseForegroundColor = palette.ui.comment
+        disclosure.configuration = chevron
+        disclosure.transform = session.isExpanded ? .identity : CGAffineTransform(rotationAngle: -.pi / 2)
+        disclosure.accessibilityIdentifier = identifier + ".disclosure"
+        disclosure.accessibilityValue = session.isExpanded ? "Expanded" : "Collapsed"
+        let flip = UIAction { _ in toggle() }
+        toggleAction = flip
+        disclosure.addAction(flip, for: .touchUpInside)
+        accessories.append(.customView(configuration: .init(customView: disclosure, placement: .trailing())))
+        custom.append(UIAccessibilityCustomAction(name: session.isExpanded ? "Hide Panes" : "Show Panes") { _ in
+            toggle()
+            return true
+        })
+        // On screen the ⊕ sits before the chevron, and VoiceOver follows the screen.
+        accessibilityElements = newPane == nil ? [rowButton, disclosure] : [rowButton, newPaneButton, disclosure]
         rowButton.accessibilityCustomActions = custom
         self.accessories = accessories
     }

@@ -3,19 +3,6 @@ import Testing
 import UIKit
 @testable import Oppi
 
-/// A device settings store for a test: over `defaults`, with the Terminal page's mode
-/// as given (nil leaves nothing chosen). A page that reads the device store would
-/// otherwise answer with whatever the slot's app container holds.
-@MainActor
-func terminalTestSettings(mode: SSHTerminalPageMode?, defaults: UserDefaults) -> SettingsStore {
-    if let mode {
-        defaults.set(mode.rawValue, forKey: AppPreferenceStore.Terminal.pageModeKey)
-    } else {
-        defaults.removeObject(forKey: AppPreferenceStore.Terminal.pageModeKey)
-    }
-    return SettingsStore(serverId: nil, device: DeviceAdapter(defaults: defaults), server: ServerAdapter { _ in nil })
-}
-
 /// A page mounted in a window that has appeared: what it draws, by identifier, and its
 /// list. Shared by the Terminal page's suites.
 @MainActor

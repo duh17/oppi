@@ -93,6 +93,10 @@ enum ShellRouteScreens {
             let screen = SSHTerminalHostListViewController(showsSidebarToggle: showsSidebarToggle)
             screen.traitOverrides.appRootEnvironment = root
             return screen
+        case .rex:
+            let screen = RexListViewController(showsSidebarToggle: showsSidebarToggle)
+            screen.traitOverrides.appRootEnvironment = root
+            return screen
         case .schedules:
             return SchedulesViewController(root: root, showsSidebarToggle: showsSidebarToggle)
         case .agents:
@@ -127,6 +131,10 @@ enum ShellRouteScreens {
             return
         }
         if let list = screen as? SSHTerminalHostListViewController {
+            list.showsSidebarToggle = placement == .splitDetailRoot
+            return
+        }
+        if let list = screen as? RexListViewController {
             list.showsSidebarToggle = placement == .splitDetailRoot
             return
         }

@@ -2765,10 +2765,10 @@ struct SSHTerminalTests {
         }
         await #expect(throws: SSHTerminalUpload.Failure.rejected("The host did not save the attachment: disk full")) {
             await fixture.setRunResult(.init(output: Data(), errorOutput: Data("disk full".utf8), exitStatus: 1))
-            _ = try await channel.upload(Data([1, 2, 3]), fileExtension: "png")
+            try await channel.attach([SSHTerminalUpload.File(data: Data([1, 2, 3]), fileExtension: "png")])
         }
         await #expect(throws: SSHTerminalUpload.Failure.tooLarge) {
-            _ = try await channel.upload(Data(count: SSHTerminalUpload.maximumBytes + 1), fileExtension: "png")
+            try await channel.attach([SSHTerminalUpload.File(data: Data(count: SSHTerminalUpload.maximumBytes + 1), fileExtension: "png")])
         }
         let runs = await fixture.runs
         #expect(runs.count == 1) // the oversized file never reached the host

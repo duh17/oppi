@@ -25,11 +25,11 @@ final class RexPreviewStreamHost: RexStreamHost {
     }
 }
 
-/// `SCREENSHOT_SCREEN=ssh-terminal-rex-list`: the Terminal tab over two saved
-/// hosts, a plain one and a Rex one (`rexHostID`). The Rex host's sessions
-/// come from a fake Rex (`RexFakeHost.preview()`: two sessions, one with a
-/// pane waiting on a permission), and a tap on a session opens a fake Rex
-/// session terminal, as the real tab opens the host's own.
+/// `SCREENSHOT_SCREEN=ssh-terminal-rex-list`: the Rex screen over two saved
+/// hosts (`rexHostID` first). Each host's sessions come from a fake Rex
+/// (`RexFakeHost.preview()`: two sessions, one with a pane waiting on a
+/// permission), and a tap on a session opens a fake Rex session terminal, as
+/// the real screen opens the host's own.
 final class SSHTerminalRexListPreviewController: PreviewRootController {
     static let rexHostID = UUID(uuid: (0x5E, 0x5E, 0x5E, 0x5E, 0, 0, 0x40, 0, 0x80, 0, 0, 0, 0, 0, 0, 1))
 
@@ -64,22 +64,19 @@ final class SSHTerminalRexListPreviewController: PreviewRootController {
         )
     }
 
-    /// The Terminal page over `hosts` (saved in the argument domain only: no
+    /// The Rex screen over `hosts` (saved in the argument domain only: no
     /// persistent defaults and no Keychain are written), each host's Rex the
     /// fake one, off the tailnet. A tapped session opens a fake Rex session
-    /// terminal pushed over the list, as the real page opens the host's own.
-    /// `fixedMode` is the page's (the Rex pane passes `.rex`).
-    static func makeList(
-        hosts: [SSHTerminalProfile], fixedMode: SSHTerminalPageMode? = nil
-    ) -> SSHTerminalHostListViewController {
+    /// terminal pushed over the list, as the real screen opens the host's own.
+    static func makeList(hosts: [SSHTerminalProfile]) -> RexListViewController {
         var values: [String: Any] = [:]
         values[SSHTerminalProfileStore.catalogKey] = try? JSONEncoder().encode(SSHTerminalCatalog(profiles: hosts))
         ScreenshotVolatileDefaults.apply(values)
         // The list is made with the factory that opens its sessions, so the
         // factory reaches the list through a reference set once it exists.
-        weak var listRef: SSHTerminalHostListViewController?
+        weak var listRef: RexListViewController?
         let consumers = Consumers()
-        let list = SSHTerminalHostListViewController(fixedMode: fixedMode, makeFollower: { profile in
+        let list = RexListViewController(makeFollower: { profile in
             let follower = SSHTerminalRexFollower(
                 profile: profile, promptsAutomatically: false, standIn: RexPreviewStreamHost()
             )

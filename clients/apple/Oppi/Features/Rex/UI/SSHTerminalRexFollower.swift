@@ -370,9 +370,9 @@ final class SSHTerminalRexFollower: SSHTerminalRexListFollowing {
     private(set) var managing = false
     private(set) var manageFailure: String?
 
-    /// The sessions whose panes the list shows. The page keeps them per host
-    /// (`SSHTerminalRexExpandedStore`), so they survive a visit.
-    var expandedSessions: Set<String> = []
+    /// The sessions folded on the list, their panes hidden. The page keeps them
+    /// per host (`SSHTerminalRexCollapsedStore`), so they survive a visit.
+    var collapsedSessions: Set<String> = []
 
     var isOpening: Bool { session.connecting || session.passwordPrompt }
 
@@ -403,7 +403,7 @@ protocol SSHTerminalRexListFollowing: AnyObject {
     /// A change to Rex is in flight, and why the last one failed.
     var managing: Bool { get }
     var manageFailure: String? { get }
-    var expandedSessions: Set<String> { get set }
+    var collapsedSessions: Set<String> { get set }
 
     /// The person tapped the row that asks to connect.
     func connect()
@@ -452,10 +452,10 @@ extension SSHTerminalRexListFollowing {
     }
 
     func toggleExpanded(session sessionID: String) {
-        if expandedSessions.contains(sessionID) {
-            expandedSessions.remove(sessionID)
+        if collapsedSessions.contains(sessionID) {
+            collapsedSessions.remove(sessionID)
         } else {
-            expandedSessions.insert(sessionID)
+            collapsedSessions.insert(sessionID)
         }
     }
 

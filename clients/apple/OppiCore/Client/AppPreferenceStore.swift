@@ -287,14 +287,8 @@ enum AppPreferenceStore {
 
     // MARK: - Terminal
 
-    /// The Terminal page's mode (`SSHTerminalPageMode`), kept as its raw value on
-    /// this device. Nothing stored means the page's own fallback (Rex while its
-    /// experiment is on, else Shell), which is why the default is empty rather than
-    /// a mode: a stored value is always a choice someone made.
+    /// The terminal's own choices, saved on this device.
     enum Terminal {
-        static let pageModeKey = "\(AppIdentifiers.subsystem).sshTerminal.pageMode"
-        static let pageModeDefault = ""
-
         /// What a tap on the terminal grid does when it opens nothing and no
         /// program takes the click (`SSHTerminalTapAction`).
         enum TapMode: String, CaseIterable, Sendable, Codable {

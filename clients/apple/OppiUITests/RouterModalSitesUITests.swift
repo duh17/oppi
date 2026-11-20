@@ -428,7 +428,7 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
     }
 
-    /// A session on the Terminal tab is closed only after a confirmation,
+    /// A session on the Rex screen is closed only after a confirmation,
     /// renamed from an alert (the list follows Rex's event), and a new one is
     /// made and opened by the row after the sessions.
     func testTerminalTabClosesRenamesAndCreatesRexSessions() {
@@ -480,12 +480,12 @@ final class RouterModalSitesUITests: XCTestCase, PreviewUITestCase {
         // New Session is the heading's ⋯ while the section still has sessions (an empty
         // one shows the row instead), and it opens the shell it makes.
         let heading = app.buttons[prefix + "menu"]
-        XCTAssertTrue(heading.waitUntilExists(timeout: 5), "The host heading has no ⋯ menu")
+        XCTAssertTrue(heading.waitUntilExists(timeout: 5), "The heading has no ⋯ menu")
         heading.tap()
         // The ＋ in the bar is titled New Session too, so the item is the element with
         // that label that is not the bar button.
         let newSession = app.descendants(matching: .any).matching(
-            NSPredicate(format: "label == %@ AND identifier != %@", "New Session", "sshTerminal.page.newSession")
+            NSPredicate(format: "label == %@ AND identifier != %@", "New Session", "rex.newSession")
         ).firstMatch
         XCTAssertTrue(newSession.waitUntilExists(timeout: 5), "The heading must offer New Session")
         newSession.tap()

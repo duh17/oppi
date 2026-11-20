@@ -242,7 +242,7 @@ Plain Pi is chat, sessions and files. Every larger feature is a switch the serve
 | `extensions` | Hides **Extensions** in the sidebar and Workspace Settings. Hiding only: sessions still use installed extensions |
 | `mcp` | Hides **MCP Servers** in the sidebar and Workspace Settings, and new sessions load no MCP servers |
 | `terminal` | Hides **Terminal** in the sidebar, in new panes, and in the chat and workspace bars |
-| `rex` | Hides Rex on the Terminal page and in Rex links, in this server's windows. Also needs Terminal, and the Rex Experiment on each device |
+| `rex` | Hides the Rex screen, Rex in new panes, and Rex links, in this server's windows. Also needs Terminal, and the Rex Experiment on each device |
 | `herdr` | A terminal opened from this server's windows on a Herdr host opens a plain shell. Also needs Terminal, and the Herdr Experiment on each device |
 | `godotPane` | Hides Godot games in new panes, and Godot links. Hiding only: sessions keep their Godot tools. Also needs the Godot Pane Experiment on each device |
 | `browserPane` | **Web Pages in Panes**: web links open in a sheet instead of a pane |

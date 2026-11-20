@@ -87,19 +87,6 @@ private struct IsolatedStores {
     func removeSuites() {
         suites.remove()
     }
-
-    /// A device settings store over this test's own defaults, holding `mode` as if it
-    /// had been chosen (nil leaves nothing chosen).
-    @MainActor
-    func settings(mode: SSHTerminalPageMode?) -> SettingsStore {
-        let defaults = suites.device
-        if let mode {
-            defaults.set(mode.rawValue, forKey: AppPreferenceStore.Terminal.pageModeKey)
-        } else {
-            defaults.removeObject(forKey: AppPreferenceStore.Terminal.pageModeKey)
-        }
-        return SettingsStore(serverId: nil, device: DeviceAdapter(defaults: defaults), server: ServerAdapter { _ in nil })
-    }
 }
 
 /// Settings › Terminal and its Rex on Your Tailnet page: the setup the Terminal
@@ -281,7 +268,7 @@ struct SSHTerminalSettingsTests {
                 reach: { .systemOnly },
                 barStore: hosts.barStore,
                 experiments: experiments,
-                settings: hosts.settings(mode: nil)
+                settings: SettingsStore(serverId: nil, device: DeviceAdapter(defaults: hosts.device), server: ServerAdapter { _ in nil })
             )
         )
     }
@@ -314,17 +301,7 @@ struct SSHTerminalHostRowActionTests {
     @Test func theMenuAsksToDeleteAndTheSheetsButtonRemovesTheHost() async throws {
         defer { hosts.removeSuites() }
         try hosts.save([plain, other])
-        let tab = try mountPage(SSHTerminalHostListViewController(
-            profileStore: hosts.profileStore,
-            tailnetRex: RexTailnetSection(
-                store: hosts.rexStore,
-                discovery: RexTailnetDiscovery { _ in .unreachable },
-                reach: { .none }
-            ),
-            startsTailnet: {},
-            // This is about the host rows, which are Shell mode's list.
-            settings: hosts.settings(mode: .shell)
-        ))
+        let tab = try mountPage(SSHTerminalHostListViewController(profileStore: hosts.profileStore))
         defer { tab.window.isHidden = true }
 
         // What the row's ⋯ **Delete Host** item runs: it asks, and nothing is removed

@@ -416,8 +416,10 @@ struct RexControlTests {
         try await waitUntil { socket.all.count == 1 }
         let hello = try socket.json(0)
         #expect(hello["type"] as? String == "hello" && hello["api_revision"] as? Int == RexControl.apiRevision)
-        control.receive(.message(.text(#"{"type":"welcome","protocol":"rex.control.v1","limits":{"max_message_bytes":1048576}}"#)))
+        #expect(hello["api_min_revision"] as? Int == RexControl.minimumRevision, "an older Rex can still choose a revision")
+        control.receive(.message(.text(#"{"type":"welcome","protocol":"rex.control.v1","limits":{"max_message_bytes":1048576},"api_revision":11}"#)))
         try await opening.value
+        #expect(control.negotiatedRevision == 11, "the revision Rex chose decides what this connection may call")
 
         let first = Task { try await control.call("server.version", [:]) }
         let second = Task { try await control.call("session.attach", ["session_id": "session:x"]) }

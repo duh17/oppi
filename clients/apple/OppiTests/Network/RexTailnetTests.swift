@@ -16,11 +16,6 @@ struct RexTailnetTests {
         TailnetPeer(id: name, hostName: name, dnsName: dns, os: os, tailscaleIPs: ["100.64.0.1"], isOnline: online)
     }
 
-    /// The device defaults a test's page reads its mode from.
-    static func deviceDefaults() -> UserDefaults {
-        testDefaults(suite: "rex-tailnet-tests-device-\(UUID().uuidString)")
-    }
-
     static func store() -> RexDirectStore {
         RexDirectStore(defaults: testDefaults(suite: "rex-tailnet-tests-\(UUID().uuidString)"))
     }
@@ -58,9 +53,9 @@ struct RexTailnetTests {
     // MARK: - Listing once
 
     /// A Rex added by name and found again by discovery is listed once, as a
-    /// Rex section of its own with the same rows as a saved host's. A Rex a
-    /// listed SSH host already reaches (its remembered address names it, in
-    /// any spelling) is left to that host's section: one section, one link.
+    /// Rex section of its own with the same rows as a saved host's. A saved SSH
+    /// host reaching the same Rex does not take it off the tailnet list: the
+    /// direct route wins (`RexListDedupe`).
     @Test func aRexKnownSeveralWaysIsListedOnce() async throws {
         let store = Self.store()
         store.saveTailnetHost(testUnwrap(RexTailnetHost(address: Self.rex.address, name: "Studio Rex")))
@@ -72,25 +67,24 @@ struct RexTailnetTests {
         let section = RexTailnetSection(store: store, discovery: discovery, reach: { reach }, makeFollower: {
             RexTailnetFollower(host: $0, monitor: RexMonitor(tailnet: $0, openDirect: Self.refusing))
         }, findsTailnetRex: { true })
-        section.update(peers: peers, selfDNSName: me, sshRexHosts: [], active: false)
+        section.update(peers: peers, selfDNSName: me, active: false)
         #expect(section.entries.map(\.address) == [Self.rex.address, "box.tail0000.ts.net"])
         #expect(section.listedFollowers.map(\.host.name) == ["Studio Rex", "box"])
         let rows = SSHTerminalRexListRow.rows(hostName: Self.rex.address, state: try #require(section.listedFollowers.first).listState)
         #expect(rows.map(\.id) == ["header", "loading"], "a node not read yet is a host's section, loading")
 
-        // An SSH host on the tab that reaches the same Rex lists it instead.
+        // A saved SSH host that learned the same Rex's address leaves the tailnet list as it is.
         let ssh = SSHTerminalProfile(host: "mac-studio", username: "alex", opensRexSessions: true)
         let said = try #require(URL(string: "https://Rex.Tail0000.ts.net/"))
         store.apply(.available(url: said, hostID: "host-1"), for: RexDirectHost(profile: ssh))
-        section.update(peers: peers, selfDNSName: me, sshRexHosts: [ssh], active: false)
-        #expect(section.entries.map(\.address) == ["box.tail0000.ts.net"])
-        #expect(section.follower(id: Self.rex.id) == nil, "its follower is dropped with it")
+        section.update(peers: peers, selfDNSName: me, active: false)
+        #expect(section.entries.map(\.address) == [Self.rex.address, "box.tail0000.ts.net"])
 
         // Forgotten, the saved name goes with its follower on the next update. A node
         // discovery still sees stays listed (it is on the tailnet), so this update is
         // one where discovery no longer finds it: the peers list without it.
         store.forgetTailnetHost(address: Self.rex.address)
-        section.update(peers: [Self.peer("box", dns: "box.tail0000.ts.net")], selfDNSName: me, sshRexHosts: [], active: false)
+        section.update(peers: [Self.peer("box", dns: "box.tail0000.ts.net")], selfDNSName: me, active: false)
         #expect(!section.entries.contains { $0.address == Self.rex.address })
         #expect(section.follower(id: Self.rex.id) == nil)
     }
@@ -115,7 +109,7 @@ struct RexTailnetTests {
         }, findsTailnetRex: { finds.withLock { $0 } })
         #expect(!AppPreferenceStore.Terminal.findsTailnetRexDefault, "off unless someone turns it on")
 
-        section.update(peers: peers, selfDNSName: me, sshRexHosts: [], active: true)
+        section.update(peers: peers, selfDNSName: me, active: true)
         await section.refresh()
         #expect(probed.withLock { $0 }.isEmpty, "no computer is asked")
         #expect(section.entries.map(\.address) == [Self.rex.address])
@@ -123,7 +117,7 @@ struct RexTailnetTests {
         finds.withLock { $0 = true }
         await section.refresh()
         #expect(probed.withLock { $0 } == ["box.tail0000.ts.net"])
-        section.update(peers: peers, selfDNSName: me, sshRexHosts: [], active: true)
+        section.update(peers: peers, selfDNSName: me, active: true)
         #expect(section.entries.map(\.address) == [Self.rex.address, "box.tail0000.ts.net"])
         section.clear()
     }
@@ -143,11 +137,11 @@ struct RexTailnetTests {
         let section = RexTailnetSection(store: Self.store(), discovery: discovery, reach: { .peers }, makeFollower: {
             RexTailnetFollower(host: $0, monitor: RexMonitor(tailnet: $0, openDirect: Self.refusing))
         }, findsTailnetRex: { finds.withLock { $0 } })
-        section.update(peers: peers, selfDNSName: me, sshRexHosts: [], active: true)
+        section.update(peers: peers, selfDNSName: me, active: true)
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { discovery.probing })
 
         finds.withLock { $0 = false }
-        section.update(peers: peers, selfDNSName: me, sshRexHosts: [], active: true)
+        section.update(peers: peers, selfDNSName: me, active: true)
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !discovery.probing }, "the pass stopped")
         #expect(asked.withLock { $0 } == RexTailnetProbe.concurrency, "no computer was asked after the switch")
         section.clear()
@@ -281,7 +275,8 @@ struct RexTailnetTests {
     }
 
     /// Without SSH there are no side commands: they fail at once with the
-    /// reason instead of hanging, and the chat bar offers no attachments.
+    /// reason instead of hanging, and a Rex that takes no uploads offers no
+    /// attachments.
     @Test func featuresThatNeedSSHSayWhyInsteadOfRunning() async throws {
         let fake = RexFakeSession(sessionID: "session:1", panes: [.init(block: "b1", label: "shell", title: "zsh", screen: "pane")])
         let registry = Self.registry()
@@ -294,7 +289,9 @@ struct RexTailnetTests {
         let reason = SSHTerminalSideCommandsUnavailable(reason: RexTailnetTransport.sideCommandsReason)
         #expect(channel.sideCommandsUnavailable == RexTailnetTransport.sideCommandsReason)
         await #expect(throws: reason) { _ = try await channel.run("true") }
-        await #expect(throws: reason) { _ = try await channel.upload(Data("photo".utf8), fileExtension: "png") }
+        // This Rex says no API revision, so it takes no uploads either: Attach is not offered.
+        #expect(channel.attachRoute == .unavailable(RexTailnetTransport.sideCommandsReason))
+        await #expect(throws: reason) { try await channel.attach([SSHTerminalUpload.File(data: Data("photo".utf8), fileExtension: "png")]) }
         await #expect(throws: reason) { _ = try await channel.openStream(command: "herdr", sink: { _ in }) }
         #expect(session.currentProfile?.rexTailnet == Self.rex.url, "the terminal knows it has no saved host to edit")
     }
@@ -354,10 +351,7 @@ struct RexTailnetTests {
             store: store, discovery: RexTailnetDiscovery { _ in .unreachable }, reach: { .systemOnly },
             makeFollower: { RexTailnetFollower(host: $0, monitor: RexMonitor(tailnet: $0, openDirect: Self.refusing)) }
         )
-        let list = SSHTerminalHostListViewController(
-            profileStore: Self.profiles(), tailnetRex: section, startsTailnet: {},
-            settings: terminalTestSettings(mode: .rex, defaults: Self.deviceDefaults())
-        )
+        let list = RexListViewController(profileStore: Self.profiles(), tailnetRex: section, startsTailnet: {})
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
@@ -419,10 +413,7 @@ struct RexTailnetTests {
                 return follower
             }
         )
-        let list = SSHTerminalHostListViewController(
-            profileStore: Self.profiles(), tailnetRex: section, startsTailnet: {},
-            settings: terminalTestSettings(mode: .rex, defaults: Self.deviceDefaults())
-        )
+        let list = RexListViewController(profileStore: Self.profiles(), tailnetRex: section, startsTailnet: {})
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)

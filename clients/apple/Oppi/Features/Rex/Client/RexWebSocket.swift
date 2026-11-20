@@ -21,13 +21,15 @@ enum RexSocketEvent: Sendable {
     case ended(any Error)
 }
 
-/// Rex's two WebSocket endpoints: the control connection and a pane's data.
+/// Rex's WebSocket endpoints: the control connection, a pane's data, and a
+/// file's bytes (an upload, `RexUpload`).
 struct RexEndpoint: Equatable, Sendable {
     let path: String
     let subprotocol: String
 
     static let control = Self(path: "/api/control", subprotocol: "rex.control.v1")
     static let data = Self(path: "/api/data", subprotocol: "rex.data.terminal.v1")
+    static let bytes = Self(path: "/api/data", subprotocol: "rex.data.bytes.v1")
 }
 
 /// One open Rex WebSocket, at the message level: the upgrade is done, pings

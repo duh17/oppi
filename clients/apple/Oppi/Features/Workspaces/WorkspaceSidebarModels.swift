@@ -43,6 +43,8 @@ struct WorkspaceSidebarPrimaryUtilityItem: Equatable {
     let accessibilityHint: String?
     /// Its place among the sidebar's rows, on the scale plugin entries use (`order`).
     var order: Double = 0
+    /// A logo asset drawn instead of `systemImage`, at a symbol's size (`SymbolSizedLogo`).
+    var logo: String?
 }
 
 enum WorkspaceSidebarPrimaryUtilities {
@@ -83,17 +85,29 @@ enum WorkspaceSidebarPrimaryUtilities {
             accessibilityHint: "Opens your saved hosts",
             order: 60
         ),
+        .init(
+            target: .rex,
+            title: "Rex",
+            systemImage: "rectangle.split.3x1",
+            accessibilityLabel: "Open Rex",
+            accessibilityIdentifier: "workspace.rex.open",
+            accessibilityHint: "Opens your Rex sessions",
+            order: 62,
+            logo: "rex-logo"
+        ),
     ]
 
     /// `items` the server offers (`offers`, its feature switches), with its plugin entries that
     /// have a sidebar row among them by `order`; an entry sorts after a native row of the same
-    /// order. The server lists only plugin entries whose feature is on.
+    /// order. The server lists only plugin entries whose feature is on. Rex also needs this
+    /// device's Rex experiment.
     static func items(
         plugins: [PluginScreenSidebarEntry],
+        rexExperiment: Bool = SSHTerminalExperimentAccess.current.rex,
         offers: (ServerFeature) -> Bool
     ) -> [WorkspaceSidebarPrimaryUtilityItem] {
         let native = items
-            .filter { $0.target.serverFeature.map(offers) ?? true }
+            .filter { ($0.target.serverFeature.map(offers) ?? true) && ($0.target != .rex || rexExperiment) }
             .map { (rank: 0, item: $0) }
         let added = plugins.filter { $0.scopes.contains("server") }.map { entry in
             (rank: 1, item: WorkspaceSidebarPrimaryUtilityItem(

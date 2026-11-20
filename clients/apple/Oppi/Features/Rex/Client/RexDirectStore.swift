@@ -103,6 +103,13 @@ struct RexDirectStore: @unchecked Sendable {
         entry(for: host)?.url
     }
 
+    /// The Tailscale address this host's Rex said it serves at, as a
+    /// `RexTailnetHost.address`, and the `host_id` it gave then.
+    func learned(for host: RexDirectHost) -> (address: String, hostID: String?)? {
+        guard let entry = entry(for: host), let address = RexTailnetHost(url: entry.url)?.address else { return nil }
+        return (address, entry.hostID)
+    }
+
     private func entry(for host: RexDirectHost) -> Entry? {
         guard let data = defaults.data(forKey: Self.key(host.id)),
               let entry = try? JSONDecoder().decode(Entry.self, from: data),
@@ -171,13 +178,6 @@ struct RexDirectStore: @unchecked Sendable {
 
     func forgetTailnetHost(address: String) {
         writeTailnetHosts(tailnetHosts().filter { $0.address != address })
-    }
-
-    /// The tailnet addresses the Rex of `profiles` said they serve at, so the
-    /// Terminal tab lists such a Rex once, under its SSH host. Addresses are
-    /// `RexTailnetHost.address`es, not URL strings.
-    func tailnetAddresses(among profiles: [SSHTerminalProfile]) -> Set<String> {
-        Set(profiles.compactMap { url(for: RexDirectHost(profile: $0)).flatMap { RexTailnetHost(url: $0)?.address } })
     }
 
     /// Posted for this store's own defaults when anything in them changes.

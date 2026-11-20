@@ -2,35 +2,30 @@ import Foundation
 import Observation
 import UIKit
 
-/// The Rexes the Terminal tab's tailnet list shows, once each: the ones saved by
+/// The Rexes the Rex screen reaches over Tailscale, once each: the ones saved by
 /// name first, in the order they were added, then the rest discovery found, by
-/// name. A Rex a listed SSH host already reaches (`listedBySSH`: its remembered
-/// `RexDirectStore` address names it) is left out, because that host's own Rex
-/// section lists it over one link.
+/// name. A saved SSH host that reaches one of them is left out of the screen
+/// instead (`RexListDedupe`).
 extension Array where Element == RexTailnetHost {
-    static func tailnet(
-        saved: [RexTailnetHost],
-        discovered: [RexTailnetHost],
-        listedBySSH: (RexTailnetHost) -> Bool
-    ) -> [RexTailnetHost] {
+    static func tailnet(saved: [RexTailnetHost], discovered: [RexTailnetHost]) -> [RexTailnetHost] {
         var seen = Set<String>()
         var hosts: [RexTailnetHost] = []
-        for host in saved where seen.insert(host.address).inserted && !listedBySSH(host) {
+        for host in saved where seen.insert(host.address).inserted {
             hosts.append(host)
         }
         let found = discovered.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        for host in found where seen.insert(host.address).inserted && !listedBySSH(host) {
+        for host in found where seen.insert(host.address).inserted {
             hosts.append(host)
         }
         return hosts
     }
 }
 
-/// Follows one Rex reached over Tailscale alone, for the Terminal tab: its
-/// `RexMonitor` reads Rex straight over Tailscale while the tab shows, and a
+/// Follows one Rex reached over Tailscale alone, for the Rex screen: its
+/// `RexMonitor` reads Rex straight over Tailscale while the screen shows, and a
 /// tapped session or pane opens over the same route in a terminal of its own
 /// (`SSHTerminalConnectSession.openTailnetRexPane`). There is no sign-in, so
-/// nothing waits for a tap. The tab draws it like a saved host's Rex
+/// nothing waits for a tap. The screen draws it like a saved host's Rex
 /// (`SSHTerminalRexListFollowing`).
 @MainActor @Observable
 final class RexTailnetFollower: SSHTerminalRexListFollowing {
@@ -41,7 +36,7 @@ final class RexTailnetFollower: SSHTerminalRexListFollowing {
     /// failure, shown under the heading until the next one or a visit.
     private(set) var managing = false
     private(set) var manageFailure: String?
-    var expandedSessions: Set<String> = []
+    var collapsedSessions: Set<String> = []
     @ObservationIgnored private var reader: Task<Void, Never>?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
 
@@ -79,7 +74,7 @@ final class RexTailnetFollower: SSHTerminalRexListFollowing {
             absence: monitor.absence,
             failure: monitor.failure,
             needsYou: monitor.needsAttention,
-            expanded: expandedSessions,
+            collapsed: collapsedSessions,
             canManage: monitor.canManage,
             managing: managing,
             manageFailure: manageFailure
@@ -141,10 +136,10 @@ final class RexTailnetFollower: SSHTerminalRexListFollowing {
     }
 }
 
-/// The Terminal tab's tailnet nodes: the ones added by name and the ones
-/// discovery finds, each with a `RexTailnetFollower` the tab lists as a Rex
-/// section of its own. Nothing heads them on the page; what was added by hand,
-/// and what limits the list, are Settings › Terminal › Rex on Your Tailnet.
+/// The Rex screen's tailnet nodes: the ones added by name and the ones
+/// discovery finds, each with a `RexTailnetFollower` the screen lists as a Rex
+/// section of its own, before the saved SSH hosts. What was added by hand, and
+/// what limits the list, are Settings › Terminal › Rex on Your Tailnet.
 @MainActor @Observable
 final class RexTailnetSection {
     private(set) var entries: [RexTailnetHost] = []
@@ -158,15 +153,13 @@ final class RexTailnetSection {
     /// The tab has been active since it last showed: a machine that did not
     /// answer is asked again on the next visit, not after each prompt.
     @ObservationIgnored private var visiting = false
-    /// The Tailscale names the listed SSH hosts' Rex said they serve at, read once
-    /// for a given host list. The saved nodes themselves are read on every update:
-    /// they are the store's own small array, and a cached copy would outlive a
-    /// forget until the store's notification arrived (one update late).
-    @ObservationIgnored private var sshNamesCache: (hosts: [SSHTerminalProfile], names: Set<String>)?
-    /// Bumped when the store changes, so the tab runs another pass.
+    /// Bumped when the store changes, so the screen runs another pass. The saved
+    /// nodes are read on every update: they are the store's own small array.
     private var storeRevision = 0
     @ObservationIgnored private var storeObserver: NSObjectProtocol?
-    @ObservationIgnored private let store: RexDirectStore
+    /// Where the Rexes added by name live, and what saved hosts learned of their
+    /// Rex's Tailscale address (`RexListDedupe`).
+    @ObservationIgnored let store: RexDirectStore
     @ObservationIgnored private let makeFollower: @MainActor (RexTailnetHost) -> RexTailnetFollower
     /// How this device reaches the tailnet now; previews pin it.
     @ObservationIgnored private let reachNow: @MainActor () -> RexTailnetReach
@@ -190,11 +183,10 @@ final class RexTailnetSection {
         self.reachNow = reach
         self.access = access
         self.makeFollower = makeFollower
-        // A host saved, or an SSH host learning or forgetting its Rex's
-        // address, changes what is listed.
+        // A Rex saved or forgotten by name changes what is listed.
         let changes = store.changes
         storeObserver = NotificationCenter.default.addObserver(forName: changes.name, object: changes.object, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.storeChanged() }
+            MainActor.assumeIsolated { self?.storeRevision += 1 }
         }
     }
 
@@ -203,41 +195,26 @@ final class RexTailnetSection {
         discovering?.cancel()
     }
 
-    private func storeChanged() {
-        sshNamesCache = nil
-        storeRevision += 1
-    }
-
     /// The tab shows the tailnet nodes once it lists one, or there is a way onto a tailnet.
     var isShown: Bool { !entries.isEmpty || reach != .none }
 
     /// The listed nodes' followers, in list order.
     var listedFollowers: [RexTailnetFollower] { entries.compactMap { followers[$0.address] } }
 
-    /// Takes what the tab knows now: the node's machine list and its own name,
-    /// the SSH hosts whose Rex the tab already lists (one of them reaching the
-    /// same Rex lists it instead), and whether the tab shows. Reads how this
-    /// device reaches the tailnet, and probes machines not asked yet while
-    /// `active`; the tab syncs each follower itself.
-    func update(peers: [TailnetPeer], selfDNSName: String?, sshRexHosts: [SSHTerminalProfile], active: Bool) {
+    /// Takes what the screen knows now: the node's machine list and its own
+    /// name, and whether the screen shows. Reads how this device reaches the
+    /// tailnet, and probes machines not asked yet while `active`; the screen
+    /// syncs each follower itself.
+    func update(peers: [TailnetPeer], selfDNSName: String?, active: Bool) {
         _ = storeRevision
         let reach = reachNow()
         self.peers = peers
         self.selfDNSName = selfDNSName
         if self.reach != reach { self.reach = reach }
-        let saved = store.tailnetHosts()
-        let sshNames: Set<String>
-        if let cached = sshNamesCache, cached.hosts == sshRexHosts {
-            sshNames = cached.names
-        } else {
-            sshNames = store.tailnetAddresses(among: sshRexHosts)
-            sshNamesCache = (sshRexHosts, sshNames)
-        }
         let finds = reach == .peers && findsTailnetRex()
         let next = [RexTailnetHost].tailnet(
-            saved: saved,
-            discovered: finds ? discovery.found(among: peers, selfDNSName: selfDNSName) : [],
-            listedBySSH: { sshNames.contains($0.address) }
+            saved: store.tailnetHosts(),
+            discovered: finds ? discovery.found(among: peers, selfDNSName: selfDNSName) : []
         )
         if next != entries { entries = next }
         let wanted = Set(entries.map(\.address))

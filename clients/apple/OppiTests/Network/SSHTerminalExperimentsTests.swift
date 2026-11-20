@@ -155,7 +155,7 @@ struct SSHTerminalExperimentTests {
         let rexStore = RexDirectStore(defaults: defaults)
         let section = RexTailnetSection(store: rexStore, reach: { .peers }, access: { access.value })
         rexStore.saveTailnetHost(node)
-        section.update(peers: [], selfDNSName: nil, sshRexHosts: [], active: false)
+        section.update(peers: [], selfDNSName: nil, active: false)
         #expect(section.isShown)
         section.clear()
         #expect(!section.isShown && section.listedFollowers.isEmpty, "no sections while Rex is off")
@@ -168,7 +168,7 @@ struct SSHTerminalExperimentTests {
         // `SSHTerminalRexSectionTests` and `RexTailnetTests`, which mount the tab
         // with the switch on in this same run.
         access.value = .all
-        section.update(peers: [], selfDNSName: nil, sshRexHosts: [], active: false)
+        section.update(peers: [], selfDNSName: nil, active: false)
         #expect(section.isShown, "Rex back on: the sections are listed again")
         #expect(SSHTerminalExperimentAccess.current == .all)
         #expect(SSHTerminalBarContext.plain.hidden().isEmpty)

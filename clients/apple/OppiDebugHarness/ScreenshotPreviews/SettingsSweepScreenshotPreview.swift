@@ -280,12 +280,6 @@ final class SettingsSweepPreviewController: PreviewRootController {
             Self.applyTailnetFixture()
         case "ssh-hosts":
             Self.seedSSHHosts()
-            Self.seedPageMode("shell")
-        case "ssh-hosts-rex":
-            Self.seedSSHHosts()
-            Self.seedPageMode("rex")
-        case "ssh-hosts-mode":
-            Self.seedSSHHosts()
         case "ssh-term-settings", "ssh-term-tailnet":
             Self.seedSSHHosts()
             Self.seedTailnetRex()
@@ -425,28 +419,8 @@ final class SettingsSweepPreviewController: PreviewRootController {
             return stack {
                 AgentDetailViewController(root: root, agentId: Self.agent.id) { _ in }
             }
-        case "ssh-hosts", "ssh-hosts-rex":
-            // Off the tailnet whatever machine runs it, so the capture shows the hosts
-            // alone. `ssh-hosts` is Shell mode's list, `ssh-hosts-rex` is Rex's.
-            return stack {
-                SSHTerminalHostListViewController(
-                    tailnetRex: RexTailnetSection(
-                        store: RexDirectStore(defaults: UserDefaults(suiteName: "settings-sweep-tailnet") ?? .standard), reach: { .none }
-                    ),
-                    startsTailnet: {}
-                )
-            }
-        case "ssh-hosts-mode":
-            // Neither mode is pinned, so the page opens on the one its experiments
-            // allow and the mode button has something to do.
-            return stack {
-                SSHTerminalHostListViewController(
-                    tailnetRex: RexTailnetSection(
-                        store: RexDirectStore(defaults: UserDefaults(suiteName: "settings-sweep-tailnet") ?? .standard), reach: { .none }
-                    ),
-                    startsTailnet: {}
-                )
-            }
+        case "ssh-hosts":
+            return stack { SSHTerminalHostListViewController() }
         case "experiments":
             // Settings → Experiments: Live Voice's own switch and the two declared
             // ones (Rex, Herdr), all off unless the launch turns one on.
@@ -543,12 +517,6 @@ final class SettingsSweepPreviewController: PreviewRootController {
         var values: [String: Any] = [:]
         values[SSHTerminalProfileStore.catalogKey] = try? JSONEncoder().encode(catalog)
         ScreenshotVolatileDefaults.apply(values)
-    }
-
-    /// The Terminal page's mode, in the argument domain, so a capture shows that mode
-    /// and nothing is saved for the next launch.
-    private static func seedPageMode(_ mode: String) {
-        ScreenshotVolatileDefaults.apply([AppPreferenceStore.Terminal.pageModeKey: mode])
     }
 
     /// One Rex added by its Tailscale name, in the argument domain: a capture

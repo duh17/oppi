@@ -321,9 +321,9 @@ struct SSHTerminalProfileStore {
     /// Where each host's Rex answers over Tailscale, kept beside the hosts.
     var rexDirect: RexDirectStore { RexDirectStore(defaults: defaults) }
 
-    /// Which of a host's Rex sessions are expanded on the Terminal page, in the same
+    /// Which of a host's Rex sessions are folded on the Rex screen, in the same
     /// defaults.
-    var rexExpanded: SSHTerminalRexExpandedStore { SSHTerminalRexExpandedStore(defaults: defaults) }
+    var rexCollapsed: SSHTerminalRexCollapsedStore { SSHTerminalRexCollapsedStore(defaults: defaults) }
 
     /// True when the catalog value is present but does not decode. Opening the
     /// list uses this to offer an explicit reset. It does not read the Keychain.
@@ -476,7 +476,7 @@ struct SSHTerminalProfileStore {
         try write(profiles.filter { $0.id != id })
         SSHTerminalColorStore(defaults: defaults).forget(id)
         SSHTerminalRexHostStore(defaults: defaults).forget(id)
-        SSHTerminalRexExpandedStore(defaults: defaults).forget(id)
+        SSHTerminalRexCollapsedStore(defaults: defaults).forget(id)
         RexDirectStore(defaults: defaults).forget(id)
     }
 

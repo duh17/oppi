@@ -31,11 +31,45 @@ protocol SSHTerminalConnection: Sendable {
     /// Side commands would sign in to the host first, which may ask for Face
     /// ID: a Rex reached over Tailscale signs in to SSH only when one needs it.
     var sideCommandsSignInPending: Bool { get }
+    /// Whether this connection saves attachments on the machine and types
+    /// their paths itself (`uploadFiles`): a Rex pane whose Rex takes uploads
+    /// (`RexUpload`), over any route. Otherwise the channel saves them with a
+    /// side command and types the paths.
+    var uploadsFiles: Bool { get }
+    func uploadFiles(_ files: [SSHTerminalUpload.File]) async throws
 }
 
 extension SSHTerminalConnection {
     var sideCommandsUnavailable: String? { nil }
     var sideCommandsSignInPending: Bool { false }
+    var uploadsFiles: Bool { false }
+    func uploadFiles(_ files: [SSHTerminalUpload.File]) async throws {
+        throw SSHTerminalSideCommandsUnavailable(reason: "This terminal cannot save files itself.")
+    }
+}
+
+/// How a terminal takes an attachment or a pasted image now. One answer for
+/// the bar's Attach and for Paste, so neither offers what the other refuses.
+enum SSHTerminalAttachRoute: Equatable, Sendable {
+    /// The connection saves the files and types their paths (a Rex pane, through Rex).
+    case connection
+    /// A side command saves each file on the host; the channel types the paths.
+    case sideCommand
+    /// Neither: why, for Paste to say (the bar hides Attach).
+    case unavailable(String)
+
+    var takesFiles: Bool {
+        if case .unavailable = self { return false }
+        return true
+    }
+
+    /// The connection's own upload first, since it needs nothing beside the
+    /// terminal; else the host's side commands; else the reason they are gone.
+    static func choose(connectionUploads: Bool, sideCommandsUnavailable: String?) -> Self {
+        if connectionUploads { return .connection }
+        if let sideCommandsUnavailable { return .unavailable(sideCommandsUnavailable) }
+        return .sideCommand
+    }
 }
 
 /// A side command asked of a terminal that has none (`sideCommandsUnavailable`):
@@ -244,6 +278,17 @@ final class SSHTerminalEventQueue: Sendable {
 enum SSHTerminalUpload {
     static let maximumBytes = 32 * 1024 * 1024
 
+    /// One attachment: its bytes and the generated name it is saved under.
+    struct File: Sendable {
+        let data: Data
+        let name: String
+
+        init(data: Data, fileExtension: String) {
+            self.data = data
+            name = SSHTerminalUpload.fileName(extension: fileExtension)
+        }
+    }
+
     enum Failure: Error, Equatable, LocalizedError {
         case tooLarge
         case rejected(String)
@@ -408,6 +453,9 @@ final class SSHTerminalChannel {
     /// Why this terminal cannot run side commands (`SSHTerminalConnection`),
     /// kept after it ends so a screen still says why.
     private(set) var sideCommandsUnavailable: String?
+    /// How attachments reach the host (`SSHTerminalAttachRoute`), read when the
+    /// terminal opens and kept after it ends.
+    private(set) var attachRoute = SSHTerminalAttachRoute.sideCommand
     /// Side commands would sign in first (`SSHTerminalConnection`): automatic
     /// reads leave them be, and a command the person asks for signs in.
     var sideCommandsSignInPending: Bool { connection?.sideCommandsSignInPending ?? false }
@@ -554,6 +602,9 @@ final class SSHTerminalChannel {
         self.connection = connection
         self.command = command
         sideCommandsUnavailable = connection.sideCommandsUnavailable
+        attachRoute = .choose(
+            connectionUploads: connection.uploadsFiles, sideCommandsUnavailable: connection.sideCommandsUnavailable
+        )
         connected = true
         connecting = false
         reason = "Connected"
@@ -774,13 +825,25 @@ final class SSHTerminalChannel {
         return try await connection.openStream(command: command, sink: sink)
     }
 
-    /// Saves `data` in a private temporary folder on the host and returns its
-    /// path, so a prompt can point an agent at a photo or file from the phone.
-    func upload(_ data: Data, fileExtension: String) async throws -> String {
-        guard data.count <= SSHTerminalUpload.maximumBytes else { throw SSHTerminalUpload.Failure.tooLarge }
-        let name = SSHTerminalUpload.fileName(extension: fileExtension)
-        return try SSHTerminalUpload.path(from: try await run(SSHTerminalUpload.command(fileName: name), input: data),
-                                          fileName: name)
+    /// Saves `files` on the host and puts their paths at the prompt, separated
+    /// by spaces and without Return, so a prompt can point an agent at a photo
+    /// or file from the phone (`attachRoute` says how).
+    func attach(_ files: [SSHTerminalUpload.File]) async throws {
+        guard files.allSatisfy({ $0.data.count <= SSHTerminalUpload.maximumBytes }) else { throw SSHTerminalUpload.Failure.tooLarge }
+        switch attachRoute {
+        case .connection:
+            guard connected, !inputClosed, let connection else { throw SSHTerminalError.disconnected }
+            try await connection.uploadFiles(files)
+        case .sideCommand:
+            var paths: [String] = []
+            for file in files {
+                let result = try await run(SSHTerminalUpload.command(fileName: file.name), input: file.data)
+                paths.append(try SSHTerminalUpload.path(from: result, fileName: file.name))
+            }
+            try paste(paths.joined(separator: " "))
+        case .unavailable(let reason):
+            throw SSHTerminalSideCommandsUnavailable(reason: reason)
+        }
     }
 
     /// Starts the grid from a pane's snapshot: its screen and modes, ready to

@@ -727,10 +727,10 @@ final class RexFakeTransport: RexTransport {
     }
 
     func openData(
-        inboundFlow: SSHPTYInboundFlow?, onEvent: @escaping @Sendable (RexSocketEvent) -> Void
+        _ endpoint: RexEndpoint, inboundFlow: SSHPTYInboundFlow?, onEvent: @escaping @Sendable (RexSocketEvent) -> Void
     ) async throws -> any RexSocket {
         let data = session.nextDataHost()
-        let socket = try await RexPipeSocket.open(.data, openStream: { data.open(sink: $0) }, onEvent: onEvent)
+        let socket = try await RexPipeSocket.open(endpoint, openStream: { data.open(sink: $0) }, onEvent: onEvent)
         state.withLock { $0.streams.append(socket) }
         session.serve(data)
         return socket

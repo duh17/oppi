@@ -1,25 +1,21 @@
 import UIKit
 
-/// Device-local host list. Row tap connects. Edit and Add push the setup form.
-/// Appearing loads defaults only: it does not dial and does not read the Keychain.
-/// Coming back from the form or the terminal reloads the list.
+/// The Terminal page: the hosts saved on this device, each opening its own login
+/// shell. Row tap connects. Edit and Add push the setup form. Appearing loads
+/// defaults only: it does not dial and does not read the Keychain. Coming back
+/// from the form or the terminal reloads the list. Rex has a screen of its own
+/// (`RexListViewController`).
 ///
 /// A `ListScreenController`: the base owns the list, the theme, the heading and
 /// footer chrome, the snapshot, the swipe actions, and the rows' redraw keys. This
-/// page keeps what only it has: the status rows, one Rex section per host, the
-/// saved hosts, the empty state and Reset, its bar and its mode button, the
-/// followers behind the Rex sections, and its own pull to refresh, which only Rex
-/// mode offers (the kit gives a pull to every `loadPolicy` but `.none`, and this
-/// page loads nothing itself).
+/// page keeps what only it has: the status rows, the saved hosts, the empty state
+/// and Reset, and its bar.
 final class SSHTerminalHostListViewController:
     ListScreenController<SSHTerminalHostListViewController.Section, SSHTerminalHostListViewController.Item> {
     var showsSidebarToggle = false {
         didSet { if isViewLoaded { installBarItems() } }
     }
 
-    /// How a Rex host's follower is made. The tab never prompts on its own;
-    /// the debug harness and tests pass one over a stand-in Rex.
-    private let makeFollower: @MainActor (SSHTerminalProfile) -> SSHTerminalRexFollower
     /// Where the saved hosts live. Tests pass a store over their own defaults.
     private let profileStore: @Sendable () -> SSHTerminalProfileStore
 
@@ -27,43 +23,11 @@ final class SSHTerminalHostListViewController:
     private lazy var session = SSHTerminalConnectSession(access: { [weak self] in self?.access ?? .current })
     private var chrome: SSHTerminalConnectChrome?
     private var profiles: [SSHTerminalProfile] = []
-    /// The Rex section's hosts, by saved host: each follows its own Rex over
-    /// its own connection while this screen shows.
-    private struct RexHost {
-        let follower: SSHTerminalRexFollower
-        let chrome: SSHTerminalConnectChrome
-    }
-
-    private var rexHosts: [UUID: RexHost] = [:]
-    /// Rex on your tailnet: Rex reached over Tailscale alone, each listed as a
-    /// Rex section of its own.
-    private let tailnetRex: RexTailnetSection
-    /// The connect chrome of each tailnet Rex's follower, by its id: it pushes
-    /// the terminal a tapped session opens.
-    private var tailnetChromes: [UUID: SSHTerminalConnectChrome] = [:]
-    /// Starts Oppi's own Tailscale node when the person connected it in
-    /// Settings, for its machine list. Tests pass one that does nothing.
-    private let startsTailnet: @MainActor () -> Void
-    /// What the Rex rows drew last, by item: `inputs(of:)` keys a Rex row on its
-    /// own value, so only a row that changed is configured again and a working
-    /// pane's mark keeps animating.
-    private var rexRows: [Item: SSHTerminalRexListRow] = [:]
-    private var isOnScreen = false
-    /// False while the pane this page sits in is covered or parked
-    /// (`PaneVisibility`): its view stays in the window, but nobody sees it.
-    private var paneShown = true
-    /// The one mode a page with no mode button shows (the Rex pane), else nil.
-    private let fixedMode: SSHTerminalPageMode?
-    /// What the page lists now: `fixedMode`, else the mode button's choice, or the
-    /// first mode its experiments allow. Read once per pass, before the snapshot.
-    private var mode: SSHTerminalPageMode
     private var connectingProfile = SSHTerminalProfile()
     private var metadataIsCorrupt = false
     private var editAfterTerminal: UUID?
-    /// The Rex experiment's switch changing while this tab is up.
-    private var experimentObserver: NSObjectProtocol?
 
-    enum Section: Hashable, Sendable { case status, rex(UUID), hosts, empty, reset }
+    enum Section: Hashable, Sendable { case status, hosts, empty, reset }
     enum Item: Hashable, Sendable {
         case corrupt
         case connecting
@@ -72,43 +36,23 @@ final class SSHTerminalHostListViewController:
         case trustMismatch
         case addHost
         case host(UUID)
-        /// A row of a Rex host's section, by the host and the row's id there.
-        case rexRow(host: UUID, id: String)
         case reset
     }
 
-    /// - Parameters:
-    ///   - fixedMode: the one mode the page shows, with no mode button (the Rex
-    ///     pane); nil for the Terminal page, whose button picks it.
-    ///   - settings: where the mode is kept: read for what the page shows
-    ///     and written by its button, so one store is both answers. The base holds it
-    ///     (the page has no declared rows), and a test or a preview passes its own.
     init(
         showsSidebarToggle: Bool = false,
-        fixedMode: SSHTerminalPageMode? = nil,
-        profileStore: @escaping @Sendable () -> SSHTerminalProfileStore = { SSHTerminalProfileStore() },
-        makeFollower: @escaping @MainActor (SSHTerminalProfile) -> SSHTerminalRexFollower = {
-            SSHTerminalRexFollower(profile: $0, promptsAutomatically: false)
-        },
-        tailnetRex: RexTailnetSection = RexTailnetSection(),
-        startsTailnet: @escaping @MainActor () -> Void = { TailnetNodeController.shared.startIfEnabled() },
-        settings: SettingsStore = .liveDevice()
+        profileStore: @escaping @Sendable () -> SSHTerminalProfileStore = { SSHTerminalProfileStore() }
     ) {
         self.showsSidebarToggle = showsSidebarToggle
-        self.fixedMode = fixedMode
-        mode = fixedMode ?? .shell
         self.profileStore = profileStore
-        self.makeFollower = makeFollower
-        self.tailnetRex = tailnetRex
-        self.startsTailnet = startsTailnet
-        super.init(title: fixedMode == .rex ? "Rex" : "Terminal", listIdentifier: "sshTerminal.hostList", settings: settings)
+        super.init(title: "Terminal", listIdentifier: "sshTerminal.hostList")
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
     /// This device's experiments, narrowed to what the window's server offers (its Rex and
-    /// Herdr switches). Observed: a switch that changes while the page shows redraws it.
+    /// Herdr switches): what a host's terminal may run.
     private var access: SSHTerminalExperimentAccess {
         SSHTerminalExperimentAccess.current.narrowed(
             to: .offered(by: AppRootEnvironment.near(self)?.windowConnection)
@@ -128,53 +72,13 @@ final class SSHTerminalHostListViewController:
             onSaved: { [weak self] _ in self?.reload() }
         )
         reload()
-        // Rex and Herdr are experiments: a switch turned while this tab is up (in
-        // Settings over it) takes effect here without a relaunch.
-        experimentObserver = NotificationCenter.default.addObserver(
-            forName: AppPreferences.Experiments.didChangeNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.experimentsChanged() }
-        }
-        // The first pass draws what a mounted page shows (the rows and the pull),
-        // since `reload()` only asks for one.
         updatePropertiesIfNeeded()
-    }
-
-    isolated deinit {
-        if let experimentObserver { NotificationCenter.default.removeObserver(experimentObserver) }
-    }
-
-    /// The Experiments switch changed: the Rex sections, the tailnet nodes, and
-    /// the followers follow it now, as they do on the way back to this tab.
-    private func experimentsChanged() {
-        reload()
-        for host in rexHosts.values { host.follower.appeared() }
-        for follower in tailnetRex.listedFollowers { follower.appeared() }
-        setNeedsUpdateProperties()
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        isOnScreen = true
-        // The saved hosts first: a host edited or deleted while this screen was
-        // covered must not be signed in, or saved back, from the old copy.
+        // A host edited or deleted while this screen was covered is drawn as it is now.
         reload()
-        for host in rexHosts.values { host.follower.appeared() }
-        for follower in tailnetRex.listedFollowers { follower.appeared() }
-        // Oppi's own node lists the tailnet's machines; it starts only if
-        // the person connected Tailscale in Settings.
-        startsTailnet()
-        // The toolbar belongs to the navigation controller and is shown per screen:
-        // this page shows it when it offers a mode, and anything pushed over it hides
-        // it (`viewWillDisappear`).
-        installModeButton()
-        setNeedsUpdateProperties()
-    }
-
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-        // A terminal or a form over this page has no mode button.
-        navigationController?.setToolbarHidden(true, animated: true)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -184,28 +88,7 @@ final class SSHTerminalHostListViewController:
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
-        isOnScreen = false
         chrome?.hostDidDisappear()
-        // The monitors stop while the tab is covered. A screen pushed over it (a
-        // terminal, a form) leaves its connection up, read again on return;
-        // leaving the tab for another closes them, and they sign in again on return.
-        let covered = navigationController?.viewControllers.contains(self) == true && !isBeingDismissed
-        stopFollowing(closing: !covered)
-    }
-
-    /// The Rex sections stop reading while nobody sees them; `closing` also ends
-    /// the saved hosts' connections, which sign in again when the page returns.
-    private func stopFollowing(closing: Bool) {
-        for host in rexHosts.values {
-            host.follower.stopReading()
-            host.chrome.hostDidDisappear()
-            if closing { host.follower.close() }
-        }
-        for follower in tailnetRex.listedFollowers {
-            follower.stopReading()
-            tailnetChromes[follower.host.id]?.hostDidDisappear()
-        }
-        tailnetRex.stop()
     }
 
     override func updateProperties() {
@@ -220,77 +103,19 @@ final class SSHTerminalHostListViewController:
         _ = session.channel
         _ = AppScenePhase.shared.isBackground
         for profile in profiles { _ = SSHTerminalRegistry.shared.terminals(for: profile.id) }
-        for host in rexHosts.values { _ = host.follower.session.showsTerminal }
-        for follower in tailnetRex.listedFollowers { _ = follower.session.showsTerminal }
         _ = sshTerminalThemeID
-        if !terminalShown, let id = editAfterTerminal {
+        if !session.showsTerminal, let id = editAfterTerminal {
             editAfterTerminal = nil
             openEditor(profileID: id)
         }
-        let active = isActive
-        // The mode before the rows it decides, and before any follower dials: a page
-        // that just switched to Shell must not open a Rex connection for a section
-        // nobody sees.
-        let mode = fixedMode ?? SSHTerminalPageMode.resolved(storedMode, in: access)
-        let modeChanged = mode != self.mode
-        self.mode = mode
-        if modeChanged {
-            // Another list, and another set of connections: the button follows the
-            // mode, and the followers follow the list.
-            installBarItems()
-            syncRexHosts()
-        }
-        // Before the snapshot: a Rex just added (or found) is listed in this
-        // pass. A change made after the snapshot read would wait for an
-        // unrelated update, since this pass does not run again for it.
-        syncTailnetRex(active: active)
-        // ＋ names the hosts it can start a session on, and that set changes here: a
-        // host saved or deleted, a host renamed, or a tailnet node found after the page
-        // appeared. Same pass as the discovery that found it, or the menu stays stale
-        // until something else reloads.
-        syncPlusItem()
-        // The base draws the rows now: it repaints the theme, asks `sections()` for
-        // this pass's rows, and configures again only the ones whose inputs changed.
         super.updateProperties()
-        // Rex mode's pull is the page's own: the kit's policy here is `.none`.
-        syncRefreshControl()
         chrome?.sync()
-        // Rex mode signs in to every saved host, so the page bounds what dials: it
-        // counts the followers already connecting, grants the rest of `inFlight`, and
-        // walks the saved hosts in order so the first screenful fills first. Only a
-        // follower that will really dial is charged — one waiting for a tap would
-        // otherwise take a grant no connection ever uses.
-        var budget = SSHTerminalConnectBudget(
-            max(0, SSHTerminalConnectBudget.inFlight - rexHosts.values.filter { $0.follower.session.connecting }.count)
-        )
-        for profile in profiles {
-            guard let host = rexHosts[profile.id] else { continue }
-            host.chrome.sync()
-            guard active else {
-                host.follower.sync(active: false)
-                continue
-            }
-            let follower = host.follower
-            follower.sync(active: !follower.wouldStartSignIn || budget.take())
-            if let sessions = follower.monitor.snapshot?.sessions {
-                let store = profileStore().rexExpanded
-                store.prune(to: Set(sessions.map(\.sessionID)), for: profile.id)
-                follower.expandedSessions.formIntersection(sessions.map(\.sessionID))
-            }
-        }
-        // A follower that is not a saved host's (a host deleted while its chrome is
-        // up) still gets its pass.
-        for (id, host) in rexHosts where !profiles.contains(where: { $0.id == id }) {
-            host.chrome.sync()
-            host.follower.sync(active: active && !host.follower.wouldStartSignIn)
-        }
     }
 
     // MARK: - The list
 
-    /// The status rows first, then the mode's own: one Rex section per host, or the
-    /// saved hosts. A page with no saved host says how to add one, and unreadable
-    /// metadata offers Reset instead.
+    /// The status rows first, then the saved hosts. A page with no saved host says
+    /// how to add one, and unreadable metadata offers Reset instead.
     override func sections() -> [ListSection<Section, Item>] {
         var sections: [ListSection<Section, Item>] = []
         var status: [Item] = []
@@ -303,31 +128,8 @@ final class SSHTerminalHostListViewController:
         default: break
         }
         if !status.isEmpty { sections.append(ListSection(.status, items: status)) }
-        // What each Rex row draws, by item: the page keys those rows on it.
-        var rows: [Item: SSHTerminalRexListRow] = [:]
-        switch mode {
-        case .rex:
-            // Every saved host, its sessions and panes, with the Rexes reached over
-            // Tailscale by name after them. The host rows stay off the page: a tap
-            // opens a pane, and the host's own form is its heading's ⋯.
-            for profile in profiles {
-                let hostRows = rexSectionRows(for: profile)
-                let items = hostRows.map { Item.rexRow(host: profile.id, id: $0.id) }
-                for (item, row) in zip(items, hostRows) { rows[item] = row }
-                sections.append(ListSection(.rex(profile.id), items: items))
-            }
-            if tailnetRex.isShown {
-                for follower in tailnetRex.listedFollowers {
-                    let hostRows = SSHTerminalRexListRow.rows(hostName: follower.host.address, state: follower.listState)
-                    let items = hostRows.map { Item.rexRow(host: follower.host.id, id: $0.id) }
-                    for (item, row) in zip(items, hostRows) { rows[item] = row }
-                    sections.append(ListSection(.rex(follower.host.id), items: items))
-                }
-            }
-        case .shell:
-            if !profiles.isEmpty {
-                sections.append(ListSection(.hosts, items: profiles.map { .host($0.id) }))
-            }
+        if !profiles.isEmpty {
+            sections.append(ListSection(.hosts, items: profiles.map { .host($0.id) }))
         }
         if profiles.isEmpty && !metadataIsCorrupt {
             sections.append(ListSection(.empty, items: [.addHost]))
@@ -335,60 +137,23 @@ final class SSHTerminalHostListViewController:
         if metadataIsCorrupt {
             sections.append(ListSection(.reset, items: [.reset]))
         }
-        rexRows = rows
         return sections
     }
 
-    /// A Rex row is drawn from the row itself, so a pass that changes another row
-    /// (or none) leaves a working pane's mark animating. Every other row redraws
-    /// whenever the page does, as before.
-    override func inputs(of item: Item) -> AnyHashable {
-        if case .rexRow = item { return AnyHashable(rexRows[item]) }
-        return super.inputs(of: item)
-    }
-
-    /// The snapshot is applied without animating, as this list always did: a pass
-    /// that follows a follower's answer replaces its rows at once.
+    /// The snapshot is applied without animating, as this list always did.
     override var animatesUpdates: Bool { false }
-
-    /// The hosts the bar's ＋ was built for, each as its id and the name it showed:
-    /// adding, deleting, or renaming one rebuilds it, and so does a tailnet node found
-    /// after the first pass, so the menu never offers a host that is gone, misses one
-    /// that is there, or names it as it was.
-    private var hostsShown: [String] = []
-
-    /// What the device last chose, nil when nothing was chosen yet.
-    private var storedMode: SSHTerminalPageMode? {
-        guard case .value(let value, _) = settings?.read(SettingsCatalog.terminalPageMode) else { return nil }
-        return SSHTerminalPageMode(rawValue: value)
-    }
 
     // MARK: - Rows
 
     override func prepareRegistrations() {
-        _ = (hostCell, rexCell, rexActionCell, rexSessionCell)
+        _ = hostCell
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
-        switch item {
-        case .rexRow:
-            // A session is a row with a disclosure; a pane and the connect
-            // row are buttons; the rest read.
-            switch rexRows[item]?.kind {
-            case .session:
-                return collectionView.dequeueConfiguredReusableCell(using: rexSessionCell, for: indexPath, item: item)
-            // A retry is a button like a pane: the row that asks again has to be
-            // drawn by the cell that carries the action, or it is a dead label.
-            case .pane, .tapToConnect, .newSession, .retry, .startRex:
-                return collectionView.dequeueConfiguredReusableCell(using: rexActionCell, for: indexPath, item: item)
-            default:
-                return collectionView.dequeueConfiguredReusableCell(using: rexCell, for: indexPath, item: item)
-            }
-        case .host:
+        if case .host = item {
             return collectionView.dequeueConfiguredReusableCell(using: hostCell, for: indexPath, item: item)
-        default:
-            return super.dequeue(item, at: indexPath)
         }
+        return super.dequeue(item, at: indexPath)
     }
 
     private lazy var hostCell = UICollectionView.CellRegistration<SSHTerminalHostRowCell, Item> { [weak self] cell, _, item in
@@ -402,23 +167,11 @@ final class SSHTerminalHostListViewController:
             folderTerminals: folderTerminals,
             palette: self.sshTerminalThemeID.palette,
             enabled: !self.session.connecting && !self.session.passwordPrompt,
-            onConnect: { [weak self] in self?.open(profile) },
+            onConnect: { [weak self] in self?.connect(profile) },
             onEdit: { [weak self] in self?.openEditor(profileID: profile.id) },
             onDelete: { [weak self] in self?.confirmDelete(profile) },
             contextMenu: self.rowMenu(for: item)
         )
-    }
-
-    private lazy var rexCell = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
-        self?.configureRexRow(cell, item: item)
-    }
-
-    private lazy var rexActionCell = UICollectionView.CellRegistration<SSHTerminalRexListActionCell, Item> { [weak self] cell, _, item in
-        self?.configureRexAction(cell, item: item)
-    }
-
-    private lazy var rexSessionCell = UICollectionView.CellRegistration<SSHTerminalRexListSessionCell, Item> { [weak self] cell, _, item in
-        self?.configureRexSession(cell, item: item)
     }
 
     override func configure(_ cell: UICollectionViewListCell, item: Item) {
@@ -457,7 +210,7 @@ final class SSHTerminalHostListViewController:
             content.secondaryText = "No saved hosts yet. Enter a host, port, and user, then connect."
             content.secondaryTextProperties.numberOfLines = 0
             cell.accessibilityIdentifier = "sshTerminal.host.add"
-        case .host, .rexRow:
+        case .host:
             break
         case .reset:
             content.text = "Reset Host List"
@@ -486,12 +239,11 @@ final class SSHTerminalHostListViewController:
         cell.accessibilityIdentifier = "sshTerminal.connecting"
     }
 
-    /// The rows that act on a tap: a host, ＋'s row, Reset, the two trust prompts,
-    /// and the Rex rows that do something. A heading or a muted line only reads.
+    /// The rows that act on a tap: a host, the Add Host row, Reset, and the two
+    /// trust prompts.
     override func isSelectable(_ item: Item) -> Bool {
         switch item {
         case .addHost, .reset, .trustUnknown, .trustMismatch, .host: true
-        case .rexRow: rexRows[item]?.kind.isAction ?? false
         case .corrupt, .connecting, .failure: false
         }
     }
@@ -503,11 +255,9 @@ final class SSHTerminalHostListViewController:
         case .host(let id):
             guard !session.connecting, !session.passwordPrompt,
                   let profile = profiles.first(where: { $0.id == id }) else { return }
-            open(profile)
+            connect(profile)
         case .reset:
             confirmReset()
-        case .rexRow(let hostID, let id):
-            activateRexRow(host: hostID, id: id)
         case .trustUnknown, .trustMismatch:
             chrome?.reopenTrust()
         case .corrupt, .connecting, .failure:
@@ -515,18 +265,7 @@ final class SSHTerminalHostListViewController:
         }
     }
 
-    /// A Rex heading or a muted line that only reads does not flash under the
-    /// finger: only a row that acts highlights, as this list always did. Declared
-    /// `@objc` because the base, not this class, conforms to the delegate: a subclass
-    /// method UIKit reaches through `respondsToSelector` has to exist in Objective-C.
-    @objc func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
-        guard let item = dataSource?.itemIdentifier(for: indexPath)?.pageItem else { return true }
-        if case .rexRow = item { return rexRows[item]?.kind.isAction ?? false }
-        return true
-    }
-
     override func rowActions(for item: Item) -> [ListRowAction] {
-        if case .rexRow(let hostID, let id) = item { return rexRowActions(host: hostID, id: id) }
         guard case .host(let id) = item, let profile = profiles.first(where: { $0.id == id }) else { return [] }
         // UIContextualAction is not UIAccessibilityIdentification: there is no
         // public accessibilityIdentifier (SwiftUI swipe had sshTerminal.host.delete).
@@ -548,20 +287,12 @@ final class SSHTerminalHostListViewController:
     /// (the hosts' forms, Rex on Your Tailnet, and the Bottom Bar), which is where
     /// the occasional setup leaves this page.
     private func installBarItems() {
-        let plus = Self.plus(mode: mode, hosts: sessionHosts)
-        let hosts = plusMenu()
-        // With several hosts to choose from the item has a menu and no action of its
-        // own: a tap opens the menu, and choosing an item is what starts the session.
         let add = UIBarButtonItem(
-            title: Self.plusTitle(plus),
+            title: String(localized: "Add Host"),
             image: UIImage(systemName: "plus"),
-            primaryAction: hosts == nil ? plusAction() : nil,
-            menu: hosts
+            primaryAction: UIAction { [weak self] _ in self?.openEditor(profileID: nil) }
         )
-        add.accessibilityIdentifier = Self.plusIdentifier(plus)
-        // What ＋ offers, by identity: a tailnet node is found after the first pass, and a
-        // renamed host is another menu.
-        hostsShown = sessionHosts.map { "\($0.id.uuidString)|\($0.endpointLabel)" }
+        add.accessibilityIdentifier = "sshTerminal.host.add"
         let settings = UIBarButtonItem(
             title: String(localized: "Terminal Settings"),
             image: UIImage(systemName: "gearshape"),
@@ -572,666 +303,9 @@ final class SSHTerminalHostListViewController:
         )
         settings.accessibilityIdentifier = "sshTerminal.settings"
         navigationItem.rightBarButtonItems = [add, settings]
-        installModeButton()
         if showsSidebarToggle, let root = AppRootEnvironment.near(self) {
             navigationItem.leftBarButtonItem = WorkspaceSplitSidebarToggle.makeItem(root: root)
         }
-    }
-
-    /// Rex mode's ＋ is a session, not a host: on the host that is the only saved one,
-    /// or the one picked in its menu when there are several. Shell mode's ＋ is a host.
-    static func plus(
-        mode: SSHTerminalPageMode,
-        hosts: [SSHTerminalProfile]
-    ) -> SSHTerminalPlusAction {
-        guard mode == .rex else { return .newHost }
-        return hosts.isEmpty ? .newHost : .newSession(hosts)
-    }
-
-    /// What ＋ says and how a test finds it: New Host when it saves one (Shell mode, or
-    /// Rex with nothing saved), New Session when Rex's list has a host to use.
-    static func plusTitle(_ action: SSHTerminalPlusAction) -> String {
-        switch action {
-        case .newHost: String(localized: "Add Host")
-        case .newSession: String(localized: "New Session")
-        }
-    }
-
-    static func plusIdentifier(_ action: SSHTerminalPlusAction) -> String {
-        switch action {
-        case .newHost: "sshTerminal.host.add"
-        case .newSession: "sshTerminal.page.newSession"
-        }
-    }
-
-    private func plusAction() -> UIAction {
-        UIAction { [weak self] _ in
-            guard let self else { return }
-            switch Self.plus(mode: mode, hosts: sessionHosts) {
-            case .newHost:
-                openEditor(profileID: nil)
-            case .newSession(let hosts):
-                guard let host = hosts.first else { return }
-                startSession(on: host)
-            }
-        }
-    }
-
-    /// Rex mode with several hosts: one item per host, so ＋ asks which one.
-    private func plusMenu() -> UIMenu? {
-        guard case .newSession(let hosts) = Self.plus(mode: mode, hosts: sessionHosts), hosts.count > 1 else { return nil }
-        return UIMenu(children: hosts.map { profile in
-            UIAction(title: profile.endpointLabel) { [weak self] _ in self?.startSession(on: profile) }
-        })
-    }
-
-    /// A session on this host, opened on its new pane.
-    private func startSession(on profile: SSHTerminalProfile) {
-        // A saved host's follower, or a tailnet node's (its stand-in profile carries the
-        // node's id).
-        let follower: (any SSHTerminalRexListFollowing)?
-        if let saved = rexHosts[profile.id]?.follower {
-            follower = saved
-        } else {
-            follower = tailnetRex.follower(id: profile.id)
-        }
-        guard let follower else { return }
-        Task { await follower.createSession() }
-    }
-
-    /// Every host Rex mode can start a session on: the saved hosts in saved order, then
-    /// the Rexes reached over Tailscale by name.
-    private var sessionHosts: [SSHTerminalProfile] {
-        guard mode == .rex else { return profiles }
-        return profiles + tailnetRex.listedFollowers.map { $0.profile }
-    }
-
-    /// The mode button, at the trailing corner of the bottom toolbar: one menu of the
-    /// modes this device offers, and no toolbar at all when there is nothing to choose
-    /// (with Rex's experiment off the page is Shell).
-    private func installModeButton() {
-        guard navigationController?.topViewController === self else { return }
-        guard fixedMode == nil, SSHTerminalPageMode.available(in: access).count > 1 else {
-            setToolbarItems(nil, animated: false)
-            navigationController?.setToolbarHidden(true, animated: true)
-            return
-        }
-        let item = UIBarButtonItem(
-            title: String(localized: "Terminal Mode"),
-            image: UIImage(systemName: mode == .rex ? "rectangle.split.3x1" : "rectangle.stack"),
-            primaryAction: nil,
-            menu: modeMenu()
-        )
-        item.accessibilityIdentifier = "sshTerminal.mode"
-        item.accessibilityValue = mode.label
-        setToolbarItems([.flexibleSpace(), item], animated: true)
-        navigationController?.setToolbarHidden(false, animated: true)
-    }
-
-    /// The modes this device can show, with the one on screen checked.
-    private func modeMenu() -> UIMenu {
-        let current = mode
-        return UIMenu(children: SSHTerminalPageMode.available(in: access).map { candidate in
-            UIAction(
-                title: candidate.label,
-                state: candidate == current ? .on : .off
-            ) { [weak self] _ in
-                self?.choose(candidate)
-            }
-        })
-    }
-
-    /// The person's choice, from the mode menu. Not private, so a test reaches the
-    /// same owner action a tap does (`UIAction` handlers are not reachable).
-    /// Written through the declaration, so one place owns the key and its default, and
-    /// redrawn here. A mode whose experiment turns off later falls back on its own
-    /// (`SSHTerminalPageMode.resolved`).
-    func choose(_ candidate: SSHTerminalPageMode) {
-        // The one store the page reads is the one it writes, so the next pass draws
-        // what was stored instead of a second copy of the choice.
-        settings?.set(SettingsCatalog.terminalPageMode, candidate.rawValue)
-        setNeedsUpdateProperties()
-    }
-
-    /// Rebuilds the bar's buttons when the hosts ＋ offers are not the ones it was built
-    /// for. One owner, called from the pass and from a reload.
-    private func syncPlusItem() {
-        if hostsShown != sessionHosts.map({ "\($0.id.uuidString)|\($0.endpointLabel)" }) { installBarItems() }
-    }
-
-    // MARK: - Pull to refresh
-
-    /// The one pull this page has is Rex mode's, and only while it lists a Rex to ask
-    /// again (a saved host, or a node on the tailnet). The kit installs a control for
-    /// any policy but `.none` and never takes it away, and this page loads nothing
-    /// itself; a pull that did nothing in Shell mode would be a spinner with no work.
-    private func syncRefreshControl() {
-        let refreshes = mode == .rex && (!Self.rexFollowedHosts(profiles, mode: mode).isEmpty || tailnetRex.isShown)
-        if (collectionView.refreshControl != nil) != refreshes {
-            collectionView.refreshControl = refreshes ? rexRefreshControl : nil
-        }
-    }
-
-    private lazy var rexRefreshControl: UIRefreshControl = {
-        let control = UIRefreshControl()
-        control.addAction(UIAction { [weak self, weak control] _ in
-            Task { @MainActor in
-                await self?.refreshRexHosts()
-                control?.endRefreshing()
-            }
-        }, for: .valueChanged)
-        return control
-    }()
-
-    /// A pull reads Rex again on every host it can without asking for anything,
-    /// and tries again where it had no `nc` or no Rex; on the tailnet it asks
-    /// every machine whether it is Rex again and reads each node's Rex again.
-    private func refreshRexHosts() async {
-        // A pull asks again everywhere, including the hosts whose last read found no Rex.
-        // Which ones those are has to be read before the memory goes, and they need a
-        // follower again, so this pull dials them too (under the same budget, in the
-        // pass that follows).
-        let store = profileStore()
-        let remembered = Self.rexFollowedHosts(profiles, mode: mode).filter { store.rexHosts.hasNoRex(on: $0) }
-        store.rexHosts.forgetNoRex()
-        if !remembered.isEmpty {
-            syncRexHosts()
-            setNeedsUpdateProperties()
-        }
-        // Only a follower that is already connected is asked on the pull itself: its
-        // stream is open, so reading again costs no sign-in. One made again by this pull
-        // owes a sign-in, and the pass that follows grants it under the budget, so a
-        // long list of remembered hosts cannot dial all at once.
-        let hosts = rexHosts.values.map(\.follower).filter(\.isConnected)
-        var reads = hosts.map { follower in Task { @MainActor in await follower.refresh() } }
-        reads += tailnetRex.listedFollowers.map { follower in Task { @MainActor in await follower.refresh() } }
-        reads.append(Task { @MainActor [tailnetRex] in await tailnetRex.refresh() })
-        for read in reads { await read.value }
-    }
-
-    // MARK: - Rex rows
-
-    /// One saved host's rows in Rex mode: its heading and what its follower last read.
-    /// A host known to have no Rex on it has no follower this visit, and keeps one
-    /// muted line instead of a gap.
-    private func rexSectionRows(for profile: SSHTerminalProfile) -> [SSHTerminalRexListRow] {
-        guard let follower = rexHosts[profile.id]?.follower else {
-            return [
-                .init(id: "header", kind: .header(name: profile.endpointLabel, needsYou: 0)),
-                .init(id: "noRex", kind: .placeholder(String(localized: "No Rex on this host."))),
-                // The same owner as a pull to refresh: one row asks this host again.
-                .init(id: "retry", kind: .retry(String(localized: "Retry"))),
-            ]
-        }
-        return SSHTerminalRexListRow.rows(hostName: profile.endpointLabel, state: follower.listState)
-    }
-
-    /// The hosts this page follows: every saved host in Rex mode, and none in any
-    /// other mode (a host is a plain SSH login; the mode decides what is read). With
-    /// Rex's experiment off nothing on this page reaches Rex.
-    static func rexFollowedHosts(
-        _ profiles: [SSHTerminalProfile],
-        mode: SSHTerminalPageMode,
-        access: SSHTerminalExperimentAccess = .current
-    ) -> [SSHTerminalProfile] {
-        guard access.rex, mode == .rex else { return [] }
-        return profiles
-    }
-
-    /// Which of those hosts this visit dials: a host whose last read found no Rex is
-    /// not asked again until a pull to refresh, and keeps its muted line meanwhile.
-    static func rexDialledHosts(
-        _ profiles: [SSHTerminalProfile],
-        noRex: SSHTerminalRexHostStore
-    ) -> [SSHTerminalProfile] {
-        profiles.filter { !noRex.hasNoRex(on: $0) }
-    }
-
-    /// Makes, updates, and drops a follower per host the mode lists. Every saved host
-    /// gets one in Rex mode; a host with no `rex` on it says so in one muted line and
-    /// its monitor gives up until a pull to refresh, as before.
-    private func syncRexHosts() {
-        let wanted = Self.rexDialledHosts(Self.rexFollowedHosts(profiles, mode: mode, access: access), noRex: profileStore().rexHosts)
-        for id in rexHosts.keys where !wanted.contains(where: { $0.id == id }) {
-            guard let host = rexHosts[id] else { continue }
-            // A host whose read found no Rex is not dialled again: drop what is open
-            // without marking another sign-in owed, or the next pass would dial it.
-            if profileStore().rexHosts.hasNoRex(on: host.follower.profile) {
-                host.follower.stopForNoRex()
-            } else {
-                host.follower.close()
-            }
-            host.chrome.hostDidDisappear()
-            rexHosts[id] = nil
-        }
-        for profile in wanted {
-            if let existing = rexHosts[profile.id] {
-                existing.follower.update(profile: profile)
-            } else {
-                let host = makeRexHost(profile)
-                host.follower.expandedSessions = profileStore().rexExpanded.expanded(for: profile.id)
-                rexHosts[profile.id] = host
-            }
-        }
-    }
-
-    /// The tailnet nodes, from what Oppi's node knows now: makes
-    /// and drops a follower (and its connect chrome) per listed node and runs
-    /// each only while the tab is `active`. Reads the node's machine list, so a
-    /// machine joining or leaving updates it.
-    private func syncTailnetRex(active: Bool) {
-        // Rex off, or a mode that does not list them: the nodes, their followers, and
-        // discovery all go, so nothing here asks the tailnet about Rex.
-        guard access.rex, mode == .rex else {
-            tailnetRex.clear()
-            for id in tailnetChromes.keys {
-                tailnetChromes[id]?.hostDidDisappear()
-                tailnetChromes[id] = nil
-            }
-            return
-        }
-        let tailnet = TailnetNodeController.shared
-        // Discovery does not outlive the foreground (the followers stop on their own).
-        if AppScenePhase.shared.isBackground { tailnetRex.stop() }
-        let sshRexHosts = profiles.filter { rexHosts[$0.id] != nil }
-        tailnetRex.update(
-            peers: tailnet.onlinePeers, selfDNSName: tailnet.snapshot?.selfDNSName, sshRexHosts: sshRexHosts, active: active
-        )
-        let followers = tailnetRex.listedFollowers
-        let listed = Set(followers.map(\.host.id))
-        for id in tailnetChromes.keys where !listed.contains(id) {
-            tailnetChromes[id]?.hostDidDisappear()
-            tailnetChromes[id] = nil
-        }
-        for follower in followers {
-            if tailnetChromes[follower.host.id] == nil {
-                // No prompts: Rex admits this device by its Tailscale identity.
-                tailnetChromes[follower.host.id] = SSHTerminalConnectChrome(
-                    host: self, session: follower.session,
-                    profile: { [weak follower] in follower?.profile ?? SSHTerminalProfile() },
-                    setProfile: { _ in }, editHost: {}, submitPassword: { _ in }, onSaved: { _ in }
-                )
-            }
-            tailnetChromes[follower.host.id]?.sync()
-            follower.sync(active: active)
-        }
-    }
-
-    /// The follower behind a Rex section: a saved host's, or a tailnet node's.
-    private func rexFollower(_ id: UUID) -> (any SSHTerminalRexListFollowing)? {
-        rexHosts[id]?.follower ?? tailnetRex.follower(id: id)
-    }
-
-    private func makeRexHost(_ profile: SSHTerminalProfile) -> RexHost {
-        let follower = makeFollower(profile)
-        // What this host's monitor finds keeps the memory of where Rex is, which the
-        // Bottom Bar's Rex button and a terminal still read. The page lists every
-        // saved host whatever it finds, so a host without Rex keeps its muted line.
-        follower.monitor.onFinding = { [weak self, weak follower] finding in
-            guard let self, let follower else { return }
-            self.profileStore().rexHosts.record(finding, on: follower.profile)
-            // No Rex on the host: the idle sign-in has nothing left to read, so it goes
-            // without owing another, and the page keeps the heading, one muted line, and
-            // the way to ask again. The store now says so, which is what drops the
-            // follower: a visit after this one makes none at all.
-            if finding == .absent(.notInstalled) {
-                // `syncRexHosts` drops it, and dropping a host the store says has no Rex
-                // is what stops it without owing a sign-in.
-                self.syncRexHosts()
-                self.reload()
-            }
-        }
-        let chrome = SSHTerminalConnectChrome(
-            host: self,
-            session: follower.session,
-            profile: { [weak follower] in follower?.profile ?? SSHTerminalProfile() },
-            setProfile: { [weak follower] in follower?.profile = $0 },
-            editHost: { [weak self, weak follower] in
-                guard let follower else { return }
-                if let id = follower.session.connectedProfile?.id { self?.editAfterTerminal = id }
-                follower.session.showsTerminal = false
-            },
-            submitPassword: { [weak follower] in follower?.submitPassword($0) },
-            onSaved: { [weak follower] in follower?.profile = $0 },
-            // A trust decision or password an automatic sign-in hit waits for the tap.
-            presentsPrompts: { [weak follower] in follower?.holdsPrompts != true }
-        )
-        return RexHost(follower: follower, chrome: chrome)
-    }
-
-    /// A tailnet node's ⋯: a session on it, which is all a node without a saved form
-    /// can be asked to do.
-    private func tailnetMenuButton(_ hostID: UUID, palette: ThemePalette) -> UIButton {
-        let button = UIButton(type: .system)
-        var config = UIButton.Configuration.plain()
-        config.image = UIImage(systemName: "ellipsis", withConfiguration: UIImage.SymbolConfiguration(textStyle: .body))
-        config.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12)
-        config.baseForegroundColor = palette.ui.comment
-        button.configuration = config
-        button.showsMenuAsPrimaryAction = true
-        button.accessibilityIdentifier = "sshTerminal.rexList.\(hostID.uuidString).menu"
-        button.menu = UIMenu(children: [
-            UIAction(title: String(localized: "New Session")) { [weak self] _ in
-                guard let follower = self?.tailnetRex.follower(id: hostID) else { return }
-                Task { await follower.createSession() }
-            },
-        ])
-        return button
-    }
-
-    /// The ⋯ a Rex section's heading draws: the host's own actions, which Shell mode
-    /// puts on the host row instead. A menu button is one tap target, so VoiceOver's
-    /// activation opens the same menu a touch does.
-    private func hostMenuButton(_ profile: SSHTerminalProfile, palette: ThemePalette) -> UIButton {
-        let button = UIButton(type: .system)
-        var config = UIButton.Configuration.plain()
-        config.image = UIImage(systemName: "ellipsis", withConfiguration: UIImage.SymbolConfiguration(textStyle: .body))
-        config.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12)
-        config.baseForegroundColor = palette.ui.comment
-        button.configuration = config
-        button.showsMenuAsPrimaryAction = true
-        button.accessibilityIdentifier = "sshTerminal.rexList.\(profile.id.uuidString).menu"
-        button.menu = UIMenu(children: [
-            // A host with no session has no ⊕ to press: a session starts here.
-            UIAction(title: String(localized: "New Session")) { [weak self] _ in
-                guard let follower = self?.rexHosts[profile.id]?.follower else { return }
-                Task { await follower.createSession() }
-            },
-            UIAction(title: String(localized: "Edit Host")) { [weak self] _ in
-                self?.openEditor(profileID: profile.id)
-            },
-            UIAction(title: String(localized: "Delete Host"), attributes: .destructive) { [weak self] _ in
-                self?.confirmDelete(profile)
-            },
-        ])
-        return button
-    }
-
-    private func configureRexRow(_ cell: UICollectionViewListCell, item: Item) {
-        guard case .rexRow(let hostID, _) = item, let row = rexRows[item] else { return }
-        let palette = sshTerminalThemeID.palette
-        let prefix = "sshTerminal.rexList.\(hostID.uuidString)"
-        var content = UIListContentConfiguration.subtitleCell()
-        content.textProperties.color = palette.ui.fg
-        content.secondaryTextProperties.color = palette.ui.comment
-        cell.accessories = []
-        cell.accessibilityTraits = []
-        switch row.kind {
-        case .retry, .startRex:
-            // The action cell draws it.
-            break
-        case .header(let name, let needsYou):
-            content.text = name
-            content.textProperties.font = .preferredFont(forTextStyle: .headline)
-            // Rex's mark, sized like a body symbol at the small scale.
-            content.image = SymbolSizedLogo.image(
-                named: "rex-logo",
-                reference: "circle.fill",
-                configuration: UIImage.SymbolConfiguration(textStyle: .body, scale: .small),
-                fallbackSide: 17
-            )
-            content.imageProperties.tintColor = palette.ui.comment
-            content.secondaryText = needsYou > 0 ? "Rex \u{00B7} " + RexSnapshot.needsYouText(needsYou) : "Rex"
-            content.secondaryTextProperties.font = .preferredFont(forTextStyle: .footnote)
-            content.secondaryTextProperties.color = needsYou > 0 ? palette.orange : palette.comment
-            cell.accessibilityIdentifier = "\(prefix).header"
-            cell.accessibilityTraits = .header
-            // The heading is the host in Rex mode (no host row is listed), so its
-            // actions ride here: a saved host's form and delete, and a tailnet node's
-            // session (it has no form of its own).
-            cell.accessories = []
-            if let profile = profiles.first(where: { $0.id == hostID }) {
-                cell.accessories = [.customView(configuration: .init(
-                    customView: hostMenuButton(profile, palette: palette),
-                    placement: .trailing()
-                ))]
-            } else if tailnetRex.follower(id: hostID) != nil {
-                cell.accessories = [.customView(configuration: .init(
-                    customView: tailnetMenuButton(hostID, palette: palette),
-                    placement: .trailing()
-                ))]
-            }
-        case .placeholder(let text):
-            content.text = text
-            content.textProperties.color = palette.ui.comment
-            cell.accessibilityIdentifier = "\(prefix).\(row.id)"
-        case .failure(let text):
-            content.text = text
-            content.textProperties.color = palette.ui.red
-            content.textProperties.font = .preferredFont(forTextStyle: .footnote)
-            content.textProperties.numberOfLines = 0
-            cell.accessibilityIdentifier = "\(prefix).\(row.id)"
-        case .window(let windowID, let name):
-            content.text = name
-            content.textProperties.font = .preferredFont(forTextStyle: .footnote)
-            content.textProperties.color = palette.ui.comment
-            cell.indentationLevel = 1
-            cell.accessibilityIdentifier = "\(prefix).\(windowID)"
-            cell.accessibilityTraits = .header
-        case .session, .pane, .tapToConnect, .newSession:
-            break
-        }
-        cell.contentConfiguration = content
-    }
-
-    private func configureRexAction(_ cell: SSHTerminalRexListActionCell, item: Item) {
-        guard case .rexRow(let hostID, let id) = item, let row = rexRows[item] else { return }
-        let themeID = sshTerminalThemeID
-        let palette = themeID.palette
-        let prefix = "sshTerminal.rexList.\(hostID.uuidString)"
-        var content = UIListContentConfiguration.subtitleCell()
-        content.textProperties.color = palette.ui.fg
-        content.secondaryTextProperties.color = palette.ui.comment
-        content.textProperties.font = .preferredFont(forTextStyle: .body)
-        switch row.kind {
-        case .pane(let pane):
-            content.text = pane.name
-            content.secondaryText = pane.detail
-            // The pane Rex types into is bold, as in the overview.
-            let body = UIFont.preferredFont(forTextStyle: .body)
-            content.textProperties.font = pane.isFocused
-                ? body.fontDescriptor.withSymbolicTraits(.traitBold).map { UIFont(descriptor: $0, size: 0) } ?? body : body
-            content.secondaryTextProperties.font = .preferredFont(forTextStyle: .footnote)
-            content.image = pane.icon.image()
-            content.imageProperties.tintColor = palette.ui.comment
-            // How long ago the pane's program last moved rides in the status label: a
-            // list cell has one trailing label.
-            cell.accessories = cell.statusAccessories(for: pane.status, themeID: themeID, suffix: pane.activity)
-            cell.indentationLevel = pane.windowName == nil ? 1 : 2
-            cell.configureAction(
-                identifier: "\(prefix).\(pane.blockID)",
-                label: pane.accessibilityLabel,
-                value: [pane.status.label, pane.activity].compactMap { $0 }.joined(separator: ", "),
-                hint: "Open this pane"
-            ) { [weak self] in self?.activateRexRow(host: hostID, id: id) }
-        case .newSession(let busy):
-            content.text = busy ? "Working\u{2026}" : "New Session"
-            content.textProperties.color = busy ? palette.comment : palette.blue
-            content.image = UIImage(systemName: "plus")
-            content.imageProperties.tintColor = busy ? palette.comment : palette.blue
-            cell.accessories = []
-            cell.indentationLevel = 0
-            cell.configureAction(
-                identifier: "\(prefix).new",
-                label: "New Session",
-                value: busy ? "Working" : nil,
-                hint: "Makes a session with a shell and opens it"
-            ) { [weak self] in self?.activateRexRow(host: hostID, id: id) }
-        case .retry(let title):
-            content.text = title
-            content.textProperties.color = palette.ui.blue
-            cell.accessories = []
-            cell.indentationLevel = 0
-            cell.configureAction(
-                identifier: "\(prefix).retry",
-                label: title,
-                value: nil,
-                hint: "Reads this host's Rex again"
-            ) { [weak self] in self?.activateRexRow(host: hostID, id: id) }
-        case .startRex:
-            content.text = String(localized: "Start Rex")
-            content.textProperties.color = palette.ui.blue
-            content.image = UIImage(systemName: "play.fill")
-            content.imageProperties.tintColor = palette.ui.blue
-            cell.accessories = []
-            cell.indentationLevel = 0
-            cell.configureAction(
-                identifier: "\(prefix).startRex",
-                label: String(localized: "Start Rex"),
-                value: nil,
-                hint: "Starts Rex on this host"
-            ) { [weak self] in self?.activateRexRow(host: hostID, id: id) }
-        case .tapToConnect:
-            content.text = "Tap to connect"
-            content.textProperties.color = palette.ui.blue
-            cell.accessories = []
-            cell.indentationLevel = 0
-            cell.configureAction(
-                identifier: "\(prefix).connect",
-                label: "Tap to connect",
-                value: nil,
-                hint: "Signs in to read this host's Rex sessions"
-            ) { [weak self] in self?.activateRexRow(host: hostID, id: id) }
-        default:
-            break
-        }
-        cell.contentConfiguration = content
-    }
-
-    private func configureRexSession(_ cell: SSHTerminalRexListSessionCell, item: Item) {
-        guard case .rexRow(let hostID, let id) = item, case .session(let session)? = rexRows[item]?.kind else { return }
-        let themeID = sshTerminalThemeID
-        cell.contentConfiguration = nil
-        cell.indentationLevel = 0
-        cell.configureSession(
-            session, identifier: "sshTerminal.rexList.\(hostID.uuidString).\(session.sessionID)", themeID: themeID,
-            actions: session.manages ? [
-                UIAccessibilityCustomAction(name: "Rename") { [weak self] _ in
-                    self?.renameRexSession(host: hostID, id: id)
-                    return true
-                },
-                UIAccessibilityCustomAction(name: "Close Session") { [weak self] _ in
-                    self?.closeRexSession(host: hostID, id: id)
-                    return true
-                },
-            ] : [],
-            perform: { [weak self] in self?.activateRexRow(host: hostID, id: id) },
-            toggle: { [weak self] in self?.toggleRexSession(host: hostID, id: id) },
-            newPane: session.manages ? { [weak self] in self?.newRexPane(host: hostID, session: session.sessionID) } : nil
-        )
-    }
-
-    // MARK: - Changing Rex
-
-    /// The session a row stands for and the follower that can change it now,
-    /// resolved when the action runs from the row's identity.
-    private func manageableSession(host hostID: UUID, id: String) -> (follower: any SSHTerminalRexListFollowing, sessionID: String, name: String)? {
-        guard let follower = rexFollower(hostID), follower.canManage,
-              case .session(let session)? = rexRows[.rexRow(host: hostID, id: id)]?.kind else { return nil }
-        let label = follower.monitor.snapshot?.sessions.first { $0.sessionID == session.sessionID }?.label
-        return (follower, session.sessionID, label ?? "")
-    }
-
-    /// Rename: a text field with the session's name. An empty name gives the
-    /// session back the name Rex chose for it.
-    private func renameRexSession(host hostID: UUID, id: String) {
-        guard let target = manageableSession(host: hostID, id: id) else { return }
-        TextPrompt(
-            title: "Rename Session", message: "Leave it empty to use the name Rex chose.",
-            placeholder: "Session name", text: target.name, actionTitle: "Rename",
-            fieldIdentifier: "sshTerminal.rexList.rename.field", actionIdentifier: "sshTerminal.rexList.rename.confirm"
-        ).present(from: self) { name in
-            Task { await target.follower.rename(session: target.sessionID, to: name) }
-        }
-    }
-
-    /// Close asks first: every pane's program ends.
-    private func closeRexSession(host hostID: UUID, id: String) {
-        guard let target = manageableSession(host: hostID, id: id) else { return }
-        let name = target.name.isEmpty ? "Session" : target.name
-        Confirmation(
-            title: "Close session \u{201C}\(name)\u{201D}?",
-            message: "Every pane's program ends.",
-            actionTitle: "Close Session",
-            style: .alert,
-            actionIdentifier: "sshTerminal.rexList.close.confirm"
-        ).present(from: self, anchor: nil) {
-            Task { await target.follower.close(session: target.sessionID) }
-        }
-    }
-
-    /// A session's ⊕: a new pane in it, opened in a terminal of its own.
-    private func newRexPane(host hostID: UUID, session sessionID: String) {
-        guard let follower = rexFollower(hostID) else { return }
-        Task { await follower.createPane(session: sessionID) }
-    }
-
-    /// Shows or hides a session's panes. Resolved from the row's identity when it runs.
-    private func toggleRexSession(host hostID: UUID, id: String) {
-        guard let follower = rexFollower(hostID), case .session(let session)? = rexRows[.rexRow(host: hostID, id: id)]?.kind else { return }
-        follower.toggleExpanded(session: session.sessionID)
-        // Kept on this device, so coming back to the tab does not fold a session
-        // someone was reading. The tailnet nodes' ids are stand-ins and are not kept.
-        if rexHosts[hostID] != nil {
-            profileStore().rexExpanded.setExpanded(follower.expandedSessions, for: hostID)
-        }
-        setNeedsUpdateProperties()
-    }
-
-    /// The one action a Rex row has, for a touch (the row's selection) and for
-    /// VoiceOver's activation: resolved from the row's identity when it runs.
-    private func activateRexRow(host hostID: UUID, id: String) {
-        guard let row = rexRows[.rexRow(host: hostID, id: id)] else { return }
-        // A retry asks about the host that has no follower, so it needs none: the one
-        // row a host without Rex draws has to be reachable.
-        if case .retry = row.kind {
-            Task { await refreshRexHosts() }
-            return
-        }
-        guard let follower = rexFollower(hostID) else { return }
-        switch row.kind {
-        case .session(let session):
-            guard !follower.isOpening else { return }
-            follower.open(session: session.sessionID)
-        case .pane(let pane):
-            guard !follower.isOpening else { return }
-            follower.open(session: pane.sessionID, pane: pane.blockID)
-        case .newSession:
-            guard follower.canManage else { return }
-            Task { await follower.createSession() }
-        case .tapToConnect:
-            follower.connect()
-        case .startRex:
-            follower.monitor.startRex()
-        default:
-            break
-        }
-    }
-
-    /// A session's swipe: Rename, and Close, which asks first (so a full swipe
-    /// must not run it, and the row stays until the person confirms). Only
-    /// while Rex can be changed.
-    private func rexRowActions(host hostID: UUID, id: String) -> [ListRowAction] {
-        guard manageableSession(host: hostID, id: id) != nil else { return [] }
-        return [
-            ListRowAction(
-                title: "Close",
-                systemImage: "xmark.circle",
-                style: .destructive,
-                performsWithFullSwipe: false
-            ) { [weak self] done in
-                self?.closeRexSession(host: hostID, id: id)
-                done(false)
-            },
-            ListRowAction(
-                title: "Rename",
-                systemImage: "textformat",
-                tint: sshTerminalThemeID.palette.ui.blue
-            ) { [weak self] done in
-                self?.renameRexSession(host: hostID, id: id)
-                done(false)
-            },
-        ]
     }
 
     // MARK: - Hosts
@@ -1240,13 +314,7 @@ final class SSHTerminalHostListViewController:
         Router.push(SSHTerminalSetupViewController(profileID: profileID), from: self)
     }
 
-    /// A host row opens its own login shell, with its Run on Connect command. What the
-    /// page lists is the mode's (`SSHTerminalPageMode`); a host is a plain SSH login,
-    /// so its row is never a Rex screen.
-    private func open(_ profile: SSHTerminalProfile) {
-        connect(profile)
-    }
-
+    /// A host row opens its own login shell, with its Run on Connect command.
     private func connect(_ profile: SSHTerminalProfile, password: String? = nil) {
         connectingProfile = profile.normalized()
         // A row is the host's own terminal, whatever this session last showed.
@@ -1306,48 +374,13 @@ final class SSHTerminalHostListViewController:
         }
     }
 
-    /// Reads the saved hosts and what follows them, then asks for the pass that draws
-    /// them: the base owns the snapshot.
+    /// Reads the saved hosts, then asks for the pass that draws them: the base
+    /// owns the snapshot.
     private func reload() {
         let store = profileStore()
         metadataIsCorrupt = store.metadataIsCorrupt
         profiles = store.load()
         if metadataIsCorrupt { profiles = [] }
-        syncPlusItem()
-        syncRexHosts()
-        // The SSH hosts' Rex just changed: the tailnet list leaves out what they list.
-        syncTailnetRex(active: isActive)
-        setNeedsUpdateProperties()
-    }
-
-    /// A terminal of this tab's own or of one of its Rex sections is showing.
-    private var terminalShown: Bool {
-        session.showsTerminal || rexHosts.values.contains { $0.follower.session.showsTerminal }
-            || tailnetRex.listedFollowers.contains { $0.session.showsTerminal }
-    }
-
-    /// The tab follows Rex only while it shows, in the foreground, with
-    /// nothing over it: a pane's terminal, the form, and a sign-in sheet each
-    /// cover it.
-    private var isActive: Bool {
-        let covered = terminalShown || editAfterTerminal != nil || presentedViewController != nil
-        return isOnScreen && paneShown && !AppScenePhase.shared.isBackground && !covered
-    }
-}
-
-/// A page in a pane stops following Rex while its pane is covered or parked, as
-/// it does when a screen covers it, and follows again once the pane shows.
-extension SSHTerminalHostListViewController: PaneVisibilityObserving {
-    func paneVisibilityDidChange(_ visibility: PaneVisibility) {
-        let shown = if case .visible = visibility { true } else { false }
-        guard shown != paneShown else { return }
-        paneShown = shown
-        if shown {
-            for host in rexHosts.values { host.follower.appeared() }
-            for follower in tailnetRex.listedFollowers { follower.appeared() }
-        } else {
-            stopFollowing(closing: false)
-        }
         setNeedsUpdateProperties()
     }
 }

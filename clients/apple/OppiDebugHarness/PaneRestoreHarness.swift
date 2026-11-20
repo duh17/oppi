@@ -58,8 +58,7 @@ final class PaneRestorePreviewController: PreviewRootController {
                     hosts: [SSHTerminalProfile(
                         id: SSHTerminalRexListPreviewController.rexHostID,
                         host: "mac-studio.invalid", username: "alex", opensRexSessions: true
-                    )],
-                    fixedMode: .rex
+                    )]
                 )
             }
         }

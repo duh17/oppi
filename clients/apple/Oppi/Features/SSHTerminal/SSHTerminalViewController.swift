@@ -981,7 +981,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             ),
             // Attachments are saved on the host over SSH, which a Rex reached
             // over Tailscale alone does not have.
-            canAttach: channel.sideCommandsUnavailable == nil,
+            canAttach: channel.attachRoute.takesFiles,
             program: keymapProgram,
             customKeys: barCustomKeys,
             shortcuts: keymap.actions,
@@ -1711,13 +1711,13 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         Task { [weak self] in
             defer { PhotoLibraryMediaImporter.discardImportedFiles(attachments, store: store) }
             do {
-                var paths: [String] = []
+                var files: [SSHTerminalUpload.File] = []
                 for attachment in attachments {
                     let (data, ext) = try await SSHTerminalAttachPicker.fileContents(attachment)
-                    paths.append(try await channel.upload(data, fileExtension: ext))
+                    files.append(SSHTerminalUpload.File(data: data, fileExtension: ext))
                 }
-                try channel.paste(paths.joined(separator: " "))
-                self?.showPasteNotice(paths.count == 1 ? "Pasted the file's path." : "Pasted the files' paths.")
+                try await channel.attach(files)
+                self?.showPasteNotice(files.count == 1 ? "Pasted the file's path." : "Pasted the files' paths.")
             } catch {
                 self?.presentPasteFailure("The attachment was not sent. \(error.localizedDescription)")
             }
@@ -2151,7 +2151,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// its path. Claude Code and pi read a pasted image path as the image.
     private func pasteImage(_ image: SSHTerminalPastedImage) {
         guard channel.connected else { channel.send(Data()); return }
-        if let reason = channel.sideCommandsUnavailable {
+        if case .unavailable(let reason) = channel.attachRoute {
             presentPasteFailure("The image was not pasted. \(reason)")
             return
         }
@@ -2159,8 +2159,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         showPasteNotice("Saving the image on the host\u{2026}")
         Task { [weak self] in
             do {
-                let path = try await channel.upload(image.data, fileExtension: image.fileExtension)
-                try channel.paste(path)
+                try await channel.attach([SSHTerminalUpload.File(data: image.data, fileExtension: image.fileExtension)])
                 self?.showPasteNotice("Pasted the image's path.")
             } catch {
                 self?.presentPasteFailure("The image was not pasted. \(error.localizedDescription)")

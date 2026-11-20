@@ -11,8 +11,8 @@ enum PaneLocalScreen: Equatable {
     case launcher(workspaceId: String?)
     /// The folder terminal for a workspace's root.
     case terminal(workspaceId: String)
-    /// The Terminal page's Rex sessions on their own: a tapped session's
-    /// terminal opens inside the pane.
+    /// The Rex screen (`RexListViewController`): a tapped session's terminal
+    /// opens inside the pane.
     case rex
     /// A browser with its address field up and no page yet.
     case browser
@@ -162,13 +162,13 @@ enum PaneSplitScreens {
         return list
     }
 
-    /// The Terminal page held in Rex mode, with no mode button: Rex reached
-    /// over Tailscale with no SSH, and the saved hosts' Rex over SSH.
+    /// The Rex screen: Rex reached over Tailscale with no SSH, then the saved
+    /// hosts' Rex over SSH.
     private static func rex(root: AppRootEnvironment?) -> UIViewController {
         #if DEBUG
-        let list = _rexListForTesting?() ?? SSHTerminalHostListViewController(fixedMode: .rex)
+        let list = _rexListForTesting?() ?? RexListViewController()
         #else
-        let list = SSHTerminalHostListViewController(fixedMode: .rex)
+        let list = RexListViewController()
         #endif
         if let root { list.traitOverrides.appRootEnvironment = root }
         return list
@@ -176,6 +176,6 @@ enum PaneSplitScreens {
 
     #if DEBUG
     /// The debug harness's Rex list, over a stand-in Rex the simulator can reach.
-    static var _rexListForTesting: (() -> SSHTerminalHostListViewController)?
+    static var _rexListForTesting: (() -> RexListViewController)?
     #endif
 }

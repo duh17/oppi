@@ -24,8 +24,7 @@ final class RexPaneUITests: XCTestCase, PreviewUITestCase {
         addTeardownBlock { @MainActor in XCUIDevice.shared.orientation = .portrait }
     }
 
-    /// Rex in the launcher opens the Rex list beside the chat, with no mode
-    /// button; a session opens its terminal inside that pane, which follows a
+    /// Rex in the launcher opens the Rex screen beside the chat; a session opens its terminal inside that pane, which follows a
     /// divider drag and a rotation and stays beside the chat.
     func testRexOpensFromTheLauncherBesideTheChat() throws {
         guard UIDevice.current.userInterfaceIdiom == .pad else {
@@ -54,7 +53,6 @@ final class RexPaneUITests: XCTestCase, PreviewUITestCase {
 
         let session = app.buttons[rexRow]
         XCTAssertTrue(session.waitUntilExists(timeout: 15), "The Rex pane lists the host's sessions")
-        XCTAssertFalse(app.buttons["sshTerminal.mode"].exists, "The Rex pane has no mode button")
         XCTAssertTrue(composer.isHittable, "The chat stays beside the Rex pane")
         hold()
         capture("rex-list")

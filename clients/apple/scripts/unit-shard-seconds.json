@@ -632,7 +632,6 @@
  "SSHTerminalMultiplexerDetectionTests": 0.001,
  "SSHTerminalMultiplexerQuotingTests": 0.011,
  "SSHTerminalOpenResolutionTests": 0,
- "SSHTerminalPageModeTests": 0.083,
  "SSHTerminalPaneRecordTimeTests": 0,
  "SSHTerminalPaneTransitionTests": 13.011,
  "SSHTerminalPasswordFillTests": 0.054,

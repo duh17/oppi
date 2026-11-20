@@ -42,12 +42,15 @@ struct ServerFeatureTests {
             // A workspace-only entry opens from Workspace Settings, never the sidebar.
             PluginScreenSidebarEntry(id: "acme.local", title: "Local", icon: "network", order: 15, scopes: ["workspace"]),
         ]
-        let all = WorkspaceSidebarPrimaryUtilities.items(plugins: plugins) { _ in true }
-        #expect(all.map(\.target) == [.agents, .schedules, .extensions, .pluginScreen("acme.things"), .sshTerminal])
+        let all = WorkspaceSidebarPrimaryUtilities.items(plugins: plugins, rexExperiment: true) { _ in true }
+        #expect(all.map(\.target) == [.agents, .schedules, .extensions, .pluginScreen("acme.things"), .sshTerminal, .rex])
         #expect(all.first { $0.target == .pluginScreen("acme.things") }?.title == "Things")
-        #expect(WorkspaceSidebarPrimaryUtilities.items(plugins: []) { _ in false }.isEmpty)
-        let terminalOnly = WorkspaceSidebarPrimaryUtilities.items(plugins: []) { $0 == .terminal }
+        #expect(WorkspaceSidebarPrimaryUtilities.items(plugins: [], rexExperiment: true) { _ in false }.isEmpty)
+        let terminalOnly = WorkspaceSidebarPrimaryUtilities.items(plugins: [], rexExperiment: true) { $0 == .terminal }
         #expect(terminalOnly.map(\.target) == [.sshTerminal])
+        // Rex needs the server's switch and this device's experiment.
+        let rexOff = WorkspaceSidebarPrimaryUtilities.items(plugins: [], rexExperiment: false) { _ in true }
+        #expect(!rexOff.map(\.target).contains(.rex))
     }
 
     @Test("A new pane offers Terminal, Rex, Web Page and Godot only where the server does")

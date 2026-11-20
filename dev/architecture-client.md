@@ -176,7 +176,7 @@ One owner per layout question. `userInterfaceIdiom` is never a layout signal: th
 
 ### Rex
 
-- Code: `Features/Rex/{Client,UI}`; Herdr: `Features/SSHTerminal/Herdr`. Entry: Terminal's Rex mode; links open `SSHTerminalRexSessionsViewController`.
+- Code: `Features/Rex/{Client,UI}`; Herdr: `Features/SSHTerminal/Herdr`. Entry: `RexListViewController` (sidebar, `PaneLocalScreen.rex`; `RexListDedupe` lists a Rex once); links open `SSHTerminalRexSessionsViewController`.
 - `RexMonitor` subscribes with `session.attach_all` (`RexRemote.swift` says why); one `session.view` runs per session at a time, dropping replies older than the applied revision. Rex has no replay, so catch-up is a full resync.
 - Rex's WebSockets are framed client-side (`RexPipeSocket`/`RexWebSocketCodec`) over the SSH bridge (`RexBridge`) or TLS over Tailscale (`RexTLSStream`). `RexRoutePlan` (`RexDirect.swift`) tries direct first and falls back to the bridge; every monitor shares its `RexDirectHost`, so all take one route.
 - `RexSessionConnection`: one control connection plus one data connection per live pane (`maximumLivePanes`). `session.attach` and `session.own_block` stay sequential because Rex does not order one connection's requests; switching never calls a focus method. A new pane becomes the shown pane in the same lock as the first view that lists it, so it never opens as an untaken neighbour.
@@ -184,6 +184,7 @@ One owner per layout question. `userInterfaceIdiom` is never a layout signal: th
 - `SSHTerminalChannel` keeps one engine per pane; the grid's `presentShownPane` alone sets `presented`, so screen and typing cannot drift apart. Snapshot restore order (READY, FINISH, width) belongs to `RexTerminalStream` and `SSHTerminalEngine`.
 - `SSHTerminalRexFollower` owns one Rex host's monitor, sign-in, and background end (`sync(active:)` from `updateProperties()`). `RexMonitor.onFinding` is the one source of what `SSHTerminalRexHostStore` remembers; management never edits the snapshot (events do). A tab follower signs in automatically only when `connectsWithoutPrompt`, reading the store in `viewWillAppear` before `appeared()`, so an edited or deleted host is never signed in from a stale copy.
 - Tailnet Rex (`RexTailnet*.swift`) has no sign-in and no side commands (`sideCommandsUnavailable`); discovery rules live in `RexTailnetDiscovery.swift`.
+- Rex panes attach through Rex (`RexUpload`); `SSHTerminalAttachRoute` decides Attach and Paste.
 
 ## Settings pages
 

@@ -1183,6 +1183,7 @@ final class SceneNavigation {
         case .extensions: "extensions"
         case .pluginScreen: "plugin_screen"
         case .sshTerminal: "ssh_terminal"
+        case .rex: "rex"
         case .manageServers: "manage_servers"
         case .serverMetrics: "server_metrics"
         case .appSettings: "app_settings"

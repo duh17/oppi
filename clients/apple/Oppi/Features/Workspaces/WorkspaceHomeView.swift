@@ -234,6 +234,8 @@ enum WorkspaceUtilityNavTarget: Hashable {
     /// A server plugin's sidebar entry, by its id (`PluginScreenViewController`).
     case pluginScreen(String)
     case sshTerminal
+    /// Every Rex this device reaches (`RexListViewController`).
+    case rex
     case manageServers
     /// The active host's CPU, memory, disk, and Oppi process over time.
     case serverMetrics
@@ -247,6 +249,7 @@ enum WorkspaceUtilityNavTarget: Hashable {
         case .schedules: .schedules
         case .extensions: .extensions
         case .sshTerminal: .terminal
+        case .rex: .rex
         case .pinned, .pluginScreen, .manageServers, .serverMetrics, .appSettings: nil
         }
     }

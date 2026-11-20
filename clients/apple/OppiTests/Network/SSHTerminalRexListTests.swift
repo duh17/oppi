@@ -118,7 +118,7 @@ struct SSHTerminalRexListRowTests {
             session("s:dots", nil, [[pane("d", [SSHTerminalPaneRecord(id: "", state: .idle, app: "codex")])]]),
             session("s:plain", "plain", [[pane("e")]]),
         ])
-        let listed = rows(.init(snapshot: snapshot, needsYou: snapshot.needsAttention))
+        let listed = rows(.init(snapshot: snapshot, needsYou: snapshot.needsAttention, collapsed: ["s:oppi", "s:dots", "s:plain"]))
 
         #expect(listed.first?.kind == .header(name: "alex@studio", needsYou: 1))
         let sessions: [SSHTerminalRexListSession] = listed.compactMap {
@@ -138,7 +138,8 @@ struct SSHTerminalRexListRowTests {
     // MARK: Panes under a session
 
     private func expandedRows(_ sessions: [RexSnapshot.Session], expanding ids: Set<String>) -> [SSHTerminalRexListRow] {
-        rows(.init(snapshot: RexSnapshot(sessions: sessions), expanded: ids))
+        let all = Set(sessions.map(\.sessionID))
+        return rows(.init(snapshot: RexSnapshot(sessions: sessions), collapsed: all.subtracting(ids)))
     }
 
     /// A pane's icon is the bar's pane switcher's, by its one rule: a monogram
@@ -160,11 +161,12 @@ struct SSHTerminalRexListRowTests {
         for (pane, source) in zip(panes, agents) {
             #expect(pane.icon == SSHTerminalPaneIcon(program: RexSessionState.program(title: source.title, records: source.records, label: source.label)))
         }
-        // The title when it says more than the name, then the folder's last component.
-        #expect(panes.map(\.detail) == ["\u{03C0} - oppi \u{00B7} oppi", "server", nil, "/"])
+        // The title when it says more than the name; the folder whole, home as `~`.
+        #expect(panes.map(\.detail) == ["\u{03C0} - oppi", nil, nil, nil])
+        #expect(panes.map(\.folder) == ["~/workspace/oppi", "~/server", nil, "/"])
         #expect(panes.map(\.isFocused) == [false, true, false, false])
         #expect(panes.map(\.needsYou) == [false, true, false, false])
-        #expect(panes[1].accessibilityLabel == "\u{2733} Fixing, server, needs you")
+        #expect(panes[1].accessibilityLabel == "\u{2733} Fixing, ~/server, needs you")
     }
 
     @Test func aSessionWithSeveralWindowsGroupsItsPanesUnderEachWindow() {
@@ -182,16 +184,29 @@ struct SSHTerminalRexListRowTests {
         #expect(named == ["agents", "agents", "Window 2"])
     }
 
-    @Test func aCollapsedSessionListsNoPanesAndOnlyTheExpandedOneDoes() {
+    /// Every session shows its panes until it is folded; a folded one is its
+    /// heading alone, and an empty one says it has no panes.
+    @Test func aFoldedSessionListsNoPanesAndTheOthersDo() {
         let sessions = [session("a", "a", [[pane("a1")]]), session("b", "b", [[pane("b1")]])]
-        #expect(expandedRows(sessions, expanding: []).map(\.id) == ["header", "session|a", "session|b"])
+        #expect(rows(.init(snapshot: RexSnapshot(sessions: sessions))).map(\.id) == ["header", "session|a", "pane|a|a1", "session|b", "pane|b|b1"])
         let listed = expandedRows(sessions, expanding: ["b"])
         #expect(listed.map(\.id) == ["header", "session|a", "session|b", "pane|b|b1"])
         let flags: [Bool] = listed.compactMap { if case .session(let session) = $0.kind { session.isExpanded } else { nil } }
         #expect(flags == [false, true])
-        // A session with no panes has nothing to show, whatever was asked.
         let empty = expandedRows([session("e", "e", [])], expanding: ["e"])
-        #expect(empty.map(\.id) == ["header", "session|e"])
+        #expect(empty.map(\.id) == ["header", "session|e", "nopanes|e"])
+    }
+
+    /// The screen lays a Rex out as its heading, a card of what it says about its
+    /// connection, and each session's heading over the card of its panes.
+    @Test func aRexIsItsHeadingThenEachSessionsHeadingOverItsPanesCard() {
+        let sessions = [session("a", "a", [[pane("a1"), pane("a2")]]), session("b", "b", [[pane("b1")]])]
+        let groups = SSHTerminalRexListRow.groups(
+            hostName: "studio", state: .init(snapshot: RexSnapshot(sessions: sessions), collapsed: ["b"], manageFailure: "Could not rename.")
+        )
+        #expect(groups.map(\.id) == ["heading", "status", "session|a", "panes|a", "session|b"])
+        #expect(groups.map(\.style) == [.heading, .card, .heading, .card, .heading])
+        #expect(groups[3].rows.map(\.id) == ["pane|a|a1", "pane|a|a2"])
     }
 
     @Test func aSessionNamesTheFolderItsFocusedPaneIsIn() {
@@ -201,7 +216,6 @@ struct SSHTerminalRexListRowTests {
         ]], focused: "b")
         let row = SSHTerminalRexListSession(snapshot)
         #expect(row.folder == "oppi")
-        #expect(row.detail == "oppi \u{00B7} 2 panes")
         #expect(row.accessibilityLabel == "s, in oppi, 2 panes")
     }
 
@@ -216,7 +230,7 @@ struct SSHTerminalRexListRowTests {
         #expect(rows(.init(connecting: true, opening: true)).map(\.kind).last == .placeholder("Opening\u{2026}"))
         // Opening a pane keeps the sessions on screen under it.
         let snapshot = RexSnapshot(sessions: [session("s", "s", [[pane("a")]])])
-        let listed = rows(.init(connecting: true, opening: true, snapshot: snapshot))
+        let listed = rows(.init(connecting: true, opening: true, snapshot: snapshot, collapsed: ["s"]))
         #expect(listed.map(\.id) == ["header", "connecting", "session|s"])
     }
 
@@ -248,7 +262,7 @@ struct SSHTerminalRexListRowTests {
 
     @Test func aFailedStreamKeepsTheLastSessionsUnderTheReason() {
         let snapshot = RexSnapshot(sessions: [session("s", "s", [[pane("a")]])])
-        let listed = rows(.init(snapshot: snapshot, failure: "The connection to Rex closed."))
+        let listed = rows(.init(snapshot: snapshot, failure: "The connection to Rex closed.", collapsed: ["s"]))
         #expect(listed.map(\.id) == ["header", "reason", "retry", "session|s"])
         #expect(listed[1].kind == .failure("The connection to Rex closed."))
         #expect(listed[2].kind == .retry("Retry"), "the reason comes with the way to ask again")
@@ -554,7 +568,7 @@ struct SSHTerminalRexSectionTests {
     }
 
     @MainActor private struct Rig {
-        let list: SSHTerminalHostListViewController
+        let list: RexListViewController
         let window: UIWindow
         let navigation: UINavigationController
         let built: Built
@@ -627,14 +641,14 @@ struct SSHTerminalRexSectionTests {
             discovery: RexTailnetDiscovery { _ in .unreachable },
             reach: { .none }
         )
-        let list = SSHTerminalHostListViewController(
-            profileStore: hosts.store, makeFollower: makeFollower, tailnetRex: tailnetRex, startsTailnet: {},
-            // These tests are about Rex mode, whatever the slot's app container holds.
-            settings: terminalTestSettings(mode: .rex, defaults: hosts.defaults)
+        let list = RexListViewController(
+            profileStore: hosts.store, makeFollower: makeFollower, tailnetRex: tailnetRex, startsTailnet: {}
         )
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
-        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        // Tall enough that every unfolded session's panes are on screen (a row off
+        // screen is not dequeued).
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 2400)
         window.traitOverrides.appRootEnvironment = makeTestAppRoot()
         let navigation = RouterNavigationController(rootViewController: list)
         window.rootViewController = navigation
@@ -823,7 +837,7 @@ struct SSHTerminalRexSectionTests {
 
     /// The bar's ＋, which names the hosts it would start a session on.
     private func plusItem(_ rig: Rig) -> UIBarButtonItem? {
-        rig.list.navigationItem.rightBarButtonItems?.first { $0.accessibilityIdentifier?.hasPrefix("sshTerminal.page.") == true }
+        rig.list.navigationItem.rightBarButtonItems?.first { $0.accessibilityIdentifier == "rex.newSession" }
     }
 
     /// ＋ offers a host menu the moment the hosts it can start a session on change, and a
@@ -844,7 +858,6 @@ struct SSHTerminalRexSectionTests {
         defer { rig.tearDown() }
         // One saved host and no node: ＋ starts a session on it, with nothing to choose.
         #expect(plusItem(rig)?.menu == nil, "one host: a tap starts its session")
-        #expect(plusItem(rig)?.accessibilityIdentifier == "sshTerminal.page.newSession")
 
         // A Rex by its Tailscale name, added while the page is up.
         let node = try #require(RexTailnetHost(address: "rex.tail1234.ts.net", name: "studio"))
@@ -1105,33 +1118,29 @@ struct SSHTerminalRexSectionTests {
     private let logsBlock = "block:01a18a7e-911a-721b-a50b-14dfc0cc62cb"
     private let dotfilesSession = "session:01a18a26-6620-76be-b529-4d9ad2b36c64"
 
-    /// The disclosure shows a session's panes, grouped by window when it has
-    /// more than one, and hides them again; only that session changes, and the
-    /// choice outlasts a screen pushed over the tab.
-    @Test func theDisclosureShowsAndHidesASessionsPanes() async throws {
+    /// Every session shows its panes, grouped by window when it has more than
+    /// one, until its chevron folds them; only that session changes, and the
+    /// choice outlasts a screen pushed over the screen.
+    @Test func theDisclosureFoldsAndUnfoldsASessionsPanes() async throws {
         let rig = try mountTab([rexHost])
         defer { rig.tearDown() }
         let prefix = "sshTerminal.rexList.\(rexHost.id.uuidString)."
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) { self.sessionCells(in: rig).count == 2 })
-        // No New Session row beside sessions: the heading's ⋯ and the page's ＋ make one.
-        #expect(rexIDs(in: rig, prefix: prefix) == ["header", oppiSession, dotfilesSession], "collapsed at first")
-
-        let oppi = try #require(sessionCells(in: rig).first)
-        let button = try #require(disclosure(oppi) as? UIButton)
-        #expect(button.accessibilityIdentifier == prefix + oppiSession + ".disclosure")
-        #expect(button.accessibilityValue == "Collapsed")
-        button.sendActions(for: .touchUpInside)
+        let dotfilesPanes = try #require(rig.built.followers[rexHost.id]?.monitor.snapshot?.sessions
+            .first { $0.sessionID == self.dotfilesSession }?.windows.flatMap(\.panes).map(\.blockID))
+        // Two windows: each is named over its panes. No New Session row beside
+        // sessions: the heading's ⋯ and the page's ＋ make one.
+        let unfolded = ["header", oppiSession, "window:01a18a26-6645-713c-97f1-2f1058c8c82f", claudeBlock, piBlock,
+                        "window:01a18a26-6645-713c-97f1-2f1058c8c830", logsBlock, dotfilesSession] + dotfilesPanes
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
             self.pass(rig)
-            return self.rexIDs(in: rig, prefix: prefix).count > 4
-        })
-        // Two windows: each is named over its panes.
-        let ids = rexIDs(in: rig, prefix: prefix)
-        #expect(ids == ["header", oppiSession, "window:01a18a26-6645-713c-97f1-2f1058c8c82f", claudeBlock, piBlock,
-                        "window:01a18a26-6645-713c-97f1-2f1058c8c830", logsBlock, dotfilesSession])
+            return self.rexIDs(in: rig, prefix: prefix) == unfolded
+        }, "unfolded at first: \(rexIDs(in: rig, prefix: prefix))")
+
         let first = try #require(sessionCells(in: rig).first)
-        let expandedButton = try #require(disclosure(first) as? UIButton)
-        #expect(expandedButton.accessibilityValue == "Expanded")
+        let button = try #require(disclosure(first) as? UIButton)
+        #expect(button.accessibilityIdentifier == prefix + oppiSession + ".disclosure")
+        #expect(button.accessibilityValue == "Expanded")
         let actions = try #require(rowElement(first)?.accessibilityCustomActions)
         #expect(actions.map(\.name) == ["Rename", "Close Session", "New Pane", "Hide Panes"], "VoiceOver reaches the disclosure through the row too")
 
@@ -1139,29 +1148,38 @@ struct SSHTerminalRexSectionTests {
         // program last moved. The time is relative to now, so only its shape is fixed.
         let pane = try #require(actionCells(in: rig).first { $0.accessibilityIdentifier == prefix + claudeBlock })
         let label = try #require(pane.accessibilityLabel)
-        #expect(label.hasPrefix("claude, in window agents, Fixing the build \u{00B7} oppi"))
+        #expect(label.hasPrefix("claude, in window agents, Fixing the build, "))
         #expect(label.hasSuffix("needs you"))
         #expect(label.contains("ago"), "the record's own time rides in the label: \(label)")
         let value = try #require(pane.accessibilityValue)
         #expect(value.hasPrefix("Needs approval"), "the value is \(value)")
         #expect(value.contains("ago"), "the value is \(value)")
 
-        // It outlasts a screen over the tab, and another session is unaffected.
-        rig.navigation.pushViewController(UIViewController(), animated: false)
-        rig.navigation.popViewController(animated: false)
+        // Fold it: only that session's panes go.
+        button.sendActions(for: .touchUpInside)
+        let folded = ["header", oppiSession, dotfilesSession] + dotfilesPanes
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
             self.pass(rig)
-            // header, two sessions, two windows and three panes: no New Session row.
-            return self.rexIDs(in: rig, prefix: prefix).count == 8
+            return self.rexIDs(in: rig, prefix: prefix) == folded
+        })
+        let foldedCell = try #require(sessionCells(in: rig).first)
+        #expect((disclosure(foldedCell) as? UIButton)?.accessibilityValue == "Collapsed")
+
+        // It outlasts a screen over the screen.
+        rig.navigation.pushViewController(UIViewController(), animated: false)
+        rig.navigation.popViewController(animated: false)
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) {
+            self.pass(rig)
+            return self.rexIDs(in: rig, prefix: prefix) == folded
         })
 
-        // Hide them again.
-        let firstAgain = try #require(sessionCells(in: rig).first)
-        let again = try #require(disclosure(firstAgain) as? UIButton)
+        // Unfold it again.
+        let foldedAgain = try #require(sessionCells(in: rig).first)
+        let again = try #require(disclosure(foldedAgain) as? UIButton)
         again.sendActions(for: .touchUpInside)
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
             self.pass(rig)
-            return self.rexIDs(in: rig, prefix: prefix) == ["header", self.oppiSession, self.dotfilesSession]
+            return self.rexIDs(in: rig, prefix: prefix) == unfolded
         })
     }
 
@@ -1178,7 +1196,6 @@ struct SSHTerminalRexSectionTests {
         var opened: [RexPaneTarget] = []
         follower.monitor.openPane = { opened.append($0) }
 
-        follower.toggleExpanded(session: oppiSession)
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
             self.pass(rig)
             return self.actionCells(in: rig).contains { $0.accessibilityIdentifier == prefix + self.piBlock }
@@ -1339,7 +1356,7 @@ struct SSHTerminalRexSectionTests {
             return self.sessionCells(in: rig).count == 2 && self.rowElement(self.sessionCells(in: rig)[0])?.accessibilityCustomActions?.isEmpty == false
         })
         let dotfilesCell = try #require(sessionCells(in: rig).last)
-        #expect(rowElement(dotfilesCell)?.accessibilityCustomActions?.map(\.name) == ["Rename", "Close Session", "New Pane", "Show Panes"])
+        #expect(rowElement(dotfilesCell)?.accessibilityCustomActions?.map(\.name) == ["Rename", "Close Session", "New Pane", "Hide Panes"])
 
         // Close: an alert names the session and says what ends; Cancel sends nothing.
         _ = try customAction("Close Session", of: dotfilesCell).actionHandler?(try customAction("Close Session", of: dotfilesCell))

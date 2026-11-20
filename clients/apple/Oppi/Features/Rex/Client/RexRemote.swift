@@ -665,6 +665,13 @@ final class RexMonitor {
 
     /// Which way the stream that last read Rex reached it.
     private(set) var route: RexRoute?
+    /// The Rex this reads, by its own `host_id` (`server.status`), once a
+    /// stream has read it: the same Rex reached two ways has one id
+    /// (`RexListDedupe`). Read only when `readsHostID`.
+    private(set) var hostID: String?
+    /// Each stream reads Rex's `host_id` once after its first full read: the
+    /// Rex screen's monitors, which list one Rex once.
+    @ObservationIgnored var readsHostID = false
     /// The last snapshot read. A stream that fails keeps it on screen, as what
     /// Rex last reported, and reports `failure`.
     private(set) var snapshot: RexSnapshot?
@@ -900,6 +907,16 @@ final class RexMonitor {
         }
     }
 
+    /// The `host_id` Rex's `server.status` names, or nil when it does not say.
+    private static func hostID(over control: RexControl) async -> String? {
+        struct Status: Decodable {
+            let hostID: String?
+            enum CodingKeys: String, CodingKey { case hostID = "host_id" }
+        }
+        guard let answer = try? await control.call("server.status", [:]) else { return nil }
+        return (try? JSONDecoder().decode(Status.self, from: answer))?.hostID.flatMap { $0.isEmpty ? nil : $0 }
+    }
+
     /// Reads Rex once more; a pull-to-refresh waits for it. With no stream
     /// open, it does not wait out the retry delay.
     func resync() async {
@@ -975,6 +992,7 @@ final class RexMonitor {
             self.control = control
             onFinding?(.reached)
             finishStart(true)
+            if readsHostID, let id = await Self.hostID(over: control), id != hostID { hostID = id }
             for await _ in inbox.wake {
                 let events = inbox.drain()
                 for event in events { mirror.apply(event) }

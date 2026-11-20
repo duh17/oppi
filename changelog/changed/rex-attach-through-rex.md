@@ -1,0 +1,1 @@
+- **Client:** **Attach** and pasted images in a Rex pane go through Rex itself, as in Rex's own apps, so they work over Tailscale with no SSH host or sign-in. Rex saves the files on its computer and types their paths into the pane. See [Attachments and secure input](docs/ssh-terminal.md#attachments-and-secure-input).

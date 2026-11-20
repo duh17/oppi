@@ -49,9 +49,15 @@ enum RexClientError: Error, Equatable, LocalizedError {
 ///
 /// Thread-safe: `receive` runs on the socket's thread, requests on any task.
 final class RexControl: Sendable {
-    /// The API revision this client was written against, from the server's
-    /// own API page.
-    static let apiRevision = 7
+    /// The newest API revision this client reads, from the server's own API
+    /// history. Rex answers with the newest revision both sides know
+    /// (`negotiatedRevision`), down to `minimumRevision`; every change from 7
+    /// to 13 adds a method or a field, so nothing this client reads changes.
+    static let apiRevision = 13
+    /// The oldest revision this client still works with.
+    static let minimumRevision = 7
+    /// The revision that added terminal uploads (`upload_begin`).
+    static let uploadRevision = 11
     /// No Rex request this client makes takes long; one with no answer by
     /// then is abandoned, and a late answer is dropped.
     static let requestTimeout: Duration = .seconds(15)
@@ -69,6 +75,7 @@ final class RexControl: Sendable {
         var onEvent: (@Sendable ([String: Any]) -> Void)?
         var reconnectToken: String?
         var resumed = false
+        var negotiatedRevision: Int?
     }
 
     private static let welcomeID = "welcome"
@@ -112,6 +119,7 @@ final class RexControl: Sendable {
         var hello: [String: Any] = [
             "type": "hello",
             "api_revision": Self.apiRevision,
+            "api_min_revision": Self.minimumRevision,
             "client": ["kind": "app", "platform": "ios", "name": "Oppi"],
         ]
         if let reconnectToken { hello["reconnect_token"] = reconnectToken }
@@ -124,6 +132,9 @@ final class RexControl: Sendable {
     /// panes, and ownership are as that client left them; only the events sent
     /// while it was away are lost.
     var resumed: Bool { state.withLock { $0.resumed } }
+    /// The API revision Rex chose for this connection in its welcome; nil
+    /// before the welcome, or from a Rex that does not say.
+    var negotiatedRevision: Int? { state.withLock { $0.negotiatedRevision } }
 
     /// Calls a method and returns its result's JSON.
     func call(_ method: String, _ payload: [String: Any]) async throws -> Data {
@@ -155,6 +166,7 @@ final class RexControl: Sendable {
                 state.withLock { state in
                     state.reconnectToken = client?["reconnect_token"] as? String
                     state.resumed = client?["resumed"] as? Bool ?? false
+                    state.negotiatedRevision = object["api_revision"] as? Int
                 }
                 resolve(Self.welcomeID, .success(Data()))
             case "response":
@@ -354,8 +366,10 @@ struct RexLink: Sendable {
 protocol RexTransport: Sendable {
     /// Which way Rex's sockets go.
     var route: RexRoute { get }
+    /// One of Rex's data sockets (`/api/data`): a pane's terminal stream, or a
+    /// file's bytes (`RexEndpoint.bytes`).
     func openData(
-        inboundFlow: SSHPTYInboundFlow?, onEvent: @escaping @Sendable (RexSocketEvent) -> Void
+        _ endpoint: RexEndpoint, inboundFlow: SSHPTYInboundFlow?, onEvent: @escaping @Sendable (RexSocketEvent) -> Void
     ) async throws -> any RexSocket
     func openStream(command: String, inboundFlow: SSHPTYInboundFlow?, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream
     func run(_ command: String, input: Data) async throws -> SSHExecResult
@@ -371,6 +385,13 @@ protocol RexTransport: Sendable {
 extension RexTransport {
     var sideCommandsUnavailable: String? { nil }
     var sideCommandsSignInPending: Bool { false }
+
+    /// A pane's terminal stream.
+    func openData(
+        inboundFlow: SSHPTYInboundFlow?, onEvent: @escaping @Sendable (RexSocketEvent) -> Void
+    ) async throws -> any RexSocket {
+        try await openData(.data, inboundFlow: inboundFlow, onEvent: onEvent)
+    }
 }
 
 /// One Rex session shown as a terminal, over the connection to its host:
@@ -1017,6 +1038,19 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
     var sideCommandsUnavailable: String? { transport.sideCommandsUnavailable }
 
     var sideCommandsSignInPending: Bool { transport.sideCommandsSignInPending }
+
+    /// Rex takes uploads at this connection's API revision: attachments go
+    /// through Rex on every route, and Rex types their paths.
+    var uploadsFiles: Bool { (control.negotiatedRevision ?? 0) >= RexControl.uploadRevision }
+
+    /// Sends `files` to the pane on screen through Rex (`RexUpload`).
+    func uploadFiles(_ files: [SSHTerminalUpload.File]) async throws {
+        userActed()
+        guard await linked() else { throw RexClientError.connectionClosed }
+        let (transport, control) = link.withLock { ($0.transport, $0.control) }
+        let block = core.withLock { $0.requested }
+        try await RexUpload.send(files, to: block, session: sessionID, control: control, transport: transport)
+    }
 
     func close() {
         let streams = endLanes()

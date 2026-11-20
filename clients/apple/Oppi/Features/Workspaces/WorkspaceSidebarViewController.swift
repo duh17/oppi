@@ -53,12 +53,15 @@ final class WorkspaceSidebarViewController: UIViewController {
     /// What `AppStorage` read before: the same defaults keys.
     private struct Defaults: Equatable {
         var workspacesExpanded: Bool
+        /// The Rex experiment, which shows or hides the Rex row.
+        var rex: Bool
 
         static func read() -> Self {
             let defaults = UserDefaults.standard
             return Self(
                 workspacesExpanded: defaults.object(forKey: AppIdentifiers.workspaceSidebarExpandedKey) as? Bool
-                    ?? WorkspaceSidebarDisclosurePolicy.defaultExpanded
+                    ?? WorkspaceSidebarDisclosurePolicy.defaultExpanded,
+                rex: AppPreferenceStore.Experiments.rexEnabled
             )
         }
     }
@@ -224,7 +227,9 @@ final class WorkspaceSidebarViewController: UIViewController {
         let plugins = connection?.serverCapabilities?.pluginSidebar ?? []
         // Pinned leads the destinations on a server that keeps pins.
         let pinned = connection?.pinsAvailable == true ? [WorkspaceSidebarPrimaryUtilities.pinned] : []
-        let items = pinned + WorkspaceSidebarPrimaryUtilities.items(plugins: plugins) { connection?.offers($0) ?? true }
+        let items = pinned + WorkspaceSidebarPrimaryUtilities.items(plugins: plugins, rexExperiment: defaults.rex) {
+            connection?.offers($0) ?? true
+        }
         for item in items {
             model.utilities[item.target] = UtilityRow(item: item, isSelected: isUtilitySelected(item.target))
             model.mainItems.append(.utility(item.target))
@@ -442,8 +447,11 @@ final class WorkspaceSidebarViewController: UIViewController {
         let item = row.item
         let tint = row.isSelected ? palette.blue : palette.fg
         var content = UIListContentConfiguration.cell()
-        content.image = UIImage(systemName: item.systemImage)
-        content.imageProperties.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .title3)
+        let symbol = UIImage.SymbolConfiguration(textStyle: .title3)
+        content.image = item.logo.flatMap {
+            SymbolSizedLogo.image(named: $0, reference: item.systemImage, configuration: symbol, fallbackSide: 24)
+        } ?? UIImage(systemName: item.systemImage)
+        content.imageProperties.preferredSymbolConfiguration = symbol
         content.imageProperties.tintColor = tint
         content.imageProperties.reservedLayoutSize = CGSize(width: 32, height: 32)
         content.imageToTextPadding = 10
