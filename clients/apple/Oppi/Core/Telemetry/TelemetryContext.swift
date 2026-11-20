@@ -1,22 +1,30 @@
 import Foundation
 
 /// Ambient app state at the moment an event is recorded. The single provider
-/// of `screen`, `stream_state`, `agents`, and `voice`: every event that carries
-/// any of them reads it here, so a memory or CPU sample cannot lack a screen.
+/// of `screen`, `stream_state`, `agents`, `voice`, and `godot`: every event
+/// that carries any of them reads it here, so a memory or CPU sample cannot
+/// lack a screen.
 struct TelemetryContext: Sendable, Equatable {
     let screen: String
     let streamState: String
     let agents: TelemetryTag.Agents
     let voice: TelemetryTag.Voice
+    let godot: TelemetryTag.Godot
 
     /// Value for any `name` tag the app cannot determine.
     static let unknown = TelemetryName.fallback
 
-    init(crashContext: MetricKitCrashContext?, agentsRunning: Bool, voiceActive: Bool) {
+    init(
+        crashContext: MetricKitCrashContext?,
+        agentsRunning: Bool,
+        voiceActive: Bool,
+        godot: TelemetryTag.Godot
+    ) {
         screen = crashContext?.screen.map(TelemetryName.sanitize) ?? Self.unknown
         streamState = crashContext.map { TelemetryName.sanitize($0.streamState) } ?? Self.unknown
         agents = agentsRunning ? .running : .idle
         voice = voiceActive ? .on : .off
+        self.godot = godot
     }
 
     /// The screen alone. Readable from any thread, so the stall watchdog can
@@ -26,11 +34,15 @@ struct TelemetryContext: Sendable, Equatable {
     }
 
     @MainActor
-    static func current(screenAwake: ScreenAwakeController = .shared) -> Self {
+    static func current(
+        screenAwake: ScreenAwakeController = .shared,
+        godot: GodotEngineHost = .shared
+    ) -> Self {
         Self(
             crashContext: MetricKitCrashContextStore.snapshot(),
             agentsRunning: screenAwake.hasRunningSession,
-            voiceActive: screenAwake.isVoiceInputActive
+            voiceActive: screenAwake.isVoiceInputActive,
+            godot: godot.telemetryState
         )
     }
 }

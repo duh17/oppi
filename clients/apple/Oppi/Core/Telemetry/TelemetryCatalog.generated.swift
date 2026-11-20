@@ -545,6 +545,13 @@ enum TelemetryTag {
         case off
     }
 
+    /// Whether a Godot game's engine was loaded in the app, and whether it was drawing (`playing`) or stopped (`paused`).
+    enum Godot: String, Sendable, CaseIterable {
+        case none
+        case paused
+        case playing
+    }
+
     /// Client voice input engine: Apple SpeechTranscriber, Apple DictationTranscriber, or server dictation.
     enum VoiceEngine: String, Sendable, CaseIterable {
         case speech
@@ -3406,6 +3413,7 @@ struct AppDeviceResources: TelemetryEvent {
     let streamState: String?
     let agents: TelemetryTag.Agents?
     let voice: TelemetryTag.Voice?
+    let godot: TelemetryTag.Godot?
 
     init(
         cpuPct: Double? = nil,
@@ -3415,7 +3423,8 @@ struct AppDeviceResources: TelemetryEvent {
         screen: String? = nil,
         streamState: String? = nil,
         agents: TelemetryTag.Agents? = nil,
-        voice: TelemetryTag.Voice? = nil
+        voice: TelemetryTag.Voice? = nil,
+        godot: TelemetryTag.Godot? = nil
     ) {
         self.cpuPct = cpuPct
         self.memoryMb = memoryMb
@@ -3425,6 +3434,7 @@ struct AppDeviceResources: TelemetryEvent {
         self.streamState = streamState
         self.agents = agents
         self.voice = voice
+        self.godot = godot
     }
 
     var fieldValues: [String: Double] {
@@ -3446,6 +3456,7 @@ struct AppDeviceResources: TelemetryEvent {
         if let streamState { values["stream_state"] = TelemetryName.sanitize(streamState) }
         if let agents { values["agents"] = agents.rawValue }
         if let voice { values["voice"] = voice.rawValue }
+        if let godot { values["godot"] = godot.rawValue }
         return values
     }
 }

@@ -105,6 +105,15 @@ export type SloSpec = {
   readonly label: string;
   /** Only events whose tags match count toward the SLO series. */
   readonly where?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * Events whose tags match leave the SLO series for an ungated one, `<event>.<field>@<as>`, that
+   * reports the same statistic without judging it: a workload the SLO is not about (a game engine
+   * in the app's memory) is still seen. An event without the tag stays in the SLO series.
+   */
+  readonly apart?: {
+    readonly where: Readonly<Record<string, readonly string[]>>;
+    readonly as: string;
+  };
 } & (
   | { readonly tm99: number }
   | { readonly p1: number }
@@ -498,6 +507,12 @@ const TAGS = {
     values: ["on", "off"],
     description: "Whether voice input was active.",
   },
+  godot: {
+    kind: "enum",
+    values: ["none", "paused", "playing"],
+    description:
+      "Whether a Godot game's engine was loaded in the app, and whether it was drawing (`playing`) or stopped (`paused`).",
+  },
   voice_engine: {
     kind: "enum",
     values: ["speech", "dictation", "server"],
@@ -645,6 +660,8 @@ const OPT_MS = { unit: "ms", optional: true } as const;
 const OPT_MB = { unit: "mb", optional: true } as const;
 const OPT_BOOL = { unit: "bool", optional: true } as const;
 const FOOTPRINT_CHANGE = { footprint_before_mb: OPT_MB, footprint_after_mb: OPT_MB } as const;
+/** A loaded game engine costs 0.5–1 GB on its own; the app's resource SLOs judge the app without it. */
+const GODOT_GAME = { where: { godot: ["paused", "playing"] }, as: "game" } as const;
 
 /** The longest plausible screen load; a longer sample is an abandoned visit. */
 const LOAD_CEILING_MS = 60_000;
@@ -1271,12 +1288,19 @@ const EVENTS = {
       memory_available_mb: "mb",
       thermal_state: "count",
     },
-    tags: { screen: {}, stream_state: {}, agents: {}, voice: {} },
+    // `godot` is absent from builds that predate it; those samples stay judged.
+    tags: { screen: {}, stream_state: {}, agents: {}, voice: {}, godot: {} },
     slo: [
-      { field: "cpu_pct", tm99: 20, label: "CPU usage %" },
-      { field: "memory_mb", tm99: 250, label: "Memory footprint" },
+      { field: "cpu_pct", tm99: 20, label: "CPU usage %", apart: GODOT_GAME },
+      { field: "memory_mb", tm99: 250, label: "Memory footprint", apart: GODOT_GAME },
       { field: "memory_available_mb", p1: 100, label: "Memory headroom (p1)" },
-      { field: "thermal_state", over: 1, share: 0.01, label: "Thermal serious+ share" },
+      {
+        field: "thermal_state",
+        over: 1,
+        share: 0.01,
+        label: "Thermal serious+ share",
+        apart: GODOT_GAME,
+      },
     ],
   },
   "app.memory_warning": {

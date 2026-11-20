@@ -251,6 +251,75 @@ describe("telemetry-review on v2 events", () => {
     );
   });
 
+  it("judges the app's resource SLOs without a Godot game and reports game samples apart", () => {
+    const now = Date.now();
+    const sample = (
+      godot: string | undefined,
+      memoryMb: number,
+      cpuPct: number,
+      thermal: number,
+    ) => ({
+      v: 2,
+      ts: now,
+      origin: "app",
+      name: "app.device_resources",
+      fields: {
+        cpu_pct: cpuPct,
+        memory_mb: memoryMb,
+        memory_available_mb: 3_000 - memoryMb,
+        thermal_state: thermal,
+      },
+      tags: godot ? { screen: "chat", godot } : { screen: "chat" },
+      client: { kind: "ios", deviceModel: "iPhone17,1" },
+    });
+    withTelemetryDir(
+      {
+        "app-events-2026-10-27.jsonl": [
+          ...Array.from({ length: 4 }, () => sample("none", 200, 5, 0)),
+          // A build that predates the tag: judged with the app, as before.
+          sample(undefined, 240, 8, 0),
+          ...Array.from({ length: 3 }, () => sample("playing", 900, 60, 2)),
+          sample("paused", 900, 2, 2),
+        ],
+      },
+      (dir) => {
+        const result = review(loadSamples(dir, 1), {
+          days: 1,
+          dataDir: "/tmp/oppi-test-data",
+          dictationOnly: false,
+          byTags: ["godot"],
+        });
+        const memory = result.metrics["app.device_resources.memory_mb"];
+        expect(memory?.count).toBe(5);
+        expect(memory?.max).toBe(240);
+        expect(memory?.status).toBe("pass");
+        expect(result.metrics["app.device_resources.cpu_pct"]?.status).toBe("pass");
+        expect(result.metrics["app.device_resources.thermal_state"]?.status).toBe("pass");
+        expect(result.summary.violations).toBe(0);
+
+        // The game's samples are reported with the SLO's statistic, never judged.
+        const game = result.metrics["app.device_resources.memory_mb@game"];
+        expect(game).toMatchObject({ count: 4, max: 900, status: "no_slo", slo: null });
+        expect(game?.apartOf).toBe("app.device_resources.memory_mb");
+        expect(game?.devices.map((row) => [row.device, row.value])).toEqual([["iPhone", 900]]);
+        const thermal = result.metrics["app.device_resources.thermal_state@game"];
+        expect(thermal?.devices.map((row) => [row.device, row.value])).toEqual([["iPhone", 1]]);
+        expect(result.metrics["app.device_resources.cpu_pct@game"]?.count).toBe(4);
+
+        // Headroom is the device's, game or not: every sample stays judged.
+        expect(result.metrics["app.device_resources.memory_available_mb"]?.count).toBe(9);
+        expect(result.metrics).not.toHaveProperty("app.device_resources.memory_available_mb@game");
+
+        // --by godot shows each state in the series its samples went to.
+        const byGodot = result.breakdowns.find((section) => section.tag === "godot");
+        expect(Object.keys(byGodot?.values.playing?.metrics ?? {})).toContain(
+          "app.device_resources.memory_mb@game",
+        );
+        expect(byGodot?.values.none?.metrics["app.device_resources.memory_mb"]?.count).toBe(4);
+      },
+    );
+  });
+
   it("judges every SLO per device and gates when any device is over", () => {
     expect(SLO_THRESHOLDS).not.toHaveProperty("server.resources.event_loop_p99_ms");
     const now = Date.now();

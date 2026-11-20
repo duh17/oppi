@@ -9,8 +9,9 @@ private let samplerLog = Logger(subsystem: AppIdentifiers.subsystem, category: "
 /// foregrounded. All sampling and uploads are gated by `TelemetrySettings`.
 ///
 /// One `app.device_resources` event per tick carries the app state at sample
-/// time (`screen`, `stream_state`, `agents`, `voice`) from `TelemetryContext`,
-/// so a spike can be traced to what was on screen.
+/// time (`screen`, `stream_state`, `agents`, `voice`, `godot`) from
+/// `TelemetryContext`, so a spike can be traced to what was on screen and the
+/// app's SLOs can leave a loaded game engine out.
 @MainActor
 final class DeviceResourceSampler {
     static let shared = DeviceResourceSampler()
@@ -135,7 +136,8 @@ final class DeviceResourceSampler {
                 screen: context.screen,
                 streamState: context.streamState,
                 agents: context.agents,
-                voice: context.voice
+                voice: context.voice,
+                godot: context.godot
             )
         )
     }

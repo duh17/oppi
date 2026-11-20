@@ -281,6 +281,21 @@ function checkEvent(
     }
     if (!slo.label.trim()) problems.push(`${name}: SLO on "${slo.field}" has no label`);
     problems.push(...checkWhere(tags, name, event, `SLO on "${slo.field}"`, slo.where));
+    if (slo.apart) {
+      if ("perMinute" in slo) {
+        // Foreground minutes are counted for the whole device, not per apart series.
+        problems.push(`${name}: per-minute SLO on "${slo.field}" cannot set events apart`);
+      }
+      if (!/^[a-z][a-z0-9_]*$/.test(slo.apart.as)) {
+        problems.push(`${name}: SLO on "${slo.field}" sets events apart as "${slo.apart.as}"`);
+      }
+      if (Object.keys(slo.apart.where).length === 0) {
+        problems.push(`${name}: SLO on "${slo.field}" sets events apart with no filter`);
+      }
+      problems.push(
+        ...checkWhere(tags, name, event, `SLO on "${slo.field}" apart`, slo.apart.where),
+      );
+    }
   }
   return problems;
 }

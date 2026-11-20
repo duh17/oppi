@@ -63,7 +63,7 @@ The catalog is pure data and types; everything else derives from it or is checke
 - Units: `ms`, `count`, `bytes`, `mb`, `pct` (0–100), `ratio` (0–1), `usd_micros`, `bool`; field names end with the unit suffix (`count` and `bool` have none). An absent optional field is never written as 0.
 - Numbers and ids are never tags.
 - `emit` rules drop out-of-range events, in the generated Swift before building anything and again at ingest.
-- `slo` is a field's release limit, judged per device (server events once); `SloSpec` defines its statistics (`tm99`, `p1`, `perMinute` over `FOREGROUND_CLOCK`, `share`).
+- `slo` is a field's release limit, judged per device (server events once); `SloSpec` defines its statistics (`tm99`, `p1`, `perMinute` over `FOREGROUND_CLOCK`, `share`) and `apart` series.
 - Removed events are deleted from the catalog, not retired.
 
 ### Tag vocabulary
@@ -84,7 +84,7 @@ Each tag key has exactly one meaning and one kind (`TAGS`): `enum` (closed, narr
 
 - One path: `Telemetry.record(<generated struct>, sessionId:, workspaceId:)` (`clients/apple/Oppi/Core/Telemetry/Telemetry.swift`). It applies `emit` rules first (the catalog is the only place a threshold lives), drops non-finite fields (one NaN fails JSON encoding for the whole batch), and hands off to `TelemetryEventUploader`. A 2xx never requeues; dropped events are logged and never resent (the server logs `telemetry_events.dropped` once per reason and build).
 - `Telemetry.record` drops durations that overlapped a background period (`TelemetryBackgroundSpans`); catalog `spansBackground` opts an event out.
-- `TelemetryContext` is the one provider of ambient `screen`, `stream_state`, `agents`, `voice`; unknown is `unknown`, never absent.
+- `TelemetryContext` is the one provider of ambient `screen`, `stream_state`, `agents`, `voice`, `godot`; unknown is `unknown`, never absent.
 - `TelemetryErrorKind.classify` is the one mapping from errors to `error_kind`. `OppiCore` vocabularies are enums whose raw values are catalog values; a test fails on any case without a catalog counterpart.
 - Numbers belong in events, not log lines.
 - `FrameHitchCounter` is the one hitch rule (a frame over 1.5× its interval). The chat timeline (`ChatTimelineFrameMeter`), SSH terminal, and diff reader feed it; hitch time pools as Σ`hitch_ms` / Σ`duration_ms`, never a mean of per-visit ratios.
@@ -212,7 +212,7 @@ Client CPU, memory, thermal pressure, and main-thread stalls.
 
 | Event | Answers | Fields | Tags | Emit, storage, SLO |
 | --- | --- | --- | --- | --- |
-| `app.device_resources` | What did the app cost in CPU and memory, and how much headroom was left, on each screen and state? Sampled every 10 s while active. | `cpu_pct` pct (optional)<br>`memory_mb` mb (optional)<br>`memory_available_mb` mb<br>`thermal_state` count | `screen`<br>`stream_state`<br>`agents`<br>`voice` | SLO `cpu_pct` TM99 ≤ 20<br>SLO `memory_mb` TM99 ≤ 250<br>SLO `memory_available_mb` p1 ≥ 100<br>SLO `thermal_state` > 1 in at most 1% of events |
+| `app.device_resources` | What did the app cost in CPU and memory, and how much headroom was left, on each screen and state? Sampled every 10 s while active. | `cpu_pct` pct (optional)<br>`memory_mb` mb (optional)<br>`memory_available_mb` mb<br>`thermal_state` count | `screen`<br>`stream_state`<br>`agents`<br>`voice`<br>`godot` | SLO `cpu_pct` TM99 ≤ 20; except godot=paused\|playing, reported as `cpu_pct@game`<br>SLO `memory_mb` TM99 ≤ 250; except godot=paused\|playing, reported as `memory_mb@game`<br>SLO `memory_available_mb` p1 ≥ 100<br>SLO `thermal_state` > 1 in at most 1% of events; except godot=paused\|playing, reported as `thermal_state@game` |
 | `app.memory_warning` | How large was the app when iOS sent a memory warning, and what did it free? | `footprint_before_mb` mb (optional)<br>`footprint_after_mb` mb (optional)<br>`cache_entries` count<br>`cache_bytes` bytes | `screen` | none |
 | `app.foreground` | How large was the app when it returned to the foreground? | `footprint_mb` mb (optional)<br>`reconnect` bool | `screen` | none |
 | `app.main_thread_stall_detected` | Did the main thread miss the watchdog probe, and how large was the app? | `threshold_ms` ms<br>`footprint_mb` mb (optional)<br>`sequence` count | `screen` | kept across background |

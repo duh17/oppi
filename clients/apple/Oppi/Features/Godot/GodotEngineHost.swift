@@ -161,6 +161,18 @@ final class GodotEngineHost {
     /// The device is critically hot: the game waits for it to cool, whatever Play says.
     var isTooHot: Bool { pauseReasons.contains(.thermal) }
 
+    /// The engine as `app.device_resources` tags it, so the app's resource
+    /// SLOs judge the app without a game: a starting engine already costs its
+    /// memory and CPU, and a paused one (any `GodotPauseReason`) still holds
+    /// its memory.
+    var telemetryState: TelemetryTag.Godot {
+        switch engine {
+        case .idle: .none
+        case .starting: .playing
+        case .running: pauseReasons.isEmpty ? .playing : .paused
+        }
+    }
+
     // MARK: Builds
 
     /// How `build` would reach the engine now.

@@ -106,7 +106,12 @@ interface MetricResult extends MetricStats {
   group: string;
   /** Worst device verdict; `no_data` when an SLO could not be judged on any device. */
   status: "pass" | "over" | "no_slo" | "no_data";
+  /**
+   * Per-device verdicts of an SLO series. An apart series (`apartOf` names the SLO series its
+   * events left) carries the same statistic per device for reference; its status stays `no_slo`.
+   */
   devices: SloDeviceResult[];
+  apartOf?: string;
 }
 
 interface BuildInfo {
@@ -271,8 +276,9 @@ const MODEL_REVIEW_EVENTS = new Set([
 
 const EVENT_FILE_PREFIXES = ["app-events-", "server-events-"];
 
-export function seriesName(event: string, field: string): string {
-  return `${event}.${field}`;
+/** `<event>.<field>`, or `<event>.<field>@<apart>` for the events an SLO's `apart` sets aside. */
+export function seriesName(event: string, field: string, apart?: string): string {
+  return apart ? `${event}.${field}@${apart}` : `${event}.${field}`;
 }
 
 function eventDef(name: string): EventDef | undefined {
@@ -312,6 +318,20 @@ export const SLO_THRESHOLDS: Record<string, SloThreshold> = Object.fromEntries(
         short: slo.label,
       } satisfies SloThreshold,
     ]),
+  ),
+);
+
+/**
+ * Series an SLO's `apart` filter fills, keyed by name: `of` is the SLO series they left. They
+ * carry its statistic per device for reference and never count toward a verdict.
+ */
+const APART_SERIES: Record<string, { of: string; slo: SloThreshold }> = Object.fromEntries(
+  Object.entries(EVENT_DEFS).flatMap(([event, def]) =>
+    (def.slo ?? []).flatMap((slo) => {
+      if (!slo.apart) return [];
+      const of = seriesName(event, slo.field);
+      return [[seriesName(event, slo.field, slo.apart.as), { of, slo: SLO_THRESHOLDS[of]! }]];
+    }),
   ),
 );
 
@@ -504,7 +524,9 @@ export function loadSamples(
         if (!fieldDef) continue;
         const slo = def.slo?.find((candidate) => candidate.field === field);
         if (slo && !tagsMatch(slo.where, record.tags)) continue;
-        const metric = seriesName(record.name, field);
+        const apart =
+          slo?.apart && tagsMatch(slo.apart.where, record.tags) ? slo.apart.as : undefined;
+        const metric = seriesName(record.name, field, apart);
         const unit = fieldSpec(fieldDef).unit;
         pushValue(values, metric, value, unit);
         samples.push({
@@ -1186,26 +1208,29 @@ function buildMetricResult(
 ): MetricResult {
   const stats = computeStats(vals);
   const slo = SLO_THRESHOLDS[metric];
+  const apart = APART_SERIES[metric];
+  const rule = slo ?? apart?.slo;
   const devices: SloDeviceResult[] = [];
-  if (slo) {
+  if (rule) {
     const scopes = new Set(Object.keys(byScope));
-    if (slo.kind === "per_minute") {
+    if (rule.kind === "per_minute") {
       for (const scope of Object.keys(foregroundMinutes)) scopes.add(scope);
     }
     for (const scope of [...scopes].sort()) {
       const sorted = [...(byScope[scope] ?? [])].sort((a, b) => a - b);
-      const value = sloValue(slo, sorted, foregroundMinutes[scope]);
+      const value = sloValue(rule, sorted, foregroundMinutes[scope]);
       if (value === undefined) continue;
       devices.push({
         ...computeStats(sorted),
         device: scope,
         value,
-        status: sloPasses(slo, value) ? "pass" : "over",
+        status: sloPasses(rule, value) ? "pass" : "over",
       });
     }
   }
   return {
     ...stats,
+    ...(apart ? { apartOf: apart.of } : {}),
     unit,
     slo: slo
       ? {
@@ -1231,7 +1256,7 @@ function buildMetricResult(
 function valuesByScope(samples: LoadedSample[]): Record<string, Record<string, number[]>> {
   const out: Record<string, Record<string, number[]>> = {};
   for (const sample of samples) {
-    if (!SLO_THRESHOLDS[sample.metric]) continue;
+    if (!SLO_THRESHOLDS[sample.metric] && !APART_SERIES[sample.metric]) continue;
     const scope = sloScope(sample.metric, sample.device);
     ((out[sample.metric] ??= {})[scope] ??= []).push(sample.value);
   }
@@ -1856,6 +1881,16 @@ function fmtStorage(n: number): string {
   return fmtValue(n, "bytes");
 }
 
+/** The apart series that left `metric` (an SLO series), in catalog order. */
+function apartSeriesOf(metric: string): string[] {
+  return Object.keys(APART_SERIES).filter((series) => APART_SERIES[series]!.of === metric);
+}
+
+/** `game, not judged` for `<event>.<field>@game`. */
+function apartLabel(series: string): string {
+  return `${series.slice(series.lastIndexOf("@") + 1)}, not judged`;
+}
+
 function visibleSloEntries(dictationOnly: boolean): Array<[string, SloThreshold]> {
   return Object.entries(SLO_THRESHOLDS).filter(([metric]) =>
     shouldIncludeMetric(metric, dictationOnly),
@@ -2030,10 +2065,7 @@ function printNarrow(result: ReviewOutput, args: ParsedArgs): void {
       const slo = SLO_THRESHOLDS[metric];
       const rows = result.metrics[metric]?.devices ?? [];
       const name = slo.short.slice(0, NAME_W);
-      if (rows.length === 0) {
-        console.log(`  ${name.padEnd(NAME_W)} ${c.dim}no data${c.reset}`);
-        continue;
-      }
+      if (rows.length === 0) console.log(`  ${name.padEnd(NAME_W)} ${c.dim}no data${c.reset}`);
       rows.forEach((row, index) => {
         const over = row.status === "over";
         const label = (index === 0 ? name : "").padEnd(NAME_W);
@@ -2042,6 +2074,16 @@ function printNarrow(result: ReviewOutput, args: ParsedArgs): void {
           `  ${label} ${row.device.slice(0, DEVICE_W).padEnd(DEVICE_W)} ${over ? c.red : ""}${value}${c.reset} ${fmtLimit(slo)}  ${over ? `${c.red}OVER${c.reset}` : `${c.green}ok${c.reset}`}`,
         );
       });
+      for (const apartMetric of apartSeriesOf(metric)) {
+        const apartName = `  ${apartLabel(apartMetric)}`.slice(0, NAME_W);
+        (result.metrics[apartMetric]?.devices ?? []).forEach((row, index) => {
+          const label = (index === 0 ? apartName : "").padEnd(NAME_W);
+          const value = fmtValue(row.value, slo.displayUnit).padStart(VAL_W);
+          console.log(
+            `  ${c.dim}${label} ${row.device.slice(0, DEVICE_W).padEnd(DEVICE_W)} ${value} ${fmtLimit(slo)}  not judged${c.reset}`,
+          );
+        });
+      }
     }
     console.log();
   }
@@ -2092,25 +2134,36 @@ function printWide(result: ReviewOutput, args: ParsedArgs): void {
       const r = result.metrics[metric];
       if (!r || r.devices.length === 0) {
         console.log(`  ${metric.padEnd(48)} ${c.dim}no data${c.reset}`);
-        continue;
       }
-      for (const row of r.devices) {
-        const over = row.status === "over";
-        const vals: string[] = [`  ${metric.padEnd(48)}`, row.device.slice(0, 6).padEnd(6)];
+      const judged = (r?.devices ?? []).map((row) => ({ series: metric, row, judged: true }));
+      const apart = apartSeriesOf(metric).flatMap((series) =>
+        (result.metrics[series]?.devices ?? []).map((row) => ({ series, row, judged: false })),
+      );
+      for (const { series, row, judged: isJudged } of [...judged, ...apart]) {
+        const over = isJudged && row.status === "over";
+        const unit = result.metrics[series]!.unit;
+        const vals: string[] = [`  ${series.padEnd(48)}`, row.device.slice(0, 6).padEnd(6)];
         if (fields.has("count")) vals.push(row.count.toLocaleString().padStart(8));
-        if (fields.has("tm99")) vals.push(fmtValue(row.tm99, r.unit).padStart(8));
-        if (fields.has("p50")) vals.push(fmtValue(row.p50, r.unit).padStart(8));
-        if (fields.has("p95")) vals.push(fmtValue(row.p95, r.unit).padStart(8));
-        if (fields.has("p99")) vals.push(fmtValue(row.p99, r.unit).padStart(8));
-        if (fields.has("max")) vals.push(fmtValue(row.max, r.unit).padStart(8));
+        if (fields.has("tm99")) vals.push(fmtValue(row.tm99, unit).padStart(8));
+        if (fields.has("p50")) vals.push(fmtValue(row.p50, unit).padStart(8));
+        if (fields.has("p95")) vals.push(fmtValue(row.p95, unit).padStart(8));
+        if (fields.has("p99")) vals.push(fmtValue(row.p99, unit).padStart(8));
+        if (fields.has("max")) vals.push(fmtValue(row.max, unit).padStart(8));
         if (fields.has("slo")) {
           vals.push(
             (over ? c.red : "") + fmtValue(row.value, slo.displayUnit).padStart(10) + c.reset,
             fmtLimit(slo),
           );
         }
-        if (fields.has("status"))
-          vals.push(over ? `${c.red}- OVER${c.reset}` : `${c.green}+ ok${c.reset}`);
+        if (fields.has("status")) {
+          vals.push(
+            !isJudged
+              ? `${c.dim}not judged${c.reset}`
+              : over
+                ? `${c.red}- OVER${c.reset}`
+                : `${c.green}+ ok${c.reset}`,
+          );
+        }
         console.log(vals.join(" "));
       }
     }
@@ -2118,7 +2171,7 @@ function printWide(result: ReviewOutput, args: ParsedArgs): void {
   }
 
   const informational = Object.entries(result.metrics)
-    .filter(([, r]) => r.status === "no_slo")
+    .filter(([, r]) => r.status === "no_slo" && !r.apartOf)
     .sort(([, a], [, b]) => b.count - a.count);
   if (informational.length > 0) {
     const grouped = new Map<string, Array<[string, MetricResult]>>();

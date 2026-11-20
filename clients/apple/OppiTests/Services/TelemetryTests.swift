@@ -196,11 +196,13 @@ struct TelemetryTests {
 
     /// A device sample always names a screen: a missing context is `unknown`, never absent.
     @Test func contextAlwaysSuppliesAScreen() {
-        let empty = TelemetryContext(crashContext: nil, agentsRunning: false, voiceActive: false)
+        let empty = TelemetryContext(
+            crashContext: nil, agentsRunning: false, voiceActive: false, godot: TelemetryTag.Godot.none
+        )
         #expect(empty.screen == "unknown")
         #expect(empty.streamState == "unknown")
 
-        let busy = TelemetryContext(crashContext: nil, agentsRunning: true, voiceActive: true)
+        let busy = TelemetryContext(crashContext: nil, agentsRunning: true, voiceActive: true, godot: .playing)
         #expect(busy.agents == .running)
         #expect(busy.voice == .on)
         #expect(empty.agents == .idle)
@@ -209,10 +211,11 @@ struct TelemetryTests {
         let event = AppDeviceResources(
             memoryAvailableMb: 100, thermalState: 0,
             screen: empty.screen, streamState: empty.streamState,
-            agents: empty.agents, voice: empty.voice
+            agents: empty.agents, voice: empty.voice, godot: empty.godot
         )
         #expect(event.tagValues["screen"] == "unknown")
-        #expect(Set(event.tagValues.keys) == ["screen", "stream_state", "agents", "voice"])
+        #expect(event.tagValues["godot"] == "none")
+        #expect(Set(event.tagValues.keys) == ["screen", "stream_state", "agents", "voice", "godot"])
     }
 
     @Test func contextCarriesTheRecordedScreenAndStream() {
@@ -226,7 +229,7 @@ struct TelemetryTests {
 
         let context = TelemetryContext(
             crashContext: MetricKitCrashContextStore.snapshot(),
-            agentsRunning: false, voiceActive: false
+            agentsRunning: false, voiceActive: false, godot: TelemetryTag.Godot.none
         )
         #expect(context.screen == "workspace")
         #expect(context.streamState == "streaming")

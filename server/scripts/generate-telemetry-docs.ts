@@ -84,7 +84,10 @@ function policyCell(event: EventDef): string {
     lines.push(`aggregate per 60 s: ${ops}`);
   }
   for (const slo of event.slo ?? []) {
-    lines.push(`SLO \`${slo.field}\` ${sloRule(slo)}${where(slo.where)}`);
+    const apart = slo.apart
+      ? `; except${where(slo.apart.where).replace(" when", "")}, reported as \`${slo.field}@${slo.apart.as}\``
+      : "";
+    lines.push(`SLO \`${slo.field}\` ${sloRule(slo)}${where(slo.where)}${apart}`);
   }
   if (event.spansBackground) lines.push("kept across background");
   return lines.length > 0 ? lines.join("<br>") : "none";

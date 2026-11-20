@@ -120,6 +120,7 @@
       "name" : "app.device_resources",
       "tags" : {
         "agents" : "running",
+        "godot" : "paused",
         "screen" : "chat",
         "stream_state" : "queueSync.initial",
         "voice" : "off"

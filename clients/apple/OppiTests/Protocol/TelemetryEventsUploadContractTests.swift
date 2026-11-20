@@ -64,7 +64,7 @@ struct TelemetryEventsUploadContractTests {
                 AppDeviceResources(
                     cpuPct: 18.25, memoryMb: 231.5, memoryAvailableMb: 1_420, thermalState: 1,
                     screen: "chat", streamState: "queueSync.initial",
-                    agents: .running, voice: .off
+                    agents: .running, voice: .off, godot: .paused
                 ),
                 ts: baseTs + 6
             ),

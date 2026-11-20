@@ -175,6 +175,32 @@ struct GodotEngineHostTests {
         #expect(host.inputRuntime != nil)
     }
 
+    /// `app.device_resources` leaves a loaded engine out of the app's SLOs:
+    /// no engine is `none`, a drawing game `playing`, a stopped one `paused`.
+    @Test func resourceSamplesTagWhetherAGameIsLoaded() async {
+        let runtime = FakeGodotRuntime()
+        let host = GodotEngineHost(runtime: runtime)
+        #expect(host.telemetryState == TelemetryTag.Godot.none)
+        #expect(TelemetryContext.current(godot: host).godot == TelemetryTag.Godot.none)
+
+        var pane: FakeGodotPane? = FakeGodotPane(tide, on: host)
+        await host.play(build(tide, ["project.binary": 1]), in: pane!)
+        #expect(host.telemetryState == .playing)
+        #expect(TelemetryContext.current(godot: host).godot == .playing)
+
+        host.setPausedByPerson(true)
+        #expect(host.telemetryState == .paused)
+        host.setPausedByPerson(false)
+        host.setVisible(false, for: pane!)
+        #expect(host.telemetryState == .paused, "A hidden pane's engine still holds its memory")
+        host.setVisible(true, for: pane!)
+        #expect(host.telemetryState == .playing)
+
+        pane = nil
+        #expect(host.engine == .idle)
+        #expect(host.telemetryState == TelemetryTag.Godot.none)
+    }
+
     @Test func onlyTheGamesOwnErrorsShowOverIt() async {
         let runtime = FakeGodotRuntime()
         let host = GodotEngineHost(runtime: runtime)
