@@ -348,10 +348,15 @@ final class WorkspaceSplitController: UISplitViewController, UISplitViewControll
         super.updateProperties()
         overrideUserInterfaceStyle = root.themeStore.userInterfaceStyle
         view.backgroundColor = root.themeStore.backgroundColor
-        area?.stack.setRoutes(navigation.splitDetailColumn.routes, rootPlacement: .splitDetailRoot)
         // A pane playing full screen takes the sidebar's room too; the
         // sidebar comes back as the person left it.
+        // The columns move before the detail column's screens change. A
+        // screen pushed first would start its push in the old column and
+        // keep that frame while the columns move, leaving the sidebar's room
+        // empty; a new root laid out inside the columns' animation would
+        // grow out of a corner with them.
         applyColumnVisibility(navigation.panes.fullScreenCell != nil ? .detailOnly : navigation.splitColumnVisibility)
+        area?.stack.setRoutes(navigation.splitDetailColumn.routes, rootPlacement: .splitDetailRoot)
     }
 
     private func applyColumnVisibility(_ visibility: SplitColumnVisibility) {
@@ -365,12 +370,13 @@ final class WorkspaceSplitController: UISplitViewController, UISplitViewControll
         }
         guard preferredDisplayMode != mode else { return }
         if animated {
-            // Only the columns move. What the same update put in the detail
-            // column (opening a chat replaces its root) takes its frames
-            // first; laid out inside the animation, a new screen would grow
-            // out of its first frame, from a corner, along with the columns.
+            // Only the columns move: what was already pending takes its
+            // frames first, and the columns reach theirs inside the animation.
             view.layoutIfNeeded()
-            UIView.animate(withDuration: 0.3) { self.preferredDisplayMode = mode }
+            UIView.animate(withDuration: 0.3) {
+                self.preferredDisplayMode = mode
+                self.view.layoutIfNeeded()
+            }
         } else {
             preferredDisplayMode = mode
         }

@@ -168,12 +168,23 @@ struct SplitDetailColumn: Equatable {
         self.pushed = pushed
     }
 
-    /// Whether the sidebar shows beside this column: hidden under a chat or a
-    /// file, shown beside a list, a configuration or a utility.
+    /// Whether the sidebar shows beside this column, from the screen on top:
+    /// hidden under a chat, a file or a page of one, shown beside a list, a
+    /// configuration, a utility or a server page.
     var visibility: SplitColumnVisibility {
-        switch root {
-        case .session, .fileBrowser, .linkedFile: .detailOnly
+        switch routes.last ?? root {
+        case .session, .fileBrowser, .linkedFile, .chatReader, .paneEntry: .detailOnly
         default: .all
+        }
+    }
+
+    /// A page of the server rather than of the window's work (the host
+    /// switcher's destinations and an Extension's detail).
+    var showsServerPage: Bool {
+        switch routes.last ?? root {
+        case .serverDetails, .modelProviders, .serverResourceDetail,
+             .utility(.manageServers), .utility(.serverMetrics): true
+        default: false
         }
     }
 }
@@ -284,10 +295,25 @@ final class SceneNavigation {
     /// Sessions for the active server.
     var selectedWorkspaceFilter: WorkspaceNavTarget?
 
-    /// Column visibility backing the regular-width split shell. The system
-    /// sidebar gestures update it too, so iPad users can reveal or hide the
-    /// workspace column either way.
-    var splitColumnVisibility: SplitColumnVisibility = .automatic
+    /// The split shell's columns: what the detail column shows decides
+    /// (`SplitDetailColumn.visibility`), unless the person showed or hid the
+    /// sidebar themselves (its toggle, Toggle Sidebar, the system's sidebar
+    /// gesture). Theirs holds until they go somewhere else: any change of the
+    /// stack, or of shell, drops it. Beside split panes a server page is the
+    /// routed pane's content, so the sidebar stays out of the panes' room.
+    var splitColumnVisibility: SplitColumnVisibility {
+        get {
+            guard isSplit else { return .automatic }
+            if let sidebarChoice { return sidebarChoice }
+            let column = splitDetailColumn
+            if column.showsServerPage, !panes.splitLeaves.isEmpty { return .detailOnly }
+            return column.visibility
+        }
+        set { sidebarChoice = newValue }
+    }
+
+    /// The person's own show or hide of the sidebar, until they navigate.
+    private var sidebarChoice: SplitColumnVisibility?
 
     /// Session-list search lives on navigation so it survives compact inbox
     /// remount after Back and split detail replacement on iPad.
@@ -321,6 +347,9 @@ final class SceneNavigation {
     var workspaceStackRouteElements: [WorkspaceStackRouteElement] = [] {
         didSet {
             if isRestoringMediaOverlay { return }
+            // A file browser's column drill rewrites its route in place; it
+            // compares equal and is no navigation.
+            if oldValue != workspaceStackRouteElements { sidebarChoice = nil }
             if restoreMediaOverlayRouteIfNeeded(
                 snapshotCount: mediaOverlaySnapshot?.workspaceStackRouteElements.count ?? 0,
                 currentCount: workspaceStackRouteElements.count
@@ -364,8 +393,8 @@ final class SceneNavigation {
         )
     }
 
-    /// The window changed shells. The stack stays as it is; only the split
-    /// sidebar's visibility starts from what the detail column shows.
+    /// The window changed shells. The stack stays as it is; the split
+    /// sidebar starts from what the detail column shows.
     func setWorkspaceNavigationPresentation(
         _ presentation: WorkspaceNavigationPresentation,
         measurement: WorkspaceNavigationMeasurement? = nil
@@ -375,15 +404,10 @@ final class SceneNavigation {
         let from = workspaceNavigationPresentation
         let fromSessionId = visibleDiagnosticSessionId()
         workspaceNavigationPresentation = presentation
-        switch presentation {
-        case .stack:
-            splitColumnVisibility = .automatic
-            // The compact stack lists the workspace only as a pushed layer.
-            if selectedWorkspaceFilter != nil, workspaceStackRouteElements.isEmpty {
-                selectedWorkspaceFilter = nil
-            }
-        case .split:
-            splitColumnVisibility = splitDetailColumn.visibility
+        sidebarChoice = nil
+        // The compact stack lists the workspace only as a pushed layer.
+        if presentation == .stack, selectedWorkspaceFilter != nil, workspaceStackRouteElements.isEmpty {
+            selectedWorkspaceFilter = nil
         }
         ClientLog.info(
             "Navigation",
@@ -489,7 +513,6 @@ final class SceneNavigation {
                 presentation: workspaceNavigationPresentation,
                 selectedWorkspaceFilter: selectedWorkspaceFilter,
                 workspaceStackRouteElements: workspaceStackRouteElements,
-                splitColumnVisibility: splitColumnVisibility,
                 activeServerId: activeServerId
             )
         }
@@ -547,7 +570,6 @@ final class SceneNavigation {
         selectedTab = .workspaces
         selectedWorkspaceFilter = target
         workspaceStackRouteElements = [.workspace(target)]
-        if isSplit { splitColumnVisibility = .all }
     }
 
     func showAllWorkspaceSessions() {
@@ -555,7 +577,6 @@ final class SceneNavigation {
         selectedTab = .workspaces
         selectedWorkspaceFilter = nil
         workspaceStackRouteElements = []
-        if isSplit { splitColumnVisibility = .all }
     }
 
     /// If the deleted workspace is the current selection, leave it through the
@@ -580,14 +601,12 @@ final class SceneNavigation {
             // replaces the detail column beside the sidebar's list.
             if case .utility = splitDetailColumn.root {
                 workspaceStackRouteElements.append(.session(resolvedTarget))
-                splitColumnVisibility = .detailOnly
                 return
             }
             if let workspace, selectedWorkspaceFilter != nil {
                 selectedWorkspaceFilter = workspace
             }
             workspaceStackRouteElements = Self.workspaceLayer(selectedWorkspaceFilter) + [.session(resolvedTarget)]
-            splitColumnVisibility = .detailOnly
             return
         }
         let wasShowingWorkspaceInbox = workspace.map {
@@ -656,7 +675,6 @@ final class SceneNavigation {
             } else {
                 workspaceStackRouteElements.append(.session(target))
             }
-            splitColumnVisibility = .detailOnly
         } else {
             workspaceStackRouteElements.append(.session(target))
         }
@@ -680,7 +698,6 @@ final class SceneNavigation {
             return
         }
         workspaceStackRouteElements.append(.linkedFile(target))
-        if isSplit { splitColumnVisibility = .detailOnly }
     }
 
     private static func isSameSession(
@@ -804,7 +821,6 @@ final class SceneNavigation {
         }
         if isSplit {
             workspaceStackRouteElements = Self.workspaceLayer(selectedWorkspaceFilter) + [.fileBrowser(target)]
-            splitColumnVisibility = .detailOnly
         } else {
             workspaceStackRouteElements.append(.fileBrowser(target))
         }
@@ -825,7 +841,6 @@ final class SceneNavigation {
             } else {
                 workspaceStackRouteElements.append(.linkedFile(target))
             }
-            splitColumnVisibility = .detailOnly
         } else {
             workspaceStackRouteElements.append(.linkedFile(target))
         }
@@ -836,27 +851,15 @@ final class SceneNavigation {
         if isSplit {
             selectedWorkspaceFilter = nil
             workspaceStackRouteElements = [.utility(target)]
-            splitColumnVisibility = .all
         } else {
             workspaceStackRouteElements.append(.utility(target))
         }
     }
 
-    /// Pushes a server-scoped page over what the window shows; the split
-    /// shell keeps its sidebar beside it.
+    /// Pushes a server-scoped page over what the window shows.
     private func pushServerPage(_ element: WorkspaceStackRouteElement) {
         selectedTab = .workspaces
         workspaceStackRouteElements.append(element)
-        showSidebarBesideServerPage()
-    }
-
-    /// The split shell shows its sidebar beside a server page, unless the
-    /// window has split panes: there the page is the routed pane's content,
-    /// beside the other panes, and the sidebar shows only when the person
-    /// asks for it (the page's sidebar toggle).
-    private func showSidebarBesideServerPage() {
-        guard isSplit, panes.splitLeaves.isEmpty else { return }
-        splitColumnVisibility = .all
     }
 
     func openServerDetails(_ target: ServerDetailsNavTarget) {
@@ -891,7 +894,6 @@ final class SceneNavigation {
         if isSplit {
             // Each job replaces the detail column beside the sidebar.
             selectedWorkspaceFilter = nil
-            showSidebarBesideServerPage()
             workspaceStackRouteElements = page.map { [$0] } ?? []
             return
         }
@@ -925,7 +927,6 @@ final class SceneNavigation {
         selectedWorkspaceFilter = target
         if isSplit {
             workspaceStackRouteElements = [.workspace(target), .workspaceConfiguration(target)]
-            splitColumnVisibility = .all
         } else {
             workspaceStackRouteElements.append(.workspaceConfiguration(target))
         }
@@ -941,7 +942,6 @@ final class SceneNavigation {
             if case .workspace = element { return true }
             return false
         }
-        splitColumnVisibility = .all
     }
 
     func completeWorkspaceConfiguration(_ target: WorkspaceNavTarget) {
@@ -955,13 +955,11 @@ final class SceneNavigation {
         mediaOverlayYieldsToUserNavigation()
         selectedTab = .workspaces
         workspaceStackRouteElements = Self.workspaceLayer(selectedWorkspaceFilter)
-        splitColumnVisibility = .all
     }
 
     func clearWorkspaceSelections() {
         selectedWorkspaceFilter = nil
         workspaceStackRouteElements = []
-        splitColumnVisibility = isSplit ? .all : .automatic
     }
 
     /// Replaces the workspace stack with a session destination in one state
@@ -973,7 +971,6 @@ final class SceneNavigation {
         }) else { return }
         if isSplit {
             workspaceStackRouteElements = Self.workspaceLayer(selectedWorkspaceFilter) + [.session(target)]
-            splitColumnVisibility = .detailOnly
         } else {
             workspaceStackRouteElements = [.session(target)]
         }
@@ -1237,7 +1234,6 @@ final class SceneNavigation {
         workspaceNavigationPresentation = snapshot.presentation
         selectedWorkspaceFilter = snapshot.selectedWorkspaceFilter
         workspaceStackRouteElements = snapshot.workspaceStackRouteElements
-        splitColumnVisibility = snapshot.splitColumnVisibility
         isRestoringMediaOverlay = false
     }
 
@@ -1245,7 +1241,6 @@ final class SceneNavigation {
         let presentation: WorkspaceNavigationPresentation
         let selectedWorkspaceFilter: WorkspaceNavTarget?
         let workspaceStackRouteElements: [WorkspaceStackRouteElement]
-        let splitColumnVisibility: SplitColumnVisibility
         let activeServerId: String?
     }
 }

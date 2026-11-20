@@ -13,11 +13,6 @@ extension SceneNavigation {
             return nil
         }
         workspaceStackRouteElements = elements
-        if workspaceNavigationPresentation == .split {
-            splitColumnVisibility = splitDetailColumn.rootIndex == nil && splitDetailColumn.pushed.isEmpty
-                ? .all
-                : .detailOnly
-        }
     }
 
     /// Pushes a linked entry's leaf state above the current screens; a second
@@ -51,9 +46,6 @@ extension SceneNavigation {
         panes.dropRestoredHandoffs()
         guard let index = workspaceStackRouteElements.firstIndex(of: .paneEntry(entry)) else { return }
         workspaceStackRouteElements.removeLast(workspaceStackRouteElements.count - index)
-        if workspaceNavigationPresentation == .split, splitDetailColumn.rootIndex == nil, splitDetailColumn.pushed.isEmpty {
-            splitColumnVisibility = .all
-        }
     }
 
     static func paneEntryDiagnosticContext(_ entry: PaneStackEntry) -> WorkspaceStackDiagnosticContext {
@@ -109,7 +101,6 @@ extension SceneNavigation {
                 if case .workspace = element { return true }
                 return false
             }
-            splitColumnVisibility = .all
             return removing
         }
         if remaining.count != elements.count {

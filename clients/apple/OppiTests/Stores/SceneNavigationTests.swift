@@ -814,6 +814,46 @@ struct SceneNavigationShellRoutingTests {
         #expect(navigation.splitDetailColumn.pushed.count == 1)
     }
 
+    @Test func splitSidebarFollowsTheTopScreenAndThePersonsChoiceHoldsUntilTheyNavigate() {
+        let navigation = SceneNavigation()
+        navigation.setWorkspaceNavigationPresentation(.split)
+        navigation.openWorkspaceUtility(.schedules)
+        #expect(navigation.splitColumnVisibility == .all)
+
+        navigation.openWorkspaceSession(.init(serverId: "server-1", sessionId: "run-1"))
+        #expect(navigation.splitDetailColumn.pushed.count == 1)
+        #expect(navigation.splitColumnVisibility == .detailOnly, "A chat pushed over Schedules hides the sidebar")
+
+        navigation.toggleSplitSidebar()
+        #expect(navigation.splitColumnVisibility == .all, "The person's choice wins over the chat's")
+
+        navigation.popShownStack(toDepth: 0)
+        #expect(navigation.splitColumnVisibility == .all, "Back to Schedules shows the sidebar")
+
+        navigation.toggleSplitSidebar()
+        #expect(navigation.splitColumnVisibility == .detailOnly)
+        navigation.openWorkspaceSession(.init(serverId: "server-1", sessionId: "run-2"))
+        navigation.popShownStack(toDepth: 0)
+        #expect(navigation.splitColumnVisibility == .all, "Navigating drops the choice; Back shows the sidebar again")
+
+        let browser = FileBrowserNavTarget(serverId: "server-1", workspaceId: "workspace-1", path: "")
+        navigation.openWorkspaceFileBrowser(browser)
+        navigation.toggleSplitSidebar()
+        navigation.recordFileBrowserColumn(
+            serverId: "server-1",
+            scope: .workspace(workspaceId: "workspace-1", worktreeId: nil),
+            routePath: "",
+            directoryPath: "src/",
+            selectedFile: nil
+        )
+        #expect(navigation.splitColumnVisibility == .all, "A column drill inside the browser is no navigation")
+
+        navigation.setWorkspaceNavigationPresentation(.stack)
+        #expect(navigation.splitColumnVisibility == .automatic)
+        navigation.setWorkspaceNavigationPresentation(.split)
+        #expect(navigation.splitColumnVisibility == .detailOnly, "A change of shell starts from the screen")
+    }
+
     @Test func openSessionPreservesWorkspaceHintFromWorkspaceTarget() {
         let navigation = SceneNavigation()
         let workspaceTarget = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
@@ -1429,13 +1469,12 @@ struct SceneNavigationShellRoutingTests {
         navigation.setWorkspaceNavigationPresentation(.split)
         navigation.openWorkspace(workspaceTarget)
         navigation.openWorkspaceSession(sessionTarget)
-        navigation.splitColumnVisibility = .detailOnly
 
         navigation.showWorkspaceListInSplitSidebar()
 
         #expect(navigation.selectedWorkspaceFilter == nil)
         #expect(navigation.splitDetailColumn.root == .session(sessionTarget))
-        #expect(navigation.splitColumnVisibility == .all)
+        #expect(navigation.splitColumnVisibility == .detailOnly, "The chat still has the window")
     }
 
     @Test func completingWorkspaceConfigurationClearsMatchingSplitDetail() {

@@ -316,6 +316,51 @@ final class ScheduleCalendarUITests: XCTestCase, PreviewUITestCase {
         add(attachment)
     }
 
+    /// In landscape a past run's session pushes over Schedules: the sidebar slides away and
+    /// the chat takes the whole window, with no empty column left where the sidebar was.
+    /// Back returns to Schedules with the sidebar beside it again.
+    func testARunsSessionFillsTheWindowOverSchedulesInLandscapeAndBackBringsTheSidebar() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "The sidebar sits beside Schedules only on the iPad mini in landscape")
+        launch()
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer { XCUIDevice.shared.orientation = .portrait }
+        XCTAssertTrue(waitFor(self.app.frame.width > self.app.frame.height, timeout: 10), "The app turned to landscape")
+        openSchedules()
+        let schedulesRow = app.buttons["workspace.schedules.open"]
+        XCTAssertTrue(schedulesRow.isHittable, "The sidebar shows beside Schedules")
+        app.segmentedControls["schedules.mode"].buttons[dayTitle].tap()
+        let digest = pastRun(named: "Daily personalized HN + X digest")
+        XCTAssertTrue(digest.waitUntilExists(timeout: 10), "Today's digest run is on the calendar")
+        hold()
+
+        digest.tap()
+        let back = app.buttons["chat.toolbar.back"]
+        XCTAssertTrue(back.waitUntilExists(timeout: 10), "The run's session opened over Schedules")
+        XCTAssertTrue(waitFor(!schedulesRow.isHittable), "The sidebar went away")
+        let window = app.windows.firstMatch
+        // The chat's bar starts at the window's leading edge once it fills the window; left in
+        // its old frame, it starts where the sidebar was, past an empty column.
+        XCTAssertTrue(
+            waitFor(back.frame.minX - window.frame.minX < 60),
+            "The chat fills the window: Back at \(back.frame), window \(window.frame)"
+        )
+        hold()
+        capture("landscape-run-session")
+
+        back.tap()
+        XCTAssertTrue(waitFor(schedulesRow.isHittable), "Back to Schedules brings the sidebar back")
+        hold()
+        capture("landscape-back-to-schedules")
+
+        // The person's own toggle holds over what Schedules would show.
+        let toggle = app.buttons["workspace.split.sidebarToggle"]
+        XCTAssertTrue(toggle.waitUntilExists(timeout: 5), "Schedules carries the sidebar toggle")
+        toggle.tap()
+        XCTAssertTrue(waitFor(!schedulesRow.isHittable), "The toggle hides the sidebar beside Schedules")
+        hold()
+        capture("landscape-schedules-sidebar-hidden")
+    }
+
     /// Calendar Events: the day's meetings sit between the runs, an all-day event above them,
     /// and touching and holding one offers Schedule Agent…, which opens a one-time schedule
     /// at the meeting's offset (30 minutes before it, until the device clock passes that)
