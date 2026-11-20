@@ -147,21 +147,3 @@ protocol SSHTerminalOverviewContent: AnyObject {
     /// The list is on screen: refresh faster.
     var watching: Bool { get set }
 }
-
-/// A multiplexer the terminal can read over its SSH side channel and show in
-/// an overview sheet from its bar (Herdr); the bar button, badge, attention
-/// dot, and sheet read it through this.
-@MainActor
-protocol SSHTerminalOverviewSource: SSHTerminalOverviewContent {
-    /// The host has answered at least once, so the bar offers the sheet.
-    var available: Bool { get }
-    /// Rows waiting at an approval, question, or sign-in.
-    var needsAttention: Int { get }
-    /// Polls until the task is cancelled, the channel disconnects, or the host
-    /// turns out not to have the multiplexer.
-    func run(on channel: SSHTerminalChannel) async
-    func refresh(on channel: SSHTerminalChannel) async
-    /// Acts on a tapped row: Herdr focuses it on the host. True closes the
-    /// sheet; false sets `focusFailure`.
-    func activate(_ focus: SSHTerminalOverviewFocus, on channel: SSHTerminalChannel) async -> Bool
-}

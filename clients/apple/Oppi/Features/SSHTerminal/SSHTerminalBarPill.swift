@@ -17,8 +17,12 @@ final class SSHTerminalBarButtons {
     /// The paste control's target (`UIPasteControl.target`).
     weak var pasteTarget: UIPasteConfigurationSupporting?
 
-    /// One button per multiplexer overview (`SSHTerminalBarAction.overviews`).
-    let overviews: [SSHTerminalBarAction: SSHTerminalPillButton]
+    /// Opens Herdr's overview sheet; orange while an agent needs you.
+    let herdr = SSHTerminalPillButton(
+        image: SSHTerminalBarAction.herdr.image(configuration: SSHTerminalPillButton.symbolConfiguration),
+        label: SSHTerminalBarAction.herdr.accessibilityLabel,
+        identifier: SSHTerminalBarAction.herdr.accessibilityIdentifier
+    )
     /// Opens a menu of every open terminal.
     let switcher = SSHTerminalPillButton(
         systemName: SSHTerminalBarAction.switcher.symbol,
@@ -43,27 +47,18 @@ final class SSHTerminalBarButtons {
     private var keysEnabled = true
 
     init() {
-        overviews = Dictionary(uniqueKeysWithValues: SSHTerminalBarAction.overviews.map { action in
-            (action, SSHTerminalPillButton(
-                image: action.image(configuration: SSHTerminalPillButton.symbolConfiguration),
-                label: action.accessibilityLabel,
-                identifier: action.accessibilityIdentifier
-            ))
-        })
         more.showsMenuAsPrimaryAction = true
         switcher.showsMenuAsPrimaryAction = true
         attach.showsMenuAsPrimaryAction = true
-        for action in SSHTerminalBarAction.overviews {
-            overviews[action]?.addAction(UIAction { [weak self] _ in
-                self?.perform(SSHTerminalBarSlot(content: .action(action)))
-            }, for: .touchUpInside)
-        }
+        herdr.addAction(UIAction { [weak self] _ in
+            self?.perform(SSHTerminalBarSlot(content: .action(.herdr)))
+        }, for: .touchUpInside)
         dictate.onTap = { [weak self] in self?.perform(SSHTerminalBarSlot(content: .action(.dictate))) }
     }
 
     /// The buttons kept for the life of the set, whether drawn or not.
     var persistent: [UIView] {
-        [switcher, attach, dictate, more] + SSHTerminalBarAction.overviews.compactMap { overviews[$0] }
+        [switcher, attach, dictate, more, herdr]
     }
 
     func isPersistent(_ view: UIView) -> Bool {
@@ -74,7 +69,8 @@ final class SSHTerminalBarButtons {
         switch action {
         case .switcher: switcher
         case .attach: attach
-        default: overviews[action]
+        case .herdr: herdr
+        default: nil
         }
     }
 
@@ -154,14 +150,14 @@ final class SSHTerminalBarButtons {
         }
     }
 
-    /// `waiting` holds each available multiplexer's count of panes that need
-    /// you; one it does not name has not answered. Keys dim while there is no
+    /// `herdrWaiting` is Herdr's count of agents that need you, nil while
+    /// Herdr has not answered. Keys dim while there is no
     /// connection to send them on. `background` is the terminal's: the paste
     /// control draws its capsule in it, since iOS will not draw a secure
     /// control on a clear background.
     func apply(
         themeID: ThemeID,
-        waiting: [SSHTerminalBarAction: Int],
+        herdrWaiting: Int?,
         openTerminals: Int,
         tint: UIColor,
         background: UIColor,
@@ -183,15 +179,11 @@ final class SSHTerminalBarButtons {
         self.keysEnabled = keysEnabled
         switcher.accessibilityValue = "\(openTerminals) open"
         switcher.apply(tint: tint)
-        for action in SSHTerminalBarAction.overviews {
-            guard let button = overviews[action] else { continue }
-            let count = waiting[action]
-            let waitingCount = count ?? 0
-            button.apply(tint: waitingCount > 0 ? themeID.palette.ui.orange : tint)
-            button.accessibilityValue = count.map { "\($0) need you" } ?? ""
-            button.largeContentTitle = waitingCount > 0
-                ? "\(action.accessibilityLabel) (\(waitingCount))" : action.accessibilityLabel
-        }
+        let waitingCount = herdrWaiting ?? 0
+        herdr.apply(tint: waitingCount > 0 ? themeID.palette.ui.orange : tint)
+        herdr.accessibilityValue = herdrWaiting.map { "\($0) need you" } ?? ""
+        let label = SSHTerminalBarAction.herdr.accessibilityLabel
+        herdr.largeContentTitle = waitingCount > 0 ? "\(label) (\(waitingCount))" : label
         more.apply(tint: tint)
         attach.apply(tint: tint)
         dictate.apply(tint: tint)
@@ -229,8 +221,8 @@ final class SSHTerminalBarButtons {
 
 /// The bottom bar's one centred glass pill: the program-status symbol (while a
 /// program has reported), the buttons the layout draws (`SSHTerminalBarPlacement.bar`:
-/// Type in Terminal, Dictate, Attach, keys, Paste, Browse Files Here, the
-/// multiplexers' overviews, the switcher, Program Shortcuts, and custom keys),
+/// Type in Terminal, Dictate, Attach, keys, Paste, Browse Files Here,
+/// Herdr's overview, the switcher, Program Shortcuts, and custom keys),
 /// in the layout's order, then
 /// the … menu, which is always last. It sits centred between Back and the Rex
 /// pane switcher's pill, so a button added or taken away grows or shrinks it the
@@ -345,14 +337,14 @@ final class SSHTerminalBarPill: SSHTerminalGlassPill {
     /// The pill's colors and button state (`SSHTerminalBarButtons.apply`).
     func apply(
         themeID: ThemeID,
-        waiting: [SSHTerminalBarAction: Int],
+        herdrWaiting: Int?,
         openTerminals: Int,
         tint: UIColor,
         background: UIColor,
         keysEnabled: Bool
     ) {
         buttons.apply(
-            themeID: themeID, waiting: waiting, openTerminals: openTerminals, tint: tint,
+            themeID: themeID, herdrWaiting: herdrWaiting, openTerminals: openTerminals, tint: tint,
             background: background, keysEnabled: keysEnabled, traits: traitCollection
         )
     }

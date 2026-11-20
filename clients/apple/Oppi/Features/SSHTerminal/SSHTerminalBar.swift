@@ -23,14 +23,12 @@ enum SSHTerminalBarAction: String, CaseIterable, Identifiable {
     case enter
     case paste
     case browseFiles
+    /// Herdr's overview sheet, the bar's one multiplexer overview. Rex has
+    /// none: a Rex pane's switcher opens its panel, and the Terminal page lists Rex.
     case herdr
     case switcher
 
     var id: String { rawValue }
-
-    /// The multiplexers whose overview sheet a button opens. Rex has none: a
-    /// Rex pane's switcher opens its panel, and the Terminal page lists Rex.
-    static let overviews: [Self] = [.herdr]
 
     /// Sends keys to the program instead of opening something. A key turned off
     /// is not offered in the … menu (the keyboard bars have every key), but a

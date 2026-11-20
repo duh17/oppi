@@ -105,19 +105,19 @@ extension SSHTerminalBarPill {
     /// One pass of the terminal's: colors and state, then the buttons, with no animation.
     func draw(
         _ slots: [SSHTerminalBarSlot], showsStatus: Bool = false,
-        waiting: [SSHTerminalBarAction: Int] = [:], keysEnabled: Bool = true
+        herdrWaiting: Int? = nil, keysEnabled: Bool = true
     ) {
         apply(
-            themeID: ThemeRuntimeState.currentThemeID(), waiting: waiting, openTerminals: 0,
+            themeID: ThemeRuntimeState.currentThemeID(), herdrWaiting: herdrWaiting, openTerminals: 0,
             tint: .label, background: .black, keysEnabled: keysEnabled
         )
         show(slots, showsStatus: showsStatus, animated: false)
     }
 
     func draw(
-        _ actions: [SSHTerminalBarAction], showsStatus: Bool = false, waiting: [SSHTerminalBarAction: Int] = [:]
+        _ actions: [SSHTerminalBarAction], showsStatus: Bool = false, herdrWaiting: Int? = nil
     ) {
-        draw(actions.map { SSHTerminalBarSlot(content: .action($0)) }, showsStatus: showsStatus, waiting: waiting)
+        draw(actions.map { SSHTerminalBarSlot(content: .action($0)) }, showsStatus: showsStatus, herdrWaiting: herdrWaiting)
     }
 }
 
@@ -141,7 +141,7 @@ struct SSHTerminalFloatingPillTests {
         let back = SSHTerminalBackPill()
         let pill = SSHTerminalBarPill(status: SSHTerminalStatusGlyphButton())
         let herdr = try #require(pill.button(for: .herdr))
-        pill.draw([.herdr], showsStatus: true, waiting: [.herdr: 0])
+        pill.draw([.herdr], showsStatus: true, herdrWaiting: 0)
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
@@ -211,7 +211,7 @@ struct SSHTerminalFloatingPillTests {
         let host = testUnwrap(root.view)
         let back = SSHTerminalBackPill()
         let pill = SSHTerminalBarPill(status: SSHTerminalStatusGlyphButton())
-        pill.draw([.herdr], showsStatus: true, waiting: [.herdr: 0])
+        pill.draw([.herdr], showsStatus: true, herdrWaiting: 0)
         host.addSubview(back)
         host.addSubview(pill)
         NSLayoutConstraint.activate([
@@ -257,7 +257,7 @@ struct SSHTerminalFloatingPillTests {
         let back = SSHTerminalBackPill()
         let pill = SSHTerminalBarPill(status: SSHTerminalStatusGlyphButton())
         let herdr = try #require(pill.button(for: .herdr))
-        pill.draw([.herdr], showsStatus: true, waiting: [.herdr: 0])
+        pill.draw([.herdr], showsStatus: true, herdrWaiting: 0)
         bar.addSubview(back)
         bar.addSubview(pill)
         // A grid above the bar, ending its own rows short of it.

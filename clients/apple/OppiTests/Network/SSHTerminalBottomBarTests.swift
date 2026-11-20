@@ -4,11 +4,9 @@ import Testing
 import UIKit
 @testable import Oppi
 
-private let everyOverview = Set(SSHTerminalBarAction.overviews)
-
 private func offer(
     context: SSHTerminalBarContext = .plain,
-    overviews: Set<SSHTerminalBarAction> = everyOverview,
+    herdrAvailable: Bool = true,
     openTerminals: Int = 2,
     canBrowseFiles: Bool = true,
     canDictate: Bool = true,
@@ -19,7 +17,7 @@ private func offer(
     agentKeys: SSHTerminalAgentKeys = .none
 ) -> SSHTerminalBarOffer {
     SSHTerminalBarOffer(
-        context: context, overviews: overviews, openTerminals: openTerminals, canBrowseFiles: canBrowseFiles,
+        context: context, herdrAvailable: herdrAvailable, openTerminals: openTerminals, canBrowseFiles: canBrowseFiles,
         canDictate: canDictate, canAttach: canAttach,
         program: program, customKeys: customKeys, shortcuts: shortcuts, agentKeys: agentKeys
     )

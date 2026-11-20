@@ -281,7 +281,7 @@ struct SSHTerminalBarOffer: Equatable {
     private(set) var shortcuts: [SSHTerminalKeyAction]
     private(set) var agentKeys: SSHTerminalAgentKeys
 
-    /// `overviews` are the multiplexers whose overview can open here. `program`
+    /// `herdrAvailable`: Herdr's overview can open here. `program`
     /// is `SSHTerminalAgentDetection.keymapProgram`: the OSC 7501 root agent,
     /// else `shell`. `shortcuts` is what `SSHTerminalKeymap.actions(for:userFile:)`
     /// reports for it. `canDictate` is a paired server and a free microphone
@@ -289,7 +289,7 @@ struct SSHTerminalBarOffer: Equatable {
     /// `agentKeys` turns the keys placed on the bar into Send and Stop.
     init(
         context: SSHTerminalBarContext,
-        overviews: Set<SSHTerminalBarAction>,
+        herdrAvailable: Bool,
         openTerminals: Int,
         canBrowseFiles: Bool,
         canDictate: Bool,
@@ -300,9 +300,7 @@ struct SSHTerminalBarOffer: Equatable {
         agentKeys: SSHTerminalAgentKeys = .none
     ) {
         var actions = Set(SSHTerminalBarAction.allCases).subtracting(context.hidden)
-        for action in SSHTerminalBarAction.overviews where !overviews.contains(action) {
-            actions.remove(action)
-        }
+        if !herdrAvailable { actions.remove(.herdr) }
         if openTerminals < 2 { actions.remove(.switcher) }
         if !canBrowseFiles { actions.remove(.browseFiles) }
         if !canDictate { actions.remove(.dictate) }

@@ -143,8 +143,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     private var attention = SSHTerminalAttention()
     private let attentionFeedback = SSHTerminalAttentionFeedback()
     private var shownNoticeKey: SSHTerminalNotice.Key?
-    /// Each multiplexer's poll, keyed by the bar action that opens its overview.
-    private var overviewTasks: [SSHTerminalBarAction: Task<Void, Never>] = [:]
+    /// Herdr's poll: the bar's Herdr button, its needs-you color, and the Back dot.
+    private var herdrPoll: Task<Void, Never>?
     /// Rex's poll: what the Rex panel shows, the Back dot's Rex count, and how
     /// the Terminal page learns Rex is on this host (`makeRexMonitor`).
     private var rexPoll: Task<Void, Never>?
@@ -425,10 +425,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         _ = channel.workingDirectory
         _ = channel.alerts.notification
         _ = channel.alerts.bell
-        for action in SSHTerminalBarAction.overviews {
-            _ = overview(action)?.available
-            _ = overview(action)?.needsAttention
-        }
+        _ = readableHerdr?.available
+        _ = readableHerdr?.needsAttention
         _ = rexWaiting
         _ = keymap.actions
         _ = keymap.profile
@@ -968,7 +966,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     private func barOffer(openTerminals: Int) -> SSHTerminalBarOffer {
         SSHTerminalBarOffer(
             context: barContext,
-            overviews: Set(SSHTerminalBarAction.overviews.filter { overview($0)?.available == true }),
+            herdrAvailable: readableHerdr?.available == true,
             openTerminals: openTerminals,
             // The Files browser over this terminal's folder needs the host to
             // report one and to be a paired Oppi server.
@@ -1036,7 +1034,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
                 channel.keys(slot.strokes)
             case .paste: break // The system paste control delivers through barPill.deliverPaste.
             case .browseFiles: browseFilesHere()
-            case .herdr: showOverview(action)
+            case .herdr: showHerdr()
             case .switcher: break // A menu, not an action.
             }
         case .customKey, .shortcut:
@@ -1127,7 +1125,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         )
         barPill.apply(
             themeID: themeID,
-            waiting: overviewsWaiting,
+            herdrWaiting: herdrWaiting,
             openTerminals: openTerminals,
             tint: tint,
             background: background,
@@ -1185,7 +1183,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             layout: barLayout, capacity: capacity, surface: .keyboardBar, dictating: dictating
         )
         keyboardBarButtons.apply(
-            themeID: themeID, waiting: overviewsWaiting, openTerminals: openTerminals, tint: tint,
+            themeID: themeID, herdrWaiting: herdrWaiting, openTerminals: openTerminals, tint: tint,
             background: background, keysEnabled: canSendKeys, traits: traitCollection
         )
         var room = capacity - keyboardBarPlacement.bar.count
@@ -1375,7 +1373,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
 
     private func attentionPending() -> Bool {
         SSHTerminalFloatingControls.attentionPending(
-            multiplexersWaiting: overviewsWaiting.values.reduce(0, +) + rexWaiting,
+            multiplexersWaiting: (herdrWaiting ?? 0) + rexWaiting,
             blockedProgram: SSHTerminalProgramStatusPresentation.blockedNotice(
                 store: channel.programStatus,
                 isStopped: programIsStopped
@@ -1785,16 +1783,13 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
 
     // MARK: - Presentations
 
-    /// The multiplexer a trailing bar action opens the overview of.
-    private func overview(_ action: SSHTerminalBarAction) -> (any SSHTerminalOverviewSource)? {
-        // An overview the bar hides (Herdr in a Rex pane, or with its
-        // experiment off) has nothing to read: no button, no poll, no dot.
-        guard !barContext.hidden.contains(action) else { return nil }
-        return switch action {
+    /// The Herdr this terminal reads, the one its bar button opens.
+    private var readableHerdr: HerdrMonitor? {
+        // Herdr hidden from the bar (in a Rex pane, or with its experiment
+        // off) has nothing to read: no button, no poll, no dot.
+        guard !barContext.hidden.contains(.herdr) else { return nil }
         // Herdr is read with side commands, which a terminal without SSH has none of.
-        case .herdr: channel.sideCommandsUnavailable == nil && !channel.sideCommandsSignInPending ? herdr : nil
-        default: nil
-        }
+        return channel.sideCommandsUnavailable == nil && !channel.sideCommandsSignInPending ? herdr : nil
     }
 
     /// Rex panes that need you, for the Back dot. A Herdr terminal leaves Rex out.
@@ -1803,17 +1798,14 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         return rex.needsAttention
     }
 
-    /// Panes that need you, per multiplexer that has answered.
-    private var overviewsWaiting: [SSHTerminalBarAction: Int] {
-        var waiting: [SSHTerminalBarAction: Int] = [:]
-        for action in SSHTerminalBarAction.overviews {
-            if let source = overview(action), source.available { waiting[action] = source.needsAttention }
-        }
-        return waiting
+    /// Herdr agents that need you; nil until Herdr has answered.
+    private var herdrWaiting: Int? {
+        guard let herdr = readableHerdr, herdr.available else { return nil }
+        return herdr.needsAttention
     }
 
-    private func showOverview(_ action: SSHTerminalBarAction) {
-        guard !presentingOverview, let source = overview(action) else { return }
+    private func showHerdr() {
+        guard !presentingOverview, let source = readableHerdr else { return }
         presentingOverview = true
         leaveKeyboardForSheet()
         source.watching = true
@@ -2279,13 +2271,11 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             rexPoll?.cancel()
             rexPoll = nil
         }
-        if !AppPreferenceStore.Experiments.herdrEnabled { stopOverview(.herdr) }
+        if !AppPreferenceStore.Experiments.herdrEnabled {
+            herdrPoll?.cancel()
+            herdrPoll = nil
+        }
         setNeedsUpdateProperties()
-    }
-
-    /// Stops one multiplexer's overview poll (its read), leaving the other alone.
-    private func stopOverview(_ action: SSHTerminalBarAction) {
-        overviewTasks.removeValue(forKey: action)?.cancel()
     }
 
     /// A terminal's Rex monitor tells the Terminal tab what it found on the
@@ -2304,8 +2294,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     }
 
     private func stopOverviewPolls() {
-        overviewTasks.values.forEach { $0.cancel() }
-        overviewTasks = [:]
+        herdrPoll?.cancel()
+        herdrPoll = nil
         rexPoll?.cancel()
         rexPoll = nil
     }
@@ -2325,10 +2315,9 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         }
         if channel.connected {
             openMultiplexerFolderIfNeeded()
-            for action in SSHTerminalBarAction.overviews where overviewTasks[action] == nil {
-                guard let source = overview(action) else { continue }
+            if herdrPoll == nil, let herdr = readableHerdr {
                 let channel = channel
-                overviewTasks[action] = Task { await source.run(on: channel) }
+                herdrPoll = Task { await herdr.run(on: channel) }
             }
             if rexPoll == nil, SSHTerminalExperimentAccess.current.rex {
                 let channel = channel

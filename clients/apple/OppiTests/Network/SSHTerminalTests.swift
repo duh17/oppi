@@ -2580,6 +2580,66 @@ struct SSHTerminalTests {
         #expect(channel.workingDirectory.isEmpty)
     }
 
+    /// The terminal polls Herdr only while it is on screen. Leaving ends the
+    /// poll, and the Herdr folder it kept current goes with it.
+    @Test func leavingTheTerminalStopsItsHerdrPoll() async throws {
+        let (_, channel) = try await herdrFolderFixture(snapshot: Self.herdrSnapshot(focused: "w1:p1", panes: Self.herdrTwoPanes))
+        channel.event(.data(Self.enterHerdr))
+        let terminal = SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
+        let nav = UINavigationController(rootViewController: UIViewController())
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = nav
+        window.makeKeyAndVisible()
+        defer {
+            window.endEditing(true)  // a hidden window must not leave its keyboard up
+            window.isHidden = true
+            window.rootViewController = nil
+            channel.close(reason: "done")
+        }
+        nav.pushViewController(terminal, animated: false)
+        nav.view.layoutIfNeeded()
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
+            terminal.updatePropertiesIfNeeded()
+            return channel.workingDirectory == "/Users/alex/workspace/oppi/server"
+        }, "the terminal on screen polls Herdr")
+
+        nav.popViewController(animated: false)
+        nav.view.layoutIfNeeded()
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) { channel.workingDirectory.isEmpty }, "leaving ends the poll")
+        #expect(channel.connected, "the terminal itself stays open")
+    }
+
+    /// The bar's Herdr button appears with Herdr's first answer, says how many
+    /// agents need you, and is orange only while any do.
+    @Test(arguments: [("blocked", 1), ("idle", 0)])
+    func theHerdrButtonFollowsAgentsThatNeedYou(status: String, waiting: Int) async throws {
+        let agents = #"[{"pane_id":"w1:p1","workspace_id":"w1","tab_id":"w1:t1","agent":"pi","agent_status":"\#(status)","focused":true}]"#
+        let (_, channel) = try await herdrFolderFixture(
+            snapshot: Self.herdrSnapshot(focused: "w1:p1", panes: Self.herdrTwoPanes, agents: agents)
+        )
+        let mounted = try MountedTerminalTestController(
+            SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
+        )
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        func control(_ id: String) -> SSHTerminalPillButton? {
+            mounted.controller.updatePropertiesIfNeeded()
+            mounted.host.view.layoutIfNeeded()
+            return mounted.find { $0.accessibilityIdentifier == id } as? SSHTerminalPillButton
+        }
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
+            control("sshTerminal.herdr")?.accessibilityValue == "\(waiting) need you"
+        }, "the first read shows on the button")
+        let button = try #require(control("sshTerminal.herdr"))
+        let more = try #require(control("sshTerminal.more"))
+        #expect(button.largeContentTitle == (waiting > 0 ? "Herdr agents (\(waiting))" : "Herdr agents"))
+        let traits = button.traitCollection
+        let tint = button.configuration?.baseForegroundColor?.resolvedColor(with: traits)
+        let plain = more.configuration?.baseForegroundColor?.resolvedColor(with: traits)
+        #expect((tint != plain) == (waiting > 0), "orange only while an agent needs you")
+    }
+
     @Test func herdrFolderTakesWhatTheSnapshotOffersAndNothingElse() async throws {
         func folder(snapshot: String, machines: String = "[]", machineSnapshot: String? = nil) async throws -> String {
             let (fixture, channel) = try await herdrFolderFixture(snapshot: Self.herdrOK(snapshot), machines: machines)

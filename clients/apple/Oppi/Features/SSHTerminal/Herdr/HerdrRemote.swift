@@ -341,8 +341,10 @@ struct HerdrMachineState: Equatable, Identifiable {
 /// A host without herdr is detected once and never polled again for that
 /// connection. Each machine is read in its own side command, so a saved
 /// machine that is down reports its own failure and Local still updates.
+/// The terminal's Herdr bar button, its needs-you color, the Back dot, and
+/// the overview sheet all read it.
 @MainActor @Observable
-final class HerdrMonitor: SSHTerminalOverviewSource {
+final class HerdrMonitor: SSHTerminalOverviewContent {
     let title = "Herdr"
     let identifierPrefix = "sshTerminal.herdr"
     /// Local first, then the host's saved machines in Herdr's order.
@@ -363,6 +365,7 @@ final class HerdrMonitor: SSHTerminalOverviewSource {
     /// and a machine that hangs is not asked again until it gives up.
     private var readers: [String?: Task<Void, Never>] = [:]
 
+    /// The host has answered at least once, so the bar offers the sheet.
     var available: Bool { machines.contains { $0.snapshot != nil } }
     /// Agents waiting at an approval, question, or sign-in on any machine.
     var needsAttention: Int { machines.reduce(0) { $0 + $1.needsAttention } }
@@ -375,7 +378,9 @@ final class HerdrMonitor: SSHTerminalOverviewSource {
     /// any more and changes nothing.
     private var runToken = 0
 
-    /// A stopped poll takes its folder with it: nothing keeps it current.
+    /// Polls until the task is cancelled, the channel disconnects, or the host
+    /// turns out not to have Herdr. A stopped poll takes its folder with it:
+    /// nothing keeps it current.
     func run(on channel: SSHTerminalChannel) async {
         runToken &+= 1
         let token = runToken
@@ -475,7 +480,7 @@ final class HerdrMonitor: SSHTerminalOverviewSource {
     }
 
     /// A workspace row focuses the workspace, an agent row its pane, on the
-    /// machine that owns the ID.
+    /// machine that owns the ID. True closes the sheet; false sets `focusFailure`.
     func activate(_ focus: SSHTerminalOverviewFocus, on channel: SSHTerminalChannel) async -> Bool {
         let machine = focus.scope
         let target: HerdrRemote.FocusTarget = focus.isGroup ? .workspace(focus.id) : .agent(focus.id)
