@@ -28,7 +28,8 @@ extension ModalPresentation {
 }
 
 /// The icon and avatar picker an Agent and a workspace share: an Emoji or
-/// Genmoji chooser, and a searchable grid of SF Symbols. Presented at the root
+/// Genmoji chooser, an image import from Photos or Files where the source can
+/// upload one (an Agent), and a searchable grid of SF Symbols. Presented at the root
 /// of a router navigation controller (`ModalPresentation.iconPicker`), which
 /// gives it its bar: Cancel, and Save, which uploads a Genmoji if one was
 /// chosen and then commits the icon. A failed save shows its reason at the top
@@ -48,13 +49,16 @@ final class IconPickerViewController: ListScreenController<IconPickerViewControl
         let assetCache: IconAssetCache?
         /// Uploads a Genmoji the person chose and returns the icon that names it.
         let prepareGenmoji: (Data, String) async throws -> IconChoice
+        /// Uploads an imported image's prepared bytes and returns the icon that
+        /// names it. Nil hides the import rows.
+        var prepareImage: ((Data) async throws -> IconChoice)? = nil
         /// Persists the chosen icon. A throw keeps the picker open with the reason.
         let commit: (IconChoice) async throws -> Void
     }
 
-    enum Section: Hashable, Sendable { case saveError, custom, symbolSearch, symbols, saving }
+    enum Section: Hashable, Sendable { case saveError, custom, image, symbolSearch, symbols, saving }
     enum Item: Hashable, Sendable {
-        case saveError, chooser, validation, search, noResults, symbol(String), saving
+        case saveError, chooser, validation, importPhotos, importFiles, search, noResults, symbol(String), saving
     }
 
     private let source: Source
@@ -63,6 +67,7 @@ final class IconPickerViewController: ListScreenController<IconPickerViewControl
     private var draftGenmojiImage: UIImage?
     private var lastErrorMessage: String?
     private let glyphInput = IconPickerGlyphInput()
+    private let imageImporter = IconImageImporter()
 
     private lazy var cancelItem: UIBarButtonItem = {
         let item = UIBarButtonItem(systemItem: .cancel, primaryAction: UIAction { [weak self] _ in
@@ -107,6 +112,7 @@ final class IconPickerViewController: ListScreenController<IconPickerViewControl
         switch value {
         case .emoji(let emoji): .emoji(emoji)
         case .genmoji(_, let contentDescription): .genmoji(contentDescription)
+        case .image: .image
         case .defaultValue, .symbol: nil
         }
     }
@@ -118,6 +124,7 @@ final class IconPickerViewController: ListScreenController<IconPickerViewControl
         // Dragging the list puts the search field's keyboard away.
         collectionView.keyboardDismissMode = .onDrag
         installGlyphInput()
+        installImageImporter()
         navigationItem.leftBarButtonItem = cancelItem
     }
 
@@ -156,6 +163,14 @@ final class IconPickerViewController: ListScreenController<IconPickerViewControl
             footer: "Use the Globe key to switch to the Emoji keyboard if needed.",
             items: model.validationMessage == nil ? [.chooser] : [.chooser, .validation]
         ))
+        if source.prepareImage != nil {
+            sections.append(ListSection(
+                .image,
+                header: "Image",
+                footer: "Any photo works. An animated PNG, GIF, or WebP can be up to 1 MB; it plays here and on the Agent’s page.",
+                items: [.importPhotos, .importFiles]
+            ))
+        }
         sections.append(ListSection(
             .symbolSearch,
             header: source.purpose.symbolSectionTitle,
@@ -177,13 +192,13 @@ final class IconPickerViewController: ListScreenController<IconPickerViewControl
         case .chooser:
             AnyHashable([
                 AnyHashable(model.draft == .value(model.savedValue)),
-                AnyHashable(String(describing: model.draft)),
+                AnyHashable(model.draft),
                 AnyHashable(model.selectedCustomChoice?.accessibilityDescription),
                 AnyHashable(draftGenmojiImage.map(ObjectIdentifier.init)),
                 AnyHashable(model.isSaving),
             ])
         case .validation: AnyHashable(model.validationMessage)
-        case .search: AnyHashable(model.isSaving)
+        case .search, .importPhotos, .importFiles: AnyHashable(model.isSaving)
         case .noResults: AnyHashable(searchText)
         case .symbol(let name): AnyHashable([model.draft == .value(.symbol(name)), model.isSaving])
         case .saving: AnyHashable(0)
@@ -216,6 +231,7 @@ final class IconPickerViewController: ListScreenController<IconPickerViewControl
         switch section {
         case .symbols: Self.symbolGrid(environment)
         case .custom: Self.listSection(environment, headers: false, footers: true)
+        case .image: Self.listSection(environment, headers: true, footers: true)
         case .symbolSearch: Self.listSection(environment, headers: true, footers: false)
         case .saveError, .saving: nil
         }
@@ -290,6 +306,7 @@ final class IconPickerViewController: ListScreenController<IconPickerViewControl
         let preview: IconPickerChooserCell.Preview = switch model.draft {
         case .value(let value): model.selectedCustomChoice == nil ? .none : .choice(value)
         case .genmoji(let data, _): .genmoji(draftGenmojiImage ?? Self.decodeDraft(data))
+        case .image(let data): .importedImage(data)
         }
         cell.configure(
             choice: model.selectedCustomChoice,
@@ -345,7 +362,38 @@ final class IconPickerViewController: ListScreenController<IconPickerViewControl
             return collectionView.dequeueConfiguredReusableCell(using: searchRow, for: indexPath, item: item)
         case .symbol:
             return collectionView.dequeueConfiguredReusableCell(using: symbolCell, for: indexPath, item: item)
+        case .importPhotos, .importFiles:
+            return cardCell(for: item, at: indexPath)
         }
+    }
+
+    /// The two import rows are the kit's button rows.
+    override func configureCard(_ cell: SidebarListCell, item: Item) {
+        let (title, symbol, suffix) = switch item {
+        case .importPhotos: ("Choose from Photos", "photo.on.rectangle", "importPhotos")
+        default: ("Choose from Files", "folder", "importFiles")
+        }
+        ListScreen.buttonRow(
+            cell,
+            identifier: "\(source.accessibilityPrefix).\(suffix)",
+            label: title,
+            enabled: !model.isSaving
+        ) { [weak self] in
+            guard let self else { return }
+            if item == .importPhotos {
+                imageImporter.presentPhotos(from: self)
+            } else {
+                imageImporter.presentFiles(from: self)
+            }
+        }
+        let style = SettingsStyle.current
+        var content = UIListContentConfiguration.cell()
+        content.text = title
+        content.textProperties.color = style.title
+        content.image = UIImage(systemName: symbol)
+        content.imageProperties.tintColor = style.accent
+        cell.contentConfiguration = content
+        cell.contentView.alpha = model.isSaving ? 0.4 : 1
     }
 
     // MARK: - Choosing
@@ -380,9 +428,20 @@ final class IconPickerViewController: ListScreenController<IconPickerViewControl
         }
     }
 
+    private func installImageImporter() {
+        imageImporter.picked = { [weak self] data in
+            guard let self, model.selectImage(data: data) else { return }
+            draftGenmojiImage = nil
+            setNeedsUpdateProperties()
+        }
+        imageImporter.failed = { [weak self] message in
+            self?.errorAlerts.show(title: String(localized: "Can’t Use This Image"), message: message)
+        }
+    }
+
     /// The Genmoji bytes as a picture, when the glyph's own render is not at hand.
     private static func decodeDraft(_ data: Data) -> UIImage? {
-        try? IconAssetCache.decodeRemoteHEIF(data: data, size: 512).image
+        try? IconAssetCache.decodeRemoteIcon(data: data, size: 512).image
     }
 
     // MARK: - Saving
@@ -392,7 +451,11 @@ final class IconPickerViewController: ListScreenController<IconPickerViewControl
         view.endEditing(true)
         Task { [weak self] in
             guard let self else { return }
-            let saved = await model.save(prepareGenmoji: source.prepareGenmoji, commit: source.commit)
+            let saved = await model.save(
+                prepareGenmoji: source.prepareGenmoji,
+                prepareImage: source.prepareImage,
+                commit: source.commit
+            )
             if saved { Router.finish(self) }
         }
     }
@@ -417,144 +480,23 @@ extension IconPickerViewController {
         }
     }
 
+    /// An imported image's upload to `apiClient`'s server, as `Source.prepareImage`.
+    static func uploadImage(using apiClient: APIClient?) -> (Data) async throws -> IconChoice {
+        { data in
+            guard let apiClient else { throw UploadError.serverOffline }
+            let asset = try await apiClient.uploadIconAsset(
+                data: data,
+                contentType: IconImageImport.uploadContentType
+            )
+            return .image(assetId: asset.assetId)
+        }
+    }
+
     /// The error `commit` throws when there is no server to save to.
     static var offlineError: any Error { UploadError.serverOffline }
 }
 
 // MARK: - Cells
-
-/// The Emoji or Genmoji chooser: the current custom choice drawn at the left
-/// with what it is, or the prompt. The whole row is one button that opens the
-/// keyboard on the picker's hidden glyph input.
-private final class IconPickerChooserCell: UICollectionViewListCell {
-    enum Preview {
-        case none
-        case choice(IconChoice)
-        case genmoji(UIImage?)
-    }
-
-    private let button = SettingsRowButton(type: .system)
-    private let iconView = IconChoiceUIView(size: 28, frameSize: 36)
-    private let imageView = UIImageView()
-    private let promptView = UIImageView(image: UIImage(systemName: "face.smiling"))
-    private let titleLabel = UILabel()
-    private let detailLabel = UILabel()
-    private let chevron = UIImageView(image: UIImage(systemName: "chevron.right"))
-    private let leading = UIView()
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        for view in [iconView, imageView, promptView] as [UIView] {
-            view.translatesAutoresizingMaskIntoConstraints = false
-            leading.addSubview(view)
-            NSLayoutConstraint.activate([
-                view.centerXAnchor.constraint(equalTo: leading.centerXAnchor),
-                view.centerYAnchor.constraint(equalTo: leading.centerYAnchor),
-            ])
-        }
-        imageView.contentMode = .scaleAspectFit
-        NSLayoutConstraint.activate([
-            imageView.widthAnchor.constraint(equalToConstant: 28),
-            imageView.heightAnchor.constraint(equalToConstant: 28),
-        ])
-        // The icon slot is 36 pt at every text size, so the prompt's symbol does not scale out of it.
-        promptView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 22)
-        leading.setContentHuggingPriority(.required, for: .horizontal)
-        leading.setContentCompressionResistancePriority(.required, for: .horizontal)
-        leading.widthAnchor.constraint(equalToConstant: 36).isActive = true
-        leading.heightAnchor.constraint(equalToConstant: 36).isActive = true
-
-        titleLabel.font = UIFontMetrics(forTextStyle: .body).scaledFont(for: .systemFont(ofSize: 17, weight: .medium))
-        detailLabel.font = .preferredFont(forTextStyle: .caption1)
-        for label in [titleLabel, detailLabel] {
-            label.adjustsFontForContentSizeCategory = true
-            label.numberOfLines = 0
-        }
-        let text = UIStackView(arrangedSubviews: [titleLabel, detailLabel])
-        text.axis = .vertical
-        text.spacing = 2
-        chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .caption1)
-            .applying(UIImage.SymbolConfiguration(weight: .semibold))
-        chevron.setContentHuggingPriority(.required, for: .horizontal)
-        chevron.setContentCompressionResistancePriority(.required, for: .horizontal)
-        let row = UIStackView(arrangedSubviews: [leading, text, chevron])
-        row.spacing = 12
-        row.alignment = .center
-        for view in [row, button] {
-            view.translatesAutoresizingMaskIntoConstraints = false
-            contentView.addSubview(view)
-        }
-        button.onHighlight = { [weak self] in self?.isHighlighted = $0 }
-        button.accessibilityTraits = .button
-        // The labels paint the row; the button above them is its one accessible element.
-        accessibilityElements = [button]
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
-            row.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
-            row.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4),
-            contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            button.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            button.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            button.topAnchor.constraint(equalTo: contentView.topAnchor),
-            button.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-        ])
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    func configure(
-        choice: IconPickerCustomChoice?,
-        preview: Preview,
-        purpose: IconChoiceUIView.Content.Purpose,
-        assetCache: IconAssetCache?,
-        isEnabled: Bool,
-        identifier: String,
-        action: @escaping () -> Void
-    ) {
-        let style = SettingsStyle.current
-        iconView.isHidden = true
-        imageView.isHidden = true
-        promptView.isHidden = true
-        switch preview {
-        case .none:
-            promptView.isHidden = false
-            promptView.tintColor = style.accent
-        case .choice(let value):
-            iconView.isHidden = false
-            iconView.apply(
-                .choice(value, purpose: purpose, sandbox: false),
-                assetCache: assetCache
-            )
-        case .genmoji(let image):
-            imageView.isHidden = false
-            imageView.image = image
-        }
-        titleLabel.text = "Choose Emoji or Genmoji"
-        titleLabel.textColor = style.title
-        detailLabel.text = choice?.accessibilityDescription
-        detailLabel.textColor = style.value
-        detailLabel.isHidden = choice == nil
-        chevron.tintColor = style.value
-        contentView.alpha = isEnabled ? 1 : 0.4
-        button.isEnabled = isEnabled
-        button.accessibilityIdentifier = identifier
-        button.accessibilityLabel = "Choose Emoji or Genmoji"
-        button.accessibilityValue = choice?.accessibilityDescription ?? "No custom choice selected"
-        button.accessibilityHint = "Opens the current keyboard"
-        button.accessibilityTraits = isEnabled ? .button : [.button, .notEnabled]
-        button.setTapAction(action)
-    }
-
-    override func prepareForReuse() {
-        super.prepareForReuse()
-        button.setTapAction(nil)
-        button.accessibilityIdentifier = nil
-        imageView.image = nil
-        isHighlighted = false
-    }
-}
 
 /// The symbol search field. The field is the cell's one accessible element and
 /// at least 44 pt tall, so the control itself meets the touch target.

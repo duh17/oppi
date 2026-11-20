@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Canonical AppEventMessage JSON — updated by npm run protocol:fixtures:update",
     "generated": "static",
-    "messageCount": 28
+    "messageCount": 29
   },
   "messages": {
     "app_events_connected": {
@@ -290,6 +290,42 @@
           "kind": "genmoji",
           "assetId": "ia_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
           "contentDescription": "A smiling fox"
+        },
+        "programStatus": {
+          "state": "done",
+          "message": "Test session",
+          "since": 1791650009000
+        },
+        "pendingAskCount": 0
+      }
+    },
+    "session_summary_icon_image": {
+      "type": "session_summary",
+      "sessionId": "sess-1",
+      "workspaceId": "ws-1",
+      "emittedAt": 1791650100000,
+      "summary": {
+        "id": "sess-1",
+        "workspaceId": "ws-1",
+        "workspaceName": "Workspace One",
+        "name": "Test session",
+        "status": "ready",
+        "createdAt": 1791650000000,
+        "lastActivity": 1791650010000,
+        "model": "anthropic/claude-sonnet-4-20250514",
+        "messageCount": 1,
+        "tokens": {
+          "input": 10,
+          "output": 5,
+          "cacheRead": 0,
+          "cacheWrite": 0
+        },
+        "cost": 0.001,
+        "firstMessage": "Hello",
+        "agentId": "agent-reviewer",
+        "agentIcon": {
+          "kind": "image",
+          "assetId": "ia_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
         },
         "programStatus": {
           "state": "done",

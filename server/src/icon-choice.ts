@@ -11,8 +11,12 @@ const EMOJI_PATTERN = /^\p{Emoji}$/u;
 const EMOJI_PRESENTATION_PATTERN = /^\p{Emoji_Presentation}$/u;
 const EMOJI_MODIFIER_BASE_PATTERN = /^\p{Emoji_Modifier_Base}$/u;
 
+/** The icon kinds a stored icon asset backs: a Genmoji (HEIC) or an imported image. */
+export type IconAssetKind = Extract<IconChoice["kind"], "genmoji" | "image">;
+
 export interface IconChoiceValidationOptions {
-  assetExists?: (assetId: string) => boolean;
+  /** The kind a stored asset can back, or undefined when there is no such asset. */
+  assetKind?: (assetId: string) => IconAssetKind | undefined;
 }
 
 export function validateIconChoice(
@@ -48,19 +52,18 @@ export function validateIconChoice(
 
     case "genmoji": {
       assertAllowedKeys(value, new Set(["kind", "assetId", "contentDescription"]), "icon");
-      const assetId = requireBoundedString(value.assetId, "icon.assetId", 46);
-      if (!ICON_ASSET_ID_PATTERN.test(assetId)) {
-        throw new Error("icon.assetId is invalid");
-      }
-      if (options.assetExists && !options.assetExists(assetId)) {
-        throw new Error("icon asset not found");
-      }
+      const assetId = requireAssetId(value.assetId, "genmoji", options);
       const contentDescription = requireBoundedString(
         value.contentDescription,
         "icon.contentDescription",
         ICON_CONTENT_DESCRIPTION_MAX_SCALARS,
       );
       return { kind: "genmoji", assetId, contentDescription };
+    }
+
+    case "image": {
+      assertAllowedKeys(value, new Set(["kind", "assetId"]), "icon");
+      return { kind: "image", assetId: requireAssetId(value.assetId, "image", options) };
     }
 
     default:
@@ -91,7 +94,7 @@ export function migrateIconChoice(value: unknown): IconChoice {
 }
 
 export function iconAssetId(value: IconChoice | undefined): string | undefined {
-  return value?.kind === "genmoji" ? value.assetId : undefined;
+  return value?.kind === "genmoji" || value?.kind === "image" ? value.assetId : undefined;
 }
 
 export function formatIconChoice(value: IconChoice | undefined): string {
@@ -102,10 +105,30 @@ export function formatIconChoice(value: IconChoice | undefined): string {
       return `symbol ${value.name}`;
     case "genmoji":
       return `Genmoji ${value.contentDescription}`;
+    case "image":
+      return `image ${value.assetId}`;
     case "default":
     case undefined:
       return "default";
   }
+}
+
+/** A well-formed asset ID that, at a server boundary, names an asset of `kind`. */
+function requireAssetId(
+  value: unknown,
+  kind: IconAssetKind,
+  options: IconChoiceValidationOptions,
+): string {
+  const assetId = requireBoundedString(value, "icon.assetId", 46);
+  if (!ICON_ASSET_ID_PATTERN.test(assetId)) {
+    throw new Error("icon.assetId is invalid");
+  }
+  if (options.assetKind) {
+    const stored = options.assetKind(assetId);
+    if (!stored) throw new Error("icon asset not found");
+    if (stored !== kind) throw new Error(`icon asset is the wrong kind for this ${kind} icon`);
+  }
+  return assetId;
 }
 
 function requireBoundedString(value: unknown, label: string, maxScalars: number): string {

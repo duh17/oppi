@@ -81,11 +81,11 @@ export class Storage {
     this.agentDefinitionStore = new AgentDefinitionStore(
       this.configStore.getDataDir(),
       undefined,
-      (assetId) => this.iconAssetStore.has(assetId),
+      (assetId) => this.iconAssetStore.kind(assetId),
     );
     this.scheduleStore = new AgentScheduleStore(this.configStore.getDataDir());
     this.workspaceStore = new WorkspaceStore(this.configStore, (assetId) =>
-      this.iconAssetStore.has(assetId),
+      this.iconAssetStore.kind(assetId),
     );
     // The string-to-object icon change of July 2026, once per data directory.
     this.sessionStore.runMigrationOnceSync("stored_icon_choices_v1", () => {
@@ -499,14 +499,14 @@ export class Storage {
     return this.iconAssetStore;
   }
 
-  putIconAsset(bytes: Buffer, declaredContentType: string | undefined): IconAssetRecord {
+  putIconAsset(bytes: Buffer): IconAssetRecord {
     // Reclaim only grace-expired abandoned uploads before enforcing the hard
     // quota. Fresh picker drafts retain their full save window.
     this.cleanupUnreferencedIconAssets(undefined, {
       now: Date.now(),
       graceMs: ICON_ASSET_ORPHAN_GRACE_MS,
     });
-    return this.iconAssetStore.put(bytes, declaredContentType);
+    return this.iconAssetStore.put(bytes);
   }
 
   cleanupUnreferencedIconAssets(

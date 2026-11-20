@@ -7,10 +7,14 @@ enum IconChoice: Sendable, Equatable, Hashable {
     case emoji(String)
     case symbol(String)
     case genmoji(assetId: String, contentDescription: String)
+    /// An image the person imported (PNG, APNG, GIF, or WebP), stored on the server.
+    case image(assetId: String)
 
     var assetId: String? {
-        guard case .genmoji(let assetId, _) = self else { return nil }
-        return assetId
+        switch self {
+        case .genmoji(let assetId, _), .image(let assetId): assetId
+        case .defaultValue, .emoji, .symbol: nil
+        }
     }
 
     var accessibilityDescription: String {
@@ -23,6 +27,8 @@ enum IconChoice: Sendable, Equatable, Hashable {
             return "SF Symbol \(name.replacingOccurrences(of: ".", with: " "))"
         case .genmoji(_, let contentDescription):
             return contentDescription
+        case .image:
+            return "Image icon"
         }
     }
 }
@@ -42,6 +48,8 @@ extension IconChoice {
                 "assetId": .string(assetId),
                 "contentDescription": .string(contentDescription),
             ]
+        case .image(let assetId):
+            return ["kind": "image", "assetId": .string(assetId)]
         }
     }
 }
@@ -56,6 +64,7 @@ extension IconChoice: Codable {
         case emoji
         case symbol
         case genmoji
+        case image
     }
 
     init(from decoder: Decoder) throws {
@@ -95,6 +104,13 @@ extension IconChoice: Codable {
                 return
             }
             self = .genmoji(assetId: assetId, contentDescription: description)
+        case .image:
+            guard let assetId = try? container.decode(String.self, forKey: .assetId),
+                  Self.isValidAssetID(assetId) else {
+                self = .defaultValue
+                return
+            }
+            self = .image(assetId: assetId)
         }
     }
 
@@ -113,6 +129,9 @@ extension IconChoice: Codable {
             try container.encode(Kind.genmoji, forKey: .kind)
             try container.encode(assetId, forKey: .assetId)
             try container.encode(contentDescription, forKey: .contentDescription)
+        case .image(let assetId):
+            try container.encode(Kind.image, forKey: .kind)
+            try container.encode(assetId, forKey: .assetId)
         }
     }
 

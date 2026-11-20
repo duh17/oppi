@@ -4,6 +4,7 @@ enum AgentIconContent: Equatable {
     case symbol(String)
     case text(String)
     case genmoji(assetId: String, contentDescription: String)
+    case image(assetId: String)
     case fallback
 
     static func resolve(_ value: IconChoice?) -> Self {
@@ -16,6 +17,8 @@ enum AgentIconContent: Equatable {
             return UIImage(systemName: name) == nil ? .fallback : .symbol(name)
         case .genmoji(let assetId, let contentDescription):
             return .genmoji(assetId: assetId, contentDescription: contentDescription)
+        case .image(let assetId):
+            return .image(assetId: assetId)
         }
     }
 
@@ -27,6 +30,8 @@ enum AgentIconContent: Equatable {
             return "Emoji \(emoji)"
         case .genmoji(_, let contentDescription):
             return contentDescription
+        case .image:
+            return "Image icon"
         case .fallback:
             return "Agent icon"
         }

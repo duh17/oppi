@@ -278,7 +278,7 @@ describe("coordinated icon migration", () => {
   ])("preserves $name and its old asset through migration plus startup GC", ({ name, icon }) => {
     const storage = new Storage(dataDir);
     const old = Date.now() - ICON_ASSET_ORPHAN_GRACE_MS - 1;
-    const asset = storage.getIconAssetStore().put(sample(name), "image/heic", old);
+    const asset = storage.getIconAssetStore().put(sample(name), old);
     const session = storage.createSession(name);
     const taggedIcon = icon(asset.assetId);
     writeLaunchMetadata(
@@ -292,7 +292,7 @@ describe("coordinated icon migration", () => {
     );
 
     const restarted = new Storage(dataDir);
-    expect(restarted.getIconAssetStore().has(asset.assetId)).toBe(true);
+    expect(restarted.getIconAssetStore().kind(asset.assetId)).toBe("genmoji");
     expect(JSON.parse(readLaunchMetadata(session.id)).agentIcon).toEqual(taggedIcon);
   });
 
@@ -301,10 +301,10 @@ describe("coordinated icon migration", () => {
     const old = Date.now() - ICON_ASSET_ORPHAN_GRACE_MS - 1;
     const futureAsset = storage
       .getIconAssetStore()
-      .put(sample("future-tagged-reference"), "image/heic", old);
+      .put(sample("future-tagged-reference"), old);
     const malformedParentAsset = storage
       .getIconAssetStore()
-      .put(sample("malformed-parent-reference"), "image/heic", old);
+      .put(sample("malformed-parent-reference"), old);
     const futureSession = storage.createSession("Future icon");
     const malformedParentSession = storage.createSession("Malformed parent");
 
@@ -337,8 +337,8 @@ describe("coordinated icon migration", () => {
     );
 
     const restarted = new Storage(dataDir);
-    expect(restarted.getIconAssetStore().has(futureAsset.assetId)).toBe(true);
-    expect(restarted.getIconAssetStore().has(malformedParentAsset.assetId)).toBe(true);
+    expect(restarted.getIconAssetStore().kind(futureAsset.assetId)).toBe("genmoji");
+    expect(restarted.getIconAssetStore().kind(malformedParentAsset.assetId)).toBe("genmoji");
   });
 
   /** By default the row is as a server from before the icon change left it: the rewrite is due. */
@@ -377,15 +377,15 @@ describe("coordinated icon migration", () => {
   it("collects abandoned uploads after grace on restart while retaining every durable reference", () => {
     const storage = new Storage(dataDir);
     const old = Date.now() - ICON_ASSET_ORPHAN_GRACE_MS - 1;
-    const abandoned = storage.getIconAssetStore().put(sample("abandoned"), "image/heic", old);
+    const abandoned = storage.getIconAssetStore().put(sample("abandoned"), old);
     const agentCurrentAsset = storage
       .getIconAssetStore()
-      .put(sample("agent-current"), "image/heic", old);
+      .put(sample("agent-current"), old);
     const agentHistoryAsset = storage
       .getIconAssetStore()
-      .put(sample("agent-history"), "image/heic", old);
-    const workspaceAsset = storage.getIconAssetStore().put(sample("workspace"), "image/heic", old);
-    const sessionAsset = storage.getIconAssetStore().put(sample("session"), "image/heic", old);
+      .put(sample("agent-history"), old);
+    const workspaceAsset = storage.getIconAssetStore().put(sample("workspace"), old);
+    const sessionAsset = storage.getIconAssetStore().put(sample("session"), old);
 
     storage.getAgentDefinitionStore().createAgent({
       name: "Current icon",
@@ -426,17 +426,17 @@ describe("coordinated icon migration", () => {
     storage.saveSession(session);
 
     const restarted = new Storage(dataDir);
-    expect(restarted.getIconAssetStore().has(abandoned.assetId)).toBe(false);
-    expect(restarted.getIconAssetStore().has(agentCurrentAsset.assetId)).toBe(true);
-    expect(restarted.getIconAssetStore().has(agentHistoryAsset.assetId)).toBe(true);
-    expect(restarted.getIconAssetStore().has(workspaceAsset.assetId)).toBe(true);
-    expect(restarted.getIconAssetStore().has(sessionAsset.assetId)).toBe(true);
+    expect(restarted.getIconAssetStore().kind(abandoned.assetId)).toBeUndefined();
+    expect(restarted.getIconAssetStore().kind(agentCurrentAsset.assetId)).toBe("genmoji");
+    expect(restarted.getIconAssetStore().kind(agentHistoryAsset.assetId)).toBe("genmoji");
+    expect(restarted.getIconAssetStore().kind(workspaceAsset.assetId)).toBe("genmoji");
+    expect(restarted.getIconAssetStore().kind(sessionAsset.assetId)).toBe("genmoji");
   });
 
   it("removes an old unreferenced workspace asset but retains a session snapshot reference", () => {
     const storage = new Storage(dataDir);
     const old = Date.now() - ICON_ASSET_ORPHAN_GRACE_MS - 1;
-    const asset = storage.getIconAssetStore().put(sample(), "image/heic", old);
+    const asset = storage.getIconAssetStore().put(sample(), old);
     const icon = {
       kind: "genmoji" as const,
       assetId: asset.assetId,
@@ -453,17 +453,17 @@ describe("coordinated icon migration", () => {
     storage.saveSession(session);
 
     storage.updateWorkspace(workspace.id, { icon: { kind: "default" } });
-    expect(storage.getIconAssetStore().has(asset.assetId)).toBe(true);
+    expect(storage.getIconAssetStore().kind(asset.assetId)).toBe("genmoji");
 
     storage.deleteSession(session.id);
-    expect(storage.getIconAssetStore().has(asset.assetId)).toBe(false);
+    expect(storage.getIconAssetStore().kind(asset.assetId)).toBeUndefined();
   });
 
   it("keeps a freshly re-uploaded asset during concurrent last-reference removal", () => {
     const storage = new Storage(dataDir);
     const old = Date.now() - ICON_ASSET_ORPHAN_GRACE_MS + 1_000;
     const bytes = sample("concurrent-removal");
-    const asset = storage.getIconAssetStore().put(bytes, "image/heic", old);
+    const asset = storage.getIconAssetStore().put(bytes, old);
     const workspace = storage.createWorkspace({
       name: "Lease race",
       icon: {
@@ -473,10 +473,10 @@ describe("coordinated icon migration", () => {
       },
     });
 
-    const refreshed = storage.getIconAssetStore().put(bytes, "image/heic", Date.now());
+    const refreshed = storage.getIconAssetStore().put(bytes, Date.now());
     storage.updateWorkspace(workspace.id, { icon: { kind: "default" } });
 
     expect(refreshed.lastUploadedAt).toBeGreaterThan(old);
-    expect(storage.getIconAssetStore().has(asset.assetId)).toBe(true);
+    expect(storage.getIconAssetStore().kind(asset.assetId)).toBe("genmoji");
   });
 });

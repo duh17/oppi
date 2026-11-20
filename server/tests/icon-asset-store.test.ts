@@ -17,6 +17,8 @@ import {
   structuralGridHeifFixture,
   structuralHeifFixture,
 } from "./harness/heic-fixture.js";
+import { gifFixture, pngFixture, webpFixture } from "./harness/image-fixtures.js";
+import { ICON_IMAGE_MAX_BYTES } from "../src/storage/icon-image-formats.js";
 
 function iconHeifBytes(suffix = "sample"): Buffer {
   const content = Buffer.from(suffix);
@@ -111,9 +113,9 @@ describe("bounded HEVC HEIF container validation", () => {
     oversizedGrid.writeUInt32BE(64, 8);
 
     for (const gridPayload of [oversizedGrid, Buffer.from([0, 1, 0])]) {
-      expect(() =>
-        sniffHeicIconContainer(structuralGridHeifFixture({ gridPayload })),
-      ).toThrow("grid");
+      expect(() => sniffHeicIconContainer(structuralGridHeifFixture({ gridPayload }))).toThrow(
+        "grid",
+      );
     }
   });
 
@@ -137,8 +139,8 @@ describe("bounded HEVC HEIF container validation", () => {
 
 describe("IconAssetStore", () => {
   it("deduplicates identical bytes under a stable opaque ID", () => {
-    const first = store.put(iconHeifBytes(), "image/heic", 100);
-    const second = store.put(iconHeifBytes(), "image/heif", 200);
+    const first = store.put(iconHeifBytes(), 100);
+    const second = store.put(iconHeifBytes(), 200);
 
     expect(first.assetId).toMatch(/^ia_[A-Za-z0-9_-]{43}$/);
     expect(second.assetId).toBe(first.assetId);
@@ -147,18 +149,58 @@ describe("IconAssetStore", () => {
     expect(store.read(first.assetId).bytes).toEqual(iconHeifBytes());
   });
 
-  it("rejects unsupported declared media types and oversized bodies deterministically", () => {
-    expect(() => store.put(iconHeifBytes(), "image/png")).toThrow("media type");
-    expect(() => store.put(Buffer.alloc(ICON_ASSET_MAX_BYTES + 1), "image/heic")).toThrow(
-      "2 MiB",
+  it("rejects oversized bodies deterministically", () => {
+    expect(() => store.put(Buffer.alloc(ICON_ASSET_MAX_BYTES + 1))).toThrow("2 MiB");
+  });
+
+  it.each([
+    ["PNG", pngFixture(), "image/png"],
+    ["GIF", gifFixture(), "image/gif"],
+    ["lossless WebP", webpFixture("VP8L"), "image/webp"],
+    ["lossy WebP", webpFixture("VP8 "), "image/webp"],
+    ["animated WebP", webpFixture("VP8X"), "image/webp"],
+    // A decoder tolerates trailing bytes, so the store does too.
+    ["GIF with trailing bytes", Buffer.concat([gifFixture(), Buffer.alloc(3)]), "image/gif"],
+  ])("stores an imported %s as an image asset typed by its bytes", (_, bytes, contentType) => {
+    const record = store.put(bytes);
+    expect(record.contentType).toBe(contentType);
+    expect(store.kind(record.assetId)).toBe("image");
+    expect(store.read(record.assetId).bytes).toEqual(bytes);
+  });
+
+  it("backs Genmoji with HEIC and images with everything else", () => {
+    expect(store.kind(store.put(iconHeifBytes()).assetId)).toBe("genmoji");
+    expect(store.kind(store.put(pngFixture()).assetId)).toBe("image");
+    expect(store.kind(`ia_${"q".repeat(43)}`)).toBeUndefined();
+  });
+
+  it("caps imported images at 1 MiB while Genmoji keep 2 MiB", () => {
+    const padding = Buffer.alloc(ICON_IMAGE_MAX_BYTES);
+    const oversized = Buffer.concat([pngFixture(), padding]);
+    expect(() => store.put(oversized)).toThrow(
+      expect.objectContaining({ code: "oversized", status: 413 }),
     );
+  });
+
+  it.each([
+    ["a JPEG", Buffer.from([0xff, 0xd8, 0xff, 0xe0, ...Buffer.alloc(32)]), "unsupported"],
+    ["random bytes", Buffer.from("definitely not an image, just text"), "unsupported"],
+    ["a PNG cut before its header", pngFixture().subarray(0, 16), "corrupt"],
+    ["a PNG wider than 1024 px", pngFixture({ width: 1025, height: 1 }), "unsupported"],
+    ["a GIF taller than 1024 px", gifFixture({ width: 1, height: 1025 }), "unsupported"],
+    ["a WebP wider than 1024 px", webpFixture("VP8X", { width: 1025, height: 1 }), "unsupported"],
+  ])("rejects %s by its content", (_, bytes, code) => {
+    expect(() => store.put(bytes)).toThrow(
+      expect.objectContaining({ code, status: code === "unsupported" ? 415 : 422 }),
+    );
+    expect(readdirSync(join(dataDir, "icon-assets", "blobs"))).toEqual([]);
   });
 
   it("rejects traversal IDs and reports missing and corrupt assets", () => {
     expect(() => store.read("../../etc/passwd")).toThrow("asset ID");
     expect(() => store.read(`ia_${"z".repeat(43)}`)).toThrow("not found");
 
-    const record = store.put(iconHeifBytes(), "image/heic");
+    const record = store.put(iconHeifBytes());
     const blobPath = join(dataDir, "icon-assets", "blobs", `${record.assetId}.heic`);
     writeFileSync(blobPath, iconHeifBytes("tampered"));
     expect(() => store.read(record.assetId)).toThrow("corrupt");
@@ -166,8 +208,8 @@ describe("IconAssetStore", () => {
 
   it("collects only requested assets that have no durable reference", () => {
     const old = 1_000;
-    const retained = store.put(iconHeifBytes("retained"), "image/heic", old);
-    const removed = store.put(iconHeifBytes("removed"), "image/heic", old);
+    const retained = store.put(iconHeifBytes("retained"), old);
+    const removed = store.put(iconHeifBytes("removed"), old);
 
     const result = store.collectUnreferenced(
       new Set([retained.assetId]),
@@ -176,19 +218,19 @@ describe("IconAssetStore", () => {
     );
 
     expect(result.removedAssetIds).toEqual([removed.assetId]);
-    expect(store.has(retained.assetId)).toBe(true);
-    expect(store.has(removed.assetId)).toBe(false);
-    expect(
-      existsSync(join(dataDir, "icon-assets", "blobs", `${removed.assetId}.heic`)),
-    ).toBe(false);
+    expect(store.kind(retained.assetId)).toBe("genmoji");
+    expect(store.kind(removed.assetId)).toBeUndefined();
+    expect(existsSync(join(dataDir, "icon-assets", "blobs", `${removed.assetId}.heic`))).toBe(
+      false,
+    );
   });
 
   it("refreshes the pending-upload lease when identical bytes are uploaded near expiry", () => {
     const uploadedAt = 10_000;
     const nearExpiry = uploadedAt + 24 * 60 * 60 * 1000 - 1;
-    const record = store.put(iconHeifBytes("lease"), "image/heic", uploadedAt);
+    const record = store.put(iconHeifBytes("lease"), uploadedAt);
 
-    const refreshed = store.put(iconHeifBytes("lease"), "image/heic", nearExpiry);
+    const refreshed = store.put(iconHeifBytes("lease"), nearExpiry);
     const earlyCleanup = store.collectUnreferenced(new Set(), new Set([record.assetId]), {
       now: nearExpiry + 2,
     });
@@ -196,7 +238,7 @@ describe("IconAssetStore", () => {
     expect(refreshed.createdAt).toBe(record.createdAt);
     expect(refreshed.lastUploadedAt).toBe(nearExpiry);
     expect(earlyCleanup.removedAssetIds).toEqual([]);
-    expect(store.has(record.assetId)).toBe(true);
+    expect(store.kind(record.assetId)).toBe("genmoji");
 
     const expiredCleanup = store.collectUnreferenced(new Set(), new Set([record.assetId]), {
       now: nearExpiry + 24 * 60 * 60 * 1000 + 1,
@@ -215,13 +257,13 @@ describe("IconAssetStore", () => {
     });
     const bytes = iconHeifBytes("recoverable");
 
-    expect(() => faulting.put(bytes, "image/heic", 100)).toThrow("injected metadata failure");
+    expect(() => faulting.put(bytes, 100)).toThrow("injected metadata failure");
     const blobs = readdirSync(join(dataDir, "icon-assets", "blobs")).filter((name) =>
       name.endsWith(".heic"),
     );
     expect(blobs).toHaveLength(1);
 
-    const repaired = new IconAssetStore(dataDir).put(bytes, "image/heic", 200);
+    const repaired = new IconAssetStore(dataDir).put(bytes, 200);
     expect(new IconAssetStore(dataDir).read(repaired.assetId).bytes).toEqual(bytes);
     expect(readdirSync(join(dataDir, "icon-assets", "metadata"))).toContain(
       `${repaired.assetId}.json`,
@@ -233,10 +275,10 @@ describe("IconAssetStore", () => {
 
   it("repairs a metadata-only record idempotently without changing its identity", () => {
     const bytes = iconHeifBytes("metadata-only");
-    const original = store.put(bytes, "image/heic", 100);
+    const original = store.put(bytes, 100);
     rmSync(join(dataDir, "icon-assets", "blobs", `${original.assetId}.heic`));
 
-    const repaired = new IconAssetStore(dataDir).put(bytes, "image/heic", 200);
+    const repaired = new IconAssetStore(dataDir).put(bytes, 200);
 
     expect(repaired).toMatchObject({
       assetId: original.assetId,
@@ -254,12 +296,12 @@ describe("IconAssetStore", () => {
       faultInjector(phase) {
         if (phase === "after_blob_commit" && !injected) {
           injected = true;
-          competingRecord = new IconAssetStore(dataDir).put(bytes, "image/heic", 150);
+          competingRecord = new IconAssetStore(dataDir).put(bytes, 150);
         }
       },
     });
 
-    const firstRecord = firstWriter.put(bytes, "image/heic", 100);
+    const firstRecord = firstWriter.put(bytes, 100);
     expect(competingRecord?.assetId).toBe(firstRecord.assetId);
     expect(firstWriter.read(firstRecord.assetId).bytes).toEqual(bytes);
     expect(firstWriter.listRecords()).toHaveLength(1);
@@ -271,14 +313,14 @@ describe("IconAssetStore", () => {
     const quotaStore = new IconAssetStore(dataDir, {
       maxStorageBytes: firstBytes.length + secondBytes.length - 1,
     });
-    const first = quotaStore.put(firstBytes, "image/heic");
+    const first = quotaStore.put(firstBytes);
 
-    expect(() => quotaStore.put(secondBytes, "image/heic")).toThrow("quota");
-    expect(quotaStore.has(first.assetId)).toBe(true);
+    expect(() => quotaStore.put(secondBytes)).toThrow("quota");
+    expect(quotaStore.kind(first.assetId)).toBe("genmoji");
   });
 
   it("persists metadata without embedding bytes", () => {
-    const record = store.put(iconHeifBytes(), "image/heic");
+    const record = store.put(iconHeifBytes());
     const metadata = readFileSync(
       join(dataDir, "icon-assets", "metadata", `${record.assetId}.json`),
       "utf8",

@@ -20,7 +20,8 @@ extension Notification.Name {
 
 /// The one owner of entity artwork.
 ///
-/// `image` draws now and never waits: a Genmoji comes from the server's icon cache
+/// `image` draws now and never waits: a Genmoji or an imported image (its first
+/// frame) comes from the server's icon cache
 /// when it is decoded, and until then the fallback symbol draws and the load
 /// starts. `.oppiEntityIconDidLoad` announces pixels that arrived, and
 /// `loadGeneration` is the redraw key for a row that compares its inputs. A load
@@ -135,7 +136,9 @@ enum EntityIcon {
             return (symbol(name, size: box) ?? symbol(fallback, size: box) ?? UIImage(), true)
         case .text(let emoji):
             return (centred(emoji, in: box, font: .systemFont(ofSize: box * glyphShare)), true)
-        case .genmoji(let assetId, _):
+        case .genmoji(let assetId, _), .image(let assetId):
+            // An animated image draws its first frame here; only
+            // `IconChoiceUIView` with `animatesImage` plays it.
             if let assets, let artwork = assets.cachedImage(assetId: assetId, size: artworkSize(box)) {
                 let image = raster(box) { rect in
                     artwork.draw(in: aspectFit(artwork.size, in: rect))
@@ -286,12 +289,12 @@ enum EntityIcon {
         )
     }
 
-    /// The pixel size a Genmoji is decoded at for a `box`-point icon.
+    /// The pixel size a Genmoji or image is decoded at for a `box`-point icon.
     private static func artworkSize(_ box: CGFloat) -> CGFloat {
         min(512, (box * max(2, UIGraphicsImageRendererFormat.preferred().scale)).rounded(.up))
     }
 
-    // MARK: - Genmoji loads
+    // MARK: - Artwork loads
 
     private static func startLoad(assetId: String, size: CGFloat, assets: IconAssetCache) {
         // One load per asset, size, and cache: a replaced cache is a different

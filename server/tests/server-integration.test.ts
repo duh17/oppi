@@ -30,6 +30,7 @@ import { Storage } from "../src/storage.js";
 import { pushRegistrationMessage } from "../src/push/registration.js";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "../src/security.js";
 import { structuralHeifFixture } from "./harness/heic-fixture.js";
+import { gifFixture } from "./harness/image-fixtures.js";
 import { WebSocket } from "ws";
 
 let dataDir: string;
@@ -345,6 +346,48 @@ describe("icon asset global auth shell", () => {
         expect((await authorized.arrayBuffer()).byteLength).toBe(0);
       }
     }
+  });
+});
+
+// ── Image icons round trip through upload, Agent save, and fetch ──
+
+describe("Agent image icon round trip", () => {
+  it("saves an uploaded GIF as an Agent's image icon and serves it back", async () => {
+    const gif = gifFixture();
+    const upload = await fetch(`${baseUrl}/icon-assets`, {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream", Authorization: `Bearer ${token}` },
+      body: gif,
+    });
+    expect(upload.status).toBe(201);
+    const { asset } = (await upload.json()) as { asset: { assetId: string; contentType: string } };
+    expect(asset.contentType).toBe("image/gif");
+
+    const icon = { kind: "image", assetId: asset.assetId };
+    const created = await post("/agents", { name: "Orbit", icon });
+    expect(created.status).toBe(201);
+    const { agent } = (await created.json()) as { agent: { id: string } };
+
+    const read = await get(`/agents/${agent.id}`);
+    expect(
+      ((await read.json()) as { agent: { definition: { icon: unknown } } }).agent.definition.icon,
+    ).toEqual(icon);
+
+    const served = await get(`/icon-assets/${asset.assetId}`);
+    expect(served.headers.get("content-type")).toBe("image/gif");
+    expect(Buffer.from(await served.arrayBuffer())).toEqual(gif);
+
+    // The same asset cannot pose as a Genmoji, and a missing asset is refused.
+    const asGenmoji = await post("/agents", {
+      name: "Orbit Genmoji",
+      icon: { kind: "genmoji", assetId: asset.assetId, contentDescription: "Orbit" },
+    });
+    expect(asGenmoji.status).toBe(400);
+    const missing = await post("/agents", {
+      name: "Orbit Missing",
+      icon: { kind: "image", assetId: `ia_${"m".repeat(43)}` },
+    });
+    expect(missing.status).toBe(400);
   });
 });
 

@@ -10,6 +10,7 @@ import { createRouteHelpers } from "../src/routes/http.js";
 import type { RouteContext } from "../src/routes/types.js";
 import { Storage } from "../src/storage.js";
 import { structuralHeifFixture } from "./harness/heic-fixture.js";
+import { gifFixture } from "./harness/image-fixtures.js";
 import { makeRawRequest, makeResponse } from "./harness/route-test-helpers.js";
 
 function sample(): Buffer {
@@ -22,7 +23,11 @@ function request(bytes: Buffer, headers: IncomingHttpHeaders = {}) {
   return req;
 }
 
-function binaryResponse(): ServerResponse & { statusCode: number; headers: Record<string, string>; body: Buffer } {
+function binaryResponse(): ServerResponse & {
+  statusCode: number;
+  headers: Record<string, string>;
+  body: Buffer;
+} {
   const response = {
     statusCode: 0,
     headers: {} as Record<string, string>,
@@ -93,6 +98,38 @@ describe("icon asset routes", () => {
     expect(head.body).toHaveLength(0);
   });
 
+  it("types an upload by its bytes, not its declared Content-Type", async () => {
+    const dispatch = createIconAssetRoutes(
+      { storage } as unknown as RouteContext,
+      createRouteHelpers(),
+    );
+    const gif = gifFixture();
+    const upload = makeResponse();
+    await dispatch({
+      method: "POST",
+      path: "/icon-assets",
+      url: new URL("http://localhost/icon-assets"),
+      req: request(gif, { "content-type": "image/heic" }),
+      res: upload as unknown as ServerResponse,
+    });
+    expect(upload.statusCode).toBe(201);
+    const { asset } = JSON.parse(upload.body) as {
+      asset: { assetId: string; contentType: string };
+    };
+    expect(asset.contentType).toBe("image/gif");
+
+    const get = binaryResponse();
+    await dispatch({
+      method: "GET",
+      path: `/icon-assets/${asset.assetId}`,
+      url: new URL(`http://localhost/icon-assets/${asset.assetId}`),
+      req: request(Buffer.alloc(0)),
+      res: get,
+    });
+    expect(get.headers["Content-Type"]).toBe("image/gif");
+    expect(get.body).toEqual(gif);
+  });
+
   it("returns deterministic errors for unsupported, missing, and traversal input", async () => {
     const dispatch = createIconAssetRoutes(
       { storage } as unknown as RouteContext,
@@ -104,7 +141,7 @@ describe("icon asset routes", () => {
       method: "POST",
       path: "/icon-assets",
       url: new URL("http://localhost/icon-assets"),
-      req: request(sample(), { "content-type": "image/png" }),
+      req: request(Buffer.from("plain text, not an image"), { "content-type": "image/png" }),
       res: unsupported as unknown as ServerResponse,
     });
     expect(unsupported.statusCode).toBe(415);

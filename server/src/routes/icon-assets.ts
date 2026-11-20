@@ -8,9 +8,8 @@ export function createIconAssetRoutes(ctx: RouteContext, helpers: RouteHelpers):
   return async ({ method, path, req, res }) => {
     if (path === "/icon-assets" && method === "POST") {
       try {
-        const bytes = await readBoundedBody(req);
-        const contentType = headerValue(req.headers["content-type"]);
-        const record = ctx.storage.putIconAsset(bytes, contentType);
+        // The bytes name their format; a declared Content-Type is not trusted.
+        const record = ctx.storage.putIconAsset(await readBoundedBody(req));
         helpers.json(res, { asset: record }, 201);
       } catch (error) {
         handleAssetError(error, res, helpers);

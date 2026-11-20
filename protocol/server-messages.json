@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Canonical ServerMessage JSON — updated by npm run protocol:fixtures:update",
     "generated": "static",
-    "messageCount": 79
+    "messageCount": 80
   },
   "messages": {
     "connected": {
@@ -529,6 +529,63 @@
             "kind": "genmoji",
             "assetId": "ia_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
             "contentDescription": "A smiling fox"
+          },
+          "parentSessionId": "parent-session-1",
+          "status": "accepted",
+          "requestedAt": 1739750399000,
+          "completedAt": 1739750400000
+        },
+        "piSessionFile": "/tmp/pi-sessions/abc123.jsonl",
+        "piSessionFiles": [
+          "/tmp/pi-sessions/abc123.jsonl"
+        ]
+      }
+    },
+    "state_icon_image": {
+      "type": "state",
+      "session": {
+        "id": "test-session-1",
+        "workspaceId": "ws-1",
+        "workspaceName": "My Workspace",
+        "name": "Test Session",
+        "status": "ready",
+        "createdAt": 1739750400000,
+        "lastActivity": 1739750460000,
+        "programStatus": {
+          "state": "blocked",
+          "kind": "question",
+          "message": "Which database?",
+          "since": 1739750455000
+        },
+        "model": "anthropic/claude-sonnet-4-20250514",
+        "messageCount": 5,
+        "tokens": {
+          "input": 1500,
+          "output": 800,
+          "cacheRead": 250,
+          "cacheWrite": 100
+        },
+        "cost": 0.012,
+        "changeStats": {
+          "mutatingToolCalls": 3,
+          "filesChanged": 6,
+          "changedFiles": [
+            "src/main.ts",
+            "README.md"
+          ],
+          "changedFilesOverflow": 4
+        },
+        "contextTokens": 2300,
+        "contextWindow": 200000,
+        "lastMessage": "I've updated the README with the new API docs.",
+        "thinkingLevel": "high",
+        "launch": {
+          "source": "agent",
+          "agentId": "agent-reviewer",
+          "agentVersion": 4,
+          "agentIcon": {
+            "kind": "image",
+            "assetId": "ia_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
           },
           "parentSessionId": "parent-session-1",
           "status": "accepted",

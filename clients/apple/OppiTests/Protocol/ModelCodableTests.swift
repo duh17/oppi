@@ -713,6 +713,7 @@ struct IconChoiceCodableTests {
             .emoji("🧘"),
             .symbol("checkmark.shield"),
             .genmoji(assetId: assetId, contentDescription: "A smiling fox"),
+            .image(assetId: assetId),
         ]
 
         for choice in choices {
@@ -729,6 +730,8 @@ struct IconChoiceCodableTests {
             #"{"kind":"symbol","name":"not/a/symbol"}"#,
             #"{"kind":"genmoji","assetId":"../../etc/passwd","contentDescription":"bad"}"#,
             #"{"kind":"genmoji","assetId":"ia_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","contentDescription":"   "}"#,
+            #"{"kind":"image","assetId":"../../etc/passwd"}"#,
+            #"{"kind":"image"}"#,
             #""historical-string""#,
             #"null"#,
         ]

@@ -175,6 +175,7 @@ struct IconPickerModelTests {
             prepareGenmoji: { _, _ in
                 throw InjectedFailure(errorDescription: "upload unavailable")
             },
+            prepareImage: { _ in .defaultValue },
             commit: { _ in commitCount += 1 }
         )
 
@@ -206,6 +207,7 @@ struct IconPickerModelTests {
                 uploadCount += 1
                 return uploaded
             },
+            prepareImage: { _ in .defaultValue },
             commit: { _ in
                 commitCount += 1
                 throw InjectedFailure(errorDescription: "save unavailable")
@@ -223,6 +225,7 @@ struct IconPickerModelTests {
                 uploadCount += 1
                 return uploaded
             },
+            prepareImage: { _ in .defaultValue },
             commit: { value in
                 commitCount += 1
                 #expect(value == uploaded)
@@ -233,6 +236,43 @@ struct IconPickerModelTests {
         #expect(uploadCount == 1)
         #expect(commitCount == 2)
         #expect(model.savedValue == uploaded)
+        #expect(!model.hasChanges)
+    }
+
+    @Test("an imported image uploads once on Save and stays the saved choice")
+    func importedImageUploadsOnceOnSave() async {
+        let model = IconPickerModel(
+            purpose: .agent,
+            savedValue: IconChoice.symbol("star"),
+            defaultValue: .defaultValue,
+            customChoice: Self.customChoice
+        )
+        let bytes = Data([0x89, 0x50, 0x4E, 0x47])
+        let uploaded = IconChoice.image(assetId: "ia_" + String(repeating: "C", count: 43))
+        #expect(model.selectImage(data: bytes))
+        #expect(model.draft == .image(data: bytes))
+        #expect(model.selectedCustomChoice == .image)
+        #expect(model.canSave)
+
+        var uploads: [Data] = []
+        var committed: [IconChoice] = []
+        let saved = await model.save(
+            prepareGenmoji: { _, _ in
+                Issue.record("an image never uploads as a Genmoji")
+                return .defaultValue
+            },
+            prepareImage: { data in
+                uploads.append(data)
+                return uploaded
+            },
+            commit: { committed.append($0) }
+        )
+
+        #expect(saved)
+        #expect(uploads == [bytes])
+        #expect(committed == [uploaded])
+        #expect(model.savedValue == uploaded)
+        #expect(model.selectedCustomChoice == .image)
         #expect(!model.hasChanges)
     }
 
@@ -254,6 +294,7 @@ struct IconPickerModelTests {
 
         let saved = await model.save(
             prepareGenmoji: { _, _ in .defaultValue },
+            prepareImage: { _ in .defaultValue },
             commit: { _ in commitCount += 1 }
         )
 
@@ -276,6 +317,7 @@ struct IconPickerModelTests {
 
         let saved = await model.save(
             prepareGenmoji: { _, _ in .defaultValue },
+            prepareImage: { _ in .defaultValue },
             commit: { _ in throw InjectedFailure(errorDescription: "workspace update unavailable") }
         )
 
@@ -301,6 +343,7 @@ struct IconPickerModelTests {
 
         let saved = await model.save(
             prepareGenmoji: { _, _ in .defaultValue },
+            prepareImage: { _ in .defaultValue },
             commit: { value in
                 commitCount += 1
                 #expect(value == .defaultValue)
@@ -313,6 +356,7 @@ struct IconPickerModelTests {
 
         let secondSave = await model.save(
             prepareGenmoji: { _, _ in .defaultValue },
+            prepareImage: { _ in .defaultValue },
             commit: { _ in commitCount += 1 }
         )
         #expect(!secondSave)
@@ -323,6 +367,7 @@ struct IconPickerModelTests {
         switch value {
         case .emoji(let emoji): return .emoji(emoji)
         case .genmoji(_, let contentDescription): return .genmoji(contentDescription)
+        case .image: return .image
         case .defaultValue, .symbol: return nil
         }
     }

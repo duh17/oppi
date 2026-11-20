@@ -29,21 +29,27 @@ final class IconAssetCache {
     }
 
     private let entries = NSCache<NSString, Entry>()
+    /// An imported image's fetched bytes, kept so an animated image can play
+    /// without a second fetch. A Genmoji's bytes are never kept: they only draw.
+    private let rawData = NSCache<NSString, NSData>()
     private let fetch: Fetch
     private let decode: Decode
     private var inFlight: [String: InFlight] = [:]
+    /// One fetch per asset at a time, shared by every decode size and `data`.
+    private var byteLoads: [String: Task<Data, Error>] = [:]
     /// Assets this cache could not load. Its fallback is what it draws for them
     /// until a new cache replaces it, so a failing icon never refetches in a loop.
     private var failed: Set<String> = []
 
     init(
         fetch: @escaping Fetch,
-        decode: @escaping Decode = IconAssetCache.decodeRemoteHEIF
+        decode: @escaping Decode = IconAssetCache.decodeRemoteIcon
     ) {
         self.fetch = fetch
         self.decode = decode
         entries.countLimit = 128
         entries.totalCostLimit = 16 * 1024 * 1024
+        rawData.totalCostLimit = 8 * 1024 * 1024
     }
 
     convenience init(apiClient: APIClient) {
@@ -81,6 +87,49 @@ final class IconAssetCache {
         }
     }
 
+    /// An image asset's bytes as the server stores them, for a view that plays
+    /// an animated image. Shares a fetch already under way for the same asset;
+    /// a failure throws and is not kept.
+    func data(assetId: String) async throws -> Data {
+        if let cached = rawData.object(forKey: assetId as NSString) {
+            return cached as Data
+        }
+        return try await bytes(assetId: assetId)
+    }
+
+    /// The asset's bytes, fetched once however many callers ask at the same time.
+    private func bytes(assetId: String) async throws -> Data {
+        if let load = byteLoads[assetId] {
+            return try await load.value
+        }
+        let fetch = self.fetch
+        let rawData = self.rawData
+        let load = Task { @MainActor in
+            let data = try await fetch(assetId)
+            guard Self.isAcceptableAssetSize(data) else {
+                throw APIError.server(status: 422, message: "Icon asset data is invalid")
+            }
+            if !Self.isHEIF(data) {
+                rawData.setObject(data as NSData, forKey: assetId as NSString, cost: data.count)
+            }
+            return data
+        }
+        byteLoads[assetId] = load
+        defer { if byteLoads[assetId] == load { byteLoads[assetId] = nil } }
+        return try await load.value
+    }
+
+    private static func isHEIF(_ data: Data) -> Bool {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let identifier = CGImageSourceGetType(source),
+              let type = UTType(identifier as String) else { return false }
+        return type.conforms(to: .heif) || type.conforms(to: .heic)
+    }
+
+    private static func isAcceptableAssetSize(_ data: Data) -> Bool {
+        !data.isEmpty && data.count <= 2 * 1024 * 1024
+    }
+
     /// The artwork if it is already decoded at `size`, for a caller that draws
     /// once and cannot await: a menu's action image, a list row's icon.
     func cachedImage(assetId: String, size: CGFloat) -> UIImage? {
@@ -97,7 +146,10 @@ final class IconAssetCache {
 
     func removeAll() {
         entries.removeAllObjects()
+        rawData.removeAllObjects()
         failed.removeAll()
+        byteLoads.values.forEach { $0.cancel() }
+        byteLoads.removeAll()
         let pending = inFlight.values
         inFlight.removeAll()
         for request in pending {
@@ -120,14 +172,11 @@ final class IconAssetCache {
         }
 
         let requestID = UUID()
-        let fetch = self.fetch
         let decode = self.decode
-        let task = Task { @MainActor in
-            let data = try await fetch(assetId)
+        let task = Task { @MainActor [weak self] in
+            guard let self else { throw CancellationError() }
+            let data = try await bytes(assetId: assetId)
             try Task.checkCancellation()
-            guard !data.isEmpty, data.count <= 2 * 1024 * 1024 else {
-                throw APIError.server(status: 422, message: "Icon asset data is invalid")
-            }
 
             // Remote Agent/workspace bytes are untrusted even after the
             // authenticated fetch. Decode through ImageIO's failable boundary;
@@ -203,11 +252,16 @@ final class IconAssetCache {
         return decodedByteCost(bytesPerRow: raster.bytesPerRow, height: raster.height)
     }
 
+    /// The formats an icon asset may be: a Genmoji's HEIF, or an imported
+    /// PNG (APNG), GIF, or WebP.
+    static let assetTypes: [UTType] = [.heic, .heif, .png, .gif, .webP]
+
     // Internal for focused malformed-input tests. This validates only a bounded,
-    // decodable HEIF representation. Apple adaptive-image semantics are supplied
-    // by the official iOS/iPadOS picker as NSAdaptiveImageGlyph.imageContent and
-    // are not authenticated by either this decoder or the server parser.
-    static func decodeRemoteHEIF(
+    // decodable image in one of `assetTypes` and draws its first frame. Apple
+    // adaptive-image semantics are supplied by the official iOS/iPadOS picker as
+    // NSAdaptiveImageGlyph.imageContent and are not authenticated by either this
+    // decoder or the server parser.
+    static func decodeRemoteIcon(
         data: Data,
         size: CGFloat
     ) throws -> (image: UIImage, retainedObject: AnyObject?) {
@@ -218,12 +272,14 @@ final class IconAssetCache {
         guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions),
               let sourceIdentifier = CGImageSourceGetType(source),
               let sourceType = UTType(sourceIdentifier as String),
-              sourceType.conforms(to: .heic) || sourceType.conforms(to: .heif) else {
-            throw APIError.server(status: 422, message: "Icon asset is not a decodable HEIF image")
+              assetTypes.contains(where: { sourceType.conforms(to: $0) }) else {
+            throw APIError.server(status: 422, message: "Icon asset is not a decodable icon image")
         }
 
+        // A HEIF holds a few representations; an animated image one per frame,
+        // bounded like the server's 600.
         let representationCount = CGImageSourceGetCount(source)
-        guard (1...8).contains(representationCount),
+        guard (1...600).contains(representationCount),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
                 as? [CFString: Any],
               let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,

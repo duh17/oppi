@@ -1855,7 +1855,7 @@ const HELP_TOPICS: HelpTopic[] = [
       "--required-engine durable writes launchConstraints.requiredEngine: every launch of the Agent (session create, Quick Session, schedules, subagents) runs durable; an omitted --engine becomes durable, --engine classic is refused, and launches fail while durable sessions are off on the server.",
       "Explicit flags override corresponding JSON keys without dropping sibling nested fields. Instructions replace as a whole.",
       "--instructions and --instructions-file are mutually exclusive. --instructions-mode is append or replace and defaults to append when creating from text or file; it requires --instructions, --instructions-file, or instructions.text in the definition JSON.",
-      "--icon is default, one Unicode emoji, or an SF Symbol name. There is no Genmoji upload flag; Genmoji can still be set via definition JSON.",
+      '--icon is default, one Unicode emoji, or an SF Symbol name. There is no upload flag for Genmoji or image icons; set them via definition JSON after POST /icon-assets stores the bytes: {"kind":"genmoji","assetId":"ia_…","contentDescription":"…"} for a HEIC Genmoji, {"kind":"image","assetId":"ia_…"} for a PNG, APNG, GIF, or WebP of at most 1 MiB.',
       "sessionDefaults.tools must list real tool names available at launch; unavailable names are dropped with a session warning, not a launch failure. excludeTools stays a denylist and noTools stays 'all' | 'builtin'.",
     ],
     examples: [
@@ -2020,7 +2020,7 @@ const HELP_TOPICS: HelpTopic[] = [
       "--allowed-workspaces overlays launchConstraints.allowedWorkspaceIds (workspace IDs) and must not be empty; --clear-allowed-workspaces sets null (any). --required-runtime overlays launchConstraints.requiredRuntime; --clear-required-runtime sets null (either). --required-engine durable overlays launchConstraints.requiredEngine, so every launch runs durable and --engine classic is refused; --clear-required-engine sets null (either engine).",
       "Explicit flags override corresponding JSON keys without dropping sibling nested fields. Instructions replace as a whole. --name overlays definition.name.",
       "--instructions and --instructions-file are mutually exclusive. --instructions-mode requires --instructions, --instructions-file, or instructions.text in the definition JSON rather than dropping stored text.",
-      "--icon is default, one Unicode emoji, or an SF Symbol name. Do not combine a value flag with its --clear-* twin.",
+      "--icon is default, one Unicode emoji, or an SF Symbol name; Genmoji and image icons go in definition JSON, as for create. Do not combine a value flag with its --clear-* twin.",
       "Omit --expected-version for a compatible unconditional PATCH.",
     ],
     examples: [

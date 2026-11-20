@@ -253,6 +253,7 @@ struct ProtocolSnapshotTests {
                 assetId: assetId,
                 contentDescription: "A smiling fox"
             )),
+            ("state_icon_image", .image(assetId: "ia_" + String(repeating: "B", count: 43))),
             ("state_icon_malformed", .defaultValue),
             ("state_icon_future", .defaultValue),
         ]

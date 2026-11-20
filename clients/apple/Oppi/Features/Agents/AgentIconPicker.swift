@@ -18,6 +18,7 @@ enum AgentIconPicker {
             accessibilityPrefix: "agent.iconPicker",
             assetCache: connection.iconAssetCache,
             prepareGenmoji: IconPickerViewController.uploadGenmoji(using: apiClient),
+            prepareImage: IconPickerViewController.uploadImage(using: apiClient),
             commit: { icon in
                 guard let apiClient else { throw IconPickerViewController.offlineError }
                 onSaved(try await apiClient.updateAgentIcon(agentId: agent.id, icon: icon))
@@ -30,6 +31,7 @@ enum AgentIconPicker {
         case .text(let emoji): return "Emoji \(emoji)"
         case .symbol(let name): return IconSymbolCatalog.label(for: name) ?? "SF Symbol"
         case .genmoji(_, let contentDescription): return contentDescription
+        case .image: return "Image"
         case .fallback: return "Default"
         }
     }

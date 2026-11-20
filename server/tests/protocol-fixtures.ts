@@ -205,6 +205,16 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
       },
     },
   },
+  state_icon_image: {
+    type: "state",
+    session: {
+      ...TEST_SESSION,
+      launch: {
+        ...TEST_SESSION_LAUNCH,
+        agentIcon: { kind: "image", assetId: `ia_${"B".repeat(43)}` },
+      },
+    },
+  },
   session_ended: {
     type: "session_ended",
     reason: "Process exited with code 0",
@@ -987,6 +997,7 @@ const SERVER_MESSAGE_ORDER = [
   "state_icon_default",
   "state_icon_emoji",
   "state_icon_genmoji",
+  "state_icon_image",
   "state_program_status_future",
   "session_summary_program_status_future",
   "state_icon_malformed",
@@ -1174,6 +1185,14 @@ const APP_EVENT_CANONICAL_EXAMPLES = {
       },
     },
   },
+  session_summary_icon_image: {
+    type: "session_summary",
+    ...appEventSessionBase,
+    summary: {
+      ...appEventSummary,
+      agentIcon: { kind: "image", assetId: `ia_${"B".repeat(43)}` },
+    },
+  },
   session_deleted: { type: "session_deleted", ...appEventSessionBase },
   session_ended: { type: "session_ended", ...appEventSessionBase, reason: "completed" },
   stop_requested: { type: "stop_requested", ...appEventSessionBase, source: "user" },
@@ -1321,6 +1340,7 @@ const APP_EVENT_MESSAGE_ORDER = [
   "session_summary_icon_default",
   "session_summary_icon_emoji",
   "session_summary_icon_genmoji",
+  "session_summary_icon_image",
   "session_summary_program_status_future",
   "session_summary_icon_malformed",
   "session_summary_icon_future",

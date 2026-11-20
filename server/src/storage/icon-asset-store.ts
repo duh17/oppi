@@ -13,8 +13,15 @@ import {
 import { dirname, join } from "node:path";
 
 import { HttpStatusError } from "../http-status-error.js";
-import { ICON_ASSET_ID_PATTERN } from "../icon-choice.js";
+import { ICON_ASSET_ID_PATTERN, type IconAssetKind } from "../icon-choice.js";
 import { syncDirectory, writeFileAtomic } from "./atomic-file.js";
+import {
+  detectIconImageFormat,
+  ICON_IMAGE_MAX_BYTES,
+  IconImageFormatError,
+  sniffIconImage,
+  type IconImageContentType,
+} from "./icon-image-formats.js";
 
 export const ICON_ASSET_MAX_BYTES = 2 * 1024 * 1024;
 export const ICON_ASSET_ORPHAN_GRACE_MS = 24 * 60 * 60 * 1000;
@@ -27,7 +34,6 @@ const HEIF_MAX_EXTENTS_PER_ITEM = 16;
 const HEVC_MAX_CONFIGURATION_BYTES = 64 * 1024;
 const HEVC_MAX_CONFIGURATION_ARRAYS = 16;
 const HEVC_MAX_NALS = 64;
-const ACCEPTED_MEDIA_TYPES = new Set(["image/heic", "image/heif"]);
 const HEVC_IMAGE_BRANDS = new Set(["heic", "heix", "hevc", "hevx", "heim", "heis", "hevm", "hevs"]);
 const HEVC_ITEM_TYPES = new Set(["hvc1", "hev1"]);
 
@@ -52,11 +58,20 @@ export class IconAssetStoreError extends HttpStatusError {
   }
 }
 
+/** A Genmoji is HEVC HEIF; an imported image icon is PNG (or APNG), GIF, or WebP. */
+export type IconAssetContentType = "image/heic" | IconImageContentType;
+const ICON_ASSET_CONTENT_TYPES = new Set<string>([
+  "image/heic",
+  "image/png",
+  "image/gif",
+  "image/webp",
+]);
+
 export interface IconAssetRecord {
   assetId: string;
   sha256: string;
   sizeBytes: number;
-  contentType: "image/heic";
+  contentType: IconAssetContentType;
   createdAt: number;
   /** Durable picker-draft lease, refreshed by every deduplicated upload. */
   lastUploadedAt: number;
@@ -106,9 +121,8 @@ export class IconAssetStore {
     removeAbandonedTemporaryFiles(this.metadataDir);
   }
 
-  put(bytes: Buffer, declaredContentType: string | undefined, now = Date.now()): IconAssetRecord {
-    validateDeclaredContentType(declaredContentType);
-    sniffHeicIconContainer(bytes);
+  put(bytes: Buffer, now = Date.now()): IconAssetRecord {
+    const contentType = sniffIconAsset(bytes);
 
     const sha256 = createHash("sha256").update(bytes).digest("hex");
     const assetId = `ia_${Buffer.from(sha256, "hex").toString("base64url")}`;
@@ -152,7 +166,7 @@ export class IconAssetStore {
       assetId,
       sha256,
       sizeBytes: bytes.length,
-      contentType: "image/heic",
+      contentType,
       createdAt: Math.min(now, blobCreatedAt),
       lastUploadedAt: now,
     };
@@ -170,11 +184,12 @@ export class IconAssetStore {
     return this.read(assetId).record;
   }
 
-  has(assetId: string): boolean {
+  /** The icon kind a readable asset backs, or undefined when it is missing or unreadable. */
+  kind(assetId: string): IconAssetKind | undefined {
     try {
-      return this.read(assetId).record.assetId === assetId;
+      return iconAssetKind(this.read(assetId).record.contentType);
     } catch {
-      return false;
+      return undefined;
     }
   }
 
@@ -291,10 +306,14 @@ export class IconAssetStore {
     const record = this.readMetadata(metadataPath, assetId);
     const bytes = readFileSync(blobPath);
     validateBlob(bytes, record.sha256, record.sizeBytes);
+    let contentType: IconAssetContentType;
     try {
-      sniffHeicIconContainer(bytes);
+      contentType = sniffIconAsset(bytes);
     } catch {
       throw new IconAssetStoreError("corrupt", "Icon asset container is corrupt", 422);
+    }
+    if (contentType !== record.contentType) {
+      throw new IconAssetStoreError("corrupt", "Icon asset content does not match its record", 422);
     }
     return { record, bytes };
   }
@@ -309,6 +328,8 @@ export class IconAssetStore {
     return validateRecord(rawRecord, assetId);
   }
 
+  // Every blob keeps the `.heic` suffix the store began with, whatever its
+  // format: the record's `contentType` says what the bytes are.
   private blobPath(assetId: string): string {
     return join(this.blobsDir, `${assetId}.heic`);
   }
@@ -316,6 +337,39 @@ export class IconAssetStore {
   private metadataPath(assetId: string): string {
     return join(this.metadataDir, `${assetId}.json`);
   }
+}
+
+/**
+ * The content type of an icon asset, from its bytes alone: an imported image
+ * (PNG, GIF, WebP, at most 1 MiB) or else a Genmoji's HEVC HEIF (at most 2 MiB).
+ */
+export function sniffIconAsset(bytes: Buffer): IconAssetContentType {
+  if (bytes.length > ICON_ASSET_MAX_BYTES) {
+    throw new IconAssetStoreError("oversized", "Icon asset exceeds the 2 MiB maximum", 413);
+  }
+  if (!detectIconImageFormat(bytes)) {
+    if (bytes.toString("latin1", 4, 8) !== "ftyp") {
+      unsupported("Unsupported icon asset; expected PNG, GIF, WebP, or a Genmoji HEIC");
+    }
+    return sniffHeicIconContainer(bytes).contentType;
+  }
+  if (bytes.length > ICON_IMAGE_MAX_BYTES) {
+    throw new IconAssetStoreError("oversized", "Icon image exceeds the 1 MiB maximum", 413);
+  }
+  try {
+    return sniffIconImage(bytes);
+  } catch (error) {
+    if (!(error instanceof IconImageFormatError)) throw error;
+    throw new IconAssetStoreError(
+      error.code,
+      error.message,
+      error.code === "unsupported" ? 415 : 422,
+    );
+  }
+}
+
+export function iconAssetKind(contentType: IconAssetContentType): IconAssetKind {
+  return contentType === "image/heic" ? "genmoji" : "image";
 }
 
 /**
@@ -727,17 +781,6 @@ function corrupt(message: string): never {
   throw new IconAssetStoreError("corrupt", message, 422);
 }
 
-function validateDeclaredContentType(contentType: string | undefined): void {
-  const normalized = contentType?.split(";", 1)[0]?.trim().toLowerCase();
-  if (!normalized || !ACCEPTED_MEDIA_TYPES.has(normalized)) {
-    throw new IconAssetStoreError(
-      "unsupported",
-      "Unsupported icon asset media type; expected image/heic or image/heif",
-      415,
-    );
-  }
-}
-
 function assertAssetId(assetId: string): void {
   if (!ICON_ASSET_ID_PATTERN.test(assetId)) {
     throw new IconAssetStoreError("invalid_id", "Invalid icon asset ID", 400);
@@ -756,7 +799,8 @@ function validateRecord(raw: unknown, expectedAssetId: string): IconAssetRecord 
     !Number.isInteger(value.sizeBytes) ||
     (value.sizeBytes as number) < 1 ||
     (value.sizeBytes as number) > ICON_ASSET_MAX_BYTES ||
-    value.contentType !== "image/heic" ||
+    typeof value.contentType !== "string" ||
+    !ICON_ASSET_CONTENT_TYPES.has(value.contentType) ||
     typeof value.createdAt !== "number" ||
     !Number.isFinite(value.createdAt) ||
     (value.lastUploadedAt !== undefined &&

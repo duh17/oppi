@@ -365,7 +365,7 @@ const SETTINGS = {
     storage: "workspace",
     default: DEFAULT_ICON_CHOICE as IconChoice,
     revisioned: false,
-    // The store also checks that a genmoji's asset exists.
+    // The store also checks that a genmoji's or image's asset exists and is of that kind.
     validate: (value: unknown) => asSettingError(() => validateIconChoice(value)),
   },
   "workspace.systemPrompt": {

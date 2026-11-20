@@ -13,7 +13,12 @@ import { basename, dirname, join } from "node:path";
 import { readdirSyncSorted } from "../dir-order.js";
 import { generateId } from "../id.js";
 import { isRecord } from "../json-shape.js";
-import { DEFAULT_ICON_CHOICE, migrateIconChoice, validateIconChoice } from "../icon-choice.js";
+import {
+  DEFAULT_ICON_CHOICE,
+  migrateIconChoice,
+  validateIconChoice,
+  type IconAssetKind,
+} from "../icon-choice.js";
 import { createLogger } from "../logger.js";
 import { safeErrorMessage } from "../log-utils.js";
 import { hostFolderClaimsHome, resolveHostPath } from "../host.js";
@@ -151,7 +156,7 @@ function normalizeSystemPromptMode(_value: unknown): WorkspaceSystemPromptMode {
 export class WorkspaceStore {
   constructor(
     private readonly configStore: ConfigStore,
-    private readonly iconAssetExists?: (assetId: string) => boolean,
+    private readonly iconAssetKind?: (assetId: string) => IconAssetKind | undefined,
     private readonly options: WorkspaceStoreOptions = {},
   ) {}
 
@@ -489,7 +494,7 @@ export class WorkspaceStore {
 
   private validateWorkspaceIcon(value: unknown): Workspace["icon"] {
     if (value === undefined) return DEFAULT_ICON_CHOICE;
-    return validateIconChoice(value, { assetExists: this.iconAssetExists });
+    return validateIconChoice(value, { assetKind: this.iconAssetKind });
   }
 
   /** Rewrites historical icon values in workspace files. False when a file could not be rewritten. */

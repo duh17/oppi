@@ -878,7 +878,10 @@ private enum HEIFFixtureError: Error {
 private func imageIOHEIFFixture(
     width: Int,
     height: Int,
-    visible: Bool
+    visible: Bool,
+    type: UTType = .heic,
+    frames: Int = 1,
+    noise: Bool = false
 ) throws -> Data {
     let bytesPerRow = width * 4
     var pixels = [UInt8](repeating: 0, count: bytesPerRow * height)
@@ -897,16 +900,24 @@ private func imageIOHEIFFixture(
         context.setFillColor(UIColor.systemPink.cgColor)
         context.fill(CGRect(x: 0, y: 0, width: width, height: height))
     }
-    guard let image = context.makeImage() else { throw HEIFFixtureError.context }
 
     let output = NSMutableData()
     guard let destination = CGImageDestinationCreateWithData(
         output,
-        UTType.heic.identifier as CFString,
-        1,
+        type.identifier as CFString,
+        frames,
         nil
     ) else { throw HEIFFixtureError.destination }
-    CGImageDestinationAddImage(destination, image, nil)
+    for _ in 0..<frames {
+        if noise {
+            // Incompressible pixels, so a few frames pass the 1 MiB cap.
+            context.data?.withMemoryRebound(to: UInt8.self, capacity: bytesPerRow * height) { pixels in
+                for index in 0..<(bytesPerRow * height) { pixels[index] = UInt8.random(in: 0...255) | (index % 4 == 3 ? 0xFF : 0) }
+            }
+        }
+        guard let image = context.makeImage() else { throw HEIFFixtureError.context }
+        CGImageDestinationAddImage(destination, image, nil)
+    }
     guard CGImageDestinationFinalize(destination) else { throw HEIFFixtureError.finalize }
     return output as Data
 }
@@ -1147,6 +1158,29 @@ struct IconAssetCacheTests {
 
     /// A cache keeps a failed asset failed, and a cleared cache (a reconnect)
     /// gives it another chance.
+    /// An animating view asks for an image's bytes while its first frame loads:
+    /// one fetch serves both, and the bytes stay for the next view. A Genmoji's
+    /// bytes only draw, so they are not kept.
+    @Test func imageBytesShareTheDrawFetchAndStayButGenmojiBytesDoNot() async throws {
+        let png = try imageIOHEIFFixture(width: 32, height: 32, visible: true, type: .png)
+        let heic = try imageIOHEIFFixture(width: 32, height: 32, visible: true)
+        for (data, expectedFetches) in [(png, 1), (heic, 3)] {
+            let counter = IconAssetFetchCounter()
+            let cache = IconAssetCache(fetch: { _ in
+                await counter.increment()
+                try await Task.sleep(for: .milliseconds(50))
+                return data
+            })
+            let assetId = "ia_" + String(repeating: "F", count: 43)
+            async let drawn = cache.image(assetId: assetId, size: 32)
+            async let bytes = cache.data(assetId: assetId)
+            _ = try await (drawn, bytes)
+            _ = try await cache.data(assetId: assetId)
+            _ = try await cache.data(assetId: assetId)
+            #expect(await counter.value() == expectedFetches)
+        }
+    }
+
     @Test func aFailedAssetIsNotFetchedAgainUntilTheCacheIsCleared() async throws {
         let assetId = "ia_" + String(repeating: "E", count: 43)
         let counter = IconAssetFetchCounter()
@@ -1169,17 +1203,24 @@ struct IconAssetCacheTests {
 
     @Test func productionRemoteDecoderAcceptsVisibleGeneratedHEIF() throws {
         let data = try imageIOHEIFFixture(width: 64, height: 64, visible: true)
-        let decoded = try IconAssetCache.decodeRemoteHEIF(data: data, size: 32)
+        let decoded = try IconAssetCache.decodeRemoteIcon(data: data, size: 32)
 
         #expect(decoded.image.size.width > 0)
         #expect(decoded.image.size.height > 0)
+    }
+
+    @Test func productionRemoteDecoderRejectsFormatsTheServerDoesNotStore() throws {
+        let jpeg = try imageIOHEIFFixture(width: 64, height: 64, visible: true, type: .jpeg)
+        #expect(throws: Error.self) {
+            _ = try IconAssetCache.decodeRemoteIcon(data: jpeg, size: 32)
+        }
     }
 
     @Test func productionRemoteDecoderRejectsTransparentBlankHEIF() throws {
         let data = try imageIOHEIFFixture(width: 64, height: 64, visible: false)
 
         #expect(throws: Error.self) {
-            _ = try IconAssetCache.decodeRemoteHEIF(data: data, size: 32)
+            _ = try IconAssetCache.decodeRemoteIcon(data: data, size: 32)
         }
     }
 
@@ -1188,7 +1229,7 @@ struct IconAssetCacheTests {
 
         for size in [CGFloat.zero, -1, 513, .infinity, .nan] {
             #expect(throws: Error.self) {
-                _ = try IconAssetCache.decodeRemoteHEIF(data: data, size: size)
+                _ = try IconAssetCache.decodeRemoteIcon(data: data, size: size)
             }
         }
     }
@@ -1197,7 +1238,7 @@ struct IconAssetCacheTests {
         let data = try imageIOHEIFFixture(width: 4_097, height: 1, visible: true)
 
         #expect(throws: Error.self) {
-            _ = try IconAssetCache.decodeRemoteHEIF(data: data, size: 32)
+            _ = try IconAssetCache.decodeRemoteIcon(data: data, size: 32)
         }
     }
 
@@ -1205,7 +1246,7 @@ struct IconAssetCacheTests {
         let valid = try imageIOHEIFFixture(width: 64, height: 64, visible: true)
         for data in [Data([1, 2, 3, 4]), Data(valid.prefix(valid.count / 2))] {
             #expect(throws: Error.self) {
-                _ = try IconAssetCache.decodeRemoteHEIF(data: data, size: 32)
+                _ = try IconAssetCache.decodeRemoteIcon(data: data, size: 32)
             }
         }
     }
@@ -1545,5 +1586,58 @@ struct ControlSessionStarterPromptTests {
 
         #expect(withPath.contains("Selected existing host file: \(path)"))
         #expect(!withoutPath.contains("Selected existing host file"))
+    }
+}
+
+@Suite("Icon image import")
+@MainActor
+struct IconImageImportTests {
+    @Test func aStillImageOfAnyDecodableFormatBecomesA128PixelPNG() throws {
+        for type in [UTType.jpeg, .heic, .png] {
+            let photo = try imageIOHEIFFixture(width: 900, height: 600, visible: true, type: type)
+            let prepared = try IconImageImport.prepare(photo)
+            let source = try #require(CGImageSourceCreateWithData(prepared as CFData, nil))
+            #expect(CGImageSourceGetType(source) as String? == UTType.png.identifier, "\(type)")
+            let properties = try #require(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
+            #expect(properties[kCGImagePropertyPixelWidth] as? Int == 128, "\(type)")
+            // 600 × 128 / 900 = 85.3; ImageIO's rounding and HEVC's even sizes vary it.
+            #expect((83...86).contains(properties[kCGImagePropertyPixelHeight] as? Int ?? 0), "\(type)")
+        }
+    }
+
+    @Test func anAnimatedImageWithinTheCapIsKeptAsUploaded() throws {
+        let gif = try imageIOHEIFFixture(width: 200, height: 200, visible: true, type: .gif, frames: 4)
+        #expect(try IconImageImport.prepare(gif) == gif)
+    }
+
+    @Test func anAnimatedImageWiderThanTheServerAllowsIsRefused() throws {
+        let gif = try imageIOHEIFFixture(width: 1_100, height: 8, visible: true, type: .gif, frames: 2)
+        #expect(gif.count <= IconImageImport.maxUploadBytes)
+        #expect(throws: IconImageImport.Failure.animatedTooLarge) {
+            _ = try IconImageImport.prepare(gif)
+        }
+    }
+
+    @Test func anImageWhoseFirstFrameIsBlankIsRefused() throws {
+        let gif = try imageIOHEIFFixture(width: 64, height: 64, visible: false, type: .gif, frames: 2)
+        #expect(throws: IconImageImport.Failure.blankFirstFrame) {
+            _ = try IconImageImport.prepare(gif)
+        }
+    }
+
+    @Test func anAnimatedImageOverTheCapIsRefused() throws {
+        let gif = try imageIOHEIFFixture(width: 400, height: 400, visible: true, type: .gif, frames: 12, noise: true)
+        #expect(gif.count > IconImageImport.maxUploadBytes)
+        #expect(throws: IconImageImport.Failure.animatedTooLarge) {
+            _ = try IconImageImport.prepare(gif)
+        }
+    }
+
+    @Test func bytesImageIOCannotDecodeAreRefused() {
+        for data in [Data(), Data("not an image".utf8), Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3])] {
+            #expect(throws: IconImageImport.Failure.undecodable) {
+                _ = try IconImageImport.prepare(data)
+            }
+        }
     }
 }

@@ -153,7 +153,7 @@ oppi token rotate            # rotate owner bearer token
 oppi update                  # update the npm-installed server and CLI
 ```
 
-You can manage saved Agents and schedules from the Oppi sidebar or server CLI/API. Saved Agents store reusable definitions and can use one Unicode emoji or SF Symbol name as an icon. The icon appears in Agent management and sessions started from that Agent. Clearing it restores the generic Agent icon.
+You can manage saved Agents and schedules from the Oppi sidebar or server CLI/API. Saved Agents store reusable definitions and can use an emoji, an SF Symbol, a Genmoji, or an image imported from Photos or Files as an icon. Any photo works; an animated PNG, GIF, or WebP can be up to 1 MB. An animated image plays only on the Agent's detail screen and in the icon picker; everywhere else it shows its first frame, and Reduce Motion or Low Power Mode keeps it still. The icon appears in Agent management and sessions started from that Agent. Clearing it restores the generic Agent icon.
 
 Schedules support `at`, `every`, and `cron` triggers. Each schedule can target a workspace, saved Agent, or existing session. Oppi keeps run history for manual and approved automatic runs.
 

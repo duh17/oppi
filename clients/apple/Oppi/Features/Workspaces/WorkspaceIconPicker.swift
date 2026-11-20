@@ -47,6 +47,7 @@ enum WorkspaceIconPicker {
         case .text(let emoji): return "Emoji \(emoji)"
         case .symbol(let name): return IconSymbolCatalog.label(for: name) ?? "SF Symbol"
         case .genmoji(_, let contentDescription): return contentDescription
+        case .image: return "Image"
         case .fallback: return "Default workspace icon"
         }
     }

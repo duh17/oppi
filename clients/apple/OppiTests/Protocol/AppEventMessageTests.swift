@@ -109,6 +109,7 @@ struct AppEventMessageTests {
                 assetId: assetId,
                 contentDescription: "A smiling fox"
             )),
+            ("session_summary_icon_image", .image(assetId: "ia_" + String(repeating: "B", count: 43))),
             ("session_summary_icon_malformed", .defaultValue),
             ("session_summary_icon_future", .defaultValue),
         ]

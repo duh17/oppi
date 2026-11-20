@@ -39,16 +39,22 @@ enum IconPickerPurpose: Sendable {
 enum IconPickerDraft<Value: Equatable & Sendable>: Equatable, Sendable {
     case value(Value)
     case genmoji(data: Data, contentDescription: String)
+    /// Imported image bytes, already prepared for upload (`IconImageImport`).
+    case image(data: Data)
 }
+
+extension IconPickerDraft: Hashable where Value: Hashable {}
 
 enum IconPickerCustomChoice: Equatable, Sendable {
     case emoji(String)
     case genmoji(String)
+    case image
 
     var accessibilityDescription: String {
         switch self {
         case .emoji(let value): return "Emoji \(value)"
         case .genmoji(let contentDescription): return "Genmoji \(contentDescription)"
+        case .image: return "Imported image"
         }
     }
 }
@@ -149,8 +155,21 @@ final class IconPickerModel<Value: Equatable & Sendable> {
         return true
     }
 
+    /// An imported image's prepared bytes; the picker offers import only where
+    /// its source can upload one.
+    @discardableResult
+    func selectImage(data: Data) -> Bool {
+        guard !data.isEmpty else { return false }
+        draft = .image(data: data)
+        customInputText = ""
+        selectedCustomChoice = .image
+        clearFeedback()
+        return true
+    }
+
     func save(
         prepareGenmoji: (Data, String) async throws -> Value,
+        prepareImage: ((Data) async throws -> Value)?,
         commit: (Value) async throws -> Void
     ) async -> Bool {
         guard hasChanges, !isSaving else { return false }
@@ -174,6 +193,12 @@ final class IconPickerModel<Value: Equatable & Sendable> {
                 value = try await prepareGenmoji(data, contentDescription)
                 // Keep the uploaded reference if persistence fails. Retry should
                 // commit the same asset instead of uploading duplicate bytes.
+                draft = .value(value)
+            case .image(let data):
+                // An image draft exists only where the picker offered import,
+                // which it does only with an upload.
+                guard let prepareImage else { preconditionFailure("an image draft without an image upload") }
+                value = try await prepareImage(data)
                 draft = .value(value)
             }
 

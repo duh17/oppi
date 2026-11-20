@@ -159,7 +159,7 @@
       "storage": "workspace",
       "type": "IconChoice",
       "default": { "kind": "default" },
-      "validation": "A tagged icon object: default, emoji, symbol, or genmoji (whose asset must exist).",
+      "validation": "A tagged icon object: default, emoji, symbol, genmoji, or image (whose asset must exist and be of that kind).",
       "revisioned": false
     },
     {

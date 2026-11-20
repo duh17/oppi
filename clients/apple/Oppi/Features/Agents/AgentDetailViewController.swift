@@ -244,9 +244,9 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
     override func inputs(of item: Item) -> AnyHashable {
         switch item {
         case .icon:
-            // The Genmoji load generation is in the key: the row that drew the
-            // fallback symbol redraws when the artwork arrives.
-            return AnyHashable([AnyHashable(agent?.definition.icon), AnyHashable(EntityIcon.loadGeneration)])
+            // `IconChoiceUIView` redraws itself when artwork arrives, so a load
+            // never rebuilds the row (and restarts a playing image).
+            return AnyHashable(agent?.definition.icon)
         case .prompt:
             guard let instructions = agent?.definition.instructions else { return AnyHashable(0) }
             return AnyHashable([AnyHashable(Self.systemPromptTitle(instructions.mode)), AnyHashable(instructions.text)])
@@ -333,14 +333,10 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
             }
             let assets = connection.iconAssetCache
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 6, leading: 0, bottom: 6, trailing: 0)) {
-                let icon = UIImageView(image: EntityIcon.image(
-                    .agent(agent.definition.icon),
-                    size: 24,
-                    assets: assets
-                ))
-                icon.contentMode = .center
-                icon.widthAnchor.constraint(equalToConstant: 32).isActive = true
-                icon.heightAnchor.constraint(equalToConstant: 32).isActive = true
+                // The Agent's page is one of the two places an animated image icon plays.
+                let icon = IconChoiceUIView(size: 24, frameSize: 24, animatesImage: true)
+                icon.apply(.choice(agent.definition.icon, purpose: .agent, sandbox: false), assetCache: assets)
+                icon.accessibilityIdentifier = "agents.detail.iconImage"
                 let row = ControlRowViews.stack([
                     ControlRowViews.label("Icon", style: .body, color: palette.ui.comment, lines: 1),
                     ControlRowViews.spacer(),

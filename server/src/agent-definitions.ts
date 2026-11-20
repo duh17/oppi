@@ -3,7 +3,12 @@ import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { generateId } from "./id.js";
-import { DEFAULT_ICON_CHOICE, migrateIconChoice, validateIconChoice } from "./icon-choice.js";
+import {
+  DEFAULT_ICON_CHOICE,
+  migrateIconChoice,
+  validateIconChoice,
+  type IconAssetKind,
+} from "./icon-choice.js";
 import { openDatabase, type SqliteDatabase } from "./sqlite-compat.js";
 import { runSessionStateDeadSchemaCleanup } from "./storage/session-state-cleanup-migration.js";
 import { isThinkingLevel } from "./thinking-levels.js";
@@ -137,7 +142,7 @@ export class AgentDefinitionStore {
   constructor(
     dataDir: string,
     dbPath?: string,
-    private readonly iconAssetExists?: (assetId: string) => boolean,
+    private readonly iconAssetKind?: (assetId: string) => IconAssetKind | undefined,
   ) {
     if (!existsSync(dataDir)) {
       mkdirSync(dataDir, { recursive: true, mode: 0o700 });
@@ -379,13 +384,10 @@ export class AgentDefinitionStore {
     })();
   }
 
+  /** A Genmoji or image icon must name a stored asset of its own kind. */
   private assertIconAssetExists(definition: AgentDefinition): void {
-    if (
-      definition.icon?.kind === "genmoji" &&
-      this.iconAssetExists &&
-      !this.iconAssetExists(definition.icon.assetId)
-    ) {
-      throw new Error("icon asset not found");
+    if (definition.icon && this.iconAssetKind) {
+      validateIconChoice(definition.icon, { assetKind: this.iconAssetKind });
     }
   }
 
