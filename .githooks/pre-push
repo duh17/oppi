@@ -886,6 +886,10 @@ run_apple_gate() {
   # The edit-entry scan reads app sources the build phase's stamp does not watch, so a change
   # to the guard or to one reader's bar would otherwise pass unpushed. About 0.1 s.
   (cd "$REPO_ROOT" && run_without_git_local_env bun scripts/document-edit-guard.ts) || return $?
+  # The Apple UI guardrails (raw share sheets, direct full-screen readers, plain WKWebViews, ...):
+  # a source scan that fails on a violation. --guardrails-only skips jscpd and writes no report,
+  # so a push never regenerates .internal/reports.
+  (cd "$REPO_ROOT" && run_without_git_local_env bun scripts/duplication-scan.ts --guardrails-only) || return $?
   # sim-pool builds without a simulator slot. The lane takes the machine-wide xcode-build slot for
   # it (with_apple_slot), so sim-pool, seeing OPPI_HEAVY_HELD, takes no second one.
   (cd "$REPO_ROOT/clients/apple" && with_apple_slot "$SIM_POOL" run -- \

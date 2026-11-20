@@ -151,7 +151,8 @@ export function planForPaths(inputPaths: Iterable<string>): PrePushPlan {
     }
 
     // The guard reads iOS app sources and runs with the architecture check.
-    if (path === "scripts/document-edit-guard.ts") {
+    // duplication-scan.ts holds the Apple UI guardrails the Apple lane runs (--guardrails-only).
+    if (path === "scripts/document-edit-guard.ts" || path === "scripts/duplication-scan.ts") {
       apple = strongerApple(apple, "unit");
       continue;
     }

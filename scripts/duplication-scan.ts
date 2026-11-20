@@ -79,7 +79,7 @@ const argv = process.argv.slice(2);
 const argSet = new Set(argv);
 
 function usage(): string {
-  return `Usage: bun scripts/duplication-scan.ts [options]\n\nSingle duplication and Apple UI guardrail check for Oppi. Generates a generic\ncopy/paste report with jscpd, then runs the bespoke Apple architecture guardrails\nin the same command.\n\nOptions:\n  --include-tests     Also scan Apple and server test targets with looser thresholds\n  --fail-on-clones    Exit 1 when any configured jscpd scan reports clones\n  --output <path>     Report directory, relative to repo root by default\n                     (default: .internal/reports/duplication-scan)\n  --verbose           Print jscpd stdout/stderr for each pass\n  --help              Show this help\n`;
+  return `Usage: bun scripts/duplication-scan.ts [options]\n\nSingle duplication and Apple UI guardrail check for Oppi. Generates a generic\ncopy/paste report with jscpd, then runs the bespoke Apple architecture guardrails\nin the same command.\n\nOptions:\n  --include-tests     Also scan Apple and server test targets with looser thresholds\n  --fail-on-clones    Exit 1 when any configured jscpd scan reports clones\n  --guardrails-only   Run only the Apple UI guardrails: no jscpd, no report files written\n                     (the pre-push Apple lane runs this)\n  --output <path>     Report directory, relative to repo root by default\n                     (default: .internal/reports/duplication-scan)\n  --verbose           Print jscpd stdout/stderr for each pass\n  --help              Show this help\n`;
 }
 
 function argValue(name: string, fallback: string): string {
@@ -101,6 +101,7 @@ if (argSet.has("--help") || argSet.has("-h")) {
 
 const includeTests = argSet.has("--include-tests");
 const failOnClones = argSet.has("--fail-on-clones");
+const guardrailsOnly = argSet.has("--guardrails-only");
 const verbose = argSet.has("--verbose");
 const outputArg = argValue("--output", ".internal/reports/duplication-scan");
 const outputRoot = isAbsolute(outputArg) ? outputArg : join(repoRoot, outputArg);
@@ -365,10 +366,12 @@ function runAppleGuardrails(): GuardrailResult {
   // child are named here: the chat reader, the file viewer, the reviewable
   // control Markdown screen, the editor's conflict review, a skill's file, and
   // the extension detail's reader (a pushed route whose prompt section or tool
-  // schema is the whole page, with the reader's own floating Back).
+  // schema is the whole page, with the reader's own floating Back), and the
+  // internal-URL pane (a background job's output, mounted as a child with the
+  // reader's buttons joining the pane's own bar).
   hits = filterAllowed(
     rgFiles("FullScreenCodeViewController\\(", ["Oppi/"], { cwd: appleRoot, type: "swift" }),
-    /(^|\/)(FullScreenCodeViewController|ChatReaderViewController|ToolTimelineRowHelpers|FileViewerViewController|WorkspaceFileEditChrome|ReviewableControlMarkdownViewController|SkillFileViewController|ServerExtensionReaderViewController)\.swift$/,
+    /(^|\/)(FullScreenCodeViewController|ChatReaderViewController|ToolTimelineRowHelpers|FileViewerViewController|WorkspaceFileEditChrome|ReviewableControlMarkdownViewController|SkillFileViewController|ServerExtensionReaderViewController|InternalURLViewController)\.swift$/,
   );
   if (hits.length > 0) {
     err(
@@ -586,6 +589,13 @@ function printGuardrailResult(result: GuardrailResult): void {
     }
     console.error("");
   }
+}
+
+// Check mode for the pre-push gate: the verdict only, with nothing written under .internal/reports.
+if (guardrailsOnly) {
+  const result = runAppleGuardrails();
+  printGuardrailResult(result);
+  process.exit(result.violations.length > 0 ? 1 : 0);
 }
 
 rmSync(outputRoot, { recursive: true, force: true });
