@@ -84,14 +84,15 @@ private final class ReviewCommentStashRowView: UIView {
 
     init(comment: ReviewComment, among comments: [ReviewComment], palette: ThemePalette) {
         super.init(frame: .zero)
-        let icon = UIImageView(image: UIImage.scaledSymbol("text.bubble.fill", style: .caption1, weight: .semibold, color: palette.ui.cyan))
+        // The type of the card the comment becomes once sent (`PromptContextCardView`).
+        let icon = UIImageView(image: UIImage.scaledSymbol("text.bubble.fill", style: .footnote, weight: .semibold, color: palette.ui.cyan))
         icon.setContentHuggingPriority(.required, for: .horizontal)
         let location = UILabel()
-        location.font = UIFont.scaledMonospaced(.caption1, .regular)
+        location.font = comment.stashLocationFont
         location.adjustsFontForContentSizeCategory = true
         location.textColor = palette.ui.comment
         location.numberOfLines = 2
-        location.lineBreakMode = .byTruncatingMiddle
+        location.lineBreakMode = comment.reference.displayPath == nil ? .byTruncatingTail : .byTruncatingMiddle
         location.text = ReviewCommentStashLocation.compactText(for: comment, among: comments)
         location.accessibilityLabel = ReviewCommentStashLocation.completeText(for: comment)
         location.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -110,7 +111,7 @@ private final class ReviewCommentStashRowView: UIView {
         stack.spacing = 10
         if let selectedText = comment.stashSelectedText {
             let selected = UILabel()
-            selected.font = UIFont.scaledMonospaced(.caption1, .regular)
+            selected.font = comment.stashSelectedTextFont
             selected.adjustsFontForContentSizeCategory = true
             selected.textColor = palette.ui.fgDim
             selected.numberOfLines = 3
@@ -132,7 +133,7 @@ private final class ReviewCommentStashRowView: UIView {
         let body = UIButton(type: .custom)
         var configuration = UIButton.Configuration.plain()
         var title = AttributedString(comment.body)
-        title.font = UIFont.preferredFont(forTextStyle: .body)
+        title.font = AppFont.messageBody
         title.foregroundColor = palette.ui.fg
         configuration.attributedTitle = title
         configuration.contentInsets = .zero
@@ -459,7 +460,7 @@ extension ReviewCommentStashViewController: UICollectionViewDataSource {
         case .location:
             var content = UIListContentConfiguration.cell()
             content.text = ReviewCommentStashLocation.completeText(for: editing)
-            content.textProperties.font = UIFont.scaledMonospaced(.caption1, .regular)
+            content.textProperties.font = editing.stashLocationFont
             content.textProperties.color = palette.ui.comment
             cell.contentConfiguration = content
         case .selectedText:
@@ -470,7 +471,7 @@ extension ReviewCommentStashViewController: UICollectionViewDataSource {
             // The list row's text inset, as a plain text row gets.
             text.textContainerInset = UIEdgeInsets(top: 11, left: 0, bottom: 11, right: 0)
             text.textContainer.lineFragmentPadding = 0
-            text.font = UIFont.scaledMonospaced(.caption1, .regular)
+            text.font = editing.stashSelectedTextFont
             text.adjustsFontForContentSizeCategory = true
             text.textColor = palette.ui.fgDim
             text.text = editing.stashSelectedText
@@ -497,6 +498,18 @@ extension ReviewCommentStashViewController: UICollectionViewDataSource {
 }
 
 extension ReviewComment {
+    /// A path is code; a chat message's start or a source name is prose.
+    @MainActor fileprivate var stashLocationFont: UIFont {
+        reference.displayPath == nil ? UIFont.scaled(.footnote) : UIFont.scaledMonospaced(.footnote)
+    }
+
+    /// Monospaced only when the sent card draws the selection as code.
+    @MainActor fileprivate var stashSelectedTextFont: UIFont {
+        PromptContextItem(comment: self).quoteCodeLanguage == nil
+            ? UIFont.scaled(.footnote)
+            : UIFont.scaledMonospaced(.footnote)
+    }
+
     fileprivate var stashSelectedText: String? {
         guard let text = reference.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines),
               !text.isEmpty else { return nil }

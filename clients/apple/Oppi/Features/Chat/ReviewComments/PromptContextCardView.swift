@@ -4,6 +4,10 @@ import UIKit
 /// (code in its language, else a quote), and the person's note. The user's message and the
 /// queue draw the same card, so a message shows what it sent.
 ///
+/// Two sizes: the note is message text (`AppFont.messageBody`, the size of the user's message
+/// above it); the place and the selection are secondary, in footnote and a dimmer color.
+/// Only code (a path, a code selection) is monospaced; prose stays in the system font.
+///
 /// The place line is a button when the place can open (`PromptContextItem.opensPlace`) and
 /// the host gives `onOpen`; touch and accessibility activation both run `onOpen`. Ids, under
 /// the host's `identifier`: `<id>.place`, `<id>.quote`, `<id>.note`.
@@ -121,7 +125,7 @@ final class PromptContextCardView: UIView {
         textColor: UIColor,
         palette: ThemePalette
     ) -> UIView {
-        let label = label(font: UIFont.scaled(.subheadline), color: textColor.withAlphaComponent(0.82))
+        let label = label(font: UIFont.scaled(.footnote), color: textColor.withAlphaComponent(secondaryAlpha))
         label.text = quote
         label.accessibilityIdentifier = identifier
         let bar = UIView()
@@ -137,22 +141,27 @@ final class PromptContextCardView: UIView {
         return row
     }
 
+    /// The place line and the selection's prose, against the card's text color.
+    private static let secondaryAlpha: CGFloat = 0.75
+
     /// Where the item points: its icon and place, a button that opens it when it can.
     private final class PlaceControl: UIControl {
         init(item: PromptContextItem, opens: Bool, textColor: UIColor, palette: ThemePalette) {
             super.init(frame: .zero)
             translatesAutoresizingMaskIntoConstraints = false
-            let tint = opens ? palette.ui.blue : textColor.withAlphaComponent(0.75)
-            let icon = UIImageView(image: UIImage.scaledSymbol(item.placeSymbolName, style: .caption1, color: tint))
+            let tint = opens ? palette.ui.blue : textColor.withAlphaComponent(PromptContextCardView.secondaryAlpha)
+            let icon = UIImageView(image: UIImage.scaledSymbol(item.placeSymbolName, style: .footnote, color: tint))
             icon.contentMode = .scaleAspectFit
             icon.setContentHuggingPriority(.required, for: .horizontal)
+            let isPath = item.path?.isEmpty == false
             let label = UILabel()
-            label.font = UIFont.scaledMonospaced(.caption1)
+            // A path is code; a chat message's start or a page's host is prose.
+            label.font = isPath ? UIFont.scaledMonospaced(.footnote) : UIFont.scaled(.footnote)
             label.adjustsFontForContentSizeCategory = true
             label.textColor = tint
             label.text = item.placeTitle
             // A path keeps its file name; a message's start keeps its first words.
-            label.lineBreakMode = item.path?.isEmpty == false ? .byTruncatingMiddle : .byTruncatingTail
+            label.lineBreakMode = isPath ? .byTruncatingMiddle : .byTruncatingTail
             label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             let row = UIStackView(arrangedSubviews: [icon, label])
             row.translatesAutoresizingMaskIntoConstraints = false
