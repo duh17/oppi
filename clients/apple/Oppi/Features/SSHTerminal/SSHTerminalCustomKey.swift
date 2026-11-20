@@ -195,10 +195,6 @@ struct SSHTerminalBarStore {
     /// redraws its bar from it.
     static var didChange: Notification.Name { preference.didChangeNotification }
 
-    /// The layout this bar had when it was two pills: the middle's buttons
-    /// and, beside them, Herdr, Rex, and the switcher, in one stored order.
-    private static let legacyOrderKey = "\(AppIdentifiers.subsystem).sshTerminal.barOrder"
-    private static let legacyShownKey = "\(AppIdentifiers.subsystem).sshTerminal.barShown"
     private static let keysKey = "\(AppIdentifiers.subsystem).sshTerminal.barKeys"
     private static let rexPanelKey = "\(AppIdentifiers.subsystem).sshTerminal.rexPanel"
 
@@ -225,25 +221,17 @@ struct SSHTerminalBarStore {
         return entries.compactMap(\.key).filter(\.isValid)
     }
 
-    /// The saved layout, or the one this bar had before it was one list
-    /// (`migrating`), else the default, always covering the custom keys: one
-    /// a deleted key left behind is dropped, and one the order has not met
-    /// yet goes last, shown.
+    /// The saved layout, else the default, always covering the custom keys:
+    /// one a deleted key left behind is dropped, and one the order has not met
+    /// yet goes last, shown. It reads the stored strings itself, not through
+    /// `preference`, because the Chat Bar entry has to be placed before it
+    /// decodes to nothing.
     var layout: SSHTerminalBarLayout {
-        var layout: SSHTerminalBarLayout
-        if let order = defaults.stringArray(forKey: Self.preference.orderKey) {
-            layout = defaults.stringArray(forKey: Self.preference.shownKey).map { shown in
-                let saved = Self.retiringChatBar(order: order, shown: shown)
-                return SSHTerminalBarLayout(storedOrder: saved.order, storedShown: saved.shown)
-            } ?? .defaultValue
-        } else if let order = defaults.stringArray(forKey: Self.legacyOrderKey),
-                  let shown = defaults.stringArray(forKey: Self.legacyShownKey) {
-            let saved = Self.retiringChatBar(order: order, shown: shown)
-            layout = .migrating(legacyOrder: saved.order, legacyShown: saved.shown)
-        } else {
-            layout = .defaultValue
-        }
-        return covering(layout)
+        guard let order = defaults.stringArray(forKey: Self.preference.orderKey),
+              let shown = defaults.stringArray(forKey: Self.preference.shownKey)
+        else { return defaultLayout }
+        let saved = Self.retiringChatBar(order: order, shown: shown)
+        return covering(SSHTerminalBarLayout(storedOrder: saved.order, storedShown: saved.shown))
     }
 
     /// A layout saved while the terminal had a Chat Bar button: Dictate and
@@ -278,13 +266,7 @@ struct SSHTerminalBarStore {
     }
 
     func setLayout(_ layout: SSHTerminalBarLayout) {
-        let hadLegacy = defaults.object(forKey: Self.legacyOrderKey) != nil || defaults.object(forKey: Self.legacyShownKey) != nil
         Self.preference.save(layout, in: defaults)
-        defaults.removeObject(forKey: Self.legacyOrderKey)
-        defaults.removeObject(forKey: Self.legacyShownKey)
-        // Retiring the old keys changes what `layout` reads even when the new
-        // layout equals the default and `save` skipped the write.
-        if hadLegacy { NotificationCenter.default.post(name: Self.preference.didChangeNotification, object: nil) }
     }
 
     /// Adds a key, or replaces the one with its id.
@@ -317,11 +299,7 @@ struct SSHTerminalBarStore {
 
     /// Forgets the saved layout; the custom keys and the Rex panel's choices stay.
     func reset() {
-        defaults.removeObject(forKey: Self.preference.orderKey)
-        defaults.removeObject(forKey: Self.preference.shownKey)
-        defaults.removeObject(forKey: Self.legacyOrderKey)
-        defaults.removeObject(forKey: Self.legacyShownKey)
-        NotificationCenter.default.post(name: Self.preference.didChangeNotification, object: nil)
+        Self.preference.reset(in: defaults)
     }
 
     private func write(_ keys: [SSHTerminalCustomKey]) {

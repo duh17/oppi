@@ -194,40 +194,6 @@ struct SSHTerminalBarFitTests {
 
 @Suite("SSH terminal bottom bar saved layout")
 struct SSHTerminalBarMigrationTests {
-    /// The old bar stored one order over both pills, reordered within each
-    /// section, and a set of what was shown.
-    @Test func anOldTwoSectionLayoutBecomesOneOrderAndKeepsWhatWasShown() {
-        let legacyOrder = ["herdr", "keyboard", "switcher", "interrupt", "rex", "tab", "escape", "up", "down", "enter", "paste", "browseFiles"]
-        let legacyShown = ["keyboard", "interrupt", "herdr", "switcher"]
-        let migrated = SSHTerminalBarLayout.migrating(legacyOrder: legacyOrder, legacyShown: legacyShown)
-        // The middle's buttons in their order, then the ones that sat beside … in
-        // theirs. Rex Sessions is no longer a button, so its entry is dropped.
-        #expect(Array(migrated.storedOrder.prefix(11)) == [
-            "keyboard", "interrupt", "tab", "escape", "up", "down", "enter", "paste", "browseFiles",
-            "herdr", "switcher",
-        ])
-        #expect(!migrated.storedOrder.contains("rex"))
-        #expect(migrated.shown == Set(legacyShown.compactMap(SSHTerminalBarItem.init(rawValue:))))
-        // Program Shortcuts arrived after the layout was saved: in the order, not shown.
-        #expect(migrated.order.contains(.programShortcuts))
-        #expect(!migrated.isShown(.programShortcuts))
-    }
-
-    @Test func theStoreReadsALegacyLayoutAndWritesTheNewOneInItsPlace() {
-        let defaults = isolatedDefaults()
-        let prefix = AppIdentifiers.subsystem
-        defaults.set(["herdr", "keyboard", "escape"], forKey: "\(prefix).sshTerminal.barOrder")
-        defaults.set(["keyboard", "herdr"], forKey: "\(prefix).sshTerminal.barShown")
-        let store = SSHTerminalBarStore(defaults: defaults)
-        #expect(Array(store.layout.order.prefix(3)) == [.action(.keyboard), .action(.escape), .action(.herdr)])
-        #expect(store.layout.shown == [.action(.keyboard), .action(.herdr)])
-
-        // A change writes the new keys and retires the old ones.
-        store.setLayout(store.layout.setting(.action(.escape), shown: true))
-        #expect(defaults.stringArray(forKey: "\(prefix).sshTerminal.barOrder") == nil)
-        #expect(SSHTerminalBarStore(defaults: defaults).layout.shown == [.action(.keyboard), .action(.herdr), .action(.escape)])
-    }
-
     /// The terminal had a Chat Bar button; Dictate and Attach took over its
     /// jobs, so a bar saved with it gets them next to Type in Terminal, shown
     /// as Chat Bar was, and a later change keeps them there.
@@ -263,25 +229,6 @@ struct SSHTerminalBarMigrationTests {
         let hidden = store.layout
         #expect(Array(hidden.order.prefix(3)) == [.action(.keyboard), .action(.dictate), .action(.attach)])
         #expect(!hidden.isShown(.action(.dictate)) && !hidden.isShown(.action(.attach)))
-    }
-
-    @Test func retiringTheOldKeysAnnouncesTheChangeEvenWhenTheNewLayoutIsTheDefault() {
-        let defaults = isolatedDefaults()
-        let prefix = AppIdentifiers.subsystem
-        // A saved bar the old way: not the default.
-        defaults.set(["escape", "keyboard"], forKey: "\(prefix).sshTerminal.barOrder")
-        defaults.set(["escape"], forKey: "\(prefix).sshTerminal.barShown")
-        let store = SSHTerminalBarStore(defaults: defaults)
-        #expect(store.layout != .defaultValue)
-        final class Counter: @unchecked Sendable { var posts = 0 }
-        let counter = Counter()
-        let token = NotificationCenter.default.addObserver(forName: SSHTerminalBarStore.didChange, object: nil, queue: nil) { _ in counter.posts += 1 }
-        defer { NotificationCenter.default.removeObserver(token) }
-        // Saving the default writes nothing new, but the bar now reads the default, not the migrated one.
-        store.setLayout(.defaultValue)
-        #expect(counter.posts >= 1, "the open terminal must hear that the layout it reads changed")
-        #expect(store.layout == .defaultValue)
-        #expect(defaults.stringArray(forKey: "\(prefix).sshTerminal.barOrder") == nil)
     }
 
     @Test func aFreshInstallHasTheDefaultBarAndResetBringsItBack() {

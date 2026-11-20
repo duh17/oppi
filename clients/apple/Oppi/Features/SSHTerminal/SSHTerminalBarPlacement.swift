@@ -5,9 +5,8 @@ import Foundation
 /// `BarLayout` of these, so the bar and the settings page share its order,
 /// shown set, and menu rules with Chat's top bar.
 ///
-/// The raw value is what the layout stores. A built-in button keeps its own
-/// raw value, so a layout saved when the bar had a middle and a right side
-/// reads as it was saved (`BarLayout.migrating(legacyOrder:legacyShown:)`).
+/// The raw value is what the layout stores; a built-in button's is its
+/// action's.
 enum SSHTerminalBarItem: BarLayoutAction, Identifiable {
     case action(SSHTerminalBarAction)
     /// The detected program's shortcuts (`SSHTerminalKeymap.actions(for:userFile:)`),
@@ -68,21 +67,6 @@ enum SSHTerminalBarItem: BarLayoutAction, Identifiable {
 }
 
 typealias SSHTerminalBarLayout = BarLayout<SSHTerminalBarItem>
-
-extension BarLayout where Action == SSHTerminalBarItem {
-    /// The layout this bar had when it was a middle pill and a trailing pill.
-    /// Its one stored order held both, with Herdr and the switcher kept to
-    /// their own side; the new bar draws one pill, and the buttons that were
-    /// beside … come after the middle's, which is where they were on screen.
-    /// The shown set is kept as it was.
-    static func migrating(legacyOrder: [String], legacyShown: [String]) -> Self {
-        let trailing: Set<String> = [SSHTerminalBarAction.herdr.rawValue, SSHTerminalBarAction.switcher.rawValue]
-        return Self(
-            storedOrder: legacyOrder.filter { !trailing.contains($0) } + legacyOrder.filter(trailing.contains),
-            storedShown: legacyShown
-        )
-    }
-}
 
 /// Which multiplexer a terminal belongs to, and so whether it offers Herdr's
 /// overview button: a terminal in Rex does not, a plain shell and a Herdr
