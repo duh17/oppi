@@ -63,14 +63,19 @@ final class ServerFeatureSwitchesUITests: XCTestCase, PreviewUITestCase {
         scroll(app.collectionViews["server.details.list"], to: features)
         XCTAssertTrue(features.waitUntilExists(timeout: 5), "Server Settings has no Features row")
         features.tap()
-        let rex = app.switches["server.features.rex"]
-        XCTAssertTrue(rex.waitUntilExists(timeout: 10), "Features has no Rex switch")
-        let herdr = app.switches["server.features.herdr"]
+        // On a phone the Terminal group sits below the fold, and the list
+        // builds only the rows on screen.
+        let list = app.collectionViews["server.features.list"]
         let terminal = app.switches["server.features.terminal"]
+        let herdr = app.switches["server.features.herdr"]
+        let rex = app.switches["server.features.rex"]
+        scroll(list, to: terminal)
         // The switches load from the server, then settle.
         XCTAssertTrue(waitFor(terminal.isEnabled && terminal.value as? String == "0", timeout: 10), "The fixture server has Terminal off")
-        XCTAssertTrue(rex.isEnabled, "Rex stands alone")
         XCTAssertFalse(herdr.isEnabled, "Herdr is held off while Terminal is off")
+        scroll(list, to: rex)
+        XCTAssertTrue(rex.waitUntilExists(timeout: 10), "Features has no Rex switch")
+        XCTAssertTrue(rex.isEnabled, "Rex stands alone")
         attachScreenshot("server-features-terminal-off")
     }
 

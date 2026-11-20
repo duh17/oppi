@@ -159,7 +159,7 @@ One owner per layout question. `userInterfaceIdiom` is never a layout signal: th
 
 ## Chat bar
 
-- `Core/BarLayout.swift` models the chat, terminal, and reader bars. `BarCustomizeViewController` is their one Customize screen and layout writer.
+- `Core/BarLayout.swift` models the chat, terminal, and reader bars and the sidebar's places (`WorkspaceSidebarPlaces.arranged`). `BarCustomizeViewController` is their one Customize screen and layout writer.
 - `ChatBarItems` (`ChatViewController+Bars.swift`) owns the chat bar in both shapes (horizontal bar, Duo rail); its capacity reads the timeline width, which a pane holds mid-drag.
 - `ChatBarItems.runTopBarAction` is the one owner of what a button does (bar, rail, menu, and accessibility take the same path). `placement(of:)` drops what cannot be offered instead of shifting another button into its place. The "…" menu is built once and resolves through `UIDeferredMenuElement.uncached`, so a bar pass never re-attaches a menu its owner holds.
 - An open panel's button shows a selection platter and selected trait: glass draws control content in one colour, so a tint alone is invisible.

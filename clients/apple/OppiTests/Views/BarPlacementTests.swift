@@ -5,6 +5,7 @@ import Testing
 private enum Tool: String, BarLayoutAction {
     case a, b, c, d, e
     static let defaultShown: Set<Tool> = Set(allCases)
+    static let unseen = BarLayoutUnseenRule.appendHidden
 }
 
 /// One button of a `Tool`; `index` tells apart the several buttons one action

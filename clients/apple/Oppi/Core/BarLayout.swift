@@ -1,14 +1,31 @@
 import Foundation
 
-/// A button a customizable bar can show, or offer in its … menu when hidden.
-/// `allCases` is the default order; `defaultShown` is what the bar draws before
-/// anyone chooses.
+/// A button a customizable bar can show, or offer in its … menu when hidden
+/// (or a place the sidebar can show). `allCases` is the default order;
+/// `defaultShown` is what the bar draws before anyone chooses.
 protocol BarLayoutAction: RawRepresentable, CaseIterable, Hashable, Sendable where RawValue == String {
     static var defaultShown: Set<Self> { get }
+    /// Where an action a saved layout has never seen goes: one a later version
+    /// added, or one met for the first time (a server's plugin place). Each
+    /// kind states its own rule; there is no default.
+    static var unseen: BarLayoutUnseenRule { get }
+}
+
+/// What a saved layout does with an action it has never seen, meaning one
+/// absent from its order.
+enum BarLayoutUnseenRule: Sendable {
+    /// Appended to the end and left out of `shown`: a bar keeps exactly the
+    /// buttons someone chose, and the new one waits in the … menu.
+    case appendHidden
+    /// Inserted after the action before it in the default order (first when
+    /// none is), and shown: a new sidebar place arrives where it would sit
+    /// without a saved layout, because hiding it is the person's choice.
+    case shownInDefaultPlace
 }
 
 /// Which buttons a customizable bar shows, and in what order (Chat's top bar,
-/// the SSH terminal's bottom bar, the file reader's bar).
+/// the SSH terminal's bottom bar, the file reader's bar), or which places the
+/// sidebar shows (`WorkspaceSidebarLayout`).
 ///
 /// Every action is in `order`; the ones in `shown` are drawn in the bar in that
 /// order, and the rest are offered in the … menu, also in that order. Showing
@@ -22,26 +39,51 @@ struct BarLayout<Action: BarLayoutAction>: Hashable, Sendable {
     private(set) var shown: Set<Action>
 
     /// A saved layout is used exactly as saved; an action added after it was
-    /// saved is appended to its order and, not being in its `shown`, offered
-    /// in the menu.
+    /// saved is placed by `Action.unseen`.
     static var defaultValue: Self { Self(order: Array(Action.allCases), shown: Action.defaultShown) }
 
     /// The bar someone gets without choosing one.
     var isDefault: Bool { self == Self.defaultValue }
 
     /// A stored order missing an action, or naming one twice, still covers every
-    /// action exactly once: the rest follow in `allCases` order.
+    /// case exactly once: a missing one is placed by `Action.unseen`.
     init(order: [Action], shown: Set<Action>) {
         var seen = Set<Action>()
         var normalized: [Action] = []
         for action in order where seen.insert(action).inserted {
             normalized.append(action)
         }
-        for action in Action.allCases where seen.insert(action).inserted {
-            normalized.append(action)
+        (self.order, self.shown) = Self.placing(unseenOf: Array(Action.allCases), order: normalized, shown: shown)
+    }
+
+    /// The layout with each action of `defaultOrder` it has never seen placed by
+    /// `Action.unseen`. `init` does this for the cases; a kind whose actions are
+    /// not all cases (the sidebar's plugin places) passes the rest here, in
+    /// their default order.
+    func placingUnseen(_ defaultOrder: [Action]) -> Self {
+        let placed = Self.placing(unseenOf: defaultOrder, order: order, shown: shown)
+        return Self(order: placed.order, shown: placed.shown)
+    }
+
+    private static func placing(
+        unseenOf defaultOrder: [Action],
+        order: [Action],
+        shown: Set<Action>
+    ) -> (order: [Action], shown: Set<Action>) {
+        var order = order
+        var shown = shown
+        var known = Set(order)
+        for (index, action) in defaultOrder.enumerated() where known.insert(action).inserted {
+            switch Action.unseen {
+            case .appendHidden:
+                order.append(action)
+            case .shownInDefaultPlace:
+                let predecessor = defaultOrder[..<index].reversed().lazy.compactMap { order.firstIndex(of: $0) }.first
+                order.insert(action, at: predecessor.map { $0 + 1 } ?? 0)
+                shown.insert(action)
+            }
         }
-        self.order = normalized
-        self.shown = shown
+        return (order, shown)
     }
 
     /// The encoded form, so the preference holds raw values and an unknown one

@@ -121,6 +121,7 @@ extension ChatTopBarAction: BarLayoutAction {
     /// button someone pins lands in a sensible place. An action added after a
     /// layout was saved (Git) is appended to its order and offered in the menu.
     static let defaultShown: Set<ChatTopBarAction> = [.context]
+    static let unseen = BarLayoutUnseenRule.appendHidden
 }
 
 /// Each action is one button, in the bar or in the … menu.

@@ -2,6 +2,8 @@
 // `WorkspaceSidebarViewController`; its workspace row is in
 // `WorkspaceComponents.swift`.
 
+import Foundation
+
 enum WorkspaceCatalogAvailability: Equatable {
     case loading
     case unavailable
@@ -118,11 +120,23 @@ enum WorkspaceSidebarPlaces {
         ),
     ]
 
-    /// The sidebar's places, in `order`: the built-in ones this window's server offers (`offers`,
-    /// its feature switches) and its plugin entries that have a sidebar row; an entry sorts after
-    /// a built-in place of the same order. The server lists only plugin entries whose feature is
-    /// on. Pinned needs a server that keeps pins (`ServerConnection.pinsAvailable`).
+    /// The sidebar's rows above the workspaces: All Sessions, then the places this window's server
+    /// offers that this device's `layout` shows, in its order (`arranged`).
     static func items(
+        plugins: [PluginScreenSidebarEntry],
+        pinsAvailable: Bool,
+        layout: WorkspaceSidebarLayout,
+        offers: (ServerFeature) -> Bool
+    ) -> [WorkspaceSidebarPlace] {
+        arranged(offered(plugins: plugins, pinsAvailable: pinsAvailable, offers: offers), by: layout)
+    }
+
+    /// The places a server offers, in their default order (`order`): the built-in ones this
+    /// window's server offers (`offers`, its feature switches) and its plugin entries that have a
+    /// sidebar row; an entry sorts after a built-in place of the same order. The server lists only
+    /// plugin entries whose feature is on, so a feature off on the server has no place here, and
+    /// none in Edit Sidebar. Pinned needs a server that keeps pins (`ServerConnection.pinsAvailable`).
+    static func offered(
         plugins: [PluginScreenSidebarEntry],
         pinsAvailable: Bool,
         offers: (ServerFeature) -> Bool
@@ -147,6 +161,32 @@ enum WorkspaceSidebarPlaces {
         return (native + added).sorted { ($0.item.order, $0.rank) < ($1.item.order, $1.rank) }.map(\.item)
     }
 
+    /// `offered` as this device's layout shows it: All Sessions first, then the places the layout
+    /// shows, in its order. A place the layout has never seen shows where `offered` puts it
+    /// (`WorkspaceSidebarPlaceID.unseen`).
+    static func arranged(_ offered: [WorkspaceSidebarPlace], by layout: WorkspaceSidebarLayout) -> [WorkspaceSidebarPlace] {
+        let ids = layoutIDs(offered)
+        let byID = Dictionary(
+            offered.compactMap { place in WorkspaceSidebarPlaceID(place.place).map { ($0, place) } },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let fixed = offered.filter { WorkspaceSidebarPlaceID($0.place) == nil }
+        return fixed + layout.placingUnseen(ids).bar(available: Set(ids)).compactMap { byID[$0] }
+    }
+
+    /// The layout ids of `places`, in their order; All Sessions has none.
+    static func layoutIDs(_ places: [WorkspaceSidebarPlace]) -> [WorkspaceSidebarPlaceID] {
+        places.compactMap { WorkspaceSidebarPlaceID($0.place) }
+    }
+
+    /// This device's sidebar layout (Edit Sidebar): one for every server and window on the
+    /// device, never synced. The sidebar redraws from `UserDefaults.didChangeNotification`.
+    static let layoutPreference = BarLayoutPreference<WorkspaceSidebarPlaceID>(
+        orderKey: "\(AppIdentifiers.subsystem).workspaceSidebar.placesOrder",
+        shownKey: "\(AppIdentifiers.subsystem).workspaceSidebar.placesShown",
+        didChangeNotification: Notification.Name("oppi.workspaceSidebar.layoutDidChange")
+    )
+
     /// Pinned below New Workspace, outside the scrolling places.
     static let appSettings = WorkspaceSidebarPlace(
         place: .utility(.appSettings),
@@ -156,6 +196,66 @@ enum WorkspaceSidebarPlaces {
         accessibilityIdentifier: "workspace.settings.open",
         accessibilityHint: nil
     )
+}
+
+/// Which places this device's sidebar shows, and in what order (Edit Sidebar).
+typealias WorkspaceSidebarLayout = BarLayout<WorkspaceSidebarPlaceID>
+
+/// A sidebar place as this device's layout stores it. All Sessions is not one: it is always
+/// first and always shown.
+///
+/// The raw values are stored: renaming one loses that place's spot and switch on every device. A
+/// plugin place is `plugin.<entry id>`, so a plugin renaming its entry id does the same.
+enum WorkspaceSidebarPlaceID: BarLayoutAction {
+    case pinned, agents, schedules, extensions, terminal, rex
+    case plugin(String)
+
+    /// The built-in places in their default order (`WorkspaceSidebarPlaces.builtIn`). Plugin
+    /// places are not cases: the sidebar passes the server's to `placingUnseen`.
+    static let allCases: [Self] = [.pinned, .agents, .schedules, .extensions, .terminal, .rex]
+    static let defaultShown = Set(allCases)
+    /// A place this device has never seen (a server's new plugin entry, a place a later version
+    /// adds) arrives shown, where the default order puts it. A bar's new button does not: it
+    /// arrives hidden at the end (`BarLayoutUnseenRule.appendHidden`).
+    static let unseen = BarLayoutUnseenRule.shownInDefaultPlace
+
+    private static let pluginPrefix = "plugin."
+
+    init?(_ place: NavigationPlace) {
+        guard case .utility(let utility) = place else { return nil }
+        switch utility {
+        case .pinned: self = .pinned
+        case .agents: self = .agents
+        case .schedules: self = .schedules
+        case .extensions: self = .extensions
+        case .sshTerminal: self = .terminal
+        case .rex: self = .rex
+        case .pluginScreen(let id): self = .plugin(id)
+        case .manageServers, .serverMetrics, .appSettings: return nil
+        }
+    }
+
+    var rawValue: String {
+        switch self {
+        case .pinned: "pinned"
+        case .agents: "agents"
+        case .schedules: "schedules"
+        case .extensions: "extensions"
+        case .terminal: "terminal"
+        case .rex: "rex"
+        case .plugin(let id): Self.pluginPrefix + id
+        }
+    }
+
+    init?(rawValue: String) {
+        if rawValue.hasPrefix(Self.pluginPrefix) {
+            self = .plugin(String(rawValue.dropFirst(Self.pluginPrefix.count)))
+        } else if let builtIn = Self.allCases.first(where: { $0.rawValue == rawValue }) {
+            self = builtIn
+        } else {
+            return nil
+        }
+    }
 }
 
 /// Compact workspace aggregate using the same attention and status semantics as session rows.

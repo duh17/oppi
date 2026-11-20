@@ -23,6 +23,9 @@ enum ReaderBarAction: String, CaseIterable, Identifiable, BarLayoutAction {
     /// Every button the reader drew before the bar was customizable, so nothing
     /// disappears from it on upgrade.
     static let defaultShown = Set(allCases)
+    /// A button a later version adds waits in the … menu of a layout saved
+    /// before it.
+    static let unseen = BarLayoutUnseenRule.appendHidden
 
     var id: String { rawValue }
 

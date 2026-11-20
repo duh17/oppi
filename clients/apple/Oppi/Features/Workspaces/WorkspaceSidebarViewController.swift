@@ -21,9 +21,10 @@ final class WorkspaceSidebarViewController: UIViewController {
     private var navigation: SceneNavigation { root.navigation }
     private var coordinator: ConnectionCoordinator { root.coordinator }
 
-    /// The app's icon heads the column in place of a written name; the row
-    /// beside it stays free for a control.
+    /// The app's icon heads the column in place of a written name, with Edit
+    /// (Edit Sidebar) at the row's trailing end.
     private let appIconView = UIImageView()
+    private let editButton = UIButton(configuration: .plain())
     private let list: UICollectionView
     private let footerList: FooterListView
     private let footerDivider = UIView()
@@ -53,15 +54,18 @@ final class WorkspaceSidebarViewController: UIViewController {
         case newWorkspace
     }
 
-    /// What `AppStorage` read before: the same defaults keys.
+    /// The device's sidebar choices: the Workspaces fold and the places'
+    /// layout (Edit Sidebar).
     private struct Defaults: Equatable {
         var workspacesExpanded: Bool
+        var placesLayout: WorkspaceSidebarLayout
 
         static func read() -> Self {
             let defaults = UserDefaults.standard
             return Self(
                 workspacesExpanded: defaults.object(forKey: AppIdentifiers.workspaceSidebarExpandedKey) as? Bool
-                    ?? WorkspaceSidebarDisclosurePolicy.defaultExpanded
+                    ?? WorkspaceSidebarDisclosurePolicy.defaultExpanded,
+                placesLayout: WorkspaceSidebarPlaces.layoutPreference.layout(in: defaults)
             )
         }
     }
@@ -131,6 +135,20 @@ final class WorkspaceSidebarViewController: UIViewController {
         appIconView.accessibilityIdentifier = "workspace.sidebar.appIcon"
         appIconView.translatesAutoresizingMaskIntoConstraints = false
 
+        editButton.configuration?.title = String(localized: "Edit")
+        editButton.configuration?.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var attributes = attributes
+            attributes.font = Self.font(.body, .regular)
+            return attributes
+        }
+        editButton.configuration?.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
+        editButton.accessibilityIdentifier = "workspace.sidebar.edit"
+        editButton.accessibilityHint = String(localized: "Shows, hides, and orders the sidebar's places on this device")
+        editButton.addAction(UIAction { [weak self] _ in self?.presentEditSidebar() }, for: .primaryActionTriggered)
+        editButton.setContentHuggingPriority(.required, for: .horizontal)
+        editButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        editButton.translatesAutoresizingMaskIntoConstraints = false
+
         list.backgroundColor = .clear
         list.allowsSelection = false
         list.accessibilityIdentifier = "workspace.sidebar.scroll"
@@ -143,6 +161,7 @@ final class WorkspaceSidebarViewController: UIViewController {
         footerDivider.translatesAutoresizingMaskIntoConstraints = false
 
         view.addSubview(appIconView)
+        view.addSubview(editButton)
         view.addSubview(list)
         view.addSubview(footerDivider)
         view.addSubview(footerList)
@@ -152,6 +171,12 @@ final class WorkspaceSidebarViewController: UIViewController {
             appIconView.leadingAnchor.constraint(equalTo: safeArea.leadingAnchor, constant: 20),
             appIconView.widthAnchor.constraint(equalToConstant: Self.appIconSide),
             appIconView.heightAnchor.constraint(equalToConstant: Self.appIconSide),
+            // The title's trailing edge mirrors the icon's 20 pt leading inset;
+            // a large text size never runs Edit into the icon.
+            editButton.trailingAnchor.constraint(equalTo: safeArea.trailingAnchor, constant: -12),
+            editButton.centerYAnchor.constraint(equalTo: appIconView.centerYAnchor),
+            editButton.leadingAnchor.constraint(greaterThanOrEqualTo: appIconView.trailingAnchor, constant: 8),
+            editButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             list.topAnchor.constraint(equalTo: appIconView.bottomAnchor, constant: 12),
             list.leadingAnchor.constraint(equalTo: safeArea.leadingAnchor),
             list.trailingAnchor.constraint(equalTo: safeArea.trailingAnchor),
@@ -192,18 +217,22 @@ final class WorkspaceSidebarViewController: UIViewController {
             appliedThemeID = themeID
             view.backgroundColor = themeID.palette.ui.bg
             appIconView.layer.borderColor = themeID.palette.ui.comment.withAlphaComponent(0.5).cgColor
+            editButton.tintColor = themeID.palette.ui.blue
         }
         let previous = model
         model = makeModel()
         apply(previous: previous, themeChanged: themeChanged)
     }
 
-    /// The disclosure and SSH flags changed in Settings or
-    /// elsewhere in the app, as `AppStorage` reacted before.
-    /// Posted on whichever thread wrote the default.
+    /// The disclosure or the places' layout changed, here, in Edit Sidebar,
+    /// or in another window. Posted on whichever thread wrote the default.
     @objc nonisolated private func defaultsDidChange() {
         Task { @MainActor [weak self] in
-            guard let self, Defaults.read() != lastDefaults else { return }
+            guard let self else { return }
+            let defaults = Defaults.read()
+            guard defaults != lastDefaults else { return }
+            // A place shown, hidden, or dragged in Edit Sidebar moves in view.
+            if defaults.placesLayout != lastDefaults?.placesLayout { animatesNextSnapshot = true }
             setNeedsUpdateProperties()
         }
     }
@@ -232,7 +261,8 @@ final class WorkspaceSidebarViewController: UIViewController {
         let plugins = connection?.serverCapabilities?.pluginSidebar ?? []
         let items = WorkspaceSidebarPlaces.items(
             plugins: plugins,
-            pinsAvailable: connection?.pinsAvailable == true
+            pinsAvailable: connection?.pinsAvailable == true,
+            layout: defaults.placesLayout
         ) { connection?.offers($0) ?? true }
         for item in items {
             model.places[item.place] = PlaceRow(item: item, isSelected: item.place == currentPlace)
@@ -600,6 +630,13 @@ final class WorkspaceSidebarViewController: UIViewController {
                 await coordinator.refreshServer(serverId, force: true)
             }
         }
+    }
+
+    /// Edit does not close the drawer: Edit Sidebar opens over it, so the
+    /// sidebar redraws in view.
+    private func presentEditSidebar() {
+        guard presentedViewController == nil else { return }
+        WorkspaceSidebarEditViewController(root: root).present(from: self, source: editButton)
     }
 
     private func presentCreateWorkspace() {

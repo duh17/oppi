@@ -33,6 +33,10 @@ enum SSHTerminalBarItem: BarLayoutAction, Identifiable {
         .action(.keyboard), .action(.dictate), .action(.attach), .action(.herdr), .action(.switcher),
     ]
 
+    /// A built-in button a later version adds waits at the end, hidden. A new
+    /// custom key is not this: the store appends it shown (`SSHTerminalBarStore.layout`).
+    static let unseen = BarLayoutUnseenRule.appendHidden
+
     var id: String { rawValue }
 
     /// The settings row's title and the Bottom Bar summary's word for it.

@@ -2,8 +2,8 @@ import UIKit
 
 /// One customizable bar as the shared Customize screen sees it: what the
 /// screen is called, where the layout is kept, and how each action's row
-/// reads. Chat's top bar, the terminal's bottom bar, and the reader's bar each
-/// make one.
+/// reads. Chat's top bar, the terminal's bottom bar, the reader's bar, and
+/// Edit Sidebar each make one.
 @MainActor
 struct BarSurface<Action: BarLayoutAction> {
     /// What a row shows for one action.
@@ -89,8 +89,10 @@ struct BarCustomizeExtraSection<Extra> {
 ///
 /// Settings pushes it; a bar's … menu opens it as a sheet
 /// (`presentSheet(from:)`), so the bar being changed stays in view and
-/// redraws as the switches move. A surface with more to set (the terminal)
-/// subclasses it and adds its sections through `extraSections()`.
+/// redraws as the switches move. The sidebar's Edit opens it as Edit Sidebar
+/// (`WorkspaceSidebarEditViewController`), a popover beside the sidebar. A
+/// surface with more to set (the terminal, the sidebar) subclasses it and adds
+/// its sections through `extraSections()`.
 class BarCustomizeViewController<Action: BarLayoutAction, Extra: Hashable & Sendable>: ListScreenController<
     BarCustomizeSection, BarCustomizeRow<Action, Extra>
 > {
@@ -138,13 +140,24 @@ class BarCustomizeViewController<Action: BarLayoutAction, Extra: Hashable & Send
         detents: [UISheetPresentationController.Detent] = [.medium(), .large()],
         onDismiss: (() -> Void)? = nil
     ) {
+        presentWithDone(from: presenter, presentation: .sheet.detents(detents).inNavigation(), onDismiss: onDismiss)
+    }
+
+    /// Opens this screen in `presentation` over `presenter`, with Done: a sheet,
+    /// or a popover at `sourceView` that a compact width turns into a sheet.
+    func presentWithDone(
+        from presenter: UIViewController,
+        presentation: ModalPresentation,
+        sourceView: UIView? = nil,
+        onDismiss: (() -> Void)? = nil
+    ) {
         let done = UIBarButtonItem(systemItem: .done, primaryAction: UIAction { [weak self] _ in
             guard let self else { return }
             Router.finish(self)
         })
         done.accessibilityIdentifier = "barCustomize.done"
         navigationItem.rightBarButtonItem = done
-        Router.present(self, presentation: .sheet.detents(detents).inNavigation(), from: presenter, onDismiss: onDismiss)
+        Router.present(self, presentation: presentation, from: presenter, sourceView: sourceView, onDismiss: onDismiss)
     }
 
     var layout: BarLayout<Action> { surface.layout() }
