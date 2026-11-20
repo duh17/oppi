@@ -357,30 +357,22 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     }
 
     /// The reader draws the screen's one bar: a pushed reader showing the file.
-    /// The stack's bar hides, and what it would carry (Share, the previous and
-    /// next file) goes on the reader's (`readerHostOffers`).
+    /// The stack's bar hides, and the file's buttons go on the reader's (`fileBar(on:)`).
     private var readerOwnsBar: Bool {
-        sharesReaderBar && showsReader
+        readerDrawsChrome && showsReader
     }
 
     private func readerPresentationMode(
         back: @escaping @MainActor @Sendable () -> Void
     ) -> FullScreenCodeViewController.PresentationMode {
-        guard showsEmbeddedNavigationChrome else { return .contentOnly(onBackSwipe: back) }
+        guard readerDrawsChrome else { return .contentOnly(onBackSwipe: back) }
         return configuration.isPaneRoot ? .pane(title: viewerTitle, onDismiss: back) : .embedded(onDismiss: back)
     }
 
-    private var showsEmbeddedNavigationChrome: Bool {
-        FileBrowserContentRenderingPolicy.showsNavigationChrome(
-            for: configuration.chromeMode,
-            source: configuration.source
-        )
-    }
-
-    /// Where this document's edit entry goes: the reader's own glass bar when the
-    /// reader shows one, else this viewer's (host files, a tree pane).
-    private var sharesReaderBar: Bool {
-        FileBrowserContentRenderingPolicy.showsNavigationChrome(
+    /// A reader here draws its own glass bar and Back; else it is content only
+    /// and this viewer's bar carries everything (host files, a tree pane).
+    private var readerDrawsChrome: Bool {
+        FileBrowserContentRenderingPolicy.readerDrawsChrome(
             for: configuration.chromeMode,
             source: configuration.source
         )
@@ -473,15 +465,30 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         return item
     }
 
-    /// What this viewer adds to a reader that draws its own bar: Edit, the
-    /// previous and next file, and for a renderer's reader the file's own Share
-    /// (a book shares its archive, which only this viewer read).
-    private var readerHostOffers: [ReaderBarAction: [UIBarButtonItem]] {
-        var offers = editOwner.readerOffers
-        guard readerOwnsBar else { return offers }
-        offers.merge(adjacentOffers) { own, _ in own }
-        if case .rendered = content, let share = shareBarItem() { offers[.share] = [share] }
-        return offers
+    private enum BarHolder { case viewer, reader }
+
+    /// The file's buttons and … menu items, on the one bar that shows them:
+    /// the reader's while it owns the screen's bar (`readerOwnsBar`), else this
+    /// viewer's. Nothing while the editor owns the bar.
+    private func fileBar(on holder: BarHolder) -> (offers: [ReaderBarAction: [UIBarButtonItem]], menu: [UIMenuElement]) {
+        guard (holder == .reader) == readerOwnsBar, !editOwner.isEditing else { return ([:], []) }
+        // The previous and next file are on every file's bar.
+        var offers = adjacentOffers
+        var menu: [UIMenuElement] = []
+        // Edit, the content-only reader's own buttons (Find, Copy, …), and the
+        // … menu (Open in Pane, Pin) wait for the file to load. A pushed
+        // viewer's own bar (an image, PDF, video, or file card) has none of them.
+        let loading: Bool = if case .loading = content { true } else { false }
+        if !loading, holder == .reader || !readerDrawsChrome {
+            offers.merge(editOwner.readerOffers) { own, _ in own }
+            if holder == .viewer { offers.merge(reader?.barOffers ?? [:]) { own, _ in own } }
+            menu = documentMenu
+        }
+        // A text reader shares the text it shows; a book shares the archive
+        // only this viewer read.
+        let readerSharesText: Bool = if holder == .reader, case .text = content { true } else { false }
+        if !readerSharesText, let share = shareBarItem() { offers[.share] = [share] }
+        return (offers, menu)
     }
 
     // MARK: Content
@@ -646,6 +653,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     private func mountReader(text: String) -> UIView {
         let path = currentFilePath
         let back: @MainActor @Sendable () -> Void = { [weak self] in self?.navigateBack() }
+        let file = fileBar(on: .reader)
         let reader = FullScreenCodeViewController(
             content: fullScreenContent(text: text),
             presentationMode: readerPresentationMode(back: back),
@@ -653,8 +661,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             lineAnchor: activeSelection == nil ? configuration.lineAnchor : nil,
             lineAnchorNotice: onLineAnchorNotice,
             headingAnchor: activeSelection == nil ? configuration.headingAnchor : nil,
-            hostOffers: readerHostOffers,
-            hostMenu: documentMenu,
+            hostOffers: file.offers,
+            hostMenu: file.menu,
             markdownViewportIntent: markdownViewportRestore.state[path],
             onMarkdownViewportIntentChange: { [weak self] in self?.markdownViewportRestore.state[path] = $0 },
             taskEditing: editOwner.makeReaderTaskEditing(path: path) { [weak self] text in if self?.isCurrentFile(path) == true { self?.content = .text(text) } },
@@ -689,7 +697,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             // spans the page and keeps its text and controls in its own safe area.
             NSLayoutConstraint.activate([
                 reader.view.topAnchor.constraint(
-                    equalTo: showsEmbeddedNavigationChrome ? page.topAnchor : safe.topAnchor
+                    equalTo: readerDrawsChrome ? page.topAnchor : safe.topAnchor
                 ),
                 reader.view.bottomAnchor.constraint(equalTo: safe.bottomAnchor),
                 reader.view.leadingAnchor.constraint(equalTo: page.leadingAnchor),
@@ -737,7 +745,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         }
         readerPage?.backgroundColor = palette.ui.bgDark
         if let reader {
-            reader.setHostBar(offers: readerHostOffers, menu: documentMenu)
+            let file = fileBar(on: .reader)
+            reader.setHostBar(offers: file.offers, menu: file.menu)
         }
         editOwner.updateEditorPage(palette: palette, checkoutSubtitle: checkoutSubtitle)
         if case .rendered(let renderer, _) = content {
@@ -763,30 +772,12 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
 
     private func updateBar() {
         let editing = editOwner.isEditing
-        // The entry stays off the bar while the file loads, as main's control did.
-        let loading: Bool = if case .loading = content { true } else { false }
-        var offers: [ReaderBarAction: [UIBarButtonItem]] = [:]
-        var documentActions: [UIMenuElement] = []
-        // The editor owns the bar while typing: status, Preview, Done.
-        if !editing {
-            // A reader that draws its own bar offers these there.
-            if !sharesReaderBar, !loading {
-                // The entry's items are trailing-first; offers read leading first.
-                offers = editOwner.readerOffers.merging(reader?.barOffers ?? [:]) { own, _ in own }
-                documentActions = documentMenu
-            }
-            // Share and the previous and next file are on every file's bar. A
-            // pushed reader has its own bar with them on it; everywhere else it
-            // is this one.
-            if !readerOwnsBar {
-                if let share = shareBarItem() { offers[.share] = [share] }
-                offers.merge(adjacentOffers) { own, _ in own }
-            }
-        }
+        let file = fileBar(on: .viewer)
         bar.reader.presenter = self
         if bar.title != viewerTitle { bar.title = viewerTitle }
+        // The editor owns the bar while typing: status, Preview, Done.
         bar.show(
-            offers: offers, documentActions: documentActions,
+            offers: file.offers, documentActions: file.menu,
             editorItems: editing ? editOwner.barItems : [], isEditing: editing
         )
         bar.apply(to: navigationItem)

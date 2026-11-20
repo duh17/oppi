@@ -230,9 +230,9 @@ struct FileBrowserReviewCommentSelectionTests {
     }
 
     @Test func treePaneTextUsesEmbeddedFileViewerWithoutNavigationChrome() {
-        #expect(FileBrowserContentRenderingPolicy.showsNavigationChrome(for: .treePane) == false)
-        #expect(FileBrowserContentRenderingPolicy.showsNavigationChrome(for: .pushed) == true)
-        #expect(FileBrowserContentRenderingPolicy.showsNavigationChrome(for: .pushed, source: .hostFile) == false)
+        #expect(FileBrowserContentRenderingPolicy.readerDrawsChrome(for: .treePane) == false)
+        #expect(FileBrowserContentRenderingPolicy.readerDrawsChrome(for: .pushed) == true)
+        #expect(FileBrowserContentRenderingPolicy.readerDrawsChrome(for: .pushed, source: .hostFile) == false)
         #expect(FileBrowserContentRenderingPolicy.navigationTitle(
             source: .hostFile,
             path: "/Users/me/secret",

@@ -31,7 +31,9 @@ struct SkillFileEditTarget: Equatable {
 }
 
 enum FileBrowserContentRenderingPolicy {
-    static func showsNavigationChrome(
+    /// A pushed viewer's reader draws its own bar and Back; a tree pane's or a
+    /// host file's reader is content only, under the screen's bar.
+    static func readerDrawsChrome(
         for chromeMode: FileBrowserContentChromeMode,
         source: FileBrowserContentSource = .workspaceFile
     ) -> Bool {

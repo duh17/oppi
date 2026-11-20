@@ -83,7 +83,7 @@ final class FullScreenCodeViewController: UIViewController {
     private var hostOffers: [ReaderBarAction: [UIBarButtonItem]]
     private var hostMenu: [UIMenuElement]
     /// The bar's layout over what the reader offers, and its … menu.
-    private lazy var readerBar: ReaderBar = {
+    private(set) lazy var readerBar: ReaderBar = {
         let bar = ReaderBar()
         bar.presenter = self
         bar.onLayoutChange = { [weak self] in
