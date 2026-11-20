@@ -8,6 +8,7 @@ import {
   type CacheMissAssistantMessage,
   type CacheMissTrackerState,
 } from "../src/cache-miss.js";
+import { importPiDist } from "../src/pi-private.js";
 
 const prices = {
   find: () => ({ cost: { cacheRead: 1 } }),
@@ -137,6 +138,63 @@ describe("Pi-compatible cache miss notices", () => {
       missedTokens: 70_000,
       missedCost: expect.closeTo(0.77, 6),
       missCount: 1,
+    });
+  });
+});
+
+describe("agreement with Pi's cache stats", () => {
+  it("counts the same re-billing as Pi over a session's history", async () => {
+    const { computeCacheWaste: piCacheWaste } = await importPiDist("core/cache-stats.js", [
+      "computeCacheWaste",
+    ]);
+    const models = {
+      ...prices,
+      getModel: () => ({ cost: { cacheRead: 1 } }),
+    };
+    const message = (options: Parameters<typeof assistant>[0]) => ({
+      type: "message",
+      message: assistant(options),
+    });
+    const entries = [
+      message({ timestamp: 1_000, input: 1_000, cacheRead: 69_000, cacheReadCost: 0.069 }),
+      // Idle past the cache TTL: re-billed.
+      message({ timestamp: 400_000, input: 70_000, inputCost: 0.84 }),
+      // A model switch re-bills too.
+      message({ timestamp: 401_000, input: 72_000, inputCost: 0.9, model: "claude-opus" }),
+      // A warming request refreshes the cache: the next answer is compared with it, not with
+      // the larger answer before it.
+      {
+        type: "usage",
+        kind: "cache_warm",
+        provider: "anthropic",
+        model: "claude-opus",
+        timestamp: new Date(600_000).toISOString(),
+        usage: assistant({ timestamp: 0, cacheRead: 50_000, cacheReadCost: 0.05 }).usage,
+      },
+      message({
+        timestamp: 700_000,
+        input: 23_000,
+        cacheRead: 50_000,
+        inputCost: 0.276,
+        cacheReadCost: 0.05,
+        model: "claude-opus",
+      }),
+      { type: "branch_summary" },
+      message({ timestamp: 800_000, input: 50_000, inputCost: 0.6 }),
+      { type: "compaction" },
+      message({ timestamp: 900_000, input: 30_000, inputCost: 0.36 }),
+      // Below the noise floor.
+      message({ timestamp: 901_000, input: 1_000, cacheRead: 29_500, cacheReadCost: 0.0295 }),
+    ];
+
+    const ours = computeCacheWaste(entries, prices);
+    const pi = (piCacheWaste as typeof computeCacheWaste)(entries, models);
+
+    expect(ours.missCount).toBe(2);
+    expect(ours).toEqual({
+      missedTokens: pi.missedTokens,
+      missedCost: expect.closeTo(pi.missedCost, 9),
+      missCount: pi.missCount,
     });
   });
 });

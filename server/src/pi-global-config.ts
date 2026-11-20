@@ -1,27 +1,27 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import {
-  createBashToolDefinition,
-  createEditToolDefinition,
-  createReadToolDefinition,
-  createWriteToolDefinition,
-  getDocsPath,
-  getExamplesPath,
-  getReadmePath,
-} from "@earendil-works/pi-coding-agent";
 import { properLockfile } from "./pi-lockfile.js";
+import { importPiDist } from "./pi-private.js";
+
+const [piTools, piSettings, piSystemPrompt] = await Promise.all([
+  importPiDist("core/tools/index.js", ["allToolNames", "createToolDefinition"]),
+  importPiDist("core/settings-manager.js", ["DEFAULT_TOOL_NAMES"]),
+  importPiDist("core/system-prompt.js", ["buildSystemPromptSections"]),
+]);
 
 export const PI_GLOBAL_SYSTEM_PROMPT_PATH = "~/.pi/agent/SYSTEM.md";
-export const PI_BUILTIN_TOOL_NAMES = [
-  "read",
-  "bash",
-  "edit",
-  "write",
-  "grep",
-  "find",
-  "ls",
-] as const;
+
+/** Pi's built-in tools (`allToolNames`), in Pi's order. */
+export const PI_BUILTIN_TOOL_NAMES = piTools.allToolNames as ReadonlySet<string>;
+
+/** The tools Pi selects when `defaultTools` is unset (`DEFAULT_TOOL_NAMES`). */
+export const PI_DEFAULT_TOOL_NAMES = piSettings.DEFAULT_TOOL_NAMES as readonly string[];
+
+/** Pi's built-in tools an Oppi host can run: every one but PowerShell, as no host is Windows. */
+const SETTING_TOOL_NAMES = new Set(
+  [...PI_BUILTIN_TOOL_NAMES].filter((name) => name !== "powershell"),
+);
 
 export type PiSystemPromptSource = "file" | "default";
 
@@ -35,9 +35,6 @@ export interface PiSystemPromptSnapshot {
 export interface PiDefaultToolsSnapshot {
   defaultTools: string[] | null;
 }
-
-const BUILTIN_TOOL_NAME_SET = new Set<string>(PI_BUILTIN_TOOL_NAMES);
-const DEFAULT_PROMPT_TOOL_NAMES = ["read", "bash", "edit", "write"] as const;
 
 export class PiGlobalConfigError extends Error {
   readonly code: "validation" | "malformed";
@@ -105,70 +102,39 @@ export function writePiDefaultTools(
   return snapshot;
 }
 
+/**
+ * The part of Pi's default system prompt that `SYSTEM.md` replaces (Pi uses the file in place of
+ * its preamble, tools, rules, and docs sections), built by Pi itself for its default tools.
+ */
 function buildPiDefaultSystemPromptTemplate(): string {
-  const tools = DEFAULT_PROMPT_TOOL_NAMES.map((name) => {
-    const definition = defaultPromptToolDefinition(name);
-    return { name, snippet: definition.promptSnippet, guidelines: definition.promptGuidelines };
+  const createToolDefinition = piTools.createToolDefinition as (
+    name: string,
+    cwd: string,
+  ) => { promptSnippet?: string; promptGuidelines?: string[] };
+  const buildSections = piSystemPrompt.buildSystemPromptSections as (options: {
+    cwd: string;
+    selectedTools: string[];
+    toolSnippets: Record<string, string>;
+    toolGuidelines: Record<string, string[]>;
+  }) => Record<string, string>;
+  const toolSnippets: Record<string, string> = {};
+  const toolGuidelines: Record<string, string[]> = {};
+  for (const name of PI_DEFAULT_TOOL_NAMES) {
+    const definition = createToolDefinition(name, "/");
+    // As `AgentSession` reads them: a snippet as one line, empty guidelines left out.
+    const snippet = definition.promptSnippet?.replace(/\s+/g, " ").trim();
+    if (snippet) toolSnippets[name] = snippet;
+    if (definition.promptGuidelines?.length) toolGuidelines[name] = definition.promptGuidelines;
+  }
+  const sections = buildSections({
+    cwd: "/",
+    selectedTools: [...PI_DEFAULT_TOOL_NAMES],
+    toolSnippets,
+    toolGuidelines,
   });
-  const toolsList = tools
-    .filter((tool) => tool.snippet)
-    .map((tool) => `- ${tool.name}: ${tool.snippet}`)
-    .join("\n");
-
-  const guidelinesList: string[] = [];
-  const seen = new Set<string>();
-  const addGuideline = (guideline: string): void => {
-    const normalized = guideline.trim();
-    if (normalized.length === 0 || seen.has(normalized)) return;
-    seen.add(normalized);
-    guidelinesList.push(normalized);
-  };
-
-  addGuideline("Use bash for file operations like ls, rg, find");
-  for (const tool of tools) {
-    for (const guideline of tool.guidelines ?? []) addGuideline(guideline);
-  }
-  addGuideline("Be concise in your responses");
-  addGuideline("Show file paths clearly when working with files");
-
-  const readmePath = getReadmePath();
-  const docsPath = getDocsPath();
-  const examplesPath = getExamplesPath();
-  return `You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
-
-Available tools:
-${toolsList}
-
-In addition to the tools above, you may have access to other custom tools depending on the project.
-
-Guidelines:
-${guidelinesList.map((guideline) => `- ${guideline}`).join("\n")}
-
-Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
-- Main documentation: ${readmePath}
-- Additional docs: ${docsPath}
-- Examples: ${examplesPath} (extensions, custom tools, SDK)
-- When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory
-- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pi packages (docs/packages.md), environment variables (docs/environment-variables.md)
-- When working on pi topics, read the docs and examples, and follow .md cross-references before implementing
-- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`;
-}
-
-function defaultPromptToolDefinition(name: (typeof DEFAULT_PROMPT_TOOL_NAMES)[number]): {
-  name: string;
-  promptSnippet?: string;
-  promptGuidelines?: string[];
-} {
-  switch (name) {
-    case "read":
-      return createReadToolDefinition("/");
-    case "bash":
-      return createBashToolDefinition("/");
-    case "edit":
-      return createEditToolDefinition("/");
-    case "write":
-      return createWriteToolDefinition("/");
-  }
+  return [sections.preamble, sections.tools, sections.rules, sections.docs]
+    .filter((section) => section !== undefined)
+    .join("\n\n");
 }
 
 function readGlobalSettingsObject(agentDir: string): Record<string, unknown> | undefined {
@@ -271,7 +237,7 @@ function validateDefaultTools(
     throw invalid();
   }
   const optional = new Set(optionalToolNames);
-  const isKnown = (name: string): boolean => BUILTIN_TOOL_NAME_SET.has(name) || optional.has(name);
+  const isKnown = (name: string): boolean => SETTING_TOOL_NAMES.has(name) || optional.has(name);
   if (
     value.some((entry) =>
       entry.startsWith("+") || entry.startsWith("-") ? !isKnown(entry.slice(1)) : !isKnown(entry),

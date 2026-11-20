@@ -4,7 +4,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 
-import { getDocsPath, getExamplesPath, getReadmePath } from "@earendil-works/pi-coding-agent";
+import {
+  createAgentSession,
+  getReadmePath,
+  SessionManager,
+  SettingsManager,
+} from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
 
 const settingsManagerHref = pathToFileURL(
@@ -15,7 +20,6 @@ const settingsManagerHref = pathToFileURL(
 ).href;
 
 import {
-  PI_BUILTIN_TOOL_NAMES,
   readPiDefaultTools,
   readPiSystemPrompt,
   writePiDefaultTools,
@@ -38,23 +42,28 @@ afterEach(() => {
 });
 
 describe("Pi global system prompt", () => {
-  it("returns the built-in default template when SYSTEM.md is missing", () => {
+  it("returns the part of Pi's own session prompt that SYSTEM.md replaces", async () => {
     const agentDir = makeAgentDir();
+    const cwd = join(dirname(agentDir), "work");
+    mkdirSync(cwd);
+    const { session } = await createAgentSession({
+      cwd,
+      agentDir,
+      sessionManager: SessionManager.inMemory(cwd),
+      settingsManager: SettingsManager.inMemory({}),
+    });
+    const sent = session.systemPrompt;
+    session.dispose();
 
     const snapshot = readPiSystemPrompt(agentDir);
 
     expect(snapshot.source).toBe("default");
     expect(snapshot.path).toBe("~/.pi/agent/SYSTEM.md");
     expect(snapshot.resolvedPath).toBeUndefined();
-    expect(snapshot.content).toContain("You are an expert coding assistant operating inside pi");
     expect(snapshot.content).toContain(`Main documentation: ${getReadmePath()}`);
-    expect(snapshot.content).toContain(`Additional docs: ${getDocsPath()}`);
-    expect(snapshot.content).toContain(`Examples: ${getExamplesPath()}`);
-    expect(snapshot.content).toContain("- read: Read file contents");
-    expect(snapshot.content).toContain("- bash: Execute bash commands");
-    expect(snapshot.content).not.toContain("Current working directory:");
-    expect(snapshot.content).not.toContain("<project_context>");
-    expect(snapshot.content).not.toMatch(/<project_instructions[\s\S]*AGENTS\.md/);
+    // A session without SYSTEM.md sends this text first; only the sections SYSTEM.md keeps follow.
+    expect(sent.startsWith(`${snapshot.content}\n\n<`)).toBe(true);
+    expect(sent.slice(snapshot.content.length)).not.toMatch(/<(tools|rules|docs)>/);
   });
 
   it("returns live SYSTEM.md contents when the file exists", () => {
@@ -173,18 +182,6 @@ describe("Pi defaultTools persistence", () => {
       defaultProvider: "openai",
       defaultTools: ["read"],
     });
-  });
-
-  it("exposes the built-in catalog without powershell", () => {
-    expect([...PI_BUILTIN_TOOL_NAMES]).toEqual([
-      "read",
-      "bash",
-      "edit",
-      "write",
-      "grep",
-      "find",
-      "ls",
-    ]);
   });
 
   it("coordinates with a concurrent FileSettingsStorage writer and preserves other keys", async () => {

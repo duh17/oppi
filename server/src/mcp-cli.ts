@@ -1,18 +1,16 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createLogger } from "./logger.js";
 import { McpError } from "./mcp-config.js";
+import { PI_PACKAGE_ENTRY } from "./pi-private.js";
 
 const log = createLogger({ base: { component: "mcp_cli" } });
 
 /** Resolve the package's declared CLI, not dist/cli.js (the unbundled shim). */
 function piCliPath(): string {
-  const root = dirname(
-    dirname(fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"))),
-  );
+  const root = dirname(dirname(PI_PACKAGE_ENTRY));
   const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
     bin: { pi: string };
   };

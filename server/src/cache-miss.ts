@@ -226,8 +226,10 @@ export function observeCacheMiss(
 
 /**
  * Feed saved history through the detector in order, resetting at compaction and branch
- * summaries (`type: "compaction" | "branch_summary"`; answers are `type: "message"`).
- * `visit` sees each assistant answer with the raw miss, if any.
+ * summaries (`type: "compaction" | "branch_summary"`; answers are `type: "message"`). A cache
+ * warming request (`type: "usage"`, `kind: "cache_warm"`) refreshed the cache, so the next
+ * answer is compared with it, as Pi's `cache-stats.ts` does. `visit` sees each assistant answer
+ * with the raw miss, if any.
  */
 function replayHistory(
   tracker: CacheMissTrackerState,
@@ -246,12 +248,28 @@ function replayHistory(
       resetCacheMissTracker(tracker);
       continue;
     }
+    if (entry.type === "usage" && entry.kind === "cache_warm") {
+      const warm = cacheWarmRequest(entry);
+      if (warm) tracker.previous = warm;
+      continue;
+    }
     if (entry.type !== "message") continue;
 
     const message = asCacheMissAssistantMessage(entry.message);
     if (!message) continue;
     visit(index, message, detectCacheMiss(tracker, message, models));
   }
+}
+
+function cacheWarmRequest(entry: Record<string, unknown>): CacheMissTrackerState["previous"] {
+  const message = asCacheMissAssistantMessage({
+    role: "assistant",
+    provider: entry.provider,
+    model: entry.model,
+    timestamp: typeof entry.timestamp === "string" ? Date.parse(entry.timestamp) : undefined,
+    usage: entry.usage,
+  });
+  return message ? previousRequest(message, true) : undefined;
 }
 
 export interface CacheMissHistoryNotice {

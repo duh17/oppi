@@ -10,6 +10,7 @@ import type { AgentDefinition } from "./agent-launch-service.js";
 import type { LoadedPlugin } from "./plugin-host.js";
 import { DURABLE_MCP_EXTENSION_PREFIX } from "./durable-mcp.js";
 import { BUILTIN_EXTENSION_PATH_PREFIX } from "./host-mcp-extensions.js";
+import { PI_BUILTIN_TOOL_NAMES, PI_DEFAULT_TOOL_NAMES } from "./pi-global-config.js";
 import type { ThinkingLevel } from "./thinking-levels.js";
 import type { Session } from "./types.js";
 import { LIVE_VOICE_EXTENSION } from "../plugins/live-voice/contract.js";
@@ -103,21 +104,6 @@ function durableInstructions(options: {
 }
 
 /**
- * Pi's built-in tool names (`allToolNames`, `pi-coding-agent` dist/core/tools/index.js). Durable
- * offers them through CodingTools (read, bash, edit, write) and the file tools (ls, find, grep).
- */
-const PI_BUILTIN_TOOL_NAMES: ReadonlySet<string> = new Set([
-  "read",
-  "bash",
-  "powershell",
-  "edit",
-  "write",
-  "grep",
-  "find",
-  "ls",
-]);
-
-/**
  * The tools Pi's `defaultTools` setting (the Pi Tools page) turns on and off: Pi's built-in tools
  * and the tools of its built-in `codemode` and `tool-search` extensions. Every other tool, an
  * extension's or an MCP server's, is on unless a tool policy says otherwise.
@@ -127,9 +113,6 @@ const PI_TOOLS_SETTING_NAMES: ReadonlySet<string> = new Set([
   "codemode",
   "tool_search",
 ]);
-
-/** Pi's `DEFAULT_TOOL_NAMES` (`pi-coding-agent` dist/core/settings-manager.js), not exported. */
-const PI_DEFAULT_TOOL_NAMES = ["read", "bash", "edit", "write"];
 
 /**
  * The tools Pi's `defaultTools` enables for a session whose settings are `settings`, as

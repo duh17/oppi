@@ -594,6 +594,29 @@ describe("architecture layer rule helpers", () => {
     }
   });
 
+  it("flags code that locates Pi's package outside pi-private.ts", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-pi-private-"));
+
+    try {
+      const locate =
+        'export const dist = import.meta.resolve("@earendil-works/pi-coding-agent");\n';
+      write(join(repoRoot, "server/src/pi-private.ts"), locate);
+      write(join(repoRoot, "server/src/share.ts"), locate);
+      write(
+        join(repoRoot, "server/src/commented.ts"),
+        '// import.meta.resolve("@earendil-works/pi-coding-agent")\nexport const ok = 1;\n',
+      );
+
+      const flagged = findServerLayerViolations(repoRoot)
+        .filter((violation) => violation.rule === "pi-private-boundary")
+        .map((violation) => violation.file);
+
+      expect(flagged).toEqual(["server/src/share.ts"]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("flags a session status assignment outside the lifecycle owner", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-status-writer-"));
 

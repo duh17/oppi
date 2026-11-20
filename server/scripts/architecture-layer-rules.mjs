@@ -47,6 +47,12 @@ const SERVER_MIRROR_RESUME_IMPORT_ALLOWED_FILES = new Set([
 const SERVER_CONFIG_UPDATE_ALLOWED_PREFIXES = ["server/src/storage/", "server/src/settings/"];
 const SERVER_CONFIG_UPDATE_CALL = /\.\s*updateConfig\s*\(/g;
 
+// Pi code its package root does not export is read through `pi-private.ts`, which names the
+// missing export when Pi moves it; it alone locates Pi's package (`PI_PACKAGE_ENTRY`).
+const SERVER_PI_PRIVATE_FILE = "server/src/pi-private.ts";
+const SERVER_PI_PACKAGE_LOCATE =
+  /import\.meta\.resolve\(\s*["']@earendil-works\/pi-coding-agent["']/;
+
 // `session-lifecycle-state.ts` is the only writer of `Session.status`. The match is textual: any
 // `.status`/`["status"]` assignment, comments ignored, so files that own a different `status`
 // field are listed by name. New rows set their status in an object literal, which this allows.
@@ -766,6 +772,23 @@ export function findServerLayerViolations(repoRoot, files = undefined) {
           }),
         );
       }
+    }
+
+    const piLocate = SERVER_PI_PACKAGE_LOCATE.exec(strippedSource);
+    if (piLocate && importer !== SERVER_PI_PRIVATE_FILE) {
+      const location = lineAndColumnForIndex(strippedSource, piLocate.index);
+      violations.push(
+        makeServerViolation({
+          rule: "pi-private-boundary",
+          importer,
+          target: "@earendil-works/pi-coding-agent dist",
+          line: location.line,
+          column: location.column,
+          reason: "Pi code its package root does not export is loaded only through pi-private.ts.",
+          remediation:
+            "Use importPiDist or PI_PACKAGE_ENTRY from server/src/pi-private.ts instead of locating Pi's package or copying its code.",
+        }),
+      );
     }
 
     if (!SERVER_CONFIG_UPDATE_ALLOWED_PREFIXES.some((prefix) => importer.startsWith(prefix))) {

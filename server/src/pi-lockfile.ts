@@ -1,10 +1,8 @@
 import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
+import { PI_PACKAGE_ENTRY } from "./pi-private.js";
 
 /** `proper-lockfile` as bundled with `@earendil-works/pi-coding-agent`. */
-export const properLockfile = createRequire(
-  fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent")),
-)("proper-lockfile") as {
+export const properLockfile = createRequire(PI_PACKAGE_ENTRY)("proper-lockfile") as {
   lock: (
     file: string,
     options?: {

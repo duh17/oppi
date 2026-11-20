@@ -60,6 +60,7 @@ import { isSpeechEnabled } from "./speech-synthesis.js";
 import { LiveVoiceSessionLink } from "./live-voice-speech.js";
 import { FileVoiceCallStore, voiceCallStorePath } from "./voice-call-store.js";
 import { PiTuiMirrorRuntime } from "./pi-tui-mirror-runtime.js";
+import { PI_PACKAGE_ENTRY } from "./pi-private.js";
 import { SessionRuntimes } from "./runtime-router.js";
 import {
   ModelRegistry,
@@ -419,8 +420,7 @@ export class Server {
   /** Version of the imported `@earendil-works/pi-coding-agent` package.json. */
   static readEmbeddedPiAgentVersion(): string {
     try {
-      const entry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
-      return Server.readPiPackageVersionNear(entry);
+      return Server.readPiPackageVersionNear(PI_PACKAGE_ENTRY);
     } catch {
       return "unknown";
     }

@@ -5,8 +5,10 @@ import { isPathWithinRoot } from "./path-utils.js";
 
 /**
  * Plugin discovery in upstream Chord's documented layout (`packages/chord/docs/next/plugin-authoring.md`),
- * ported from Chord's `next-node/plugins/discover.ts`, which 1.5.0 ships but does not export. Replace it
- * with upstream's `discoverPlugins` once that is exported. Nothing here parses or runs plugin code.
+ * ported from Chord's `node/plugins/discover.ts`. Chord exports `discoverPlugins` only from
+ * `@earendil-works/chord/plugins`, whose entry also loads Chord's plugin build and with it esbuild, an
+ * optional peer of Chord that an npm install of Oppi does not have. Replace this port once discovery
+ * can be imported without esbuild. Nothing here parses or runs plugin code.
  *
  * A package is a directory with a `package.json`: the plugins its `"chord": { "plugins": [...] }` lists
  * (paths, `*`/`**` globs, `!` exclusions); without that list itself when its top has a facet file, else

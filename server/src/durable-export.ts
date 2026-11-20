@@ -6,10 +6,10 @@
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { sanitizeTranscriptCard } from "./durable-ui.js";
+import { importPiDist } from "./pi-private.js";
 import type { SessionEntry } from "./trace.js";
 
 export interface DurableExportState {
@@ -28,15 +28,12 @@ interface PiHtmlExport {
 
 let loading: Promise<PiHtmlExport> | undefined;
 
-/** Pi exports neither piece from its package root. Same dist loading as `pi-mcp-internals.ts`. */
+/** Pi exports neither piece from its package root. */
 function loadPiHtmlExport(): Promise<PiHtmlExport> {
   return (loading ??= (async () => {
-    const dist = dirname(fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent")));
-    const load = (path: string): Promise<Record<string, unknown>> =>
-      import(pathToFileURL(join(dist, path)).href) as Promise<Record<string, unknown>>;
     const [exporter, theme] = await Promise.all([
-      load("core/export-html/index.js"),
-      load("modes/interactive/theme/theme.js"),
+      importPiDist("core/export-html/index.js", ["exportSessionToHtml"]),
+      importPiDist("modes/interactive/theme/theme.js", ["getThemeByName"]),
     ]);
     return {
       exportSessionToHtml: exporter.exportSessionToHtml,
