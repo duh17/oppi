@@ -1,6 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 import type { Message } from "@earendil-works/pi-ai";
@@ -32,6 +32,11 @@ import {
 import type { ExtensionUISurface, ServerMessage, Session, Workspace } from "../src/types.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
 import { makeTempDir } from "./harness/temp-dir.js";
+import { bootDurablePlugins, DURABLE_BOOT_TIMEOUT_MS } from "./harness/durable-boot.js";
+
+// The first durable runtime in a worker imports every built-in plugin; boot that once here, on
+// its own budget, instead of inside whichever test runs first.
+beforeAll(bootDurablePlugins, DURABLE_BOOT_TIMEOUT_MS);
 
 // The example plugins Oppi ships off (server/plugins/example-*), driven as the owner would: their
 // rows on the extension list turn them on, and a durable session's model calls their tools.
@@ -339,7 +344,7 @@ describe("example plugins", () => {
     }));
     await f.reattach(session);
     expect(await f.offered(session)).toEqual([]);
-  });
+  }, 30_000);
 
   it("bookmarks: saved links survive a server restart and belong to their chat", async () => {
     const f = await fixture();

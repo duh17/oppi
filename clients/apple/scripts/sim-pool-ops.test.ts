@@ -2,7 +2,7 @@ import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   APP_BUNDLE_ID,
   applyPoolBuildSettings,
@@ -13,6 +13,7 @@ import {
   extractBuildTimingSummary,
   extractCompilerLinkerErrors,
   extractPoolFlags,
+  finishedTests,
   logTestFailureLines,
   GATE_POOL_WAIT_SECONDS,
   loadConfig,
@@ -581,4 +582,66 @@ describe("sim-pool checkout targeting", () => {
     expect(ensureOppiTestsInfoPlist(appleDir)).toBe(plist);
     expect(readFileSync(plist, "utf8")).toBe("keep-me\n");
   });
+});
+
+describe("finishedTests completion guards", () => {
+  const swiftTestPrelude = `Test Suite 'All tests' passed at 2026-10-01 13:10:19.718.
+\t Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+◇ Test run started.
+`;
+  const swiftPassed = "✔ Test run with 9 tests in 1 suite passed after 11.224 seconds.\n";
+  const xctestE2E = (failures: number) => `Test Suite 'Selected tests' started at 2026-10-08 20:08:53.283.
+Test Suite 'OppiE2ETests.xctest' started at 2026-10-08 20:08:53.284.
+Test Suite 'ChatE2ETests' started at 2026-10-08 20:08:53.284.
+Test Case '-[OppiE2ETests.ChatE2ETests testSend]' started.
+Test Case '-[OppiE2ETests.ChatE2ETests testSend]' ${failures ? "failed" : "passed"} (20.972 seconds).
+Test Suite 'ChatE2ETests' ${failures ? "failed" : "passed"} at 2026-10-08 20:09:14.260.
+\t Executed 1 test, with ${failures} failure${failures === 1 ? "" : "s"} (0 unexpected) in 20.972 (20.976) seconds
+Test Suite 'OppiE2ETests.xctest' ${failures ? "failed" : "passed"} at 2026-10-08 20:09:14.261.
+\t Executed 1 test, with ${failures} failure${failures === 1 ? "" : "s"} (0 unexpected) in 20.972 (20.977) seconds
+Test Suite 'Selected tests' ${failures ? "failed" : "passed"} at 2026-10-08 20:09:14.261.
+\t Executed 1 test, with ${failures} failure${failures === 1 ? "" : "s"} (0 unexpected) in 20.972 (20.978) seconds
+2026-10-08 20:09:14.303 xcodebuild[75205:17669572] [MT] IDESchemeActionSDKRecord: operatingSystemBuild = <DVTBuildVersion 24A94232>, error = invalidDigitCount(94232).
+`;
+  // Exact completionArgv (`split.argv`) shapes that runXcodebuildAttempt passes to finishedTests.
+  const unitArgs = ["-scheme", "OppiUnitTests", "test", "-only-testing:OppiTests"];
+  const e2eArgs = ["-scheme", "Oppi", "test", "-only-testing:OppiE2ETests/ChatE2ETests/testSend"];
+
+  // Positive control for every argv shape below so no guard row can pass vacuously.
+  test.each([
+    ["unit Swift Testing", unitArgs, swiftTestPrelude + swiftPassed, { outcome: "passed", tests: 9, suites: 1, issues: 0 }],
+    ["unit with relative Oppi.xcodeproj", [...unitArgs, "-project", "Oppi.xcodeproj"], swiftTestPrelude + swiftPassed, { outcome: "passed", tests: 9, suites: 1, issues: 0 }],
+    ["unit with resolved Oppi.xcodeproj", [...unitArgs, "-project", resolve("Oppi.xcodeproj")], swiftTestPrelude + swiftPassed, { outcome: "passed", tests: 9, suites: 1, issues: 0 }],
+    ["unit with parallel-testing NO", [...unitArgs, "-parallel-testing-enabled", "NO"], swiftTestPrelude + swiftPassed, { outcome: "passed", tests: 9, suites: 1, issues: 0 }],
+    ["E2E XCTest", e2eArgs, xctestE2E(0), { outcome: "passed", tests: 1, suites: 1, issues: 0 }],
+    ["allowed scheme single XCTest bundle", ["-scheme", "Oppi", "test", "-only-testing:ParallelTests"], xctestE2E(0), { outcome: "passed", tests: 1, suites: 1, issues: 0 }],
+  ] as const)("positive control: %s accepts a clean passing log", (_name, argv, text, expected) => {
+    expect(finishedTests([...argv], `Resolve Package Graph\n${text}`)).toMatchObject(expected);
+  });
+
+  const completionGuards: { name: string; text: string; args?: string[]; extraArgs?: string[] }[] = [
+    { name: "pre-test launch stall", text: "Build succeeded; launching test host...\n" },
+    { name: "foreign project", text: swiftTestPrelude + swiftPassed, extraArgs: ["-project", "/tmp/Other.xcodeproj"] },
+    { name: "suite result without run completion", text: swiftTestPrelude + "✔ Suite example passed after 1.0 seconds.\n" },
+    { name: "zero tests", text: swiftTestPrelude + swiftPassed.replace("9 tests", "0 tests") },
+    { name: "truncated terminal line", text: swiftTestPrelude + swiftPassed.replace("seconds.", "seconds") },
+    { name: "no XCTest completion", text: "◇ Test run started.\n" + swiftPassed },
+    { name: "later test activity", text: swiftTestPrelude + swiftPassed + "◇ Test unfinished() started.\n" },
+    { name: "multiple test processes", text: swiftTestPrelude + swiftPassed + swiftTestPrelude + swiftPassed },
+    { name: "multiple bundles", text: swiftTestPrelude + swiftPassed, extraArgs: ["-only-testing:OppiE2ETests"] },
+    { name: "repeated tests", text: swiftTestPrelude + swiftPassed, extraArgs: ["-test-iterations", "2"] },
+    { name: "parallel workers", text: swiftTestPrelude + swiftPassed, extraArgs: ["-parallel-testing-enabled", "YES"] },
+    { name: "XCTest failures", text: swiftTestPrelude.replace("with 0 failures", "with 1 failures") + swiftPassed },
+    { name: "infrastructure failure", text: swiftTestPrelude + swiftPassed + "Testing failed:\nrunner disconnected\n" },
+    { name: "XCTest run of two bundles", text: xctestE2E(0), args: [...e2eArgs, "-only-testing:OppiUITests"] },
+    { name: "XCTest activity after the top-level result", text: xctestE2E(0) + "Test Suite 'Selected tests' started at 2026-10-08 20:09:15.000.\n", args: e2eArgs },
+    { name: "XCTest run of a parallel scheme", text: xctestE2E(0), args: ["-scheme", "ParallelScheme", "test", "-only-testing:ParallelTests"] },
+    { name: "XCTest passed with failures", text: xctestE2E(1).replaceAll("failed at", "passed at"), args: e2eArgs },
+  ];
+  for (const guard of completionGuards) {
+    test(`${guard.name} is rejected as incomplete`, () => {
+      const argv = [...(guard.args ?? unitArgs), ...(guard.extraArgs ?? [])];
+      expect(finishedTests(argv, `Resolve Package Graph\n${guard.text}`)).toBeUndefined();
+    });
+  }
 });

@@ -296,7 +296,11 @@ describe("sim-pool claim and release", () => {
     const blocked = sim.pool(["release", "--owner", "worker-a"]);
     expect(blocked.status).not.toBe(0);
     expect(blocked.stderr).toContain("busy");
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const deadline = Date.now() + 30_000;
+    while (!stderr.includes("busy, waiting") && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(stderr).toContain("busy, waiting");
     releaseClaimed(held.owned, { owner: "worker-a", profile: "duo" });
     expect({ status: await exited, stderr }).toMatchObject({ status: 0 });
     expect(stdout.trim()).toBe("UDID-Oppi-Pool-30");
@@ -697,11 +701,11 @@ describe("sim-pool slot wait", () => {
   });
 
   test("a gate run that never gets a slot fails at its deadline and says so", async () => {
-    const pool = busyPool({ OPPI_SIM_POOL_GATE: "1", OPPI_SIM_POOL_WAIT: "4" });
-    expect(await pool.announced("busy, waiting up to 4s")).toBe(true);
+    const pool = busyPool({ OPPI_SIM_POOL_GATE: "1", OPPI_SIM_POOL_WAIT: "2" });
+    expect(await pool.announced("busy, waiting up to 2s")).toBe(true);
     expect(await pool.exited).not.toBe(0);
     pool.release();
-    expect(pool.output()).toContain("error: all 1 simulator slots (slots 0) are busy or quarantined (waited 4s)");
+    expect(pool.output()).toContain("error: all 1 simulator slots (slots 0) are busy or quarantined (waited 2s)");
     expect(pool.sim.state("Oppi-Pool-0")).toBe("Shutdown");
   });
 

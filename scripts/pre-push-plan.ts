@@ -10,6 +10,8 @@ export type PrePushPlan = {
   server: ServerGateMode;
   apple: AppleGateMode;
   harness: boolean;
+  /** A script under clients/apple/scripts/ changed: the harness lane also runs sim-pool self-test. */
+  simPool: boolean;
   /** A `dev/` doc, its budgets, or their guard changed: the hook runs scripts/dev-docs-guard.ts. */
   docs: boolean;
   changedPaths: string[];
@@ -22,7 +24,6 @@ const gatePolicyPaths = new Set([
   "scripts/pre-push-plan.test.ts",
   "scripts/heavy.sh",
   "scripts/heavy.test.ts",
-  "dev/testing/README.md",
   "scripts/dev-docs-guard.ts",
   "scripts/dev-docs-guard.test.ts",
 ]);
@@ -103,11 +104,18 @@ export function planForPaths(inputPaths: Iterable<string>): PrePushPlan {
   let server: ServerGateMode = "none";
   let apple: AppleGateMode = "none";
   let harness = false;
+  let simPool = false;
   let docs = false;
 
   for (const path of changedPaths) {
     if (affectsDevDocs(path)) docs = true;
     if (harnessTestedPaths.has(path)) harness = true;
+    // unit-shards.ts and ui-shards.ts import scripts/gate-report.ts, and sim-pool self-test is
+    // the only gate lane that runs their tests and typechecks them.
+    if (path.startsWith("clients/apple/scripts/") || path === "scripts/gate-report.ts") {
+      harness = true;
+      simPool = true;
+    }
 
     if (gatePolicyPaths.has(path) || path.startsWith(".github/workflows/")) {
       harness = true;
@@ -176,7 +184,7 @@ export function planForPaths(inputPaths: Iterable<string>): PrePushPlan {
     apple = strongerApple(apple, "unit");
   }
 
-  return { server, apple, harness, docs, changedPaths };
+  return { server, apple, harness, simPool, docs, changedPaths };
 }
 
 /**
@@ -340,6 +348,7 @@ if (import.meta.main) {
     console.log(`SERVER_MODE=${plan.server}`);
     console.log(`APPLE_MODE=${plan.apple}`);
     console.log(`HARNESS_CHANGED=${plan.harness ? 1 : 0}`);
+    console.log(`SIM_POOL_CHANGED=${plan.simPool ? 1 : 0}`);
     console.log(`DOCS_CHANGED=${plan.docs ? 1 : 0}`);
     console.log(`CHANGED_COUNT=${plan.changedPaths.length}`);
     console.log(`APPLE_RELEASE=${releaseWhy === null ? 0 : 1}`);

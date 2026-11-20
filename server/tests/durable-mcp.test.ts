@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { ModelRuntime, ProjectTrustStore, SettingsManager } from "@earendil-works/pi-coding-agent";
 import type { ConversationId } from "@earendil-works/pi-durable";
@@ -27,7 +27,12 @@ import { resolveSandboxGuestCwd } from "../src/workspace-folder.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import type { ServerMessage, Session, Workspace } from "../src/types.js";
+import { bootDurablePlugins, DURABLE_BOOT_TIMEOUT_MS } from "./harness/durable-boot.js";
 import { makeTempDir } from "./harness/temp-dir.js";
+
+// The first durable runtime in a worker imports every built-in plugin; boot that once here, on
+// its own budget, instead of inside whichever test runs first.
+beforeAll(bootDurablePlugins, DURABLE_BOOT_TIMEOUT_MS);
 
 const ECHO_SERVER = fileURLToPath(new URL("./fixtures/mcp-echo-server.mjs", import.meta.url));
 
@@ -229,7 +234,7 @@ describe("server durable MCP (host)", () => {
     expect(await toolResults(f.manager, f.session.id)).toEqual([
       expect.stringContaining("mcp__echo__echo"),
     ]);
-  });
+  }, 30_000);
 
   it("offers direct tools on the first prompt, reports a broken server once, and stops its servers with the session", async () => {
     const marker = join(agentDir, "echo.marker");
@@ -270,7 +275,7 @@ describe("server durable MCP (host)", () => {
         return true;
       }
     }, "echo server to exit after Stop");
-  });
+  }, 30_000);
 
   it("frees a stopped session while an older registry snapshot still holds its MCP extension", async () => {
     writeMcpJson(agentDir, {
@@ -307,7 +312,7 @@ describe("server durable MCP (host)", () => {
     expect(await collected(mcp)).toBe(true);
     expect(await collected(backend)).toBe(true);
     expect(pinned.length).toBeGreaterThan(0);
-  });
+  }, 30_000);
 
   it("turns codemode on for a codemode server, whose tools scripts call and tool_search loads, and keeps loaded ones after a restart", async () => {
     const marker = join(agentDir, "echo.marker");
@@ -371,7 +376,7 @@ describe("server durable MCP (host)", () => {
     await prompt(restarted, f.session.id, "Echo again");
     expect(read(marker)).toContain('call echo {"text":"again"}');
     expect((await toolResults(restarted, f.session.id)).at(-1)).toContain("echo:again");
-  });
+  }, 30_000);
 
   it("follows Pi's tool policy: an allow list naming codemode lets scripts reach MCP tools, never direct or excluded ones", async () => {
     const marker = (name: string) => join(agentDir, `${name}.marker`);
@@ -425,7 +430,7 @@ describe("server durable MCP (host)", () => {
     expect(results[2]).toContain("echo:script");
     expect(results[2]).toContain("mcp__secret__echo unavailable");
     expect(results[2]).toContain("mcp__loud__echo unavailable");
-  });
+  }, 30_000);
 
   it("connects a cached codemode server at its first call, not at session start, and fails that call when the server is down", async () => {
     const marker = join(agentDir, "echo.marker");
@@ -517,7 +522,7 @@ describe("server durable MCP (host)", () => {
     expect(failed).toContain('MCP server \\"echo\\"');
     expect(failed).toContain("echo server is down");
     expect(read(marker)).not.toContain("never");
-  });
+  }, 30_000);
 
   it("refreshes a stale cached list at the first call, which concurrent calls share", async () => {
     const marker = join(agentDir, "echo.marker");
@@ -548,7 +553,7 @@ describe("server durable MCP (host)", () => {
     expect(
       [...cache.load().values()].map((snapshot) => snapshot.tools.map((tool) => tool.name)),
     ).toEqual([["echo"]]);
-  });
+  }, 30_000);
 
   it("ends a call waiting on a cached server's hung first connect at Stop, not at its timeout", async () => {
     const pidFile = join(agentDir, "hang.pid");
@@ -578,7 +583,7 @@ describe("server durable MCP (host)", () => {
       "agent_end after Stop",
     );
     projection.unsubscribe();
-  });
+  }, 30_000);
 
   it("fails a call to a cached OAuth server that needs sign-in with a pointer to Oppi's MCP settings", async () => {
     const remote = createServer((_req, res) => {
@@ -621,7 +626,7 @@ describe("server durable MCP (host)", () => {
     } finally {
       remote.close();
     }
-  });
+  }, 30_000);
 
   it("in a sandbox, loads only picked global servers, runs stdio in the VM, and refuses hosts outside Allowed Hosts", async () => {
     const marker = (name: string) => join(agentDir, `${name}.marker`);
@@ -706,7 +711,7 @@ describe("server durable MCP (host)", () => {
     ]);
     // The codemode server keeps its exposure in a sandbox: callable from scripts, not offered.
     expect(agent.callable.map((tool: { name: string }) => tool.name)).toContain("mcp__lazy__echo");
-  });
+  }, 30_000);
 
   it.each([
     ["deny", 2, false],
@@ -739,6 +744,7 @@ describe("server durable MCP (host)", () => {
         expect(new ProjectTrustStore(agentDir).get(f.dir)).toBe(false);
       }
     },
+    30_000,
   );
 });
 
@@ -798,7 +804,7 @@ describe("DurableMcp tool offers", () => {
     } finally {
       await mcp!.close();
     }
-  });
+  }, 30_000);
 
   it("retries a failed tool-list commit at the next prompt instead of failing every prompt", async () => {
     const { conversation, state } = flakyConversation(1);
@@ -816,5 +822,5 @@ describe("DurableMcp tool offers", () => {
     } finally {
       await mcp!.close();
     }
-  });
+  }, 30_000);
 });

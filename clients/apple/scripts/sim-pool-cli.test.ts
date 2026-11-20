@@ -542,16 +542,57 @@ describe("sim-pool CLI", () => {
 
   test("runs that start together and take the same slot one after the other each keep their own log and summary", async () => {
     const fx = slotlessFixture("same-slot");
-    // The slot is held for a second and a half, so the second run is still queued when its stamp would be taken.
+    // Hold the first run in slot 0 until the second run is queued behind it and the 1-second
+    // slotStamp advances, so the overlap is deterministic without sleeping in the second run.
+    const firstLock = join(fx.fake, "first.lock");
+    const firstSec = join(fx.fake, "first.sec");
+    const releaseFile = join(fx.fake, "release");
     renameSync(join(fx.root, "bin", "xcodebuild"), join(fx.root, "bin", "xcodebuild.real"));
-    writeFileSync(join(fx.root, "bin", "xcodebuild"), `#!/bin/sh\ncase " $* " in *" test-without-building "*) sleep 1.5;; esac\nexec "${join(fx.root, "bin", "xcodebuild.real")}" "$@"\n`, { mode: 0o755 });
+    writeFileSync(
+      join(fx.root, "bin", "xcodebuild"),
+      `#!/bin/sh
+case " $* " in *" test-without-building "*)
+  if mkdir "${firstLock}" 2>/dev/null; then
+    date +%s > "${firstSec}"
+    while [ ! -f "${releaseFile}" ]; do sleep 0.05; done
+  fi
+  ;;
+esac
+exec "${join(fx.root, "bin", "xcodebuild.real")}" "$@"
+`,
+      { mode: 0o755 },
+    );
     const env = { ...fx.env, OPPI_SIM_POOL_WAIT: "60" };
+    let stderr = "";
     const start = () => {
-      const child = spawn("bun", [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "OppiUnitTests", "test", "-only-testing:OppiTests/FooTests"], { cwd: fx.apple, env });
+      const child = spawn("bun", [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "OppiUnitTests", "test", "-only-testing:OppiTests/FooTests"], {
+        cwd: fx.apple,
+        env,
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      child.stderr!.on("data", (chunk) => {
+        stderr += String(chunk);
+      });
       procs.push(child);
       return new Promise<number | null>((resolve) => child.on("exit", (code) => resolve(code)));
     };
-    expect(await Promise.all([start(), start()])).toEqual([0, 0]);
+    const runs = Promise.all([start(), start()]);
+    try {
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        if (existsSync(firstSec) && stderr.includes("busy, waiting")) {
+          const startedSec = Number(readFileSync(firstSec, "utf8").trim());
+          if (Math.floor(Date.now() / 1000) > startedSec) break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      expect(existsSync(firstSec)).toBe(true);
+      expect(stderr).toContain("busy, waiting");
+      writeFileSync(releaseFile, "");
+      expect(await runs).toEqual([0, 0]);
+    } finally {
+      writeFileSync(releaseFile, "");
+    }
     const summaries = readdirSync(join(fx.apple, ".build", "logs")).filter((name) => /^pool-0-.*\.summary\.json$/.test(name));
     expect(summaries).toHaveLength(2);
   });
@@ -1430,8 +1471,8 @@ sleep 30
       args: e2eArgs,
       listed: { "ChatE2ETests/testSend()": "Failed" },
       unfinishedBundle: true,
-      // Ten completion waits; the run's 2-second silence window passes too while it writes.
-      afterLog: `/bin/sleep 10; : > "$bundle/Info.plist"; exec /bin/sleep 30`,
+      // Three completion waits; the run's 2-second silence window passes too while it writes.
+      afterLog: `/bin/sleep 3; : > "$bundle/Info.plist"; exec /bin/sleep 30`,
       env: { OPPI_SIM_POOL_RESULT_TIMEOUT: "60", OPPI_SIM_POOL_SILENCE_TIMEOUT: "2" },
       timeoutMs: 60_000,
     });
@@ -1448,7 +1489,7 @@ sleep 30
     expect(result.run.stderr).toContain("xcodebuild is still writing");
     expect(result.run.stderr).toContain("completion hang:");
     // Stopped once the bundle was written, well before the result wait ran out.
-    expect(result.summary.elapsed_seconds).toBeGreaterThanOrEqual(10);
+    expect(result.summary.elapsed_seconds).toBeGreaterThanOrEqual(3);
     expect(result.summary.elapsed_seconds).toBeLessThan(40);
   });
 
@@ -1458,13 +1499,13 @@ sleep 30
       listed: { "ChatE2ETests/testSend()": "Failed" },
       unfinishedBundle: true,
       afterLog: "exec /bin/sleep 120",
-      env: { OPPI_SIM_POOL_RESULT_TIMEOUT: "4" },
+      env: { OPPI_SIM_POOL_RESULT_TIMEOUT: "3" },
       timeoutMs: 60_000,
     });
     expect(result.run.status).toBe(65);
     expect(result.attempts).toHaveLength(1);
     expect(result.calls).not.toMatch(/simctl (shutdown|erase)/);
-    expect(result.run.stderr).toMatch(/completion hang: .* xcodebuild still alive after [45]s/);
+    expect(result.run.stderr).toMatch(/completion hang: .* xcodebuild still alive after [34]s/);
     expect(result.summary).toMatchObject({
       exit_code: 65, completion_hang_detected: true, xcodebuild_exit_code: null, xcodebuild_signal: "SIGTERM",
       test_results: { bundle: expect.stringMatching(/Run\.xcresult$/), unreadable: expect.stringContaining("Info.plist") },
@@ -1481,8 +1522,8 @@ sleep 30
       args: e2eArgs,
       listed: { "ChatE2ETests/testSend()": "Passed" },
       unfinishedBundle: true,
-      // Ten completion waits; the run's 2-second silence window passes too while it writes.
-      afterLog: `/bin/sleep 10; : > "$bundle/Info.plist"; exec /bin/sleep 30`,
+      // Three completion waits; the run's 2-second silence window passes too while it writes.
+      afterLog: `/bin/sleep 3; : > "$bundle/Info.plist"; exec /bin/sleep 30`,
       env: { OPPI_SIM_POOL_RESULT_TIMEOUT: "60", OPPI_SIM_POOL_SILENCE_TIMEOUT: "2" },
       timeoutMs: 60_000,
     });
@@ -1495,7 +1536,7 @@ sleep 30
     expect(result.run.stdout).toContain("Tests: 1 (1 passed, 0 failed, 0 skipped); xcresult Passed");
     expect(result.run.stderr).toContain("xcodebuild is still writing");
     // Stopped once the bundle was written, well before the result wait ran out.
-    expect(result.summary.elapsed_seconds).toBeGreaterThanOrEqual(10);
+    expect(result.summary.elapsed_seconds).toBeGreaterThanOrEqual(3);
     expect(result.summary.elapsed_seconds).toBeLessThan(40);
   });
 
@@ -1617,36 +1658,8 @@ sleep 30
     expect(result.attempts).toHaveLength(1);
   });
 
-  const completionGuards = [
-    { name: "pre-test launch stall", text: "Build succeeded; launching test host...\n" },
-    { name: "foreign project", text: swiftTestPrelude + swiftPassed, extraArgs: ["-project", "/tmp/Other.xcodeproj"] },
-    { name: "suite result without run completion", text: swiftTestPrelude + "✔ Suite example passed after 1.0 seconds.\n" },
-    { name: "zero tests", text: swiftTestPrelude + swiftPassed.replace("9 tests", "0 tests") },
-    { name: "truncated terminal line", text: swiftTestPrelude + swiftPassed.replace("seconds.", "seconds") },
-    { name: "no XCTest completion", text: "◇ Test run started.\n" + swiftPassed },
-    { name: "later test activity", text: swiftTestPrelude + swiftPassed + "◇ Test unfinished() started.\n" },
-    { name: "multiple test processes", text: swiftTestPrelude + swiftPassed + swiftTestPrelude + swiftPassed },
-    { name: "multiple bundles", text: swiftTestPrelude + swiftPassed, extraArgs: ["-only-testing:OppiE2ETests"] },
-    { name: "repeated tests", text: swiftTestPrelude + swiftPassed, extraArgs: ["-test-iterations", "2"] },
-    { name: "parallel workers", text: swiftTestPrelude + swiftPassed, extraArgs: ["-parallel-testing-enabled", "YES"] },
-    { name: "XCTest failures", text: swiftTestPrelude.replace("with 0 failures", "with 1 failures") + swiftPassed },
-    { name: "infrastructure failure", text: swiftTestPrelude + swiftPassed + "Testing failed:\nrunner disconnected\n" },
-    { name: "XCTest run of two bundles", text: xctestE2E(0), args: [...e2eArgs, "-only-testing:OppiUITests"] },
-    { name: "XCTest activity after the top-level result", text: xctestE2E(0) + "Test Suite 'Selected tests' started at 2026-10-08 20:09:15.000.\n", args: e2eArgs },
-    { name: "XCTest run of a parallel scheme", text: xctestE2E(0), args: ["-scheme", "ParallelScheme", "test", "-only-testing:ParallelTests"] },
-    { name: "XCTest passed with failures", text: xctestE2E(1).replaceAll("failed at", "passed at"), args: e2eArgs },
-  ];
-  for (const guard of completionGuards) {
-    test(`${guard.name} cannot turn an incomplete hang into a pass`, () => {
-      const result = runCompletionFixture(`Resolve Package Graph\n${guard.text}`, { args: guard.args, extraArgs: guard.extraArgs });
-      expect(result.run.status).toBe(143);
-      expect(result.attempts).toHaveLength(2);
-      expect(result.summary.hang_detected).toBe(true);
-      expect(result.summary.completion_hang_detected).toBeUndefined();
-      expect(result.summary.test_completion).toBeUndefined();
-      expect(result.calls).toContain("simctl erase");
-    });
-  }
+  // The 17 finishedTests rejection guards live in-process in sim-pool-ops.test.ts (with positive
+  // controls); the hang-retry CLI path is covered by the tests above.
 
   test("real nonzero xcodebuild exit after a passed test summary is not masked", () => {
     const result = runCompletionFixture(swiftTestPrelude + swiftPassed, { afterLog: "exit 65" });

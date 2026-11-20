@@ -40,13 +40,20 @@ function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 }
 
-function installSlowWorktreeRemove(bin: string): void {
+function installSlowWorktreeRemove(bin: string, cwd: string, stateDir: string): void {
   const realGit = execFileSync("/bin/sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  const state = JSON.stringify(stateDir);
   writeFileSync(
     join(bin, "git"),
     `#!/bin/sh
-if [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then
-  sleep 1
+expected=${JSON.stringify(cwd)}
+expected_p=$(cd "$expected" && pwd -P)
+pwd_p=$(pwd -P)
+if [ "$pwd_p" = "$expected_p" ] && [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then
+  touch ${state}/remove-started
+  while [ ! -f ${state}/release-remove ]; do
+    sleep 0.02
+  done
 fi
 exec ${JSON.stringify(realGit)} "$@"
 `,
@@ -125,10 +132,13 @@ rmdir ${active}/$$
       : // Arrivals stay recorded: the first add to see both must not leave before the second looks.
         `#!/bin/sh
 mkdir ${active}/$$
-while [ "$(ls ${active} | wc -l)" -lt 2 ]; do
-  sleep 0.02
+while :; do
+  set -- ${active}/*
+  [ $# -ge 2 ] && break
+  sleep 0.05
 done
-ls ${active} | wc -l | tr -d ' ' >> ${log}
+set -- ${active}/*
+printf '%s\n' "$#" >> ${log}
 `,
   );
   chmodSync(join(hooks, "post-checkout"), 0o755);
@@ -577,7 +587,7 @@ describe("workspace worktrees", async () => {
   });
 
   it("hides a worktree from the catalog while its removal runs and rejects a second removal", async () => {
-    const { workspace } = makeGitWorkspace();
+    const { workspace, root } = makeGitWorkspace();
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-pending-"));
     roots.push(dataDir);
     const created = await createWorkspaceWorktree(
@@ -585,16 +595,25 @@ describe("workspace worktrees", async () => {
       { branch: "feature/pending" },
       { dataDir },
     );
+    const stateDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-slow-remove-state-"));
+    roots.push(stateDir);
     const bin = mkdtempSync(join(tmpdir(), "oppi-worktrees-slow-remove-"));
     roots.push(bin);
-    installSlowWorktreeRemove(bin);
+    installSlowWorktreeRemove(bin, root, stateDir);
     const previousPath = process.env.PATH;
     process.env.PATH = `${bin}${delimiter}${previousPath ?? ""}`;
+    let removal: ReturnType<typeof removeWorkspaceWorktree> | undefined;
     try {
-      const removal = removeWorkspaceWorktree(workspace, { dataDir, worktreeId: created.id });
-      await vi.waitFor(async () => {
-        expect(await resolveWorkspaceWorktree(workspace, created.id, { dataDir })).toBeUndefined();
-      });
+      removal = removeWorkspaceWorktree(workspace, { dataDir, worktreeId: created.id });
+      await vi.waitFor(
+        async () => {
+          expect(existsSync(join(stateDir, "remove-started"))).toBe(true);
+          expect(
+            await resolveWorkspaceWorktree(workspace, created.id, { dataDir }),
+          ).toBeUndefined();
+        },
+        { timeout: 10_000 },
+      );
       await expect(
         removeWorkspaceWorktree(workspace, { dataDir, worktreeId: created.id }),
       ).rejects.toMatchObject({
@@ -605,9 +624,12 @@ describe("workspace worktrees", async () => {
         createWorkspaceWorktree(workspace, { branch: "feature/pending" }, { dataDir }),
       ).rejects.toMatchObject({ status: 409, message: "Worktree id already exists" });
 
+      writeFileSync(join(stateDir, "release-remove"), "1");
       expect((await removal).id).toBe(created.id);
       expect(existsSync(created.path)).toBe(false);
     } finally {
+      writeFileSync(join(stateDir, "release-remove"), "1");
+      await removal?.catch(() => undefined);
       process.env.PATH = previousPath;
     }
   });
@@ -636,29 +658,39 @@ describe("workspace worktrees", async () => {
       { dataDir },
     );
     expect(leftTree.id).toBe(rightTree.id);
+    const stateDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-slow-scope-state-"));
+    roots.push(stateDir);
     const bin = mkdtempSync(join(tmpdir(), "oppi-worktrees-slow-scope-"));
     roots.push(bin);
-    installSlowWorktreeRemove(bin);
+    installSlowWorktreeRemove(bin, left.root, stateDir);
     const previousPath = process.env.PATH;
     process.env.PATH = `${bin}${delimiter}${previousPath ?? ""}`;
+    let removal: ReturnType<typeof removeWorkspaceWorktree> | undefined;
     try {
-      const removal = removeWorkspaceWorktree(left.workspace, {
+      removal = removeWorkspaceWorktree(left.workspace, {
         dataDir,
         worktreeId: leftTree.id,
       });
-      await vi.waitFor(async () => {
-        expect(
-          await resolveWorkspaceWorktree(left.workspace, leftTree.id, { dataDir }),
-        ).toBeUndefined();
-      });
+      await vi.waitFor(
+        async () => {
+          expect(existsSync(join(stateDir, "remove-started"))).toBe(true);
+          expect(
+            await resolveWorkspaceWorktree(left.workspace, leftTree.id, { dataDir }),
+          ).toBeUndefined();
+        },
+        { timeout: 10_000 },
+      );
       expect(
         await resolveWorkspaceWorktree(right.workspace, rightTree.id, { dataDir }),
       ).toMatchObject({ id: rightTree.id });
       await expect(
         removeWorkspaceWorktree(right.workspace, { dataDir, worktreeId: rightTree.id }),
       ).resolves.toMatchObject({ id: rightTree.id });
+      writeFileSync(join(stateDir, "release-remove"), "1");
       expect((await removal).id).toBe(leftTree.id);
     } finally {
+      writeFileSync(join(stateDir, "release-remove"), "1");
+      await removal?.catch(() => undefined);
       process.env.PATH = previousPath;
     }
   });
@@ -679,23 +711,29 @@ describe("workspace worktrees", async () => {
     installCreateRemovalRaceGit(bin, root, stateDir);
     const previousPath = process.env.PATH;
     process.env.PATH = `${bin}${delimiter}${previousPath ?? ""}`;
+    let creating: ReturnType<typeof createWorkspaceWorktree> | undefined;
+    let removal: ReturnType<typeof removeWorkspaceWorktree> | undefined;
     try {
-      const creating = createWorkspaceWorktree(
-        workspace,
-        { branch: "feature/create-race" },
-        { dataDir },
+      creating = createWorkspaceWorktree(workspace, { branch: "feature/create-race" }, { dataDir });
+      await vi.waitFor(
+        () => {
+          expect(existsSync(join(stateDir, "list-started"))).toBe(true);
+        },
+        { timeout: 10_000 },
       );
-      await vi.waitFor(() => {
-        expect(existsSync(join(stateDir, "list-started"))).toBe(true);
-      });
-      const removal = removeWorkspaceWorktree(workspace, {
+      removal = removeWorkspaceWorktree(workspace, {
         dataDir,
         worktreeId: created.id,
         force: true,
       });
-      await vi.waitFor(async () => {
-        expect(await resolveWorkspaceWorktree(workspace, created.id, { dataDir })).toBeUndefined();
-      });
+      await vi.waitFor(
+        async () => {
+          expect(
+            await resolveWorkspaceWorktree(workspace, created.id, { dataDir }),
+          ).toBeUndefined();
+        },
+        { timeout: 10_000 },
+      );
       writeFileSync(join(stateDir, "release-list"), "1");
       await expect(creating).rejects.toMatchObject({
         status: 409,
@@ -705,6 +743,10 @@ describe("workspace worktrees", async () => {
       writeFileSync(join(stateDir, "release-remove"), "1");
       await expect(removal).resolves.toMatchObject({ id: created.id });
     } finally {
+      writeFileSync(join(stateDir, "release-list"), "1");
+      writeFileSync(join(stateDir, "release-remove"), "1");
+      await creating?.catch(() => undefined);
+      await removal?.catch(() => undefined);
       process.env.PATH = previousPath;
     }
   });

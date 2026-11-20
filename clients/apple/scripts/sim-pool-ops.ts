@@ -1346,7 +1346,7 @@ function writeJsonArtifact(input: ArtifactInput): void {
   writeFileSync(input.artifactPath, `${JSON.stringify(payload, null, 2)}\n`);
 }
 
-type TestCompletion = {
+export type TestCompletion = {
   outcome: "passed" | "failed";
   tests: number;
   suites: number;
@@ -1361,7 +1361,7 @@ type TestCompletion = {
  * prelude; an XCTest-only bundle (UI/E2E lanes) must print exactly one
  * top-level suite result with at least one test, and nothing test-related after it.
  */
-function finishedTests(argv: string[], rawLog: string): TestCompletion | undefined {
+export function finishedTests(argv: string[], rawLog: string): TestCompletion | undefined {
   const logText = untangledRunLines(rawLog);
   const project = extractFlagValue("-project", argv);
   if (

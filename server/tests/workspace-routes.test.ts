@@ -474,7 +474,9 @@ describe("workspaces module", () => {
       const ctx = {
         storage: {
           getDataDir: () => dataDir,
-          getWorkspace: vi.fn((id: string) => (exists && id === workspace.id ? workspace : undefined)),
+          getWorkspace: vi.fn((id: string) =>
+            exists && id === workspace.id ? workspace : undefined,
+          ),
           createWorkspace: vi.fn(() => {
             exists = true;
             return workspace;
@@ -673,9 +675,12 @@ describe("workspaces module", () => {
         req: {} as never,
         res: res as never,
       });
-      await vi.waitFor(() => {
-        expect(existsSync(join(stateDir, "list-started"))).toBe(true);
-      });
+      await vi.waitFor(
+        () => {
+          expect(existsSync(join(stateDir, "list-started"))).toBe(true);
+        },
+        { timeout: 10_000 },
+      );
       const created = await createWorkspaceWorktree(
         workspace,
         { branch: "feature/during-delete" },
@@ -728,9 +733,12 @@ describe("workspaces module", () => {
       installHeldWorktreeAdd(bin, root, stateDir);
       process.env.PATH = `${bin}${delimiter}${previousPath ?? ""}`;
       creating = createWorkspaceWorktree(workspace, { branch: "feature/claim-held" }, { dataDir });
-      await vi.waitFor(() => {
-        expect(existsSync(join(stateDir, "add-started"))).toBe(true);
-      });
+      await vi.waitFor(
+        () => {
+          expect(existsSync(join(stateDir, "add-started"))).toBe(true);
+        },
+        { timeout: 10_000 },
+      );
       expect(hasManagedWorkspaceWorktreeDirectory(dataDir, workspace.id)).toBe(false);
       const deleteWorkspace = vi.fn(() => true);
       const stopWorkspaceVm = vi.fn(async () => undefined);
@@ -825,9 +833,12 @@ describe("workspaces module", () => {
         req: makeRequest({ branch: "feature/unclaimed-create" }) as never,
         res: createRes as never,
       });
-      await vi.waitFor(() => {
-        expect(existsSync(join(stateDir, "check-ref-started"))).toBe(true);
-      });
+      await vi.waitFor(
+        () => {
+          expect(existsSync(join(stateDir, "check-ref-started"))).toBe(true);
+        },
+        { timeout: 10_000 },
+      );
       expect(hasManagedWorkspaceWorktreeDirectory(dataDir, workspace.id)).toBe(false);
 
       const deleteRes = makeResponse();

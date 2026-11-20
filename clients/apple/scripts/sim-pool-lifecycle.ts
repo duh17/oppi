@@ -777,6 +777,7 @@ export async function commandClaim(config: PoolConfig, args: string[]): Promise<
     });
     if (mine !== undefined) {
       const deadline = Date.now() + config.waitSeconds * 1000;
+      let announced = false;
       while (!acquired && !session.canceled) {
         const result = tryAcquireSlot({
           lockDir: config.lockDir,
@@ -793,6 +794,10 @@ export async function commandClaim(config: PoolConfig, args: string[]): Promise<
             `claim: ${poolDeviceName(mine)}, already claimed by session ${owner}, is still busy (${result.reason}); try again`,
           );
         } else {
+          if (!announced) {
+            log(`[sim-pool] ${poolDeviceName(mine)} busy, waiting up to ${config.waitSeconds}s...`);
+            announced = true;
+          }
           await session.waitWhileIdle(1000);
         }
       }

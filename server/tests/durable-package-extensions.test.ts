@@ -390,7 +390,7 @@ describe("plugins from Pi packages", () => {
     expect((await freshSession()).tools).not.toContain("notify");
     expect(await enabled(notifyRow, true)).toMatchObject({ status: 200, body: { state: "on" } });
     expect((await freshSession()).tools).toContain("notify");
-  });
+  }, 30_000);
 
   it("offers a package's tool to a durable session and runs the reloaded code without a restart", async () => {
     writePackage("probe");

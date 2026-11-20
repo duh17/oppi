@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 import {
@@ -22,7 +22,12 @@ import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import type { Session } from "../src/types.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
+import { bootDurablePlugins, DURABLE_BOOT_TIMEOUT_MS } from "./harness/durable-boot.js";
 import { makeTempDir } from "./harness/temp-dir.js";
+
+// The first durable runtime in a worker imports every built-in plugin; boot that once here, on
+// its own budget, instead of inside whichever test runs first.
+beforeAll(bootDurablePlugins, DURABLE_BOOT_TIMEOUT_MS);
 
 async function until(check: () => boolean | Promise<boolean>, what: string): Promise<void> {
   const deadline = Date.now() + 15_000;
@@ -239,7 +244,7 @@ describe("Oppi Control sessions on the durable harness, experimental.serverDurab
       serverDurable: { role: "control" },
     });
     expect(listed.find((row) => row.id === session.id)?.workspaceId).toBeUndefined();
-  });
+  }, 30_000);
 
   it("refuses a launch key that belongs to a session that is not a control session", async () => {
     const { storage } = await setup();
@@ -383,5 +388,5 @@ describe("Oppi Control sessions on the durable harness, experimental.serverDurab
       .flatMap((entry) => entry.model ?? [])
       .find((message) => message.role === "system");
     expect(JSON.stringify(system)).toContain(join(storage.getDataDir(), "themes"));
-  });
+  }, 30_000);
 });

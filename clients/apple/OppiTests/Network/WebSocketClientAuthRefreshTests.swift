@@ -1126,14 +1126,13 @@ struct DictationDeviceAuthTests {
 
     @Test func postMigrateSnapshotOpensWithReplacementTokenWithoutWaiting() async throws {
         let factory = ScriptedDictationFactory()
-        let currentStarted = LockedCallCount()
+        let gate = LateTokenGate()
         guard let client = DictationStreamClient(
             baseURL: URL(string: "https://server.example.test")!,
             token: "at_replacement",
             tlsCertFingerprint: nil,
             currentTokenProvider: { @Sendable in
-                currentStarted.increment()
-                try await Task.sleep(for: .milliseconds(200))
+                await gate.wait()
                 return "at_replacement"
             },
             webSocketFactory: { factory.make($0) }
@@ -1148,10 +1147,14 @@ struct DictationDeviceAuthTests {
         // After dt_ -> at_ migrate the constructor already holds the replacement
         // snapshot. dictation_start is queued until currentAccessToken() resolves
         // so the first writable socket still receives start.
+        await gate.waitUntilEntered()
         try await client.sendDictation(.dictationStart())
+        await gate.release()
 
         #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
-            factory.sockets.count == 1 && factory.sockets.first?.sentDictationStartCount == 1
+            factory.sockets.count == 1
+                && factory.sockets.first?.sentDictationStartCount == 1
+                && client.status == .connected
         })
         #expect(factory.requests.first?.value(forHTTPHeaderField: "Authorization") == "Bearer at_replacement")
         #expect(client.status == .connected)

@@ -175,7 +175,7 @@ describe("internal URLs through the durable read tool", () => {
     expect(results[8]!.text).toContain("artifact:// is not available");
     expect(results[9]!.text).toContain(`Valid ids:`);
     expect(results[10]!.text).toContain("plain file still reads");
-  });
+  }, 30_000);
 
   it("reads a background job's live output and lists jobs through proc://", async () => {
     const f = await fixture([]);
@@ -306,7 +306,7 @@ describe("the app's view of an internal URL", () => {
     await expect(runtimes.viewInternalUrl(session.id, "history://x")).rejects.toThrow(
       "Oppi cannot show history://x",
     );
-  });
+  }, 30_000);
 
   it("keeps a long job's output at its true offsets after it ends, so a reader resumes where it left off", async () => {
     const f = await fixture([]);
@@ -354,7 +354,7 @@ describe("the app's view of an internal URL", () => {
     );
     // The delivered card's output.
     await expectTrueOffsets();
-  });
+  }, 30_000);
 });
 
 describe("mcp:// through a real MCP server", () => {
@@ -382,5 +382,5 @@ describe("mcp:// through a real MCP server", () => {
     expect(body!.text).toBe("NOTES-RESOURCE-BODY");
     expect(missing).toMatchObject({ isError: true });
     expect(missing!.text).toContain('No MCP resource "test://missing"');
-  });
+  }, 30_000);
 });

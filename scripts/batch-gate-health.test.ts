@@ -329,7 +329,7 @@ describe("batch gate: --with-pre-push runs the hook alongside the lanes", () => 
   /** What the stand-in hook does after its Apple build passed (or, for `before-apple`, instead of passing it). */
   const HOOK_ENDINGS = {
     passes: `touch "$STATE/hook-done"\nexit 0`,
-    "lane-fails": `echo "ios-unit failed" >> "$OPPI_PRE_PUSH_EVENTS"\necho "[ios-unit] FAILED" >&2\nsleep 2\nexit 1`,
+    "lane-fails": `echo "ios-unit failed" >> "$OPPI_PRE_PUSH_EVENTS"\necho "[ios-unit] FAILED" >&2\ni=0; while [ ! -f "$STATE/ui-iphone.terminated" ] && [ "$i" -lt 200 ]; do sleep 0.05; i=$((i+1)); done\nexit 1`,
     // A lane reported red, yet the hook exits 0: a stray event, as the self-test's fixtures once wrote.
     "event-then-passes": `echo "apple failed" >> "$OPPI_PRE_PUSH_EVENTS"\nexit 0`,
     // Red outside any lane (check-home-paths, the deps sync): no event, only the exit.
@@ -346,10 +346,11 @@ describe("batch gate: --with-pre-push runs the hook alongside the lanes", () => 
 
   /**
    * An app change whose gate names a UI and an E2E suite. The stand-in hook reads its push row and
-   * records whether the kept build stamps still existed. Then, after 0.5 s, it either fails its
-   * Apple build (`before-apple`) or says `apple passed` (leaving an `apple-passed` marker) and, 1 s
-   * later, ends as `ending` says. The stand-in ui-shards records whether the Apple build had
-   * passed when it started, then works for `uiSeconds` unless stopped.
+   * records whether the kept build stamps still existed. It then either fails its Apple build
+   * (`before-apple`) or says `apple passed` (leaving an `apple-passed` marker), waits for the
+   * started UI lane's marker (`ui-iphone.start`), and ends as `ending` says. The stand-in
+   * ui-shards installs its SIGTERM handler before recording `ui-iphone.start`, then works for
+   * `uiSeconds` unless stopped.
    */
   function overlapCheckout(options: { ending: keyof typeof HOOK_ENDINGS | "before-apple"; uiSeconds: number }) {
     const fx = fakeCheckout();
@@ -359,8 +360,8 @@ describe("batch gate: --with-pre-push runs the hook alongside the lanes", () => 
     writeFileSync(join(apple, "OppiUITests", "ChatRoutesUITests.swift"), "final class ChatRoutesUITests: XCTestCase { func testOpen() {} }\n");
     writeFileSync(join(apple, "scripts", "ui-shards.ts"), `import { existsSync, writeFileSync } from "node:fs";
 const profile = process.argv[process.argv.indexOf("--profile") + 1];
-writeFileSync("${state}/ui-" + profile + ".start", existsSync("${state}/apple-passed") ? "after-apple" : "before-apple");
 process.on("SIGTERM", () => { writeFileSync("${state}/ui-" + profile + ".terminated", ""); process.exit(143); });
+writeFileSync("${state}/ui-" + profile + ".start", existsSync("${state}/apple-passed") ? "after-apple" : "before-apple");
 await Bun.sleep(${options.uiSeconds * 1000});
 writeFileSync("${state}/ui-" + profile + ".done", "");
 `);
@@ -373,15 +374,14 @@ writeFileSync("${state}/ui-" + profile + ".done", "");
       writeFileSync(stamp, "");
     }
     const ending = options.ending === "before-apple"
-      ? `echo "apple failed" >> "$OPPI_PRE_PUSH_EVENTS"\necho "[apple] FAILED" >&2\nsleep 1\nexit 1`
-      : `touch "$STATE/apple-passed"\necho "apple passed" >> "$OPPI_PRE_PUSH_EVENTS"\nsleep 1\n${HOOK_ENDINGS[options.ending]}`;
+      ? `echo "apple failed" >> "$OPPI_PRE_PUSH_EVENTS"\necho "[apple] FAILED" >&2\nexit 1`
+      : `touch "$STATE/apple-passed"\necho "apple passed" >> "$OPPI_PRE_PUSH_EVENTS"\ni=0; while [ ! -f "$STATE/ui-iphone.start" ] && [ "$i" -lt 200 ]; do sleep 0.05; i=$((i+1)); done\n${HOOK_ENDINGS[options.ending]}`;
     writeFileSync(join(fx.checkout, ".githooks", "pre-push"), `#!/bin/bash
 set -euo pipefail
 STATE="${state}"
 cat > "$STATE/hook.stdin"
 ls ${stamps.map((stamp) => `"${stamp}"`).join(" ")} > "$STATE/stamps-at-hook" 2>/dev/null || true
 echo "[apple] starting"
-sleep 0.5
 ${ending}
 `);
     chmodSync(join(fx.checkout, ".githooks", "pre-push"), 0o755);

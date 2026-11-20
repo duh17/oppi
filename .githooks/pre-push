@@ -28,7 +28,7 @@ fi
 SIM_POOL="$REPO_ROOT/clients/apple/scripts/sim-pool.sh"
 HEAVY="$REPO_ROOT/scripts/heavy.sh"
 PLANNER="$REPO_ROOT/scripts/pre-push-plan.ts"
-GATE_VERSION="7"
+GATE_VERSION="8"
 ZERO_OID="0000000000000000000000000000000000000000"
 CACHE_DIR="$(git rev-parse --git-dir)/oppi/pre-push-cache/v${GATE_VERSION}"
 GIT_LOCAL_ENV_VARS="$(git rev-parse --local-env-vars)"
@@ -64,7 +64,10 @@ release_slot_holder() {
 }
 
 # --lanes-only: just the lane-runner fixtures below (seconds), not the suites and checks before them.
+# --no-sim-pool: run bash -n, root scripts/*.test.ts, and the lane fixtures, skipping sim-pool self-test
+# (used by the harness lane when no clients/apple/scripts/ file changed).
 run_self_test() {
+  local mode="${1:-}"
   # This self-test is the harness lane, which can run inside batch-gate.ts --with-pre-push. Its
   # fixtures fail lanes on purpose; their lane_event lines must never reach that gate's events file.
   # Nor may they take the Apple lane's slot signal or a slot an ancestor holds: each fixture's
@@ -76,13 +79,15 @@ run_self_test() {
   # The harness lane runs after the push's own plan: its APPLE_RELEASE must not decide whether the
   # fixtures' apple_lane starts a Release compile. Each fixture that wants none sets 0 itself.
   APPLE_RELEASE=1
-  if [[ "${1:-}" != "--lanes-only" ]]; then
+  if [[ "$mode" != "--lanes-only" ]]; then
     bash -n "$REPO_ROOT/.githooks/pre-push" "$REPO_ROOT/clients/apple/scripts/check-coverage.sh" "$SIM_POOL" "$HEAVY"
     bun test "$REPO_ROOT/scripts/pre-push-plan.test.ts" "$REPO_ROOT/scripts/heavy.test.ts" \
       "$REPO_ROOT/scripts/batch-gate.test.ts" "$REPO_ROOT/scripts/batch-gate-health.test.ts" \
       "$REPO_ROOT/scripts/gate-report.test.ts" "$REPO_ROOT/scripts/dev-docs-guard.test.ts" \
       "$REPO_ROOT/scripts/apple-warnings.test.ts"
-    "$SIM_POOL" self-test
+    if [[ "$mode" != "--no-sim-pool" ]]; then
+      "$SIM_POOL" self-test
+    fi
   fi
 
   # Regression for run_cached status capture.
@@ -631,6 +636,7 @@ fi
 SERVER_MODE="none"
 APPLE_MODE="none"
 HARNESS_CHANGED=0
+SIM_POOL_CHANGED=0
 DOCS_CHANGED=0
 CHANGED_COUNT=0
 # Fails closed: a planner that says nothing about Release leaves it on.
@@ -646,6 +652,7 @@ while IFS='=' read -r key value; do
     SERVER_MODE) SERVER_MODE="$value" ;;
     APPLE_MODE) APPLE_MODE="$value" ;;
     HARNESS_CHANGED) HARNESS_CHANGED="$value" ;;
+    SIM_POOL_CHANGED) SIM_POOL_CHANGED="$value" ;;
     DOCS_CHANGED) DOCS_CHANGED="$value" ;;
     CHANGED_COUNT) CHANGED_COUNT="$value" ;;
     APPLE_RELEASE) APPLE_RELEASE="$value" ;;
@@ -655,7 +662,7 @@ done <<< "$PLAN_OUTPUT"
 
 case "$SERVER_MODE" in none|changed|full) ;; *) echo "pre-push: invalid server plan." >&2; exit 1 ;; esac
 case "$APPLE_MODE" in none|unit|all) ;; *) echo "pre-push: invalid Apple plan." >&2; exit 1 ;; esac
-[[ "$HARNESS_CHANGED" =~ ^[01]$ && "$DOCS_CHANGED" =~ ^[01]$ && "$APPLE_RELEASE" =~ ^[01]$ && "$CHANGED_COUNT" =~ ^[1-9][0-9]*$ ]] || {
+[[ "$HARNESS_CHANGED" =~ ^[01]$ && "$SIM_POOL_CHANGED" =~ ^[01]$ && "$DOCS_CHANGED" =~ ^[01]$ && "$APPLE_RELEASE" =~ ^[01]$ && "$CHANGED_COUNT" =~ ^[1-9][0-9]*$ ]] || {
   echo "pre-push: incomplete planner output." >&2
   exit 1
 }
@@ -679,7 +686,7 @@ lane_has_dirty_paths() {
     return 1
   fi
 
-  local dirty_server="none" dirty_apple="none" dirty_harness=0 dirty_plan=""
+  local dirty_server="none" dirty_apple="none" dirty_harness=0 dirty_sim_pool=0 dirty_plan=""
   if ! dirty_plan="$(bun "$PLANNER" --paths0-file "$dirty_file" --format shell)"; then
     echo "[$lane] dirty-path planner failed; blocking cache use." >&2
     rm -f "$dirty_file"
@@ -690,12 +697,13 @@ lane_has_dirty_paths() {
       SERVER_MODE) dirty_server="$value" ;;
       APPLE_MODE) dirty_apple="$value" ;;
       HARNESS_CHANGED) dirty_harness="$value" ;;
+      SIM_POOL_CHANGED) dirty_sim_pool="$value" ;;
     esac
   done <<< "$dirty_plan"
 
   case "$dirty_server" in none|changed|full) ;; *) echo "[$lane] invalid dirty server plan." >&2; rm -f "$dirty_file"; return 0 ;; esac
   case "$dirty_apple" in none|unit|all) ;; *) echo "[$lane] invalid dirty Apple plan." >&2; rm -f "$dirty_file"; return 0 ;; esac
-  if [[ ! "$dirty_harness" =~ ^[01]$ ]]; then
+  if [[ ! "$dirty_harness" =~ ^[01]$ || ! "$dirty_sim_pool" =~ ^[01]$ ]]; then
     echo "[$lane] incomplete dirty-path plan; blocking cache use." >&2
     rm -f "$dirty_file"
     return 0
@@ -705,7 +713,7 @@ lane_has_dirty_paths() {
   case "$lane" in
     server-bun) [[ "$dirty_server" != "none" ]] && overlaps=0 ;;
     apple) [[ "$dirty_apple" != "none" ]] && overlaps=0 ;;
-    harness) [[ "$dirty_harness" -eq 1 ]] && overlaps=0 ;;
+    harness) [[ "$dirty_harness" -eq 1 || "$dirty_sim_pool" -eq 1 ]] && overlaps=0 ;;
     ios-unit|ios-release|catalyst) [[ "$dirty_apple" != "none" ]] && overlaps=0 ;;
   esac
 
@@ -735,7 +743,7 @@ cache_path() {
     apple|ios-unit) lane_mode="$APPLE_MODE $(apple_scheme)" ;;
     # It compiles under the pinned Xcode, not the default `xcodebuild` that TOOLCHAIN_KEY names.
     ios-release|catalyst) lane_mode="$APPLE_MODE $(pinned_xcode_version)" ;;
-    harness) lane_mode="$HARNESS_CHANGED" ;;
+    harness) lane_mode="${HARNESS_CHANGED}:${SIM_POOL_CHANGED}" ;;
   esac
   key="$(printf '%s\n' "$GATE_VERSION" "$HEAD_SHA" "$RANGE_KEY_INPUT" "$PUSH_PATHS_KEY" "$lane" "$lane_mode" "$TOOLCHAIN_KEY" | shasum -a 256 | cut -d' ' -f1)"
   echo "$CACHE_DIR/${lane}-${key}.pass"
@@ -793,7 +801,11 @@ run_cached() {
 }
 
 run_harness_gate() {
-  run_self_test
+  if [[ "$SIM_POOL_CHANGED" -eq 1 ]]; then
+    run_self_test
+  else
+    run_self_test --no-sim-pool
+  fi
 }
 
 # The server's only push lane: static checks, the plugins' `bun test` suites, and the Vitest suite
@@ -1003,7 +1015,7 @@ run_compile_lane() {
   grep -E '\*\* BUILD' "$build_log" || true
 }
 
-echo "pre-push: $CHANGED_COUNT changed paths; server=$SERVER_MODE apple=$APPLE_MODE harness=$HARNESS_CHANGED docs=$DOCS_CHANGED"
+echo "pre-push: $CHANGED_COUNT changed paths; server=$SERVER_MODE apple=$APPLE_MODE harness=$HARNESS_CHANGED sim_pool=$SIM_POOL_CHANGED docs=$DOCS_CHANGED"
 
 # Cheap repo-wide invariant that no lane owns: tracked source and configuration
 # must not record an absolute home directory. It runs on every push because an
@@ -1026,7 +1038,7 @@ if [[ "$DOCS_CHANGED" -eq 1 ]]; then
 fi
 
 # The Apple build runs the server's architecture rules in a build phase, so it needs them too.
-if [[ "$SERVER_MODE" != "none" || "$HARNESS_CHANGED" -eq 1 || "$APPLE_MODE" != "none" ]]; then
+if [[ "$SERVER_MODE" != "none" || "$HARNESS_CHANGED" -eq 1 || "$SIM_POOL_CHANGED" -eq 1 || "$APPLE_MODE" != "none" ]]; then
   # Install server deps from this worktree's lockfile before any lane starts, so
   # lanes never race on node_modules. Fails the hook if deps cannot be synced.
   if ! run_without_git_local_env ensure_server_deps; then
@@ -1200,7 +1212,7 @@ apple_lane() {
 LANE_PIDS=()
 LANE_NAMES=()
 RED_LANE=""
-if [[ "$HARNESS_CHANGED" -eq 1 ]]; then
+if [[ "$HARNESS_CHANGED" -eq 1 || "$SIM_POOL_CHANGED" -eq 1 ]]; then
   run_cached harness run_harness_gate & LANE_PIDS+=("$!"); LANE_NAMES+=("harness")
 fi
 if [[ "$SERVER_MODE" != "none" ]]; then

@@ -1,6 +1,6 @@
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 import {
@@ -23,6 +23,7 @@ import { buildMobileOutputGuide, buildOppiSystemPromptAppend } from "../src/oppi
 import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "../src/oppi-cli-prompt.js";
 import { getCurrentSystemPrompt } from "@earendil-works/pi-ai/utils/transcript";
 import { saveControlRow } from "./harness/control-row.js";
+import { bootDurablePlugins, DURABLE_BOOT_TIMEOUT_MS } from "./harness/durable-boot.js";
 import { makeTempDir } from "./harness/temp-dir.js";
 import { toolArguments, toolNamed } from "./helpers/tool-arguments.js";
 import { DurableNotify } from "../plugins/notify/server.js";
@@ -400,6 +401,9 @@ const PINNED = {
 
 const managers: SessionManager[] = [];
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+// The first durable runtime in a worker imports every built-in plugin; boot that once here, on
+// its own budget, instead of inside whichever test runs first.
+beforeAll(bootDurablePlugins, DURABLE_BOOT_TIMEOUT_MS);
 afterEach(async () => {
   await Promise.all(managers.splice(0).map((manager) => manager.close()));
   vi.restoreAllMocks();
@@ -536,7 +540,7 @@ describe("durable built-in selection", () => {
       control: await createdAndReattached(f, control),
     };
     expect(pinned).toEqual(PINNED);
-  });
+  }, 30_000);
 
   it("offers the Pi tools the Pi Tools setting enables: host grep and a codemode script over them", async () => {
     const f = await fixture(
