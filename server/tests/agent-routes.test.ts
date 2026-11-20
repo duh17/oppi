@@ -1577,6 +1577,96 @@ describe("agent routes", () => {
     }
   });
 
+  it("launches a durable-only Agent durable by default and refuses classic or a server without durable", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-required-engine-"));
+    const store = new AgentDefinitionStore(dataDir);
+    const sessions: Session[] = [];
+    let durableOn = true;
+    try {
+      const agent = store.createAgent({
+        name: "Gemini",
+        launchConstraints: { requiredEngine: "durable" },
+      });
+      const startSession = vi.fn(async (sessionId: string) => makeSession({ id: sessionId }));
+      const ctx = {
+        storage: {
+          getAgentDefinitionStore: () => store,
+          getWorkspace: vi.fn((workspaceId: string) =>
+            workspaceId === "ws-1"
+              ? { id: "ws-1", name: "Oppi", hostMount: tmpdir(), runtime: "host" }
+              : undefined,
+          ),
+          getDataDir: vi.fn(() => dataDir),
+          createSession: vi.fn((name?: string, model?: string) =>
+            makeSession({ id: `sess-${sessions.length + 1}`, name, model }),
+          ),
+          saveSession: vi.fn((session: Session) => {
+            const index = sessions.findIndex((candidate) => candidate.id === session.id);
+            if (index >= 0) sessions[index] = structuredClone(session);
+            else sessions.push(structuredClone(session));
+          }),
+          deleteSession: vi.fn(() => false),
+          getSession: vi.fn((sessionId: string) =>
+            sessions.find((candidate) => candidate.id === sessionId),
+          ),
+          listSessions: vi.fn(() => sessions),
+          findSessionByLaunchIdempotencyKey: vi.fn(),
+          claimSessionLaunchRecovery: vi.fn(),
+        },
+        sessions: {
+          startSession,
+          sendPrompt: vi.fn(async () => undefined),
+          durableSessionsAvailable: () => durableOn,
+        },
+        ensureSessionContextWindow: vi.fn((session: Session) => session),
+        appEvents: { emitSessionCreated: vi.fn(), emitSessionSummary: vi.fn() },
+      } as unknown as RouteContext;
+      const dispatch = createAgentRoutes(ctx, createRouteHelpers());
+      const launch = async (body: Record<string, unknown>) => {
+        const res = makeResponse();
+        await dispatch({
+          method: "POST",
+          path: `/agents/${agent.id}/sessions`,
+          url: new URL(`http://localhost/agents/${agent.id}/sessions`),
+          req: makeRequest({
+            prompt: { text: "Review this" },
+            target: { workspaceId: "ws-1" },
+            ...body,
+          }) as never,
+          res: res as never,
+        });
+        return res;
+      };
+
+      const classic = await launch({ engine: "classic" });
+      expect(classic.statusCode).toBe(400);
+      expect(JSON.parse(classic.body).error).toBe(
+        "Agent Gemini runs only on the durable engine; omit engine or pass durable",
+      );
+      const incognito = await launch({ engine: "durable", ephemeral: true });
+      expect(incognito.statusCode).toBe(400);
+      expect(JSON.parse(incognito.body).error).toBe(
+        "Incognito sessions cannot run on the durable engine, which Agent Gemini requires",
+      );
+      durableOn = false;
+      const off = await launch({});
+      expect(off.statusCode).toBe(409);
+      expect(JSON.parse(off.body).error).toMatch(
+        /^Agent Gemini runs only on the durable engine, and durable sessions are off/,
+      );
+      expect(sessions).toEqual([]);
+      expect(startSession).not.toHaveBeenCalled();
+
+      durableOn = true;
+      expect((await launch({})).statusCode).toBe(201);
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]?.serverDurable).toEqual({ storeId: sessions[0]?.id });
+    } finally {
+      store.close();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     [{ parentSessionId: 42 }, "parentSessionId must be a non-empty string"],
     [{ parentSessionId: "   " }, "parentSessionId must be a non-empty string"],

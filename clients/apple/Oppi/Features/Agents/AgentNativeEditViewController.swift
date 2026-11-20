@@ -16,7 +16,7 @@ final class AgentNativeEditViewController: ListScreenController<
         case model, useServerModel, thinking, tools
         case chatStyle
         case skillMode, skills, extensionMode, extensions, loadingResources, skillStatus, extensionStatus
-        case runtime, workspaceMode, workspaces
+        case runtime, engine, workspaceMode, workspaces
         case error
     }
 
@@ -197,8 +197,8 @@ final class AgentNativeEditViewController: ListScreenController<
             .init(
                 .constraints,
                 header: "Launch Constraints",
-                footer: "Only compatible workspaces appear when this Agent starts. The server enforces the same restrictions for API and scheduled launches.",
-                items: [.runtime, .workspaceMode] + (draft.workspaceConstraintMode == .exact ? [.workspaces] : [])
+                footer: "Only compatible workspaces appear when this Agent starts. Durable starts every session of this Agent on the durable engine, which the server must offer. The server enforces the same restrictions for API and scheduled launches.",
+                items: [.runtime, .engine, .workspaceMode] + (draft.workspaceConstraintMode == .exact ? [.workspaces] : [])
             ),
         ]
         if draft.error != nil {
@@ -239,6 +239,7 @@ final class AgentNativeEditViewController: ListScreenController<
         case .skillStatus: AnyHashable(String(describing: draft.skillCatalogState))
         case .extensionStatus: AnyHashable(String(describing: draft.extensionCatalogState))
         case .runtime: AnyHashable(draft.requiredRuntime)
+        case .engine: AnyHashable(draft.requiredEngine)
         case .workspaceMode: AnyHashable(draft.workspaceConstraintMode)
         case .workspaces: AnyHashable(draft.selectedAllowedWorkspaceIds)
         case .error: AnyHashable(draft.error)
@@ -259,7 +260,7 @@ final class AgentNativeEditViewController: ListScreenController<
             collectionView.dequeueConfiguredReusableCell(using: indexRow, for: indexPath, item: item)
         case .useServerModel:
             collectionView.dequeueConfiguredReusableCell(using: actionRow, for: indexPath, item: item)
-        case .promptMode, .thinking, .chatStyle, .skillMode, .extensionMode, .runtime, .workspaceMode:
+        case .promptMode, .thinking, .chatStyle, .skillMode, .extensionMode, .runtime, .engine, .workspaceMode:
             collectionView.dequeueConfiguredReusableCell(using: menuRow, for: indexPath, item: item)
         case .loadingResources, .skillStatus, .extensionStatus, .error:
             collectionView.dequeueConfiguredReusableCell(using: stateRow, for: indexPath, item: item)
@@ -456,6 +457,21 @@ final class AgentNativeEditViewController: ListScreenController<
                     }
                 }
             )
+        case .engine:
+            let engine = draft.requiredEngine
+            let options: [SessionEngine?] = [nil, .durable]
+            cell.configure(
+                title: "Engine",
+                identifier: "agent.nativeEdit.requiredEngine",
+                value: Self.engineTitle(engine),
+                menu: { [weak self] in
+                    options.map { option in
+                        SettingsMenuOption(title: Self.engineTitle(option), selected: engine == option) { [weak self] in
+                            self?.draft.requiredEngine = option
+                        }
+                    }
+                }
+            )
         case .workspaceMode:
             let mode = draft.workspaceConstraintMode
             cell.configure(
@@ -489,6 +505,11 @@ final class AgentNativeEditViewController: ListScreenController<
     /// How a launch's required runtime reads, in the row and in its choices.
     private static func runtimeTitle(_ runtime: WorkspaceRuntime?) -> String {
         runtime?.rawValue.capitalized ?? "Any runtime"
+    }
+
+    /// How a launch's required engine reads, in the row and in its choices.
+    private static func engineTitle(_ engine: SessionEngine?) -> String {
+        engine?.rawValue.capitalized ?? "Any engine"
     }
 
     private func modeOptions(

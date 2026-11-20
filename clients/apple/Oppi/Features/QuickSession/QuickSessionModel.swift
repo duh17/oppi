@@ -183,7 +183,8 @@ final class QuickSessionModel {
             durableByDefault: durableByDefault,
             incognito: launchesIncognito,
             chosenEngine: chosenEngine,
-            agentResolution: agentResolution
+            agentResolution: agentResolution,
+            agentRequiredEngine: selectedAgent?.launchConstraints?.requiredEngine
         )
     }
 

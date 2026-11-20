@@ -95,7 +95,7 @@ struct AgentScheduleAPIClientTests {
             #expect(request.httpMethod == "GET")
             #expect(request.url?.path == "/agents")
             return mockResponse(json: """
-            {"agents":[{"id":"agent-1","name":"Sensei","icon":{"kind":"emoji","value":"🧘"},"launchConstraints":{"allowedWorkspaceIds":["research"],"requiredRuntime":"sandbox"},"status":"active","version":2,"createdAt":1000,"updatedAt":2000}]}
+            {"agents":[{"id":"agent-1","name":"Sensei","icon":{"kind":"emoji","value":"🧘"},"launchConstraints":{"allowedWorkspaceIds":["research"],"requiredRuntime":"sandbox","requiredEngine":"durable"},"status":"active","version":2,"createdAt":1000,"updatedAt":2000}]}
             """)
         }
 
@@ -105,6 +105,7 @@ struct AgentScheduleAPIClientTests {
         #expect(agents.first?.icon == .emoji("🧘"))
         #expect(agents.first?.launchConstraints?.allowedWorkspaceIds == ["research"])
         #expect(agents.first?.launchConstraints?.requiredRuntime == .sandbox)
+        #expect(agents.first?.launchConstraints?.requiredEngine == .durable)
         #expect(agents.first?.sessionDefaults == nil)
     }
 
@@ -281,6 +282,13 @@ struct AgentScheduleAPIClientTests {
                 let constraints = try #require(json["launchConstraints"] as? [String: Any])
                 #expect(constraints["allowedWorkspaceIds"] as? [String] == ["research"])
                 #expect(constraints["requiredRuntime"] as? String == "sandbox")
+                #expect(constraints["requiredEngine"] as? String == "durable")
+            } else if requestCount == 2 {
+                // One constraint kept: the cleared ones go as null so the server's PATCH drops them.
+                let constraints = try #require(json["launchConstraints"] as? [String: Any])
+                #expect(constraints["requiredRuntime"] as? String == "sandbox")
+                #expect(constraints["allowedWorkspaceIds"] is NSNull)
+                #expect(constraints["requiredEngine"] is NSNull)
             } else {
                 #expect(json["launchConstraints"] is NSNull)
             }
@@ -300,8 +308,21 @@ struct AgentScheduleAPIClientTests {
             extensionIds: nil,
             launchConstraints: AgentLaunchConstraints(
                 allowedWorkspaceIds: ["research"],
-                requiredRuntime: .sandbox
+                requiredRuntime: .sandbox,
+                requiredEngine: .durable
             )
+        )
+        _ = try await client.updateAgentNative(
+            agentId: "agent-1",
+            name: "Research Scout",
+            description: nil,
+            instructions: nil,
+            model: nil,
+            thinkingLevel: nil,
+            skillPaths: nil,
+            extensionIds: nil,
+            launchConstraints: AgentLaunchConstraints(requiredRuntime: .sandbox),
+            previouslyHadLaunchConstraints: true
         )
         _ = try await client.updateAgentNative(
             agentId: "agent-1",
@@ -315,6 +336,7 @@ struct AgentScheduleAPIClientTests {
             launchConstraints: nil,
             previouslyHadLaunchConstraints: true
         )
+        #expect(requestCount == 3)
     }
 
     @Test func agentLaunchDecodesActionableConfigurationFailure() async throws {

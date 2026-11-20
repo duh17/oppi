@@ -110,8 +110,8 @@ extension QuickSessionViewController {
     }
 
     /// Durable Sessions: the engine this launch uses. A toggle between
-    /// Durable and Classic, or a fixed Classic with its reason when the server
-    /// would refuse durable for this launch.
+    /// Durable and Classic, or a fixed engine with its reason: Classic while a
+    /// saved Agent loads, Durable for a durable-only Agent.
     private func updateEnginePill(_ pill: QuickSessionPillButton, colors: ComposerThemeColors, enabled: Bool) {
         let decision = model.engineDecision
         pill.setHiddenIfChanged(!decision.showsPill)
@@ -136,10 +136,10 @@ extension QuickSessionViewController {
                 icon: isDurable ? .symbol("infinity", color: colors.fg, style: bar ? .body : .caption2, weight: .semibold) : nil,
                 title: isDurable ? "Durable" : "Classic",
                 titleColor: isDurable ? colors.fg : colors.comment,
-                detail: decision.classicReason.map { "\u{00B7} \($0)" }
+                detail: decision.fixedReason.map { "\u{00B7} \($0)" }
             ), colors: colors)
         }
-        // A fixed Classic still takes its touches, as a label; its tap does
+        // A fixed engine still takes its touches, as a label; its tap does
         // nothing (`toggleEngine`). Passed on, the touch landed on the row's
         // empty space, whose tap closes Quick Session.
         pill.dimsWhenPressed = decision.canToggle
@@ -152,7 +152,9 @@ extension QuickSessionViewController {
         } else {
             pill.isEnabled = true
             pill.accessibilityTraits = .staticText
-            pill.accessibilityLabel = "Classic session. Durable is unavailable with \(decision.classicReason ?? "this launch")."
+            pill.accessibilityLabel = isDurable
+                ? "Durable session. \(decision.fixedReason ?? "Fixed for this launch")."
+                : "Classic session. Durable is unavailable with \(decision.fixedReason ?? "this launch")."
             pill.accessibilityHint = nil
             pill.toolTip = nil
         }

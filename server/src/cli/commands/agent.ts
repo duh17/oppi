@@ -248,6 +248,7 @@ const AGENT_VALUE_CLEAR_TWINS: Array<{ values: string[]; clear: string }> = [
   { values: ["extensions"], clear: "clear-extensions" },
   { values: ["allowed-workspaces"], clear: "clear-allowed-workspaces" },
   { values: ["required-runtime"], clear: "clear-required-runtime" },
+  { values: ["required-engine"], clear: "clear-required-engine" },
 ];
 
 function hasFlag(flags: Record<string, string>, name: string): boolean {
@@ -385,6 +386,15 @@ function applyLaunchConstraintFlags(
   }
   if (hasFlag(flags, "clear-required-runtime")) {
     overlayNested(definition, "launchConstraints", "requiredRuntime", null);
+  }
+  if (hasFlag(flags, "required-engine")) {
+    if (flags["required-engine"] !== "durable") {
+      throw new Error("--required-engine must be durable");
+    }
+    overlayNested(definition, "launchConstraints", "requiredEngine", "durable");
+  }
+  if (hasFlag(flags, "clear-required-engine")) {
+    overlayNested(definition, "launchConstraints", "requiredEngine", null);
   }
 }
 

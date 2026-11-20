@@ -1745,7 +1745,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Create saved Agent",
     summary: "Create a saved Agent from first-class flags and optional file or inline JSON.",
     usage:
-      "oppi agent create [--name <name>] [--description <text>] [--icon <text>] [--instructions <text> | --instructions-file <file>] [--instructions-mode <append|replace>] [--skills <csv>] [--extensions <csv>] [--allowed-workspaces <csv>] [--required-runtime <host|sandbox>] [--definition <file> | --definition-json <json-object>] [--model <model[:thinking]>] [--thinking <level>] [--tools <csv>] [--exclude-tools <csv>] [--no-tools] [--no-builtin-tools] [--idempotency-key <key>] [--json]",
+      "oppi agent create [--name <name>] [--description <text>] [--icon <text>] [--instructions <text> | --instructions-file <file>] [--instructions-mode <append|replace>] [--skills <csv>] [--extensions <csv>] [--allowed-workspaces <csv>] [--required-runtime <host|sandbox>] [--required-engine durable] [--definition <file> | --definition-json <json-object>] [--model <model[:thinking]>] [--thinking <level>] [--tools <csv>] [--exclude-tools <csv>] [--no-tools] [--no-builtin-tools] [--idempotency-key <key>] [--json]",
     flags: [
       {
         name: "--name",
@@ -1793,6 +1793,11 @@ const HELP_TOPICS: HelpTopic[] = [
         name: "--required-runtime",
         value: "<host|sandbox>",
         summary: "writes launchConstraints.requiredRuntime",
+      },
+      {
+        name: "--required-engine",
+        value: "durable",
+        summary: "writes launchConstraints.requiredEngine",
       },
       { name: "--definition", value: "<file>", summary: "JSON AgentDefinition fields" },
       {
@@ -1847,6 +1852,7 @@ const HELP_TOPICS: HelpTopic[] = [
       "Forbidden launch-only keys: target, workspaceId, worktreeId, cwd, schedule, attachments, images.",
       "--skills <skill-path> writes resources.skillPaths (skill paths); --extensions extension_<id> writes resources.extensionIds (extension IDs; builtin:mcp, builtin:codemode, and builtin:tool-search select Pi built-ins in managed host sessions; sandbox sessions accept builtin:mcp and builtin:tool-search but not builtin:codemode). Empty CSV is none []; omit them to inherit Pi discovery.",
       "--allowed-workspaces writes launchConstraints.allowedWorkspaceIds (workspace IDs) and must not be empty; omit it for any workspace. --required-runtime writes launchConstraints.requiredRuntime.",
+      "--required-engine durable writes launchConstraints.requiredEngine: every launch of the Agent (session create, Quick Session, schedules, subagents) runs durable; an omitted --engine becomes durable, --engine classic is refused, and launches fail while durable sessions are off on the server.",
       "Explicit flags override corresponding JSON keys without dropping sibling nested fields. Instructions replace as a whole.",
       "--instructions and --instructions-file are mutually exclusive. --instructions-mode is append or replace and defaults to append when creating from text or file; it requires --instructions, --instructions-file, or instructions.text in the definition JSON.",
       "--icon is default, one Unicode emoji, or an SF Symbol name. There is no Genmoji upload flag; Genmoji can still be set via definition JSON.",
@@ -1872,7 +1878,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Update saved Agent",
     summary: "Patch a saved Agent from first-class flags and optional file or inline JSON.",
     usage:
-      "oppi agent update <agent> [--name <name>] [--description <text>] [--clear-description] [--icon <text>] [--clear-icon] [--instructions <text> | --instructions-file <file>] [--instructions-mode <append|replace>] [--clear-instructions] [--skills <csv>] [--clear-skills] [--extensions <csv>] [--clear-extensions] [--allowed-workspaces <csv>] [--clear-allowed-workspaces] [--required-runtime <host|sandbox>] [--clear-required-runtime] [--definition <file> | --definition-json <json-object>] [--model <model[:thinking]>] [--thinking <level>] [--tools <csv>] [--exclude-tools <csv>] [--no-tools] [--no-builtin-tools] [--expected-version <version>] [--json]",
+      "oppi agent update <agent> [--name <name>] [--description <text>] [--clear-description] [--icon <text>] [--clear-icon] [--instructions <text> | --instructions-file <file>] [--instructions-mode <append|replace>] [--clear-instructions] [--skills <csv>] [--clear-skills] [--extensions <csv>] [--clear-extensions] [--allowed-workspaces <csv>] [--clear-allowed-workspaces] [--required-runtime <host|sandbox>] [--clear-required-runtime] [--required-engine durable] [--clear-required-engine] [--definition <file> | --definition-json <json-object>] [--model <model[:thinking]>] [--thinking <level>] [--tools <csv>] [--exclude-tools <csv>] [--no-tools] [--no-builtin-tools] [--expected-version <version>] [--json]",
     arguments: [{ name: "<agent>", summary: "agent id or unique name" }],
     flags: [
       {
@@ -1946,6 +1952,15 @@ const HELP_TOPICS: HelpTopic[] = [
         summary: "sets launchConstraints.requiredRuntime null (either)",
       },
       {
+        name: "--required-engine",
+        value: "durable",
+        summary: "overlays launchConstraints.requiredEngine",
+      },
+      {
+        name: "--clear-required-engine",
+        summary: "sets launchConstraints.requiredEngine null (either engine)",
+      },
+      {
         name: "--definition",
         value: "<file>",
         summary: "JSON AgentDefinition fields to patch",
@@ -2002,7 +2017,7 @@ const HELP_TOPICS: HelpTopic[] = [
       "sessionDefaults.tools is an allowlist of real tool names; a stale name is dropped from launched sessions with a warning, so patch it to the current tool names instead of leaving leftovers.",
       "--model, --thinking, --tools, --exclude-tools, --no-tools, and --no-builtin-tools overlay the same sessionDefaults keys from --definition / --definition-json. --thinking wins over a --model :thinking suffix.",
       "--skills overlays resources.skillPaths (skill paths); --extensions overlays resources.extensionIds (extension IDs). Empty CSV is none []; --clear-skills / --clear-extensions set null so omit them to inherit Pi discovery.",
-      "--allowed-workspaces overlays launchConstraints.allowedWorkspaceIds (workspace IDs) and must not be empty; --clear-allowed-workspaces sets null (any). --required-runtime overlays launchConstraints.requiredRuntime; --clear-required-runtime sets null (either).",
+      "--allowed-workspaces overlays launchConstraints.allowedWorkspaceIds (workspace IDs) and must not be empty; --clear-allowed-workspaces sets null (any). --required-runtime overlays launchConstraints.requiredRuntime; --clear-required-runtime sets null (either). --required-engine durable overlays launchConstraints.requiredEngine, so every launch runs durable and --engine classic is refused; --clear-required-engine sets null (either engine).",
       "Explicit flags override corresponding JSON keys without dropping sibling nested fields. Instructions replace as a whole. --name overlays definition.name.",
       "--instructions and --instructions-file are mutually exclusive. --instructions-mode requires --instructions, --instructions-file, or instructions.text in the definition JSON rather than dropping stored text.",
       "--icon is default, one Unicode emoji, or an SF Symbol name. Do not combine a value flag with its --clear-* twin.",
@@ -2105,7 +2120,8 @@ const HELP_TOPICS: HelpTopic[] = [
       {
         name: "--engine",
         value: "<classic|durable>",
-        summary: "agent engine; default classic; durable needs experimental.serverDurable",
+        summary:
+          "agent engine; default classic, or durable for an --agent whose launchConstraints.requiredEngine is durable; durable needs experimental.serverDurable",
       },
       {
         name: "--idempotency-key",
@@ -2116,7 +2132,7 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "Pass @- to --prompt to read the first prompt from stdin.",
-      "--engine durable starts a server durable session. The server rejects it unless experimental.serverDurable is on. With --agent the saved Agent becomes the durable session's agent; it starts without the Agent Extensions that have no plugin (builtin:codemode among them) and warns, naming them. Every other create stays classic.",
+      "--engine durable starts a server durable session. The server rejects it unless experimental.serverDurable is on. With --agent the saved Agent becomes the durable session's agent; it starts without the Agent Extensions that have no plugin (builtin:codemode among them) and warns, naming them. An --agent whose launchConstraints.requiredEngine is durable starts durable without --engine and refuses --engine classic. Every other create stays classic.",
       "When a managed session is the caller, create prefixes the prompt with `This is a message from session <caller-id>:` so the child can inspect that source session. Do not type the prefix yourself.",
       "JSON output is compact and returns the launch id as data.session_id.",
       "Managed sessions can create only direct children by default. A root may pass --allow-nested-delegation to authorize a child to spawn its own children; the grant then propagates down the subtree, so explicitly requested grandchild sessions work without re-authorizing at every level.",

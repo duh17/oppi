@@ -125,7 +125,11 @@ const SESSION_DEFAULT_KEYS = new Set([
   "excludeTools",
   "noTools",
 ]);
-const LAUNCH_CONSTRAINT_KEYS = new Set(["allowedWorkspaceIds", "requiredRuntime"]);
+const LAUNCH_CONSTRAINT_KEYS = new Set([
+  "allowedWorkspaceIds",
+  "requiredRuntime",
+  "requiredEngine",
+]);
 const MAX_UNVERSIONED_AGENT_UPDATE_ATTEMPTS = 3;
 export class AgentDefinitionStore {
   private readonly db: SqliteDatabase;
@@ -672,9 +676,15 @@ function validateLaunchConstraints(
     throw new Error("launchConstraints.requiredRuntime must be host or sandbox");
   }
 
+  const requiredEngine = validateString(value.requiredEngine, "launchConstraints.requiredEngine");
+  if (requiredEngine !== undefined && requiredEngine !== "durable") {
+    throw new Error("launchConstraints.requiredEngine must be durable");
+  }
+
   return {
     ...(allowedWorkspaceIds ? { allowedWorkspaceIds: [...new Set(allowedWorkspaceIds)] } : {}),
     ...(requiredRuntime ? { requiredRuntime: requiredRuntime as "host" | "sandbox" } : {}),
+    ...(requiredEngine ? { requiredEngine: "durable" as const } : {}),
   };
 }
 

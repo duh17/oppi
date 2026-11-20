@@ -204,6 +204,7 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
         if let constraints = definition.launchConstraints {
             sections.append(ListSection(.constraints, header: "Launch Constraints", items: [
                 .value(title: "Runtime", value: constraints.requiredRuntime?.rawValue.capitalized ?? "Any"),
+                .value(title: "Engine", value: constraints.requiredEngine?.rawValue.capitalized ?? "Any"),
                 .value(title: "Workspaces", value: allowedWorkspaceNames(constraints.allowedWorkspaceIds)),
             ]))
         }

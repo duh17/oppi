@@ -176,8 +176,10 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
         helpers.error(res, 400, "autoStop must be a boolean");
         return true;
       }
-      const requestedEngine = parseRequestedEngine(body.engine, () =>
-        ctx.sessions.durableSessionsAvailable(),
+      const requestedEngine = parseRequestedEngine(
+        body.engine,
+        () => ctx.sessions.durableSessionsAvailable(),
+        agent.definition,
       );
       if ("error" in requestedEngine) {
         helpers.error(res, requestedEngine.status, requestedEngine.error);
@@ -191,7 +193,9 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
         helpers.error(
           res,
           400,
-          `${durableUnsupported} cannot run on the durable engine; omit engine`,
+          agent.definition.launchConstraints?.requiredEngine === "durable"
+            ? `${durableUnsupported} cannot run on the durable engine, which Agent ${agent.definition.name} requires`
+            : `${durableUnsupported} cannot run on the durable engine; omit engine`,
         );
         return true;
       }

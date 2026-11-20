@@ -461,6 +461,23 @@ private struct NativeAgentUpdateBody: Encodable {
     let launchConstraints: AgentLaunchConstraints?
     let includesLaunchConstraints: Bool
 
+    /// The server merges launch constraints key by key, so a cleared constraint is sent as
+    /// null; an omitted key would keep its stored value.
+    struct LaunchConstraints: Encodable {
+        let constraints: AgentLaunchConstraints
+
+        enum CodingKeys: String, CodingKey {
+            case allowedWorkspaceIds, requiredRuntime, requiredEngine
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encodeNullable(constraints.allowedWorkspaceIds, forKey: .allowedWorkspaceIds)
+            try container.encodeNullable(constraints.requiredRuntime, forKey: .requiredRuntime)
+            try container.encodeNullable(constraints.requiredEngine, forKey: .requiredEngine)
+        }
+    }
+
     enum CodingKeys: String, CodingKey {
         case name, description, instructions, resources, sessionDefaults, launchConstraints
     }
@@ -473,7 +490,7 @@ private struct NativeAgentUpdateBody: Encodable {
         try container.encodeIfPresent(resources, forKey: .resources)
         try container.encode(sessionDefaults, forKey: .sessionDefaults)
         if includesLaunchConstraints {
-            try container.encodeNullable(launchConstraints, forKey: .launchConstraints)
+            try container.encodeNullable(launchConstraints.map(LaunchConstraints.init), forKey: .launchConstraints)
         }
     }
 }

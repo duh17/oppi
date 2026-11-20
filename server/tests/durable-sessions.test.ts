@@ -3771,6 +3771,48 @@ describe("durable engine on create requests", () => {
     expect(f.storage.getSession(pluggedId)?.warnings).toEqual(warnings);
   });
 
+  it.each([true, false])(
+    "runs a durable-only Agent's schedule durable, never classic (durable on: %s)",
+    async (durableOn) => {
+      const f = await fixture(
+        model(() => fauxAssistantMessage("SCHEDULED_ANSWER")),
+        {
+          serverDurable: durableOn,
+        },
+      );
+      const agent = f.storage.getAgentDefinitionStore().createAgent({
+        name: "Gemini",
+        launchConstraints: { requiredEngine: "durable" },
+      });
+      const launch = createAgentScheduleDispatchHooks(
+        { storage: f.storage, sessions: f.manager, ensureSessionContextWindow: (s) => s },
+        "test-runner",
+      ).launchNewSession({
+        run: { id: "run-1", idempotencyKey: "schedule-run-1", slotKey: "slot-1" },
+        schedule: { id: "schedule-1" },
+        action: {
+          type: "new_session",
+          workspaceId: f.workspace.id,
+          prompt: "Nightly check",
+          agentId: agent.id,
+        },
+      } as unknown as NewSessionDispatchInput);
+      if (!durableOn) {
+        await expect(launch).rejects.toThrow(
+          "Agent Gemini runs only on the durable engine, and durable sessions are off on this server",
+        );
+        const agentSessions = f.storage
+          .listSessions()
+          .filter((s) => s.launch?.agentId === agent.id);
+        expect(agentSessions).not.toHaveLength(0);
+        expect(agentSessions.every((s) => s.serverDurable !== undefined)).toBe(true);
+        return;
+      }
+      const result = (await launch) as { sessionId: string };
+      expect(conversationOf(f.storage, result.sessionId)).toBeDefined();
+    },
+  );
+
   it("runs a durable new-session schedule as its saved Agent", async () => {
     const f = await fixture(model(() => fauxAssistantMessage("SCHEDULED_ANSWER")));
     const agent = f.storage.getAgentDefinitionStore().createAgent({

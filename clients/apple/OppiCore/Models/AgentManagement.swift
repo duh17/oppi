@@ -74,13 +74,17 @@ struct AgentResources: Codable, Sendable, Equatable {
 struct AgentLaunchConstraints: Codable, Sendable, Equatable {
     var allowedWorkspaceIds: [String]?
     var requiredRuntime: WorkspaceRuntime?
+    /// Every launch runs on this engine; the server refuses another. Only `.durable` is set.
+    var requiredEngine: SessionEngine?
 
     init(
         allowedWorkspaceIds: [String]? = nil,
-        requiredRuntime: WorkspaceRuntime? = nil
+        requiredRuntime: WorkspaceRuntime? = nil,
+        requiredEngine: SessionEngine? = nil
     ) {
         self.allowedWorkspaceIds = allowedWorkspaceIds
         self.requiredRuntime = requiredRuntime
+        self.requiredEngine = requiredEngine
     }
 
     func allows(_ workspace: Workspace) -> Bool {
@@ -90,7 +94,7 @@ struct AgentLaunchConstraints: Codable, Sendable, Equatable {
     }
 
     var isEmpty: Bool {
-        allowedWorkspaceIds == nil && requiredRuntime == nil
+        allowedWorkspaceIds == nil && requiredRuntime == nil && requiredEngine == nil
     }
 }
 

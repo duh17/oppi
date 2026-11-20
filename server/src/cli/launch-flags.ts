@@ -62,6 +62,7 @@ const AGENT_EDITOR_FLAGS = [
   "extensions",
   "allowed-workspaces",
   "required-runtime",
+  "required-engine",
   "clear-description",
   "clear-icon",
   "clear-instructions",
@@ -69,6 +70,7 @@ const AGENT_EDITOR_FLAGS = [
   "clear-extensions",
   "clear-allowed-workspaces",
   "clear-required-runtime",
+  "clear-required-engine",
 ] as const;
 
 export function hasSessionDefaultFlags(flags: Record<string, string>): boolean {

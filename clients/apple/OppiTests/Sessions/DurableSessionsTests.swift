@@ -9,15 +9,30 @@ struct DurableSessionsTests {
         durableDefault: Bool = false,
         incognito: Bool = false,
         chose engine: SessionEngine? = nil,
-        agent resolution: DurableSessions.AgentResolution = .resolved
+        agent resolution: DurableSessions.AgentResolution = .resolved,
+        agentRequires required: SessionEngine? = nil
     ) -> DurableSessions.LaunchDecision {
         DurableSessions.launchDecision(
             serverOffersDurable: offered,
             durableByDefault: durableDefault,
             incognito: incognito,
             chosenEngine: engine,
-            agentResolution: resolution
+            agentResolution: resolution,
+            agentRequiredEngine: required
         )
+    }
+
+    @Test func aDurableOnlyAgentLaunchesDurableWithAFixedPillWhateverWasChosen() {
+        for chose in [nil, SessionEngine.classic, .durable] {
+            let fixed = decide(offered: true, chose: chose, agentRequires: .durable)
+            #expect(fixed.engine == .durable, "chose \(String(describing: chose))")
+            #expect(fixed.showsPill)
+            #expect(!fixed.canToggle)
+            #expect(!fixed.blocksLaunch)
+            #expect(fixed.fixedReason != nil)
+        }
+        // An unresolved Agent still holds the launch.
+        #expect(decide(offered: true, agent: .pending, agentRequires: .durable).blocksLaunch)
     }
 
     @Test func newSessionsStartClassicWithASwitchUnlessDurableIsTheDefault() {
@@ -25,7 +40,7 @@ struct DurableSessionsTests {
         #expect(classic.engine == .classic)
         #expect(classic.showsPill)
         #expect(classic.canToggle)
-        #expect(classic.classicReason == nil)
+        #expect(classic.fixedReason == nil)
 
         let durable = decide(offered: true, durableDefault: true)
         #expect(durable.engine == .durable)
@@ -38,7 +53,7 @@ struct DurableSessionsTests {
         #expect(classic.engine == .classic)
         #expect(!classic.showsPill)
         #expect(!classic.canToggle)
-        #expect(classic.classicReason == nil)
+        #expect(classic.fixedReason == nil)
     }
 
     @Test func thePillChoiceOverridesTheDefaultForOneLaunchInEitherDirection() {
@@ -49,7 +64,7 @@ struct DurableSessionsTests {
         let classic = decide(offered: true, durableDefault: true, chose: .classic)
         #expect(classic.engine == .classic)
         #expect(classic.canToggle)
-        #expect(classic.classicReason == nil)
+        #expect(classic.fixedReason == nil)
     }
 
     @Test func incognitoLaunchRunsClassicWithoutAnEnginePillEvenWhenDurableWasChosen() {
@@ -68,7 +83,7 @@ struct DurableSessionsTests {
                 #expect(held.blocksLaunch, "\(resolution), chose \(String(describing: chose))")
                 #expect(held.engine == .classic)
                 #expect(!held.canToggle)
-                #expect(held.classicReason == resolution.blockReason)
+                #expect(held.fixedReason == resolution.blockReason)
             }
         }
         #expect(!decide(offered: true, agent: .resolved).blocksLaunch)

@@ -133,6 +133,11 @@ export class SessionStartCoordinator {
           !isControlConversation(session) &&
           !this.deps.durableSessionsAvailable()
         ) {
+          if (agentDefinition?.launchConstraints?.requiredEngine === "durable") {
+            throw new Error(
+              `Agent ${agentDefinition.name} runs only on the durable engine, and durable sessions are off on this server`,
+            );
+          }
           delete session.serverDurable;
           session.warnings = [
             ...(session.warnings ?? []),

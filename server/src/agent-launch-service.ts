@@ -44,6 +44,8 @@ export interface AgentDefinition {
   launchConstraints?: {
     allowedWorkspaceIds?: string[];
     requiredRuntime?: "host" | "sandbox";
+    /** Every launch runs on this engine: an omitted engine becomes it, another is refused. */
+    requiredEngine?: "durable";
   };
 }
 
@@ -149,22 +151,38 @@ export function requiredModelLaunchFailureMessage(session: Session): string | un
   return launch.promptError;
 }
 
+const DURABLE_OFF_HINT =
+  "turn on Durable Sessions in Server Settings or set experimental.serverDurable";
+
 /**
- * Parse a create request's `engine`. Omitted means classic. Durable needs
+ * Parse a create request's `engine`. Omitted means classic, or the saved Agent's
+ * `launchConstraints.requiredEngine`, which also refuses any other engine. Durable needs
  * `experimental.serverDurable`, which makes durable sessions available but
  * never enrolls a session on its own.
  */
 export function parseRequestedEngine(
   engine: unknown,
   durableAvailable: () => boolean,
+  agent?: Pick<AgentDefinition, "name" | "launchConstraints">,
 ): { engine: SessionEngine } | { status: 400 | 409; error: string } {
-  if (engine === undefined || engine === "classic") return { engine: "classic" };
-  if (engine !== "durable") return { status: 400, error: 'engine must be "classic" or "durable"' };
+  const required = agent?.launchConstraints?.requiredEngine;
+  if (engine !== undefined && engine !== "classic" && engine !== "durable") {
+    return { status: 400, error: 'engine must be "classic" or "durable"' };
+  }
+  if (required && engine !== undefined && engine !== required) {
+    return {
+      status: 400,
+      error: `Agent ${agent?.name} runs only on the ${required} engine; omit engine or pass ${required}`,
+    };
+  }
+  const resolved = engine ?? required ?? "classic";
+  if (resolved === "classic") return { engine: "classic" };
   if (!durableAvailable()) {
     return {
       status: 409,
-      error:
-        "Durable sessions are off on this server; turn on Durable Sessions in Server Settings or set experimental.serverDurable",
+      error: required
+        ? `Agent ${agent?.name} runs only on the durable engine, and durable sessions are off on this server; ${DURABLE_OFF_HINT}`
+        : `Durable sessions are off on this server; ${DURABLE_OFF_HINT}`,
     };
   }
   return { engine: "durable" };

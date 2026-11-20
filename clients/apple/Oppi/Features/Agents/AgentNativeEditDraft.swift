@@ -42,6 +42,7 @@ final class AgentNativeEditDraft {
     var workspaceConstraintMode: AgentResourceSelectionMode
     var selectedAllowedWorkspaceIds: Set<String>
     var requiredRuntime: WorkspaceRuntime?
+    var requiredEngine: SessionEngine?
     var extensionToolDetailsById: [String: ServerExtensionDetail] = [:]
     var isLoadingExtensionTools = false
     var isLoadingResources = false
@@ -80,6 +81,7 @@ final class AgentNativeEditDraft {
         workspaceConstraintMode = definition.launchConstraints?.allowedWorkspaceIds == nil ? .inherit : .exact
         selectedAllowedWorkspaceIds = Set(definition.launchConstraints?.allowedWorkspaceIds ?? [])
         requiredRuntime = definition.launchConstraints?.requiredRuntime
+        requiredEngine = definition.launchConstraints?.requiredEngine
     }
 
     // MARK: Validation
@@ -338,7 +340,8 @@ final class AgentNativeEditDraft {
     private var resolvedLaunchConstraints: AgentLaunchConstraints? {
         let constraints = AgentLaunchConstraints(
             allowedWorkspaceIds: workspaceConstraintMode == .inherit ? nil : selectedAllowedWorkspaceIds.sorted(),
-            requiredRuntime: requiredRuntime
+            requiredRuntime: requiredRuntime,
+            requiredEngine: requiredEngine
         )
         return constraints.isEmpty ? nil : constraints
     }

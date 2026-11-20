@@ -84,7 +84,11 @@ async function launchNewSession(
     },
     sessionName: input.action.name,
     // The durable session resolves the saved Agent when it first attaches (`resolveDurableAgent`).
-    ...(input.action.engine === "durable" ? { engine: "durable" as const } : {}),
+    // A durable-only Agent launches durable; session start refuses it while durable sessions are off.
+    ...(input.action.engine === "durable" ||
+    scheduledAgent.agent.launchConstraints?.requiredEngine === "durable"
+      ? { engine: "durable" as const }
+      : {}),
   });
   if (result.kind === "launch_delivery_unknown") {
     throw new ScheduleDispatchError("other", "launch_delivery_unknown");

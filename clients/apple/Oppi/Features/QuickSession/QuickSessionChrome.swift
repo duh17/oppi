@@ -123,7 +123,7 @@ final class QuickSessionPillButton: UIButton {
         captionLabel.setContentCompressionResistancePriority(priority, for: .horizontal)
     }
 
-    /// The same for the detail text after the title (the fixed Classic engine's reason).
+    /// The same for the detail text after the title (a fixed engine's reason).
     func setDetailCompressionResistance(_ priority: UILayoutPriority) {
         detailLabel.setContentCompressionResistancePriority(priority, for: .horizontal)
     }
@@ -154,7 +154,7 @@ final class QuickSessionPillButton: UIButton {
         }
     }
 
-    /// False for a pill whose tap does nothing (the fixed Classic engine), so
+    /// False for a pill whose tap does nothing (a fixed engine), so
     /// a press does not suggest it will.
     var dimsWhenPressed = true {
         didSet { updateAlpha() }

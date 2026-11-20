@@ -17,7 +17,7 @@ import UIKit
 /// The bar never scrolls or overflows. When the width runs out, a title gives
 /// up room in this order, by its label's compression resistance:
 ///
-/// 1. the reason after a fixed Classic engine,
+/// 1. the reason after a fixed engine,
 /// 2. the worktree's name,
 /// 3. the workspace's name, last.
 ///
