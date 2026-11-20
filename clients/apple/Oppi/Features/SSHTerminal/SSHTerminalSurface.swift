@@ -915,7 +915,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     /// The chat link menu's pane choices (Open Here, a new pane to the right
     /// or below, Open in Pane ▸), from the pane this terminal sits in. A web
     /// page offers only the new panes, as a chat's does. Nil on a compact
-    /// window or with Split Panes off.
+    /// window.
     private func paneItems(for target: SSHTerminalOpenTarget) -> UIMenu? {
         let isWebPage = target.hostLabel != nil
         return PaneOpenMenu.section(near: self, includesOpenHere: !isWebPage, offersOtherPanes: !isWebPage) { [weak self] placement in

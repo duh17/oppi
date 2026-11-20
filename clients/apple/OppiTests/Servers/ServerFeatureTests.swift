@@ -9,20 +9,18 @@ import Testing
 struct ServerFeatureTests {
     private static let plainPi = Dictionary(uniqueKeysWithValues: ServerFeature.allCases.map { ($0.rawValue, false) })
 
-    private static func capabilities(features: [String: Bool]?, godot: Bool = true) -> ServerInfo.Capabilities {
+    private static func capabilities(features: [String: Bool]?) -> ServerInfo.Capabilities {
         var capabilities = ServerInfo.Capabilities(
             sessionStream: .init(version: 1), dictationStream: nil, appEventStream: .init(version: 1), extensionNativeUI: nil
         )
-        capabilities.godot = godot ? .init(version: 1) : nil
         capabilities.features = features
         return capabilities
     }
 
-    @Test("An older server without switches offers everything; Godot also needs a server that serves games")
-    func olderServersOfferEverything() {
+    @Test("A server without switches offers everything")
+    func serversWithoutSwitchesOfferEverything() {
         let older = Self.capabilities(features: nil)
         #expect(ServerFeature.allCases.allSatisfy(older.offers))
-        #expect(!Self.capabilities(features: nil, godot: false).offers(.godotPane))
         // A switch this app does not know about changes nothing it reads.
         #expect(Self.capabilities(features: ["voice": false]).offers(.terminal))
     }

@@ -1,0 +1,1 @@
+- **Compatibility:** This app requires `oppi-server@0.55.0` or later. With an older server it shows "This server is older than this app" with **Open Server Settings** to update it. Until the server is updated, features that need 0.55.0, such as the Schedules calendar and the Godot pane, fail, and a session that ends can keep showing as running until the list refreshes.

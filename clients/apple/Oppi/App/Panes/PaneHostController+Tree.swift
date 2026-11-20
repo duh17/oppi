@@ -67,11 +67,9 @@ enum PaneDirection: CaseIterable, Hashable, Sendable {
 extension PaneHostController {
     /// Split, Move and Move Divider need a wide window (build plan §1.5); a
     /// compact one keeps one pane. The host is the window's pane area and
-    /// takes the window's traits, never a leaf's forced ones. The Split Panes
-    /// experiment off takes splits away too: then no Split, web page beside
-    /// the chat, or terminal or drop in a new pane is offered.
+    /// takes the window's traits, never a leaf's forced ones.
     var canSplit: Bool {
-        panes.splitsEnabled && AdaptiveWidth.isWide(traitCollection)
+        AdaptiveWidth.isWide(traitCollection)
             && panes.tree.leaves.count < PaneLayout.maximumLeaves
     }
 
@@ -836,7 +834,7 @@ extension PaneHostController {
         guard let cell = cell(holding: screen) else { return [] }
         let cells = panes.cellLayout
         var items = menuItems(for: cell).filter { $0.identifier == "pane.menu.undo" }
-        if panes.splitsEnabled, cells.zoomed != nil, cells.leaves.count > 1 {
+        if cells.zoomed != nil, cells.leaves.count > 1 {
             items.append(PaneMenuItem(
                 title: String(localized: "Restore Panes"), symbol: PaneGripView.restoreSymbol,
                 actionName: String(localized: "Restore Panes"), identifier: "pane.menu.restore",

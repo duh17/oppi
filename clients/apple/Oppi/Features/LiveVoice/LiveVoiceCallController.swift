@@ -141,7 +141,7 @@ final class LiveVoiceCallController {
     /// result, success or not, by a new socket (whose media starts fresh), by hold, or by the
     /// call ending.
     @ObservationIgnored private var bargeInRequestId: String?
-    /// The server refused the barge-in (stale lease, or a server without it), so the interrupted
+    /// The server refused the barge-in (a stale lease), so the interrupted
     /// reply keeps streaming. Its audio is dropped until the stream has been quiet for
     /// `LiveVoicePlaybackScheduler.replyGap`, instead of resuming mid-sentence. The time the
     /// last of it was dropped (or the refusal arrived).
@@ -470,7 +470,7 @@ final class LiveVoiceCallController {
             guard command.hasPrefix("voice_") else { return }
             if command == "voice_call_barge_in" {
                 // After a success the server sends no more of the interrupted reply. After a
-                // refusal (stale lease, the keepalive's to repair, or an older server) it does,
+                // refusal (stale lease, the keepalive's to repair) it does,
                 // so that reply stays dropped until its stream goes quiet.
                 guard requestId != nil, requestId == bargeInRequestId else { return }
                 bargeInRequestId = nil

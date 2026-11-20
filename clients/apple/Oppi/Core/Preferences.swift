@@ -58,8 +58,7 @@ enum AppPreferences {
 
     // MARK: - Experiments
 
-    /// Features on trial, saved on this device. Every flag but Split Panes
-    /// defaults to off.
+    /// Features on trial, saved on this device. Every flag defaults to off.
     ///
     /// Live Voice keeps its flag and getter here. The others live in
     /// `AppPreferenceStore.Experiments` (both clients read them), declared in

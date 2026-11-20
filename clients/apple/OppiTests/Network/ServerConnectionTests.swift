@@ -241,7 +241,8 @@ struct ServerConnectionTests {
         pipe.handle(.sessionEnded(reason: "stopped"), sessionId: "s1")
         pipe.flushNow()
 
-        #expect(conn.sessionStore.sessions.first?.status == .stopped)
+        // The event writes no status: the server's stopped `state` comes before it.
+        #expect(conn.sessionStore.sessions.first?.status == .busy)
 
         let system = pipe.reducer.items.filter {
             if case .systemEvent = $0 { return true }

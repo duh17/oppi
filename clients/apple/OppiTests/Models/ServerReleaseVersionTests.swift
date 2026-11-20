@@ -7,8 +7,10 @@ struct ServerReleaseVersionTests {
     @Test func treatsOlderServersAsBelowMinimum() {
         #expect(ServerReleaseVersion.isBelowMinimum("0.49.1"))
         #expect(ServerReleaseVersion.isBelowMinimum("0.53.0"))
-        #expect(!ServerReleaseVersion.isBelowMinimum("0.54.0"))
+        #expect(ServerReleaseVersion.isBelowMinimum("0.54.0"))
+        #expect(ServerReleaseVersion.isBelowMinimum("0.54.9"))
         #expect(!ServerReleaseVersion.isBelowMinimum("0.55.0"))
+        #expect(!ServerReleaseVersion.isBelowMinimum("0.56.0"))
         #expect(!ServerReleaseVersion.isBelowMinimum(nil))
         #expect(!ServerReleaseVersion.isBelowMinimum("not-a-version"))
     }

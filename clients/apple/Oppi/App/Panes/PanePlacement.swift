@@ -8,7 +8,7 @@ import UIKit
 // is not decided here: Open in New Pane to the Right or Below (`PaneOpenMenu`),
 // a drop on a pane's edge (`+Drop`), Split Right and Split Down (the grip's
 // menu and their keys), and a launcher choice, which fills its own pane.
-// Everywhere else (a compact window, Split Panes off) the opener shows the
+// Everywhere else (a compact window) the opener shows the
 // content as it always did, in the main pane.
 
 /// What a new pane shows, as the placement weighs it.
@@ -63,7 +63,7 @@ enum PaneContentKind: Equatable, Sendable, CaseIterable {
 ///   chat keeps its share and is not squeezed to its minimum by each open.
 /// - A file that opens to the right takes its reading width of the pane it
 ///   splits (`PaneReadingWidth`); every other new pane takes half.
-/// - On a compact window, with Split Panes off, or with the window at its
+/// - On a compact window, or with the window at its
 ///   most panes and none to reuse, it opens in the main pane.
 enum PanePlacement: Equatable {
     case reuse(PaneID)
@@ -168,7 +168,7 @@ extension PaneHostController {
         let placement = PanePlacement.resolve(
             kind,
             side: AppPreferenceStore.NewPanes.side(for: kind.setting, in: panes.preferences),
-            isWide: panes.splitsEnabled && AdaptiveWidth.isWide(traitCollection),
+            isWide: AdaptiveWidth.isWide(traitCollection),
             canAddPane: panes.tree.leaves.count < PaneLayout.maximumLeaves,
             cells: cells,
             source: source,

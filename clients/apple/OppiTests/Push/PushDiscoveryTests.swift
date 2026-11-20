@@ -190,11 +190,9 @@ struct PushDiscoveryTests {
 
             conn.handleAppEvent(event)
 
-            if name == "ended" {
-                #expect(PushDiscovery.stage(serverId: serverId) == .ready, "\(name)")
-            } else {
-                // stop_confirmed and a non-launch error carry no status now; the server's
-                // next summary is what makes the card due.
+            do {
+                // These events carry no status; the server's summary (sent before
+                // session_ended) is what makes the card due.
                 #expect(PushDiscovery.stage(serverId: serverId) == nil, "\(name) before its summary")
                 let terminal = makeTestSession(id: "background", workspaceId: "w1", status: terminalStatus)
                 conn.handleAppEvent(.sessionSummary(

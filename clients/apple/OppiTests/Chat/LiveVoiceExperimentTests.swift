@@ -163,53 +163,11 @@ struct SettingsExperimentsPageTests {
         #expect(defaults.bool(forKey: AppPreferences.Experiments.liveVoiceKey))
     }
 
-    @Test("Split Panes is listed on a wide window only, on until switched off")
-    func splitPanesIsAWideWindowsExperimentOnByDefault() async throws {
-        let defaults = try #require(UserDefaults(suiteName: "SettingsExperimentsPageTests-\(UUID().uuidString)"))
-        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-        func show(wide: Bool) -> (SettingsExperimentsViewController, UIWindow) {
-            let page = SettingsExperimentsViewController(defaults: defaults)
-            let window = UIWindow(windowScene: scene)
-            window.frame = CGRect(x: 0, y: 0, width: wide ? 1133 : 390, height: 1200)
-            window.traitOverrides.horizontalSizeClass = wide ? .regular : .compact
-            window.rootViewController = page
-            window.makeKeyAndVisible()
-            return (page, window)
-        }
-        func splitPanesSwitch(in page: SettingsExperimentsViewController) async -> UISwitch? {
-            for _ in 0..<50 {
-                page.view.layoutIfNeeded()
-                if let found = Self.switches(in: page.view).first(where: { $0.accessibilityIdentifier == "settings.experiments.splitPanes" }) {
-                    return found
-                }
-                try? await Task.sleep(for: .milliseconds(20))
-            }
-            return nil
-        }
-
-        let (compact, compactWindow) = show(wide: false)
-        #expect(await splitPanesSwitch(in: compact) == nil, "a compact window never splits")
-        #expect(!Self.switches(in: compact.view).isEmpty, "the page drew its other switches")
-        compactWindow.isHidden = true
-        compactWindow.rootViewController = nil
-
-        let (wide, wideWindow) = show(wide: true)
-        defer { wideWindow.isHidden = true; wideWindow.rootViewController = nil }
-        let toggle = try #require(await splitPanesSwitch(in: wide))
-        #expect(toggle.isOn, "on with nothing saved")
-        toggle.isOn = false
-        toggle.sendActions(for: .valueChanged)
-        for _ in 0..<50 where defaults.object(forKey: AppPreferenceStore.Experiments.splitPanesKey) == nil {
-            try? await Task.sleep(for: .milliseconds(20))
-        }
-        #expect(defaults.object(forKey: AppPreferenceStore.Experiments.splitPanesKey) as? Bool == false)
-    }
-
-    /// New Panes sits under Split Panes while it is on: one side per kind,
-    /// a terminal Below and the rest Automatic until changed, and a choice
-    /// saves that kind's side. Split Panes off hides it.
-    @Test("New Panes lists a side per kind while Split Panes is on")
-    func newPanesFollowsSplitPanes() async throws {
+    /// New Panes on a wide window: one side per kind, a terminal Below and the
+    /// rest Automatic until changed, and a choice saves that kind's side. Split
+    /// Panes has no switch: panes are always on.
+    @Test("New Panes lists a side per kind on a wide window, with no Split Panes switch")
+    func newPanesListsASidePerKind() async throws {
         let defaults = try #require(UserDefaults(suiteName: "SettingsExperimentsPageTests-\(UUID().uuidString)"))
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let page = SettingsExperimentsViewController(defaults: defaults)
@@ -246,17 +204,7 @@ struct SettingsExperimentsPageTests {
         }
         #expect(AppPreferenceStore.NewPanes.side(for: .terminal, in: defaults) == .right)
         #expect(AppPreferenceStore.NewPanes.side(for: .files, in: defaults) == .automatic, "one kind at a time")
-
-        let split = try #require(Self.switches(in: page.view).first { $0.accessibilityIdentifier == "settings.experiments.splitPanes" })
-        split.isOn = false
-        split.sendActions(for: .valueChanged)
-        var gone = false
-        for _ in 0..<50 where !gone {
-            try? await Task.sleep(for: .milliseconds(20))
-            page.view.layoutIfNeeded()
-            gone = !Self.buttons(in: page.view).contains { $0.accessibilityIdentifier?.hasPrefix("settings.experiments.newPanes.") == true }
-        }
-        #expect(gone, "Split Panes off hides New Panes")
+        #expect(!Self.switches(in: page.view).contains { $0.accessibilityIdentifier == "settings.experiments.splitPanes" })
     }
 
     /// Buttons the user can see, as `switches(in:)` finds switches.
@@ -273,9 +221,9 @@ struct SettingsExperimentsPageTests {
             if let before { UserDefaults.standard.set(before, forKey: key) } else { UserDefaults.standard.removeObject(forKey: key) }
         }
         UserDefaults.standard.set(false, forKey: key)
-        let without = SettingsExperimentsViewController.enabledCount(wide: false)
+        let without = SettingsExperimentsViewController.enabledCount()
         UserDefaults.standard.set(true, forKey: key)
-        #expect(SettingsExperimentsViewController.enabledCount(wide: false) == without + 1)
+        #expect(SettingsExperimentsViewController.enabledCount() == without + 1)
     }
 
     /// Switches the user can see: a collection view keeps removed cells hidden in its reuse pool.

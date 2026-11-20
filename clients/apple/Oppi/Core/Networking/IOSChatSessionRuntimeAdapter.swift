@@ -133,10 +133,6 @@ final class IOSChatSessionRuntimeAdapter:
 
     var closedForOversizedMessage: Bool { connection?.wsClient?.closedForOversizedMessage == true }
 
-    var conversationStreamAvailable: Bool { connection?.conversationStreamAvailable == true }
-
-    var conversationStreamLiveTailsAvailable: Bool { connection?.conversationStreamLiveTailsAvailable == true }
-
     /// Conversation stream `attach` / `older` on the focused socket.
     func send(_ message: ClientMessage) async throws {
         guard let connection else { throw ChatSessionFocusedStreamBindError.timedOut }

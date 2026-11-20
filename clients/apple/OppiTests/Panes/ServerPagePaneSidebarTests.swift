@@ -13,7 +13,6 @@ struct ServerPagePaneSidebarTests {
         let shell = try ShellWindow()
         defer { shell.hide() }
         let navigation = shell.root.navigation
-        navigation.panes.splitsEnabled = true
         #expect(navigation.panes.split(navigation.panes.routedLeafID, axis: .row) != nil)
         // The routed pane shows a chat or file: the sidebar is hidden.
         navigation.splitColumnVisibility = .detailOnly
@@ -38,7 +37,6 @@ struct ServerPagePaneSidebarTests {
         let shell = try ShellWindow()
         defer { shell.hide() }
         let navigation = shell.root.navigation
-        navigation.panes.splitsEnabled = true
         navigation.splitColumnVisibility = .detailOnly
         #expect(await shell.settles { shell.split.displayMode == .secondaryOnly })
 

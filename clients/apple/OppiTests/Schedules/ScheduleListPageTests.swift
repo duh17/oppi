@@ -34,6 +34,7 @@ struct ScheduleListPageTests {
     @Test("a failed pause keeps the list on screen and is not the list's own failure")
     func failedActionKeepsTheList() async throws {
         let routes = TestURLProtocol.routeScope(mockPageRoutes { request in
+            if let calendar = Self.noCalendar(request) { return calendar }
             guard request.url?.path.hasSuffix("/schedules") == true else {
                 guard request.url?.path.contains("/pause") == true else { return nil }
                 // The pause is refused: a 500 of its own, not the list's route.
@@ -65,6 +66,7 @@ struct ScheduleListPageTests {
     func failedReloadKeepsTheRows() async throws {
         let answers = ScheduleAnswers(listed: [schedule("nightly")])
         let routes = TestURLProtocol.routeScope(mockPageRoutes { request in
+            if let calendar = Self.noCalendar(request) { return calendar }
             guard request.url?.path.hasSuffix("/schedules") == true else { return nil }
             return try answers.answer(for: request)
         })
@@ -93,6 +95,13 @@ struct ScheduleListPageTests {
         window.rootViewController = UINavigationController(rootViewController: page)
         window.makeKeyAndVisible()
         return window
+    }
+
+    /// The list also reads the calendar's runs; these tests leave them out, so the cards
+    /// show their definitions alone.
+    private static func noCalendar(_ request: URLRequest) -> (Data, HTTPURLResponse)? {
+        guard request.url?.path.hasSuffix("/schedules/calendar") == true else { return nil }
+        return (Data(#"{"error":"not in this test"}"#.utf8), status(500, for: request))
     }
 
     private static func status(_ code: Int, for request: URLRequest) -> HTTPURLResponse {

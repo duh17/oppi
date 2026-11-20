@@ -185,6 +185,8 @@ struct ScreenAwakeIntegrationTests {
         conn.sessionStore.upsert(makeTestSession(id: "s1", status: .busy))
 
         pipe.handle(.state(session: makeTestSession(id: "s1", status: .busy)), sessionId: "s1")
+        // A runtime that ends sends its stopped state, then session_ended.
+        pipe.handle(.state(session: makeTestSession(id: "s1", status: .stopped)), sessionId: "s1")
         pipe.handle(.sessionEnded(reason: "done"), sessionId: "s1")
 
         #expect(!ctrl.isPreventingSleep)
@@ -304,6 +306,7 @@ struct ScreenAwakeIntegrationTests {
         conn.sessionStore.upsert(makeTestSession(id: "s2", status: .busy))
 
         conn.routeStreamMessage(streamMsg(sessionId: "s2", message: .state(session: makeTestSession(id: "s2", status: .busy))))
+        conn.routeStreamMessage(streamMsg(sessionId: "s2", message: .state(session: makeTestSession(id: "s2", status: .stopped))))
         conn.routeStreamMessage(streamMsg(sessionId: "s2", message: .sessionEnded(reason: "done")))
 
         #expect(!ctrl.isPreventingSleep)

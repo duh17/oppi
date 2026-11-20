@@ -12,8 +12,7 @@ import UIKit
 ///
 /// The Day is the default: the morning questions (did last night work, what needs me, what
 /// runs next) matter more than the inventory, and the list is one tap away. The choice holds
-/// for the rest of the app session. A server without `capabilities.scheduleCalendar` shows
-/// only the list, with no switch.
+/// for the rest of the app session.
 ///
 /// The list keeps its status filter; the calendar shows every past run, paused and archived
 /// schedules' included, so the filter leaves the bar and Today takes its place, with `‹ ›`
@@ -111,10 +110,8 @@ final class SchedulesViewController: UIViewController {
 
     private var isAccessibilitySize: Bool { traitCollection.preferredContentSizeCategory.isAccessibilityCategory }
 
-    /// The mode on screen: the chosen one as this width and text size can show it, where the
-    /// server has a calendar.
+    /// The mode on screen: the chosen one as this width and text size can show it.
     var mode: Mode {
-        guard connection.scheduleCalendarAvailable else { return .list }
         let chosen = Self.chosenMode
         if chosen == .week, !AdaptiveWidth.isWide(traitCollection) || isAccessibilitySize { return .day }
         return chosen
@@ -164,12 +161,11 @@ final class SchedulesViewController: UIViewController {
     override func updateProperties() {
         super.updateProperties()
         let mode = mode
-        let available = connection.scheduleCalendarAvailable
         let wide = AdaptiveWidth.isWide(traitCollection)
         let palette = root.themeStore.activeThemeID.palette
         view.backgroundColor = palette.ui.bg
         // The Agents rows name, once the connection has a client; appearing reads them again.
-        if available { agents.load(connection.apiClient, refresh: false) }
+        agents.load(connection.apiClient, refresh: false)
 
         let child: UIViewController
         if mode == .list {
@@ -189,7 +185,7 @@ final class SchedulesViewController: UIViewController {
         show(child)
 
         applySegments(wide: wide, mode: mode)
-        navigationItem.titleView = available ? modeControl : nil
+        navigationItem.titleView = modeControl
         // Trailing items run right to left: "Today ‹ ›".
         let calendarItems = wide ? [nextItem, previousItem, todayItem] : [todayItem]
         ListScreen.setBarItems(

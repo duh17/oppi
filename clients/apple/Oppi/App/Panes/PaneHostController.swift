@@ -138,8 +138,6 @@ final class PaneHostController: UIViewController {
     /// The software keyboard's overlap with the host's bottom edge; the fit
     /// rule draws a field's cell over its column when that leaves it short.
     var keyboardHeight: CGFloat = 0
-    /// The Split Panes experiment as the host last drew it.
-    private var drawnSplitsEnabled: Bool?
 
     init(primary: UIViewController, panes: ScenePanes = ScenePanes(), parkedViewLifetime: TimeInterval = 10) {
         self.primary = primary
@@ -337,21 +335,8 @@ final class PaneHostController: UIViewController {
         _ = panes.tree
         // And a sheet waiting its turn, for its pane's grip.
         _ = panes.sheets.waitingOwners
-        // The Split Panes switch mounts or removes every split leaf at once;
-        // the routed leaf's cell takes the window or gives it back, and each
-        // leaf hears what it can see now.
-        let splitsEnabled = panes.splitsEnabled
         syncSplitLeaves()
-        guard drawnSplitsEnabled != nil, drawnSplitsEnabled != splitsEnabled else {
-            drawnSplitsEnabled = splitsEnabled
-            view.setNeedsLayout()
-            return
-        }
-        drawnSplitsEnabled = splitsEnabled
-        if !splitsEnabled { undoToast.hide() }
-        relayoutCells()
-        updateVisibility()
-        announceLayoutChange()
+        view.setNeedsLayout()
     }
 
     /// The sidebar showing or hiding changes the leading safe area, and with

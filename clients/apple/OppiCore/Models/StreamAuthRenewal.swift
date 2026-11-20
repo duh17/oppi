@@ -1,6 +1,6 @@
 import Foundation
 
-/// The live-stream renewal exchange (`capabilities.streamAuthRenewal`): `auth_renew` replaces a
+/// The live-stream renewal exchange: `auth_renew` replaces a
 /// socket's access token before the server closes it with `4001 auth_expired`. It runs on the
 /// app-event, focused session, and dictation streams, outside each stream's own message set.
 enum StreamAuthRenewal {

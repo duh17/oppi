@@ -374,13 +374,13 @@ enum AppEventSessionCleanupCase: CaseIterable {
         }
     }
 
-    /// Screen-awake follows the stored row. Ending or deleting the session releases it;
-    /// `stopConfirmed` and a fatal error carry no status, so the turn still in flight on the
-    /// row holds it until the server's next summary.
+    /// Screen-awake follows the stored row. Deleting the session releases it;
+    /// `stopConfirmed`, `session_ended` and a fatal error carry no status, so the turn still
+    /// in flight on the row holds it until the server's next summary.
     var screenStaysAwake: Bool {
         switch self {
-        case .stopConfirmed, .fatalError: true
-        case .sessionEnded, .sessionDeleted: false
+        case .stopConfirmed, .sessionEnded, .fatalError: true
+        case .sessionDeleted: false
         }
     }
 
@@ -423,7 +423,9 @@ enum AppEventSessionCleanupCase: CaseIterable {
             // server's next state/session_summary restores it.
             #expect(connection.sessionStore.session(id: "s2")?.status == .stopping)
         case .sessionEnded:
-            #expect(connection.sessionStore.session(id: "s2")?.status == .stopped)
+            // The server sends the stopped summary before `session_ended`; the event itself
+            // carries no status.
+            #expect(connection.sessionStore.session(id: "s2")?.status == .busy)
         case .sessionDeleted:
             #expect(connection.sessionStore.session(id: "s2") == nil)
         case .fatalError:

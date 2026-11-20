@@ -412,9 +412,9 @@ enum SSHTerminalMenuHeader {
 
 /// Where the terminal shows a file or folder it resolved: the pane owner's
 /// `openBeside`, from the terminal's own pane, as the chat bar's Terminal and
-/// a Rex link do. On a wide window with Split Panes on it opens in a pane
+/// a Rex link do. On a wide window it opens in a pane
 /// beside the terminal (on the New Panes side for files), and a terminal is
-/// never replaced. Elsewhere (a compact window, Split Panes off, a full window
+/// never replaced. Elsewhere (a compact window, a full window
 /// of panes) it is pushed over the terminal in the terminal's own navigation,
 /// never onto the Workspaces stack a chat link falls back to: the terminal may
 /// sit on the Terminal tab.

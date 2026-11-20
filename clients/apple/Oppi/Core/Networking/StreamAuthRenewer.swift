@@ -3,8 +3,7 @@ import OSLog
 
 private let renewalLogger = Logger(subsystem: AppIdentifiers.subsystem, category: "StreamAuthRenewal")
 
-/// Keeps one live socket's access ahead of the server's expiry close (`auth_renew`,
-/// `capabilities.streamAuthRenewal`).
+/// Keeps one live socket's access ahead of the server's expiry close (`auth_renew`).
 ///
 /// The server closes a device socket with `4001 auth_expired` 30 s after the token it holds for
 /// that socket expires. A minute before the expiry, the renewer takes a token newer than the
@@ -63,15 +62,13 @@ final class StreamAuthRenewer {
     private var pending: String?
     private var task: Task<Void, Never>?
 
-    /// A renewer for one new live socket when the server takes `auth_renew`
-    /// (`capabilities.streamAuthRenewal`) and the connection has a device auth session to mint
+    /// A renewer for one new live socket when the connection has a device auth session to mint
     /// from. Otherwise nil, and the socket reconnects when its token expires.
-    static func ifSupported(
-        by capabilities: ServerInfo.Capabilities?,
-        session: DeviceAuthSession?,
+    static func forSession(
+        _ session: DeviceAuthSession?,
         streamRole: String
     ) -> StreamAuthRenewer? {
-        guard capabilities?.streamAuthRenewal?.version ?? 0 >= 1, let session else { return nil }
+        guard let session else { return nil }
         return StreamAuthRenewer(source: Source(session: session), streamRole: streamRole)
     }
 

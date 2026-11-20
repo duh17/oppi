@@ -1319,11 +1319,10 @@ struct ServerConnectionStreamTests {
 
     /// A connection whose focused-session socket can open, recording the frames it sends.
     ///
-    /// `advertised` is what the server's `/server/info` lists for extension native UI, and so what
-    /// the connection is allowed to declare. Passing nil is a server predating the v2 stack.
+    /// `advertised` is what the server's `/server/info` lists for extension native UI.
     private func makeDeclaringConnection(
         sessionId: String = "s1",
-        advertised: [String]? = [ClientCapability.extensionNativeUIComposites]
+        advertised: [String]? = Self.everyServerDraws
     ) async -> (conn: ServerConnection, sent: SentClientFrames) {
         let (conn, _) = await makeTestConnection(sessionId: sessionId)
         conn.setSplitStreamCapabilitiesForTesting(
@@ -1336,6 +1335,15 @@ struct ServerConnectionStreamTests {
         return (conn, sent)
     }
 
+    /// What every supported server takes; `tiles` is newer.
+    private static let everyServerDraws = [
+            ClientCapability.extensionNativeUIComposites,
+            ClientCapability.extensionNativeUIBlocks,
+            ClientCapability.extensionNativeUIElapsed,
+            ClientCapability.extensionNativeUIPanel,
+            ClientCapability.extensionNativeUIWorking,
+        ]
+
     @Test func openingTheSessionSocketDeclaresComposableSurfaces() async {
         let (conn, sent) = await makeDeclaringConnection()
         defer { conn.disconnectStream() }
@@ -1347,21 +1355,14 @@ struct ServerConnectionStreamTests {
             !sent.capabilityDeclarations.isEmpty
         }
         #expect(declared, "A socket that opens for a session declares what this build draws")
-        #expect(sent.capabilityDeclarations == [[ClientCapability.extensionNativeUIComposites]])
+        #expect(sent.capabilityDeclarations == [Self.everyServerDraws])
         #expect(sent.capabilityRequestIds.allSatisfy { $0 == nil },
                 "Fire-and-forget: no requestId, so nothing waits on an answer")
     }
 
-    @Test func aServerAdvertisingBlocksIsToldThisBuildDrawsThem() async {
+    @Test func aServerAdvertisingTilesIsToldThisBuildDrawsThem() async {
         let (conn, sent) = await makeDeclaringConnection(
-            advertised: [
-                ClientCapability.extensionNativeUIComposites,
-                ClientCapability.extensionNativeUIBlocks,
-                ClientCapability.extensionNativeUIElapsed,
-                ClientCapability.extensionNativeUIPanel,
-                ClientCapability.extensionNativeUIWorking,
-                ClientCapability.extensionNativeUITiles,
-            ]
+            advertised: Self.everyServerDraws + [ClientCapability.extensionNativeUITiles]
         )
         defer { conn.disconnectStream() }
         conn.wsClient?._setStatusForTesting(.connected)
@@ -1381,10 +1382,8 @@ struct ServerConnectionStreamTests {
         ]], "Every shape in one declaration; the server ranks the strongest")
     }
 
-    @Test func aServerThatListsOnlyCompositesIsNotToldAboutBlocks() async {
-        let (conn, sent) = await makeDeclaringConnection(
-            advertised: [ClientCapability.extensionNativeUIComposites]
-        )
+    @Test func capabilitiesThatHaveNotLoadedStillDeclareWhatEveryServerDraws() async {
+        let (conn, sent) = await makeDeclaringConnection(advertised: nil)
         defer { conn.disconnectStream() }
         conn.wsClient?._setStatusForTesting(.connected)
 
@@ -1393,7 +1392,7 @@ struct ServerConnectionStreamTests {
         #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
             sent.capabilityDeclarations.count == 1
         })
-        #expect(sent.capabilityDeclarations == [[ClientCapability.extensionNativeUIComposites]])
+        #expect(sent.capabilityDeclarations == [Self.everyServerDraws], "No tiles until the server lists them")
     }
 
     @Test func reconnectingDeclaresComposableSurfacesAgain() async {
@@ -1411,23 +1410,8 @@ struct ServerConnectionStreamTests {
         #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
             sent.capabilityDeclarations.count == 2
         })
-        #expect(sent.capabilityDeclarations == [
-            [ClientCapability.extensionNativeUIComposites],
-            [ClientCapability.extensionNativeUIComposites],
-        ], "One declaration per socket open; a repeat declaration is idempotent on the server")
-    }
-
-    @Test func aServerWithoutTheCapabilityIsNotDeclaredTo() async {
-        let (conn, sent) = await makeDeclaringConnection(advertised: nil)
-        defer { conn.disconnectStream() }
-        conn.wsClient?._setStatusForTesting(.connected)
-
-        conn.routeStreamMessage(streamConnectedFrame())
-        // The declaration runs in a task; give a bug every chance to send before asserting silence.
-        try? await Task.sleep(for: .milliseconds(80))
-
-        #expect(sent.capabilityDeclarations.isEmpty,
-                "A server predating the v2 stack never sees a command it cannot answer")
+        #expect(sent.capabilityDeclarations == [Self.everyServerDraws, Self.everyServerDraws],
+                "One declaration per socket open; a repeat declaration is idempotent on the server")
     }
 
     @Test func aSocketWithNoBoundSessionDeclaresNothing() async {
@@ -1468,10 +1452,7 @@ struct ServerConnectionStreamTests {
         #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
             sent.capabilityDeclarations.count == 2
         })
-        #expect(sent.capabilityDeclarations == [
-            [ClientCapability.extensionNativeUIComposites],
-            [ClientCapability.extensionNativeUIComposites],
-        ])
+        #expect(sent.capabilityDeclarations == [Self.everyServerDraws, Self.everyServerDraws])
     }
 
 }

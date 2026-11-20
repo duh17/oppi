@@ -180,18 +180,10 @@ final class ServerConnection {
     var appEventStreamAvailable: Bool { serverCapabilities?.appEventStream?.version ?? 0 >= 1 }
     /// The server accepts durable-engine creates. With the experiment on, new sessions default durable.
     var durableSessionsAvailable: Bool { serverCapabilities?.durableSessions?.version ?? 0 >= 1 }
-    /// The server replicates durable conversations on the focused socket (`capabilities.conversationStream`).
-    var conversationStreamAvailable: Bool { serverCapabilities?.conversationStream?.version ?? 0 >= 1 }
-    /// v2: `attach { mode: live }` streams the live tails of a session's subagents on its socket.
-    var conversationStreamLiveTailsAvailable: Bool { serverCapabilities?.conversationStream?.version ?? 0 >= 2 }
     /// The server reads messages aloud (`capabilities.speech`, `POST /speech`).
     var speechAvailable: Bool { serverCapabilities?.speech?.version ?? 0 >= 1 }
-    /// A Live Voice call can start (`capabilities.liveVoice`). A server that does not
-    /// advertise it, such as one older than 0.53.0, cannot run a call.
+    /// A Live Voice call can start (`capabilities.liveVoice`): the server's backend is ready.
     var liveVoiceAvailable: Bool { serverCapabilities?.liveVoice?.version ?? 0 >= 1 }
-    /// The server answers the schedule calendar (`capabilities.scheduleCalendar`); without it
-    /// Schedules shows only its list.
-    var scheduleCalendarAvailable: Bool { serverCapabilities?.scheduleCalendar?.version ?? 0 >= 1 }
     /// Why staged comments cannot go with a message to this server, or nil when they can
     /// (`capabilities.promptContext`). An older server would drop them and still acknowledge.
     var promptContextRefusal: String? {
@@ -1993,7 +1985,7 @@ final class ServerConnection {
     /// A new live socket's access for `role`: its renewer, and the token it opens with.
     func streamAccess(role: String) -> (renewer: StreamAuthRenewer?, token: @Sendable () async throws -> String) {
         let session = httpAuthSession, fallback = credentials?.effectiveAccessToken ?? ""
-        return (.ifSupported(by: serverCapabilities, session: session, streamRole: role), { try await session?.currentAccessToken() ?? fallback })
+        return (.forSession(session, streamRole: role), { try await session?.currentAccessToken() ?? fallback })
     }
 
     func makeDictationStreamClient() -> DictationStreamClient? {
@@ -2017,7 +2009,7 @@ final class ServerConnection {
             tailnetRoute: route.configuredTailnetRoute,
             currentTokenProvider: currentTokenProvider,
             refreshTokenProvider: refreshTokenProvider,
-            authRenewer: .ifSupported(by: serverCapabilities, session: httpAuthSession, streamRole: "dictation")
+            authRenewer: .forSession(httpAuthSession, streamRole: "dictation")
         )
         activeDictationClient = client
         return client
@@ -2046,7 +2038,7 @@ final class ServerConnection {
             tlsCertFingerprint: credentials.normalizedTLSCertFingerprint,
             tlsServerName: selection.tlsServerName,
             authSession: httpAuthSession,
-            authRenewer: .ifSupported(by: serverCapabilities, session: httpAuthSession, streamRole: "live_voice")
+            authRenewer: .forSession(httpAuthSession, streamRole: "live_voice")
         )
         client.setPreferredEndpoint(selection)
         client.setStreamURL(streamURL, sessionId: sessionId, workspaceId: routeScope.workspaceId)
@@ -2098,7 +2090,7 @@ final class ServerConnection {
             leftoverExpiresAtMs: credentials.deviceCredential?.expiresAt,
             currentTokenProvider: currentTokenProvider,
             refreshTokenProvider: refreshTokenProvider,
-            authRenewer: .ifSupported(by: serverCapabilities, session: httpAuthSession, streamRole: "app_event_stream"),
+            authRenewer: .forSession(httpAuthSession, streamRole: "app_event_stream"),
             webSocketFactory: webSocketFactory
         )
         client.onTransportHealthFailure = { @MainActor [weak self, weak client] failure in
@@ -2220,14 +2212,11 @@ final class ServerConnection {
         dictationStream: Bool = false,
         appEventStream: Bool = false,
         durableSessions: Bool = false,
-        conversationStream: Bool = false,
-        conversationStreamVersion: Int = 1,
         speech: Bool = false,
         liveVoice: Bool = false,
         pushRelay: URL? = nil,
         extensionNativeUICapabilities: [String]? = nil,
         pins: Bool = false,
-        godot: Bool = false,
         promptContext: Bool = false,
         features: [String: Bool]? = nil,
         pluginSidebar: [PluginScreenSidebarEntry]? = nil
@@ -2243,7 +2232,6 @@ final class ServerConnection {
                 ServerInfo.ExtensionNativeUICapability(version: 1, capabilities: $0)
             },
             durableSessions: version(durableSessions),
-            conversationStream: conversationStream ? .init(version: conversationStreamVersion) : nil,
             speech: version(speech),
             liveVoice: version(liveVoice),
             pushNotifications: pushRelay.map {
@@ -2254,7 +2242,6 @@ final class ServerConnection {
         serverCapabilities?.pins = pins ? ServerInfo.CapabilityVersion(version: 3) : nil
         serverCapabilities?.features = features
         serverCapabilities?.pluginSidebar = pluginSidebar
-        serverCapabilities?.godot = version(godot)
         serverCapabilities?.promptContext = version(promptContext)
         dictationStreamUnsupportedByEndpoint = false
         missingRequiredSplitStreamCapabilities = capabilities.missingRequiredSplitStreamCapabilities
@@ -2322,7 +2309,7 @@ extension ServerConnection: ServerRouteHost {
             tlsCertFingerprint: credentials.normalizedTLSCertFingerprint,
             tlsServerName: selection.tlsServerName,
             authSession: httpAuthSession,
-            authRenewer: .ifSupported(by: serverCapabilities, session: httpAuthSession, streamRole: "focused_session"),
+            authRenewer: .forSession(httpAuthSession, streamRole: "focused_session"),
             tailnetRoute: route.configuredTailnetRoute,
             webSocketFactory: focusedWebSocketFactory
         )

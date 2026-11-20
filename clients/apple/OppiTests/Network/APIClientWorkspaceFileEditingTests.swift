@@ -330,12 +330,6 @@ struct APIClientWorkspaceFileEditingTests {
         defer { EditURLProtocol.reset() }
         let link = FileEditLocation(serverId: "s1", origin: .session(sessionId: "sess-1"), path: "~/code/a b.md")
 
-        // An older server cannot say: no request, and the reader's own identity decides.
-        let older = makeClient()
-        try await loadCapabilities(older, #"{"workspaceFileEditing":{"version":1,"maxBytes":1048576}}"#)
-        #expect(await older.resolveFileForEditing(link) == .unresolved)
-        #expect(EditURLProtocol.recorded.isEmpty)
-
         let client = makeClient()
         try await loadCapabilities(client, #"{"fileEditOrigins":{"version":1,"maxBytes":1048576}}"#)
         let bytes = Data("# A\n".utf8)

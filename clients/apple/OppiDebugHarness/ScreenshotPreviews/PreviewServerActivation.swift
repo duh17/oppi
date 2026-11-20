@@ -10,16 +10,14 @@ extension ConnectionCoordinator {
     /// `server.host`. Give preview servers a reserved `.invalid` host (RFC 6761):
     /// it never resolves, so those requests fail as unreachable instead of
     /// reaching a real machine, whose refusal would fail the route closed.
-    /// `durableSessions` advertises Durable sessions in that `/server/info`, and
-    /// `scheduleCalendar` the schedule calendar.
+    /// `durableSessions` advertises Durable sessions in that `/server/info`.
     @discardableResult
     func activatePreviewServer(
         _ server: PairedServer,
         apiClient: APIClient? = nil,
-        durableSessions: Bool = false,
-        scheduleCalendar: Bool = false
+        durableSessions: Bool = false
     ) -> ServerConnection {
-        let info = Self.previewServerInfo(durableSessions: durableSessions, scheduleCalendar: scheduleCalendar)
+        let info = Self.previewServerInfo(durableSessions: durableSessions)
         _serverInfoBootstrapForTesting = { _, _ in info }
         _initialLANEndpointForTesting = { _ in nil }
         if let apiClient {
@@ -33,19 +31,14 @@ extension ConnectionCoordinator {
         return connection
     }
 
-    private static func previewServerInfo(durableSessions: Bool, scheduleCalendar: Bool) -> ServerInfo {
+    private static func previewServerInfo(durableSessions: Bool) -> ServerInfo {
         var capabilities = ServerInfo.Capabilities(
             sessionStream: .init(version: 1),
             dictationStream: nil,
             appEventStream: nil,
             extensionNativeUI: nil,
-            durableSessions: durableSessions ? .init(version: 1) : nil,
-            scheduleCalendar: scheduleCalendar ? .init(version: 1) : nil
+            durableSessions: durableSessions ? .init(version: 1) : nil
         )
-        // The chat-routes server serves games (`ChatRoutesGodot`); the Godot pane needs it to say so.
-        if ProcessInfo.processInfo.environment["CHAT_ROUTES_GODOT"] != nil {
-            capabilities.godot = .init(version: 1)
-        }
         // The pane-restore server keeps pins (`ChatRoutesURLProtocol` answers `/pins`).
         if ProcessInfo.processInfo.environment["PANE_RESTORE_PINS"] == "1" {
             capabilities.pins = .init(version: 3)

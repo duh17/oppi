@@ -24,8 +24,8 @@ extension WorkspaceDetailViewController {
                 resetWorktreeScopedState()
             }
         } catch {
-            // Worktree discovery is best-effort: older servers lack the route, and sandbox
-            // workspaces answer 409. Keep the main checkout visible.
+            // Worktree discovery is best-effort: sandbox workspaces answer 409. Keep the main
+            // checkout visible.
             if state.worktrees.isEmpty, let connection {
                 state.worktrees = visibleWorktrees(currentWorkspace(connection))
             }

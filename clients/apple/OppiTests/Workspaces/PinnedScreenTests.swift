@@ -82,7 +82,10 @@ struct PinnedScreenTests {
         let serverId = "sha256:pinned-\(UUID().uuidString)"
         let root = try await makeTestAppRoot(readyServerId: serverId, apiClient: client)
         let connection = try #require(root.coordinator.connection(for: serverId))
-        connection.setSplitStreamCapabilitiesForTesting(pins: pinsAvailable, godot: godot)
+        connection.setSplitStreamCapabilitiesForTesting(
+            pins: pinsAvailable,
+            features: godot ? nil : [ServerFeature.godotPane.rawValue: false]
+        )
         connection.sessionStore.upsert(makeTestSession(id: "sess-release", name: "Write the release notes", status: .busy))
         connection.sessionStore.upsert(makeTestSession(id: "sess-review", name: "Review the pins change", status: .ready))
         if pinsAvailable { await connection.pins.refresh(api: client) }
@@ -194,7 +197,7 @@ struct PinnedScreenTests {
             "pin_OldGame00008", "pin_GodotDocs010", "pin_Report000011", "pin_AppTs0000012",
         ])
         #expect(shell.cell("pin_Notebook0001") is PinTileCell)
-        // This server offers no Godot Pane (no `godot` capability), so no game plays here.
+        // This server turns the Godot Pane off, so no game plays here.
         let swordLab = try #require(shell.cell("pin_SwordLab0007"))
         #expect(swordLab.accessibilityLabel == "Sword Lab, Godot Pane is off")
         #expect(swordLab.accessibilityIdentifier == "pinned.pin.game:sword-lab-3fa9c2b1")
@@ -471,7 +474,6 @@ struct PinnedScreenTests {
         let shell = try await Self.makeShell(size: CGSize(width: 1133, height: 744), regular: true)
         defer { shell.end() }
         let panes = shell.root.navigation.panes
-        panes.splitsEnabled = true
         shell.root.navigation.openWorkspaceUtility(.pinned)
         #expect(await shell.settles { shell.cell("pin_Notebook0001") != nil })
 

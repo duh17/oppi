@@ -28,13 +28,6 @@ protocol PaneChat: AnyObject {
 /// panels have links (`.files`, `.git`, `.panel`), so they are the
 /// companions that restore; Outline, Context, Share, readers and a commit's
 /// diff are `.local` and are not saved.
-///
-/// Split Panes is an experiment (Settings → Experiments, on by default).
-/// While it is off the window's cells are the routed leaf alone, with its
-/// companion: no split leaf mounts, and no change to the cells is made, so
-/// the tree (and what is saved) keeps the split leaves until the switch
-/// comes back on and they mount again. The host offers no split while off
-/// (`PaneHostController.canSplit`, `openChoices`).
 @MainActor @Observable
 final class ScenePanes {
     /// The tree. The routed leaf's stack here is a placeholder; `layout(…)`
@@ -60,10 +53,6 @@ final class ScenePanes {
     @ObservationIgnored private var restoredLeaves: Set<PaneID> = []
     /// One sheet at a time across the window's panes.
     @ObservationIgnored let sheets = PaneSheetArbiter()
-    /// The Split Panes experiment, as this window draws it. Follows the
-    /// switch without a relaunch.
-    var splitsEnabled: Bool
-    @ObservationIgnored private var experimentObserver: NSObjectProtocol?
     /// Where the New Panes settings are read as a pane opens
     /// (`PaneHostController.openBeside`); a test's own defaults.
     @ObservationIgnored var preferences: UserDefaults = .standard
@@ -94,24 +83,11 @@ final class ScenePanes {
     /// The routed leaf's stack until `layout(…)` reads the shell's.
     private static let routedPlaceholder = PaneStackEntry(serverId: "", route: .local(PaneLocalToken(raw: "routes")))
 
-    init(splitsEnabled: Bool = AppPreferenceStore.Experiments.splitPanesEnabled) {
+    init() {
         let id = Self.leafID(1)
         nextLeafNumber = 2
         routedLeafID = id
         tree = PaneLayout(single: PaneLeaf(id: id, name: nil, stack: [Self.routedPlaceholder], attachedTo: nil, origin: .split))
-        self.splitsEnabled = splitsEnabled
-        experimentObserver = NotificationCenter.default.addObserver(
-            forName: AppPreferences.Experiments.didChangeNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                let enabled = AppPreferenceStore.Experiments.splitPanesEnabled
-                if self?.splitsEnabled != enabled { self?.splitsEnabled = enabled }
-            }
-        }
-    }
-
-    isolated deinit {
-        if let experimentObserver { NotificationCenter.default.removeObserver(experimentObserver) }
     }
 
     private static func leafID(_ number: Int) -> PaneID {
@@ -283,8 +259,7 @@ final class ScenePanes {
     /// The leaves Split made (or a restored tree held): every leaf but the
     /// routed one and its companion, in tree order.
     var splitLeaves: [PaneLeaf] {
-        guard splitsEnabled else { return [] }
-        return tree.leaves.filter { $0.id != routedLeafID && $0.attachedTo == nil }
+        tree.leaves.filter { $0.id != routedLeafID && $0.attachedTo == nil }
     }
 
     /// The tree the host lays out by the fit rule: one cell per leaf, the
@@ -292,14 +267,6 @@ final class ScenePanes {
     /// itself (`PaneHostController`). The person's full-window companion is
     /// its cell's zoom; the fit rule's stays inside the cell.
     var cellLayout: PaneLayout {
-        guard splitsEnabled else {
-            // The routed leaf alone; its full-window companion is its zoom, as
-            // below.
-            var cells = PaneLayout(single: tree.leaf(routedLeafID)
-                ?? PaneLeaf(id: routedLeafID, name: nil, stack: [Self.routedPlaceholder], attachedTo: nil, origin: .split))
-            if tree.zoomed == companionID, companionID != nil, !companionZoomIsFit { cells.zoomed = routedLeafID }
-            return cells
-        }
         guard let companionID, var cells = try? tree.close(companionID) else { return tree }
         if tree.focus == companionID {
             cells.focus = routedLeafID
@@ -313,11 +280,9 @@ final class ScenePanes {
     /// Runs `change` on the cells and puts the companion back beside its
     /// routed leaf, at the share, focus, zoom and recency it had. False when
     /// the change is refused.
-    /// Refused while Split Panes is off: the cells drawn then are not the
-    /// tree's, and writing them back would drop its split leaves.
     @discardableResult
     private func changeCells(_ change: (PaneLayout) throws -> PaneLayout) -> Bool {
-        guard splitsEnabled, var next = try? change(cellLayout) else { return false }
+        guard var next = try? change(cellLayout) else { return false }
         if let companionID, let companion = tree.leaf(companionID), next.leaf(routedLeafID) != nil,
            var withCompanion = try? next.split(routedLeafID, axis: .row, inserting: companion) {
             if let share = companionPairShare,
@@ -531,9 +496,8 @@ final class ScenePanes {
     /// Newest last, at most `undoDepth`. Not saved: a relaunch starts empty.
     private(set) var undoSteps: [UndoStep] = []
 
-    /// What Undo would take back now ("Close Pane"), nil with nothing to undo
-    /// or while Split Panes is off.
-    var undoAction: String? { splitsEnabled ? undoSteps.last?.action : nil }
+    /// What Undo would take back now ("Close Pane"), nil with nothing to undo.
+    var undoAction: String? { undoSteps.last?.action }
 
     /// Runs `change` on the cells and keeps the cells before it for Undo,
     /// when it changed anything.

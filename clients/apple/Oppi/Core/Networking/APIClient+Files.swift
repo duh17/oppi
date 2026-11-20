@@ -297,11 +297,10 @@ extension APIClient {
         }
         let url = try makeFileEditURL(identity)
         // A host file is tagged only on a read that asks for its owner.
-        let resolves = fileEditOrigins != nil
         let (data, response) = try await performAuthorized {
             var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
             req.httpMethod = "GET"
-            if resolves { req.setValue("1", forHTTPHeaderField: fileEditResolveHeader) }
+            req.setValue("1", forHTTPHeaderField: fileEditResolveHeader)
             return req
         }
         try checkStatus(response, data: data)
@@ -331,10 +330,8 @@ extension APIClient {
     /// origin the reader used. The server follows the path to its canonical file
     /// and names the origin that owns it, so a chat link, an Org `file:` link,
     /// and the workspace tree all edit one file the same way. A read through a
-    /// sandbox session stays inside its sandbox. Without `fileEditOrigins` there
-    /// is no request and the answer is `.unresolved`.
+    /// sandbox session stays inside its sandbox. A failed read is `.unresolved`.
     func resolveFileForEditing(_ location: FileEditLocation) async -> FileEditResolution {
-        guard let capability = fileEditOrigins, capability.version >= 1 else { return .unresolved }
         do {
             let url = try makeCurrentFileURL(location.origin, path: location.path)
             let (data, response) = try await performAuthorized {

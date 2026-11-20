@@ -743,7 +743,7 @@ final class PaneSplitUITests: XCTestCase, PreviewUITestCase {
         attachScreenCapture("terminal-below-chat-portrait")
     }
 
-    /// New Panes (Settings → Experiments, under Split Panes): Terminal reads
+    /// New Panes (Settings → Experiments): Terminal reads
     /// Below until changed, and set to Right the chat bar's next terminal
     /// opens to the chat's right.
     func testNewPanesPutsTheChatBarsTerminalWhereItIsSet() throws {
@@ -752,7 +752,7 @@ final class PaneSplitUITests: XCTestCase, PreviewUITestCase {
         let list = app.collectionViews["settings.experiments.list"]
         let terminalSide = app.buttons["settings.experiments.newPanes.terminal"]
         for _ in 0..<6 where !(terminalSide.exists && terminalSide.isHittable) { list.swipeUp() }
-        XCTAssertTrue(terminalSide.waitUntilExists(timeout: 5), "Experiments lists New Panes under Split Panes")
+        XCTAssertTrue(terminalSide.waitUntilExists(timeout: 5), "Experiments lists New Panes")
         XCTAssertEqual(terminalSide.value as? String, "Below")
         XCTAssertEqual(app.buttons["settings.experiments.newPanes.files"].value as? String, "Automatic")
         hold()
@@ -816,73 +816,6 @@ final class PaneSplitUITests: XCTestCase, PreviewUITestCase {
         XCTAssertEqual(row.frame.minX, frame.minX, accuracy: 2, "where it was")
         XCTAssertTrue(undo.waitUntilGone(timeout: 5), "The toast goes with the undo")
         attachScreenCapture("undo-restored")
-    }
-
-    /// The Split Panes experiment (Settings → Experiments) over a window
-    /// with three panes: off, the panes and their grips leave and the window
-    /// is the chat and its panel, with no Split in the chat's menu; on again,
-    /// the panes come back where they were, without a relaunch.
-    func testSplitPanesOffLeavesTheChatAndItsPanelAndOnBringsThePanesBack() throws {
-        guard UIDevice.current.userInterfaceIdiom == .pad else {
-            throw XCTSkip("The switch is listed on a wide window; the iPad mini is the wide simulator")
-        }
-        XCUIDevice.shared.orientation = .landscapeLeft
-        addTeardownBlock { @MainActor in XCUIDevice.shared.orientation = .portrait }
-        launchPreview(screen: "pane-restore", environment: ["PANE_RESTORE_SEED": "splits"], ready: nil)
-        let grips = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane.grip.'"))
-        let filesPane = app.descendants(matching: .any)["fileBrowser.row.Route.md"]
-        let row = app.descendants(matching: .any)[sessionRow]
-        XCTAssertTrue(row.waitUntilExists(timeout: 10), "The Sessions pane lists the fixture session")
-        row.tap()
-        let composer = app.descendants(matching: .any)["chat.input"]
-        XCTAssertTrue(composer.waitUntilExists(timeout: 10), "The chat opened")
-        XCTAssertTrue(filesPane.waitUntilExists(timeout: 10), "The Files pane sits beside the chat")
-        XCTAssertTrue(waitFor(grips.count == 3), "Each of the three panes has a grip")
-        hold()
-        attachScreenCapture("split-panes-on")
-
-        setSplitPanes(false)
-        XCTAssertTrue(waitFor(grips.count == 0), "No grips with the experiment off")
-        XCTAssertTrue(filesPane.waitUntilGone(timeout: 5), "The Files pane left the window")
-        // App Settings took the chat's place; the sidebar opens it again.
-        app.buttons["workspace.open.routes-workspace"].tap()
-        XCTAssertTrue(row.waitUntilExists(timeout: 10), "The workspace lists the session")
-        row.tap()
-        XCTAssertTrue(waitFor(composer.isHittable), "Back at the chat")
-        let window = app.windows.firstMatch
-        let timeline = app.collectionViews["chat.timeline"]
-        XCTAssertEqual(timeline.frame.maxX, window.frame.maxX, accuracy: 2, "The chat has the window")
-        app.buttons["chat.toolbar.git"].tap()
-        XCTAssertTrue(app.navigationBars["Git"].waitUntilExists(timeout: 5), "The Git panel opened beside the chat")
-        XCTAssertTrue(waitFor(composer.isHittable), "beside it, not over it")
-        XCTAssertEqual(grips.count, 0)
-        app.buttons["chat.toolbar.more"].tap()
-        XCTAssertTrue(app.buttons["chat.toolbar.menu.customize"].waitUntilExists(timeout: 5), "The chat's menu opened")
-        XCTAssertFalse(app.buttons["pane.menu.splitRight"].exists, "The chat's menu offers no Split Right")
-        // A tap outside closes the menu (Escape does not reach it in the simulator).
-        window.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.6)).tap()
-        XCTAssertTrue(app.buttons["chat.toolbar.menu.customize"].waitUntilGone(timeout: 5))
-        hold()
-        attachScreenCapture("split-panes-off")
-
-        setSplitPanes(true)
-        XCTAssertTrue(filesPane.waitUntilExists(timeout: 10), "The Files pane is back")
-        // The sidebar is open (it led to Settings), so the fit rule keeps two
-        // panes beside it and Git waits in Hidden Panes.
-        XCTAssertTrue(waitFor(grips.count >= 2), "with the panes' grips")
-    }
-
-    /// Opens Settings → Experiments from the sidebar and sets the Split
-    /// Panes switch.
-    private func setSplitPanes(_ on: Bool) {
-        openExperiments()
-        let toggle = app.switches["settings.experiments.splitPanes"]
-        XCTAssertTrue(toggle.waitUntilExists(timeout: 10), "Experiments lists Split Panes on the iPad")
-        XCTAssertEqual(toggle.value as? String, on ? "0" : "1")
-        hold()
-        attachScreenCapture(on ? "settings-experiments-off" : "settings-experiments")
-        toggle.tap()
-        XCTAssertTrue(waitFor((toggle.value as? String) == (on ? "1" : "0")), "The switch turned \(on ? "on" : "off")")
     }
 
     /// Opens Settings → Experiments from the sidebar.

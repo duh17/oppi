@@ -8,7 +8,7 @@ extension PaneHostController {
     /// False where it belongs in the main pane (`openBeside`).
     @discardableResult
     func openGodot(_ entry: PaneStackEntry) -> Bool {
-        if panes.splitsEnabled, AdaptiveWidth.isWide(traitCollection),
+        if AdaptiveWidth.isWide(traitCollection),
            let shown = panes.cellLayout.leaves.first(where: { $0.stack.last == entry }) {
             focus(cell: shown.id)
             return true

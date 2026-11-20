@@ -732,7 +732,8 @@ struct ServerConnectionRoutingTests {
             .givenStoredSession(status: .busy)
             .whenHandle(.sessionEnded(reason: "stopped"), flushAfter: true)
 
-        #expect(scenario.firstSessionStatus() == .stopped)
+        // The event writes no status: the server's stopped `state` comes before it.
+        #expect(scenario.firstSessionStatus() == .busy)
         #expect(scenario.timelineItemCount(of: .systemEvent) == 1)
     }
 

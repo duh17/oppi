@@ -20,7 +20,6 @@ struct GodotProtocolContractTests {
         }
 
         let capability: String
-        let serverInfo: ServerInfo.Capabilities
         let projectList: GodotProjectList
         let projectDetail: GodotProjectDetail
         let logPage: GodotLogPage
@@ -42,10 +41,8 @@ struct GodotProtocolContractTests {
         try JSONDecoder().decode(T.self, from: JSONEncoder().encode(value))
     }
 
-    @Test func capabilityAndServerInfoMatchTheApp() throws {
-        let fixture = try Self.fixture()
-        #expect(fixture.capability == ClientCapability.godotPane)
-        #expect(fixture.serverInfo.godot?.version == 1)
+    @Test func capabilityMatchesTheApp() throws {
+        #expect(try Self.fixture().capability == ClientCapability.godotPane)
     }
 
     @Test func readsProjectsWithAndWithoutABuild() throws {

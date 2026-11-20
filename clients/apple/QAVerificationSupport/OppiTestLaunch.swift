@@ -23,19 +23,17 @@ enum OppiTestLaunch {
 
     /// The experiments (Settings → Experiments; `AppPreferences.Experiments`,
     /// keys repeated here). A launch states each one it depends on: a test that
-    /// drives Rex or Herdr screens turns it on, a test of the app as it ships
-    /// turns both off, and a test of a window without split panes turns Split
-    /// Panes (on as it ships) off, so a value left in the simulator's app
-    /// container by another run cannot decide the answer.
+    /// drives Rex or Herdr screens turns it on and a test of the app as it ships
+    /// turns both off, so a value left in the simulator's app container by
+    /// another run cannot decide the answer.
     enum Experiment: String, Sendable {
-        case rex, herdr, godotPane, splitPanes
+        case rex, herdr, godotPane
 
         var key: String {
             switch self {
             case .rex: "dev.chenda.Oppi.experiments.rex"
             case .herdr: "dev.chenda.Oppi.experiments.herdr"
             case .godotPane: "dev.chenda.Oppi.experiments.godotPane"
-            case .splitPanes: "dev.chenda.Oppi.experiments.splitPanes"
             }
         }
     }

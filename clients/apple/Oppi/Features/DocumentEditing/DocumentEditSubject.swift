@@ -123,9 +123,9 @@ extension DocumentEditSubject {
     /// The document this subject edits by the reader's own reckoning: a
     /// workspace file by workspace + worktree + path, a host file as its Skill's
     /// own file, or a record's prompt on `serverId` (which a prompt subject does
-    /// not carry). A server with `fileEditOrigins` overrides it for a file; this
-    /// is the identity an older server edits, and the one a deleted file's kept
-    /// draft reopens under.
+    /// not carry). The server's resolution overrides it for a file; this is the
+    /// identity an unresolved read edits, and the one a deleted file's kept draft
+    /// reopens under.
     func editIdentity(serverId: String?) -> WorkspaceFileEditIdentity? {
         switch self {
         case .file(let file):

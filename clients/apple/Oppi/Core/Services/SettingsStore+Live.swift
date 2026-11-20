@@ -89,9 +89,6 @@ extension SettingsStore {
             case SettingsCatalog.experimentLiveActivity.id:
                 // Server Settings redraws from the store; the cards and servers follow here.
                 coordinator?.liveActivityExperimentChanged()
-            case SettingsCatalog.experimentSplitPanes.id:
-                // Every window's panes (`ScenePanes`) follow at once.
-                NotificationCenter.default.post(name: AppPreferences.Experiments.didChangeNotification, object: nil)
             default:
                 break
             }

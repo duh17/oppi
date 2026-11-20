@@ -264,7 +264,7 @@ extension APIClient {
     }
 
     /// Past runs with their sessions' outcomes and upcoming occurrences in `[from, to)`, at most
-    /// 62 days (`capabilities.scheduleCalendar`).
+    /// 62 days.
     func scheduleCalendar(from: Date, to: Date) async throws -> ScheduleCalendarResponse {
         let fromMs = Int64((from.timeIntervalSince1970 * 1000).rounded(.down))
         let toMs = Int64((to.timeIntervalSince1970 * 1000).rounded(.down))

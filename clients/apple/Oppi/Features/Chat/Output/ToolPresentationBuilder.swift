@@ -335,8 +335,8 @@ enum ToolPresentationBuilder {
         var result = CollapsedPresentation(title: inspection.title)
 
         if terminalOutput {
-            // Older servers may omit summary segments; the resolved command is
-            // still available in the inspection rather than reconstructed from a name.
+            // The resolved command comes from the inspection rather than being
+            // reconstructed from a name.
             if let command = inspection.commandText, !command.isEmpty { result.title = command } else if !argsSummary.isEmpty { result.title = argsSummary }
             result.toolNamePrefix = "$"
             result.toolNameColor = UIColor.themeGreen

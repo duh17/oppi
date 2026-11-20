@@ -10,8 +10,8 @@ import UIKit
 /// cost (subagents included), who runs it (the saved Agent, else the workspace) and on
 /// which model, with the calendar's own chip. Active schedules group by when they run
 /// next (Today, Tomorrow, This Week, Later), each group by next run. Next and last runs
-/// come from the calendar's answer for the weeks around now, so a server without the
-/// calendar shows the definitions alone, in its own order.
+/// come from the calendar's answer for the weeks around now; until it lands, or when it
+/// fails, the list shows the definitions alone, in its own order.
 ///
 /// A `ListScreenController`: the base owns the list, the theme, each row's
 /// redraw key, the swipe actions, and the load on appearance and pull to
@@ -49,8 +49,7 @@ final class ScheduleListViewController: ListScreenController<ScheduleListViewCon
     private var schedules: [AgentScheduleSummary] = [] {
         didSet { setNeedsUpdateProperties() }
     }
-    /// The calendar's answer around now: nil before it lands, on a server without it, or
-    /// when reading it failed (the cards then show their definitions alone).
+    /// The calendar's answer around now: nil before it lands, or when reading it failed (the cards then show their definitions alone).
     private var runs: ScheduleCalendarResponse? {
         didSet { setNeedsUpdateProperties() }
     }
@@ -144,22 +143,20 @@ final class ScheduleListViewController: ListScreenController<ScheduleListViewCon
     /// installs an API client again after a rebuild.
     override func loadConnection() -> ServerConnection? { root.windowConnectionOrStandIn }
 
-    /// The active server's schedules, and the calendar's runs around now where the server
-    /// has one: the base runs it on the first appearance (and the next after a failure), on
+    /// The active server's schedules, and the calendar's runs around now: the base runs it on the first appearance (and the next after a failure), on
     /// pull to refresh, after a Retry, when the container asks, and when the server or its
     /// client changes. Throws the reason the list's state row
     /// shows; a calendar that fails to load leaves the cards without their runs.
     override func load() async throws {
         let apiClient = try requireAPIClient()
-        let hasCalendar = root.windowConnectionOrStandIn.scheduleCalendarAvailable
-        async let calendarRuns = hasCalendar ? Self.runs(apiClient, around: ScheduleCalendarModel.systemClock()) : nil
+        async let calendarRuns = Self.runs(apiClient, around: ScheduleCalendarModel.systemClock())
         let loaded = try await apiClient.listAgentSchedules()
         let answer = await calendarRuns
         // A load the page cancelled (it left, or another one replaced it) never
         // replaces what this one shows.
         guard !Task.isCancelled else { return }
         schedules = loaded
-        if hasCalendar { runs = answer ?? runs } else { runs = nil }
+        runs = answer ?? runs
         // The list was read again: what an action failed at is old news.
         actionError = nil
     }

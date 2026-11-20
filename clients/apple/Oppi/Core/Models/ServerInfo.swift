@@ -137,25 +137,15 @@ struct ServerInfo: Codable, Sendable, Equatable {
         var fileEditOrigins: WorkspaceFileEditingCapability? = nil
         /// Create requests may ask for `engine: "durable"` (`experimental.serverDurable`).
         var durableSessions: CapabilityVersion? = nil
-        /// Durable sessions replicate over the focused socket (`attach` / `snapshot` / `update`).
-        var conversationStream: CapabilityVersion? = nil
         /// `POST /speech` reads messages aloud with the server's configured TTS provider.
         var speech: CapabilityVersion? = nil
         /// The server's Live Voice backend is set up, so a call can start (`asr.liveVoiceBackend`).
         var liveVoice: CapabilityVersion? = nil
         /// The server pushes end to end encrypted through this relay (`push.mode` relay).
         var pushNotifications: PushNotificationsCapability? = nil
-        /// Live streams take `auth_renew`, so access-token rotation never reconnects them.
-        var streamAuthRenewal: CapabilityVersion? = nil
-        /// `GET /schedules/calendar`: past runs with their outcomes and upcoming occurrences.
-        /// Missing means Schedules shows only its list.
-        var scheduleCalendar: CapabilityVersion? = nil
         /// Turn commands and control-session launches take `context` items (staged comments).
         /// Missing means the server would drop them, so the app does not send them.
         var promptContext: CapabilityVersion? = nil
-        /// The Godot pane's `/godot` routes and `WS /godot/{id}/link` (`protocol/godot.json`).
-        /// Missing means the server lists and serves no games.
-        var godot: CapabilityVersion? = nil
         /// Plugin screens: the sidebar's plugin entries and `WS /screens/stream`, one integer
         /// for the whole vocabulary (`protocol/screens.json`).
         var screens: ScreensCapability? = nil
@@ -184,12 +174,12 @@ struct ServerInfo: Codable, Sendable, Equatable {
             return url.scheme == "http" && loopback ? url : nil
         }
 
-        /// Whether the server offers `feature`: its switch is not off, Rex and Herdr also need
-        /// Terminal, and the Godot pane also needs a server that serves games (`godot`).
+        /// Whether the server offers `feature`: its switch is not off, and Rex and Herdr also
+        /// need Terminal.
         func offers(_ feature: ServerFeature) -> Bool {
             guard features?[feature.rawValue] != false else { return false }
-            if feature == .rex || feature == .herdr, !offers(.terminal) { return false }
-            return feature != .godotPane || godot?.version ?? 0 >= 1
+            if feature == .rex || feature == .herdr { return offers(.terminal) }
+            return true
         }
     }
 

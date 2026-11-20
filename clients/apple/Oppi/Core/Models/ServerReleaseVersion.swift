@@ -2,13 +2,13 @@ import Foundation
 
 /// Client-side floor for a paired Oppi server.
 ///
-/// Build 57 requires `oppi-server` 0.54.0: against 0.53.0 the Extensions page and
-/// the Agent extension picker fail (0.53.0 refuses `?plugins=true`), the Durable
-/// Sessions switch cannot load, user images in chat history arrive inline, and
-/// Oppi Control sessions for extensions and themes show as agents. Compare against
-/// `GET /server/info` `version`. Unparseable versions are treated as unknown, not old.
+/// The app requires `oppi-server` 0.55.0: it reads the schedule calendar,
+/// host file editing, stream auth renewal, composite extension surfaces, the Godot
+/// pane, and a stopped summary after `session_ended` without checking for them.
+/// Compare against `GET /server/info` `version`. Unparseable versions are treated
+/// as unknown, not old.
 enum ServerReleaseVersion {
-    static let minimumSupported = "0.54.0"
+    static let minimumSupported = "0.55.0"
 
     static func isBelowMinimum(_ version: String?, minimum: String = minimumSupported) -> Bool {
         guard let version else { return false }

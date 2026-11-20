@@ -421,18 +421,11 @@ extension ServerConnection {
     /// Every socket open declares again — first connect, reconnect, and a switch to another
     /// focused session — because the server keeps one declaration per socket. Fire-and-forget:
     /// the frames are the answer, and the subscribe never waits on one.
-    ///
-    /// Only a server advertising the same capability is told. A build predating the v2 stack does
-    /// not know this command and answers it with an error frame on the session stream.
-    ///
-    /// Every capability this build can draw is declared, but only the ones the server lists: a
-    /// server that does not name `blocks` would answer a surface in that shape with the v1
-    /// projection anyway, and naming it would only invite a frame this build reads as unreadable.
     func declareStreamSurfaceCapabilities() {
-        guard let sessionId = focusedStreamBinder.boundSessionId,
-              let advertised = serverCapabilities?.extensionNativeUI?.capabilities,
-              advertised.contains(ClientCapability.extensionNativeUIComposites) else { return }
-        let capabilities = Self.surfaceCapabilities(advertisedBy: advertised)
+        guard let sessionId = focusedStreamBinder.boundSessionId else { return }
+        let capabilities = Self.surfaceCapabilities(
+            advertisedBy: serverCapabilities?.extensionNativeUI?.capabilities ?? []
+        )
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -448,19 +441,17 @@ extension ServerConnection {
         }
     }
 
-    /// What this build draws, in the order the server wants it named: the closed composites on
-    /// every v2 socket, the block trees beside them when the server lists that capability too, and
-    /// each node kind added since blocks that the server lists.
+    /// What this build draws, in the order the server wants it named: every server takes the
+    /// composites through `working`; `tiles` only when the server lists it, because a server
+    /// that does not would answer a tree that holds one with a frame this build cannot read.
     static func surfaceCapabilities(advertisedBy advertised: [String]) -> [String] {
-        var capabilities = [ClientCapability.extensionNativeUIComposites]
-        guard advertised.contains(ClientCapability.extensionNativeUIBlocks) else { return capabilities }
-        capabilities.append(ClientCapability.extensionNativeUIBlocks)
-        guard advertised.contains(ClientCapability.extensionNativeUIElapsed) else { return capabilities }
-        capabilities.append(ClientCapability.extensionNativeUIElapsed)
-        guard advertised.contains(ClientCapability.extensionNativeUIPanel) else { return capabilities }
-        capabilities.append(ClientCapability.extensionNativeUIPanel)
-        guard advertised.contains(ClientCapability.extensionNativeUIWorking) else { return capabilities }
-        capabilities.append(ClientCapability.extensionNativeUIWorking)
+        var capabilities = [
+            ClientCapability.extensionNativeUIComposites,
+            ClientCapability.extensionNativeUIBlocks,
+            ClientCapability.extensionNativeUIElapsed,
+            ClientCapability.extensionNativeUIPanel,
+            ClientCapability.extensionNativeUIWorking,
+        ]
         if advertised.contains(ClientCapability.extensionNativeUITiles) {
             capabilities.append(ClientCapability.extensionNativeUITiles)
         }

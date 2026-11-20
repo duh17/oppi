@@ -42,7 +42,7 @@ final class ScheduleCalendarPreviewController: PreviewRootController {
             token: "sk_preview",
             configuration: configuration
         )
-        let connection = coordinator.activatePreviewServer(server, apiClient: client, scheduleCalendar: true)
+        let connection = coordinator.activatePreviewServer(server, apiClient: client)
         for workspace in world.workspaces {
             connection.workspaceStore.upsert(workspace, serverId: server.id)
         }

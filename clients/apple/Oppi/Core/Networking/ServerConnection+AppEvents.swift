@@ -31,8 +31,8 @@ extension ServerConnection {
                 Task { await pins.refresh(api: apiClient) }
             }
 
-        case .sessionEnded(let sessionId, let workspaceId, _, _):
-            applySessionEndedFromAppEvent(sessionId: sessionId, workspaceId: workspaceId)
+        case .sessionEnded(let sessionId, _, _, _):
+            // Its stopped `session_summary` came first and carries the status.
             clearSessionScopedAppEventState(for: event, sessionId: sessionId)
 
         case .stopRequested:
@@ -185,25 +185,6 @@ extension ServerConnection {
         if let workspaceId = normalized.workspaceId {
             syncWorkspaceSummary(workspaceId: workspaceId)
         }
-        syncLiveActivityState()
-    }
-
-    /// `session_ended` is the one app event that writes a status; see
-    /// `SessionStore.applySessionEnded`.
-    private func applySessionEndedFromAppEvent(
-        sessionId: String,
-        workspaceId: String?
-    ) {
-        guard let previous = sessionStore.applySessionEnded(id: sessionId, workspaceId: workspaceId) else {
-            return
-        }
-        if previous.status.isRunning {
-            notePushDiscoveryMoment()
-        }
-        if let resolvedWorkspaceId = sessionStore.session(id: sessionId)?.workspaceId ?? workspaceId {
-            syncWorkspaceSummary(workspaceId: resolvedWorkspaceId)
-        }
-        syncScreenAwake()
         syncLiveActivityState()
     }
 

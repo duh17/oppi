@@ -1,6 +1,6 @@
 import Foundation
 
-/// One chat runtime's durable conversation stream (`capabilities.conversationStream` v1).
+/// One chat runtime's durable conversation stream.
 ///
 /// `ChatSessionManager` creates it when the focused socket connects a durable session, sends
 /// what it builds (`attach`, `older`), and hands it the stream's frames and command results.

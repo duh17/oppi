@@ -19,8 +19,7 @@ final class FileBrowserShareUITests: XCTestCase, PreviewUITestCase {
 
     private func row(_ path: String) -> XCUIElement { app.buttons["fileBrowser.row.\(path)"] }
     private var shareAction: XCUIElement { app.buttons["fileBrowser.rowMenu.share"].firstMatch }
-    /// The row's own Open. On the iPad, where Split Panes ships on, Open Here
-    /// stands in for it, with Open in New Pane beside it (`PaneOpenMenu`).
+    /// The row's own Open. On the iPad Open Here stands in for it, with Open in New Pane beside it (`PaneOpenMenu`).
     private var rowOpenAction: XCUIElement { app.buttons["fileBrowser.rowMenu.open"].firstMatch }
     private var openHereAction: XCUIElement { app.buttons["pane.open.here"].firstMatch }
     private var openInNewPaneAction: XCUIElement { app.buttons["pane.open.newPane.right"].firstMatch }
@@ -37,14 +36,13 @@ final class FileBrowserShareUITests: XCTestCase, PreviewUITestCase {
 
     private var isPad: Bool { UIDevice.current.userInterfaceIdiom == .pad }
 
-    private func launchMediaFolder(openFile: String? = nil, splitPanes: Bool = true) {
+    private func launchMediaFolder(openFile: String? = nil) {
         var environment = ["SCREENSHOT_FILE_BROWSER_FOLDER": "media/"]
         if let openFile { environment["SCREENSHOT_FILE_BROWSER_FILE"] = openFile }
         launchPreview(
             screen: "file-browser-column",
             environment: environment,
             colorScheme: "dark",
-            arguments: OppiTestLaunch.experimentArguments([.splitPanes: splitPanes]),
             readyTimeout: 20
         )
         guard openFile == nil || isPad else { return }
@@ -114,22 +112,6 @@ final class FileBrowserShareUITests: XCTestCase, PreviewUITestCase {
         hold()
         XCTAssertFalse(shareAction.exists, "a folder cannot be shared")
         save("row-menu-folder-\(device)")
-    }
-
-    /// With Split Panes off the iPad window has one pane: a row's menu offers
-    /// its own Open and no pane items, and Open opens the file beside the list.
-    func testWithSplitPanesOffAnIPadRowOffersOpen() throws {
-        guard isPad else { throw XCTSkip("The phone's menu never has pane items") }
-        launchMediaFolder(splitPanes: false)
-        openRowMenu("media/raised-beds.png")
-        XCTAssertTrue(rowOpenAction.exists, "the row's menu offers Open")
-        XCTAssertEqual(paneItems.count, 0, "and no pane items")
-        XCTAssertLessThan(shareAction.frame.minY, rowOpenAction.frame.minY)
-        XCTAssertLessThan(rowOpenAction.frame.minY, copyPathAction.frame.minY)
-        save("row-menu-split-panes-off-\(device)")
-
-        rowOpenAction.tap()
-        XCTAssertTrue(viewerShare.waitUntilExists(timeout: 20), "Open opened the image")
     }
 
     /// A large download shows how far it is; when its connection drops it

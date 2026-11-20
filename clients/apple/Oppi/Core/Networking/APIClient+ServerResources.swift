@@ -19,8 +19,8 @@ extension APIClient {
     }
 
     /// Lists server-global Pi extensions and their contributed tools. `plugins` adds the rows
-    /// that are only a plugin (`plugins=true`), which a server that predates plugins refuses; a
-    /// caller that reads only the tool catalogs leaves it off. An Agent's selection offers only
+    /// that are only a plugin (`plugins=true`); a caller that reads only the tool catalogs
+    /// leaves it off. An Agent's selection offers only
     /// the Pi extensions (`ServerExtensionSummary.isPiExtension`).
     func listServerExtensions(plugins: Bool) async throws -> ServerExtensionCatalog {
         try await get(

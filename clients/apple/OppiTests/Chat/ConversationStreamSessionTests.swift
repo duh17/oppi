@@ -3,7 +3,7 @@ import Testing
 import UIKit
 @testable import Oppi
 
-/// A durable session on a server with `capabilities.conversationStream`: the chat runtime
+/// A durable session: the chat runtime
 /// attaches on the focused socket and its timeline comes from the replica.
 @Suite("Conversation stream session")
 @MainActor
@@ -921,7 +921,7 @@ struct ConversationStreamSessionTests {
     /// its live tail streams on the parent's socket apart from the parent's own replica. The
     /// call already returned, so the tail is not inline.
     @Test func followsAReturnedChildsLiveTailWhileADrawerShowsItAcrossAReconnect() async throws {
-        let harness = Harness(liveTails: true)
+        let harness = Harness()
         await harness.connect()
         harness.manager.followsReturnedChildren = true
         let own = try await harness.attach(1)
@@ -976,7 +976,7 @@ struct ConversationStreamSessionTests {
     /// queue. An in-place reconnect resets only the session's run state; its followed children
     /// keep their tails and attach again.
     @Test func childTailsNeverDriveTheSessionsRunStateOrQueue() async throws {
-        let harness = Harness(liveTails: true)
+        let harness = Harness()
         await harness.connect()
         harness.manager.followsReturnedChildren = true
         let own = try await harness.attach(1)
@@ -1009,7 +1009,7 @@ struct ConversationStreamSessionTests {
     }
 
     @Test func followsTheNewestChildrenAndKeepsTheSessionWhenATailIsRefused() async throws {
-        let harness = Harness(liveTails: true)
+        let harness = Harness()
         await harness.connect()
         harness.manager.followsReturnedChildren = true
         _ = try await harness.attach(1)
@@ -1042,51 +1042,10 @@ struct ConversationStreamSessionTests {
         await harness.finish()
     }
 
-    @Test func aServerWithoutLiveTailsGetsNoChildAttach() async throws {
-        let harness = Harness()
-        await harness.connect()
-        harness.manager.followsReturnedChildren = true
-        _ = try await harness.attach(1)
-        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [
-            Wire.user(1, "Delegate"),
-            Wire.assistant(2, [Wire.toolCall("call-s", "subagent", ["action": "spawn"])]),
-            Wire.toolResult(3, callId: "call-s", output: "ok", details: Wire.child(9, "child-session")),
-        ], docs: [:])))
-        #expect(await harness.waitForRows(["1", "call-s"]))
-        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) { harness.attaches.count == 1 })
-        await harness.finish()
-    }
-
-    /// A v1 server's `attach` replaces the socket's only stream: reconnecting to one (a server
-    /// rolled back under a running app) must not re-attach the children followed before.
-    @Test func aReconnectToAServerWithoutLiveTailsStopsFollowingChildren() async throws {
-        let harness = Harness(liveTails: true)
-        await harness.connect()
-        harness.manager.followsReturnedChildren = true
-        _ = try await harness.attach(1)
-        harness.frame(Self.parentWithChild)
-        _ = try await harness.attach(2)
-        harness.frame(.snapshot(.init(conversationId: 9, head: 0, hasOlder: false, entries: [], docs: [
-            "pi.live": Wire.live(text: "busy"),
-        ])))
-        #expect(await waitForMainActorCondition { harness.manager.childTails["child-session"] != nil })
-
-        harness.connection.setSplitStreamCapabilitiesForTesting(conversationStream: true, conversationStreamVersion: 1)
-        harness.yield(.connected(session: harness.session))
-        let resumed = try await harness.attach(3)
-        #expect(resumed.conversationId == 7 && resumed.mode == nil)
-        #expect(await waitForMainActorCondition { harness.manager.childTails.isEmpty })
-        // Neither now nor on the session's next frames.
-        harness.frame(.update(.init(conversationId: 7, entries: [Wire.user(4, "still here")])))
-        #expect(await harness.waitForRows(["1", "call-s", "4"]))
-        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) { harness.attaches.count == 3 })
-        await harness.finish()
-    }
-
     /// A detached child's snapshot can still be in flight when the session's own replica was
     /// reset and waits for its snapshot: it must not become the session's replica.
     @Test func aDetachedChildsLateSnapshotNeverReplacesTheSessionsReplica() async throws {
-        let harness = Harness(liveTails: true)
+        let harness = Harness()
         await harness.connect()
         harness.manager.followsReturnedChildren = true
         _ = try await harness.attach(1)
@@ -1115,7 +1074,7 @@ struct ConversationStreamSessionTests {
     /// A durable tree navigation moves the session to another conversation: the server sends
     /// that branch's snapshot, unasked on another device, and the timeline follows it.
     @Test func aSnapshotOfTheSessionsNewBranchReplacesTheReplica() async throws {
-        let harness = Harness(liveTails: true)
+        let harness = Harness()
         await harness.connect()
         _ = try await harness.attach(1)
         harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [
@@ -1137,7 +1096,7 @@ struct ConversationStreamSessionTests {
     /// shows under that call's row. Once the call returns, its tail leaves the timeline and it
     /// streams only while a drawer could list it.
     @Test func aChildTheParentWaitsOnShowsInlineUntilItsCallReturns() async throws {
-        let harness = Harness(liveTails: true)
+        let harness = Harness()
         await harness.connect()
         _ = try await harness.attach(1)
         harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [
@@ -1309,7 +1268,7 @@ struct ConversationStreamSessionTests {
 struct ConversationChildTailPerfTests {
     @Test func eightStreamingChildrenPublishAtMostFourTimesASecond() async throws {
         let children = ChatSessionManager.maxChildTails
-        let harness = Harness(liveTails: true)
+        let harness = Harness()
         await harness.connect()
         harness.manager.followsReturnedChildren = true
         _ = try await harness.attach(1)
@@ -1370,17 +1329,13 @@ private final class Harness {
     private(set) var sent: [ClientMessage] = []
     private var connectTask: Task<Void, Never>?
 
-    init(engine: SessionEngine = .durable, liveTails: Bool = false) {
+    init(engine: SessionEngine = .durable) {
         manager = ChatSessionManager(sessionId: sessionId)
         var session = makeTestSession(id: sessionId, workspaceId: "w1", status: .ready)
         session.engine = engine
         self.session = session
         manager._streamSessionForTesting = { [streams] _ in streams.makeStream() }
         manager._loadHistoryForTesting = { _, _ in nil }
-        connection.setSplitStreamCapabilitiesForTesting(
-            conversationStream: true,
-            conversationStreamVersion: liveTails ? 2 : 1
-        )
         connection._sendMessageForTesting = { [weak self] message in self?.sent.append(message) }
         store.upsert(session)
     }

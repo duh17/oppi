@@ -214,12 +214,6 @@ protocol ChatSessionFocusedStreamPort: AnyObject {
     /// The focused socket ended because the server sent a message larger than the client
     /// accepts. A reconnect would get the same message.
     var closedForOversizedMessage: Bool { get }
-    /// The server advertises `capabilities.conversationStream` v1: a durable session's
-    /// timeline comes from the conversation stream replica.
-    var conversationStreamAvailable: Bool { get }
-    /// `capabilities.conversationStream` v2: the focused socket also streams the live tails of
-    /// the session's subagents (`attach { mode: live }`), multiplexed by conversation id.
-    var conversationStreamLiveTailsAvailable: Bool { get }
 
     /// Focus `sessionId` and return a new ownership claim, or nil when focus is
     /// refused. Each call supersedes older claims on the same session. A port

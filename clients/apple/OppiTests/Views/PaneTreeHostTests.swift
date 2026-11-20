@@ -97,30 +97,15 @@ struct PaneTreeHostTests {
         #expect(host.panes.menuItems(for: split).first { $0.identifier == "pane.menu.zoom" }?.title == "Zoom")
     }
 
-    /// The other ways out of a zoom: Split Panes off shows the chat alone,
-    /// unzoomed, and on again the capsule is there to leave by; closing the
-    /// zoomed pane gives the chat the window back.
-    @Test func splitPanesOffAndCloseNeverLeaveAZoomWithoutAWayOut() throws {
+    /// Another way out of a zoom: closing the zoomed pane gives the chat the
+    /// window back.
+    @Test func closingTheZoomedPaneGivesTheChatTheWindow() throws {
         let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
         defer { host.hide() }
         let routed = host.scenePanes.routedLeafID
         host.act { host.panes.split(axis: .row) }
         let split = try #require(host.scenePanes.splitLeaves.first?.id)
         host.act { host.panes.zoom(split) }
-
-        host.act {
-            host.scenePanes.splitsEnabled = false
-            host.panes.updatePropertiesIfNeeded()
-        }
-        #expect(!host.panes.primary.view.isHidden)
-        #expect(host.panes.primary.view.frame == host.panes.view.bounds, "the chat has the window")
-        #expect(host.scenePanes.zoomedCell == nil)
-        host.act {
-            host.scenePanes.splitsEnabled = true
-            host.panes.updatePropertiesIfNeeded()
-        }
-        let capsule = try grip(host, split)
-        #expect(!capsule.isHidden && capsule.accessibilityValue == "Zoomed", "back on, the capsule shows")
 
         host.act { host.panes.closePane(split) }
         #expect(host.scenePanes.zoomedCell == nil)
@@ -202,58 +187,6 @@ struct PaneTreeHostTests {
         host.act { items[1].run() }
         let split = try #require(host.scenePanes.splitLeaves.first?.id)
         #expect(leafView(host, split)?.frame.minY ?? 0 > 0, "Split Down put the new pane below")
-    }
-
-    /// The Split Panes experiment turned off with a pane open: the window is
-    /// the chat and its panel again, at the panel's width, with no grip, and
-    /// offers no split, item menu, web page beside, drop zone or Undo. Turned
-    /// back on, the pane returns with its grip and its Undo.
-    @Test func splitPanesOffLeavesTheChatAndItsPanelAndOnBringsThePaneBack() throws {
-        let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
-        defer { host.hide() }
-        let routed = host.scenePanes.routedLeafID
-        host.showPanel(minWidth: 320, idealWidth: 360, maxWidth: 640)
-        host.act { host.panes.split(axis: .column) }
-        let kept = try #require(host.scenePanes.splitLeaves.first?.id)
-        // Open in Pane, for an Undo.
-        let files = PaneStackEntry(serverId: "s", route: .files(workspace: "ws", path: nil))
-        host.act {
-            host.scenePanes.open(files, inCell: kept)
-            host.panes.updatePropertiesIfNeeded()
-        }
-        #expect(host.scenePanes.undoAction == ScenePanes.openInPaneAction)
-        let companion = try #require(host.companion?.view)
-        let splitHeight = companion.frame.height
-
-        host.act {
-            host.scenePanes.splitsEnabled = false
-            host.panes.updatePropertiesIfNeeded()
-        }
-        #expect(leafView(host, kept) == nil, "the split pane leaves the window")
-        #expect(try grip(host, routed).isHidden)
-        #expect(host.screen.additionalSafeAreaInsets.top == 0, "no grip strip")
-        #expect(companion.frame.maxX == 1133, "the panel stays beside the chat")
-        #expect(abs(host.screenWidth + 1 + companion.frame.width - 1133) <= 1, "the two share the window")
-        #expect(companion.frame.height > splitHeight, "the chat's cell is the whole window again")
-        #expect(host.panes.screenMenuItems(for: host.screen).isEmpty, "no Split Right or Down")
-        #expect(host.panes.openChoices(from: routed) == nil, "no Open in New Pane or Open in Pane")
-        #expect(host.panes.openBrowser(try #require(URL(string: "https://example.com"))) == nil, "web links keep Safari's sheet")
-        let chat = try #require(host.panes.cellFrame(routed))
-        let file = PaneDragPayload.Content.entry(PaneStackEntry(serverId: "s", route: .file(.host, path: "/tmp/a", line: nil)))
-        #expect(host.panes.dropTarget(at: CGPoint(x: chat.minX + 10, y: chat.midY), payload: file) == nil, "no drop zone splits")
-        #expect(host.scenePanes.undoAction == nil)
-        host.act { host.panes.split(axis: .column) }
-        #expect(host.scenePanes.tree.leaves.count == 3, "⌘D does nothing")
-        #expect(host.scenePanes.topEntry(of: kept) == files, "the tree keeps the pane")
-
-        host.act {
-            host.scenePanes.splitsEnabled = true
-            host.panes.updatePropertiesIfNeeded()
-        }
-        let leaf = try #require(leafView(host, kept), "the pane is back")
-        #expect(leaf.frame.maxY == 744, "below the chat, where it was")
-        #expect(!(try grip(host, kept)).isHidden)
-        #expect(host.scenePanes.undoAction == ScenePanes.openInPaneAction)
     }
 
     /// A screen that brings its own controls, as the terminal and a file
@@ -637,8 +570,7 @@ struct PaneTreeHostTests {
     /// A tapped file link opens beside the chat, to its right in landscape
     /// and below it in portrait, focused; a second file link replaces what
     /// that pane shows. A terminal in that pane is never replaced: the next
-    /// link gets a pane of its own. With Split Panes off, the link is the
-    /// main pane's again.
+    /// link gets a pane of its own.
     @Test(arguments: [(CGSize(width: 1133, height: 744), PaneAxis.row), (CGSize(width: 744, height: 1133), .column)])
     func aTappedFileLinkOpensBesideTheChatAndTheNextReusesItsPane(size: CGSize, axis: PaneAxis) async throws {
         let host = PaneTestHost(width: size.width, height: size.height, inNavigation: true)
@@ -681,12 +613,6 @@ struct PaneTreeHostTests {
         }
         #expect(host.scenePanes.topEntry(of: pane) == terminal, "the terminal keeps its pane")
         #expect(host.scenePanes.splitLeaves.count == 2, "the file got a pane of its own")
-
-        host.act {
-            host.scenePanes.splitsEnabled = false
-            host.panes.updatePropertiesIfNeeded()
-        }
-        #expect(!host.panes.openBeside(file("/tmp/d.md"), kind: .file), "Split Panes off: the main pane opens it")
     }
 
     /// New Panes settings of the test's own, so a saved side on the
@@ -813,18 +739,13 @@ struct PaneTreeHostTests {
         #expect(besideRight || besideBelow, "beside the terminal: \(terminalFrame) \(fileFrame)")
     }
 
-    /// On a compact window, or with Split Panes off, the file is pushed over
-    /// the terminal in the terminal's own navigation, as before panes.
-    @Test(arguments: ["compact", "splitPanesOff"])
-    func aTerminalFileIsPushedOverTheTerminalWithoutPanes(mode: String) throws {
-        let host = PaneTestHost(width: mode == "compact" ? 390 : 1133, height: 844, inNavigation: true)
+    /// On a compact window the file is pushed over the terminal in the
+    /// terminal's own navigation, as before panes.
+    @Test func aTerminalFileIsPushedOverTheTerminalOnACompactWindow() throws {
+        let host = PaneTestHost(width: 390, height: 844, inNavigation: true)
         defer { host.hide() }
         host.act {
-            if mode == "compact" {
-                host.window.traitOverrides.horizontalSizeClass = .compact
-            } else {
-                host.scenePanes.splitsEnabled = false
-            }
+            host.window.traitOverrides.horizontalSizeClass = .compact
             host.panes.updatePropertiesIfNeeded()
         }
         let terminal = host.screen

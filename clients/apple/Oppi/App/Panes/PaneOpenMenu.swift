@@ -7,7 +7,7 @@ import UIKit
 // `PaneOpenMenu` builds the items, their accessibility actions and the opens
 // from the pane the item sits in. A compact window, or a screen outside the
 // panes (a sheet), offers none of them: the window has one pane there
-// (§1.5). Neither does any window while the Split Panes experiment is off.
+// (§1.5).
 
 /// Where an item menu opens its item.
 enum PaneOpenPlacement: Hashable {
@@ -332,11 +332,10 @@ final class PaneOpenContextMenu: NSObject, UIContextMenuInteractionDelegate {
 }
 
 extension PaneHostController {
-    /// What an item menu in cell `id` offers now: nothing while the Split
-    /// Panes experiment is off, as on a compact window.
+    /// What an item menu in cell `id` offers now: nothing on a compact window.
     func openChoices(from id: PaneID) -> PaneOpenChoices? {
         PaneOpenChoices.resolve(
-            isWide: panes.splitsEnabled && AdaptiveWidth.isWide(traitCollection),
+            isWide: AdaptiveWidth.isWide(traitCollection),
             canAddPane: panes.tree.leaves.count < PaneLayout.maximumLeaves,
             cells: panes.cellLayout,
             source: id,

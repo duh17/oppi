@@ -125,13 +125,13 @@ final class ChatSessionManager {
     private(set) var tracePage: TracePageMetadata?
     private(set) var isLoadingOlderTracePage = false
 
-    /// A durable session on a server with `capabilities.conversationStream`: the timeline comes
+    /// A durable session: the timeline comes
     /// from this replica, not from classic events or trace catch-up. Set when the focused
     /// socket connects and kept across reconnects so `attach` resumes from the replica.
     private(set) var conversationStream: ConversationStreamDriver?
 
     /// Live tails of the subagent conversations the replica's tool calls name, followed on the
-    /// same socket (`capabilities.conversationStream` v2): one live driver per conversation, for
+    /// same socket (`attach { mode: live }`): one live driver per conversation, for
     /// the newest `maxChildTails` children whose naming call still runs, and all of them while
     /// `followsReturnedChildren`.
     @ObservationIgnored private var childStreams: [Int: ChildStream] = [:]
@@ -1927,12 +1927,11 @@ final class ChatSessionManager {
     private static let conversationJumpPageEntries = 500
     private static let traceJumpPageEvents = 1_000
 
-    /// Attach the conversation stream when `session` is durable and the server offers it.
-    /// Replaces trace catch-up: the durable event cursor only moves forward, so classic
+    /// Attach the conversation stream when `session` is durable. Replaces trace catch-up: the durable event cursor only moves forward, so classic
     /// events keep their non-timeline effects after a gap. Resumes from the replica's
     /// cursor when it holds the conversation.
     private func startConversationStreamIfOffered(for session: Session, meta: InboundStreamMeta?) -> Bool {
-        guard focusedStreamPort.conversationStreamAvailable, session.engine == .durable else {
+        guard session.engine == .durable else {
             endConversationStream()
             return false
         }
@@ -1951,17 +1950,11 @@ final class ChatSessionManager {
             focusedStreamPort.persistEpoch(meta?.runtimeEpoch, sessionId: sessionId)
         }
         sendConversationAttach(fresh: false)
-        // A new socket: each followed child attaches again after the session's own stream. A
-        // server without live tails (v1) replaces the socket's only stream on every attach, so a
-        // child attach there would end the session's own: follow none.
+        // A new socket: each followed child attaches again after the session's own stream.
         refusedChildTails.removeAll()
         // The old socket's streams ended with it.
         detachedChildTails.removeAll()
-        if focusedStreamPort.conversationStreamLiveTailsAvailable {
-            for child in childStreams.values { sendChildTailAttach(child.driver) }
-        } else {
-            dropChildTails()
-        }
+        for child in childStreams.values { sendChildTailAttach(child.driver) }
         return true
     }
 
@@ -2076,7 +2069,7 @@ final class ChatSessionManager {
 
     /// Follow the newest children the replica's tool calls name, and stop following the rest.
     private func followChildTails() {
-        guard focusedStreamPort.conversationStreamLiveTailsAvailable, let conversationStream else { return }
+        guard let conversationStream else { return }
         let wanted = conversationStream.children.children(limit: Self.maxChildTails)
             .filter { followsReturnedChildren || $0.callIsRunning }
         let wantedIds = Set(wanted.map(\.conversationId))

@@ -61,9 +61,10 @@ extension ServerConnection {
 
         // MARK: Stop lifecycle
 
-        case .stopRequested, .stopConfirmed, .stopFailed:
+        case .stopRequested, .stopConfirmed, .stopFailed, .sessionEnded:
             // The server's state frame carries the authoritative stopping/ready/busy
-            // status and side effects; these events carry none.
+            // status and side effects; these events carry none. A runtime that ends
+            // broadcasts its stopped summary before `session_ended`.
             return StoreUpdateResult()
 
         // MARK: Session state
@@ -73,15 +74,6 @@ extension ServerConnection {
 
         case .sessionSummary(let summary):
             return applySessionSummary(summary)
-
-        case .sessionEnded:
-            let workspaceId = sessionStore.applySessionEnded(id: sessionId)?.workspaceId
-            if let workspaceId {
-                syncWorkspaceSummary(workspaceId: workspaceId)
-            }
-            syncScreenAwake()
-            syncLiveActivityState()
-            return StoreUpdateResult()
 
         case .sessionDeleted(let deletedId):
             let workspaceId = sessionStore.session(id: deletedId)?.workspaceId

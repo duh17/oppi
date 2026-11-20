@@ -1,6 +1,6 @@
 import Foundation
 
-// Durable conversation stream (`capabilities.conversationStream` v1): a replica of one
+// Durable conversation stream: a replica of one
 // conversation's `{ entries, docs }` on the focused session socket. Wire reference:
 // `dev/architecture-server/durable-conversation-stream.md`; canonical frames in
 // `protocol/conversation-stream.json`. `ConversationReplica` applies the server frames.
