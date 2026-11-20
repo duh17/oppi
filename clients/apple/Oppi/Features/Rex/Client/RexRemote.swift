@@ -894,7 +894,7 @@ final class RexMonitor {
         // A start nobody can answer any more does not leave its asker waiting.
         defer { finishStart(false) }
         var failures = 0
-        while !Task.isCancelled, AppPreferenceStore.Experiments.rexEnabled, alive() {
+        while !Task.isCancelled, alive() {
             var synced = false
             let retry: Retry
             do {

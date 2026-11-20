@@ -65,8 +65,6 @@ final class RexListViewController: ListScreenController<RexListViewController.Se
     /// (`PaneVisibility`): its view stays in the window, but nobody sees it.
     private var paneShown = true
     private var editAfterTerminal: UUID?
-    /// The Rex experiment's switch changing while this screen is up.
-    private var experimentObserver: NSObjectProtocol?
 
     init(
         profileStore: @escaping @Sendable () -> SSHTerminalProfileStore = { SSHTerminalProfileStore() },
@@ -86,29 +84,16 @@ final class RexListViewController: ListScreenController<RexListViewController.Se
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    /// This device's experiments, narrowed to what the window's server offers.
-    private var access: SSHTerminalExperimentAccess {
-        SSHTerminalExperimentAccess.current.narrowed(
-            to: .offered(by: AppRootEnvironment.near(self)?.windowConnection)
-        )
+    /// What the window's server offers (its Rex switch).
+    private var access: SSHTerminalMultiplexerAccess {
+        .offered(by: AppRootEnvironment.near(self)?.windowConnection)
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
         installBarItems()
         reload()
-        // Rex is an experiment: its switch turned while this screen is up takes
-        // effect here without a relaunch.
-        experimentObserver = NotificationCenter.default.addObserver(
-            forName: AppPreferences.Experiments.didChangeNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.followersAppeared() }
-        }
         updatePropertiesIfNeeded()
-    }
-
-    isolated deinit {
-        if let experimentObserver { NotificationCenter.default.removeObserver(experimentObserver) }
     }
 
     private func followersAppeared() {
@@ -445,7 +430,7 @@ final class RexListViewController: ListScreenController<RexListViewController.Se
     }
 
     /// Which saved hosts are listed now (`RexListDedupe`), and their followers.
-    /// With Rex's experiment off nothing on this screen reaches Rex.
+    /// With the server's Rex off nothing on this screen reaches Rex.
     private func syncListedHosts() {
         for (id, host) in rexHosts {
             if let hostID = host.follower.monitor.hostID { savedHostIDs[id] = hostID }

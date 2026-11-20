@@ -24,8 +24,7 @@ final class RexListUITests: XCTestCase, PreviewUITestCase {
         let dotfiles = "session:01a18a26-6620-76be-b529-4d9ad2b36c64"
         launchPreview(
             screen: "ssh-terminal-rex-list",
-            colorScheme: "dark",
-            arguments: OppiTestLaunch.experimentArguments([.rex: true])
+            colorScheme: "dark"
         )
         let prefix = "sshTerminal.rexList.\(hostID)."
         XCTAssertTrue(app.buttons[prefix + oppi].waitUntilExists(timeout: 15), "The Rex section did not list its sessions")

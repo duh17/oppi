@@ -191,25 +191,6 @@ struct SSHTerminalSettingsTests {
         #expect(value.contains(keyboard))
     }
 
-    // MARK: - Experiments
-
-    /// Rex off: the page has no Rex on Your Tailnet row at all (its section is
-    /// dropped), and the Bottom Bar summary leaves Herdr out while its switch is off.
-    @Test func withTheExperimentsOffThereIsNoRexRowAndTheBarSummaryLeavesThemOut() throws {
-        defer { hosts.removeSuites() }
-        try hosts.save([plain])
-        let off = SSHTerminalExperimentAccess(rex: false, herdr: false)
-        let page = try mountSettings(experiments: { off })
-        defer { page.window.isHidden = true }
-
-        #expect(!page.identifiers.contains("settings.sshTerminal.rexTailnet"))
-        let summary = try #require(page.element("settings.sshTerminal.bar")?.accessibilityValue)
-        let herdr = SSHTerminalBarItem.action(.herdr).title(customKeys: [])
-        let keyboard = SSHTerminalBarItem.action(.keyboard).title(customKeys: [])
-        #expect(!summary.contains(herdr), "the summary names Herdr off: \(summary)")
-        #expect(summary.contains(keyboard), "the summary keeps the buttons that are not experiments: \(summary)")
-    }
-
     // MARK: - Rex on Your Tailnet
 
     /// A name typed by hand is saved and listed, and one that is not a Rex's
@@ -258,8 +239,7 @@ struct SSHTerminalSettingsTests {
     }
 
     private func mountSettings(
-        profileStore: (@Sendable () -> SSHTerminalProfileStore)? = nil,
-        experiments: @escaping @MainActor () -> SSHTerminalExperimentAccess = { .all }
+        profileStore: (@Sendable () -> SSHTerminalProfileStore)? = nil
     ) throws -> MountedPage<SSHTerminalSettingsViewController> {
         try mountPage(
             SSHTerminalSettingsViewController(
@@ -267,7 +247,6 @@ struct SSHTerminalSettingsTests {
                 rexStore: hosts.rexStore,
                 reach: { .systemOnly },
                 barStore: hosts.barStore,
-                experiments: experiments,
                 settings: SettingsStore(serverId: nil, device: DeviceAdapter(defaults: hosts.device), server: ServerAdapter { _ in nil })
             )
         )

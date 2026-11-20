@@ -85,7 +85,7 @@ Each of these has cost a false red or a false green.
 - **An anchored confirmation has no Cancel** (iOS 26+ popover action sheets drop `.cancel`): dismiss by tapping outside.
 - **Sheet and alert buttons can appear twice** on iOS 27: query by identifier and take `firstMatch`.
 - **A `UIAction`/`UIAlertAction` handler can't run in a unit test:** test the owner method it calls and prove the menu item in a UI test; never add a test-only property to reach the closure.
-- **Experiments are on in unit tests** (`OppiTestExperimentsAtLoad.m`): no test stores a switch; test the off state with an explicit `SSHTerminalExperimentAccess`. UI tests use `OppiTestLaunch.experimentArguments`.
+- **A server's Rex or Herdr off** is an explicit `SSHTerminalMultiplexerAccess` in unit tests; no test stores a switch. UI tests that need the Godot Pane experiment use `OppiTestLaunch.experimentArguments`.
 - **`waitForExistence` costs a second even when the element is there** (its first check comes about 1 s in): UI tests use `waitUntilExists`/`waitUntilGone`, which read `exists` first. Before claiming something stays or ran once after an action that could still change it, call `hold()` (a stated second of run loop), then read. A claim that something never shows keeps `XCTAssertFalse(x.waitForExistence(timeout:))`, which looks for the whole timeout.
 - **Launch arguments are strings:** `-key YES` reads as `"YES"`; use `bool(forKey:)`.
 - **A popover menu's actions are buttons** on iOS 26/27, not `app.menuItems`: query enabled buttons whose whole `label` is the title and assert `isHittable` in Swift (`hittable` is not a predicate key); a broad `descendants(matching: .any)[title]` can match a same-text list row.

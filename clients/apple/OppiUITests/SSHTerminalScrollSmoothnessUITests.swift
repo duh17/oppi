@@ -27,8 +27,6 @@ final class SSHTerminalScrollSmoothnessUITests: XCTestCase {
 
     private func launch(screen: String) {
         app = OppiTestLaunch.makeApp()
-        // Rex is an experiment (Settings → Experiments): the Rex screens need it.
-        app.launchArguments += OppiTestLaunch.experimentArguments([.rex: true])
         app.launchArguments += ["--screenshot-preview"]
         app.launchEnvironment["SCREENSHOT_SCREEN"] = screen
         app.launchEnvironment["SCREENSHOT_COLOR_SCHEME"] = "dark"

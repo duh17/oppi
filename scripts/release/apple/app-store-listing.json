@@ -116,7 +116,7 @@
       "- Edit with Oppi: \"Describe a change\" on Agents, schedules, Skills, and workspaces starts a session that asks before applying it.",
       "",
       "VISIBLE BUT NOT TESTABLE ON THE REVIEW SERVER",
-      "- Rex and Herdr (Settings > Experiments, off by default): Terminal tab integrations for the Rex and herdr terminal tools on the user's own computers; the review server runs neither.",
+      "- Rex and Herdr (Server Settings > Features): Terminal integrations for the Rex and herdr terminal tools on the user's own computers. The review server has Rex turned off and runs neither.",
       "- Durable Sessions (Server Settings, off by default): the server saves each turn so sessions resume after a server restart.",
       "",
       "NOTES",

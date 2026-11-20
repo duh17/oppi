@@ -77,10 +77,8 @@ struct TerminalOpen: Equatable, Sendable {
 /// and the saved SSH hosts. The decision never touches the network.
 enum TerminalLinkRoute: Equatable {
     case invalid(TerminalDeepLinkError)
-    /// The Rex experiment is off on this device.
-    case rexOff
     /// The link's server turned its Rex switch off.
-    case rexOffOnServer
+    case rexOff
     /// No server to take a host from.
     case noServerHost
     /// No saved host serves the server: Add Host, with the server's host filled in.
@@ -93,7 +91,6 @@ enum TerminalLinkRoute: Equatable {
         link: Result<TerminalDeepLink, TerminalDeepLinkError>,
         serverHost: String?,
         profiles: [SSHTerminalProfile],
-        rexEnabled: Bool,
         serverOffersRex: Bool
     ) -> Self {
         let pane: TerminalDeepLink
@@ -101,8 +98,7 @@ enum TerminalLinkRoute: Equatable {
         case .failure(let error): return .invalid(error)
         case .success(let value): pane = value
         }
-        guard rexEnabled else { return .rexOff }
-        guard serverOffersRex else { return .rexOffOnServer }
+        guard serverOffersRex else { return .rexOff }
         let host = serverHost?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !host.isEmpty else { return .noServerHost }
         // A Rex host first, so a plain shell entry for the same machine does not hide it.

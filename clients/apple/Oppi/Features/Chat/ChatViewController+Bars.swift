@@ -967,7 +967,7 @@ extension ChatViewController {
         let apiClient = connection.apiClient
         let host = connection.credentials?.host ?? ""
         let workspaceStore = connection.workspaceStore
-        let serverOffers = SSHTerminalExperimentAccess.offered(by: connection)
+        let serverOffers = SSHTerminalMultiplexerAccess.offered(by: connection)
         model.isOpeningTerminal = true
         Task { [weak self] in
             defer { self?.model.isOpeningTerminal = false }

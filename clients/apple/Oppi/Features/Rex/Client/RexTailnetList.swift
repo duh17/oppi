@@ -163,8 +163,6 @@ final class RexTailnetSection {
     @ObservationIgnored private let makeFollower: @MainActor (RexTailnetHost) -> RexTailnetFollower
     /// How this device reaches the tailnet now; previews pin it.
     @ObservationIgnored private let reachNow: @MainActor () -> RexTailnetReach
-    /// The experiments: Rex is discovered and read only while its switch is on.
-    @ObservationIgnored private let access: @MainActor () -> SSHTerminalExperimentAccess
     /// Find Rex on Your Tailnet (`AppPreferenceStore.Terminal.findsTailnetRex`):
     /// off, nothing is probed and only the Rex servers added by name are listed.
     @ObservationIgnored private let findsTailnetRex: @MainActor () -> Bool
@@ -174,14 +172,12 @@ final class RexTailnetSection {
         discovery: RexTailnetDiscovery = .shared,
         reach: @escaping @MainActor () -> RexTailnetReach = { .current },
         makeFollower: @escaping @MainActor (RexTailnetHost) -> RexTailnetFollower = { RexTailnetFollower(host: $0) },
-        access: @escaping @MainActor () -> SSHTerminalExperimentAccess = { .current },
         findsTailnetRex: @escaping @MainActor () -> Bool = { AppPreferenceStore.Terminal.findsTailnetRex() }
     ) {
         self.findsTailnetRex = findsTailnetRex
         self.store = store
         self.discovery = discovery
         self.reachNow = reach
-        self.access = access
         self.makeFollower = makeFollower
         // A Rex saved or forgotten by name changes what is listed.
         let changes = store.changes
@@ -244,8 +240,8 @@ final class RexTailnetSection {
         }
     }
 
-    /// The experiment was off when this last looked: nothing is listed, read, or
-    /// offered (the saved nodes stay in the store, so turning it on lists them).
+    /// The window's server had Rex off when this last looked: nothing is listed, read,
+    /// or offered (the saved nodes stay in the store, so turning it on lists them).
     func clear() {
         stop()
         for follower in followers.values { follower.close() }
@@ -266,7 +262,7 @@ final class RexTailnetSection {
     /// A pull to refresh: probes every machine again (through `discovering`,
     /// so leaving the tab cancels it and `update` starts no second pass beside it).
     func refresh() async {
-        guard access().rex, reach == .peers, findsTailnetRex() else { return }
+        guard reach == .peers, findsTailnetRex() else { return }
         startDiscovery(force: true)
         await discovering?.value
     }
@@ -278,7 +274,6 @@ final class RexTailnetSection {
 
     /// One discovery pass at a time; a new one replaces the one running.
     private func startDiscovery(force: Bool) {
-        guard access().rex else { return }
         discovering?.cancel()
         discovering = Task { [weak self, discovery, peers, selfDNSName] in
             await discovery.discover(peers: peers, selfDNSName: selfDNSName, force: force)

@@ -132,19 +132,15 @@ struct SSHTerminalProfile: Codable, Equatable, Sendable, Identifiable {
     /// Nil on the default SSH port so the row does not repeat 22.
     var portLabel: String? { port == 22 ? nil : "Port \(port)" }
 
-    /// What the host row says a terminal runs. The one-line form keeps the
-    /// property its callers already read.
-    var startupLabel: String { startupLabel() }
-
-    func startupLabel(_ access: SSHTerminalExperimentAccess = .current) -> String {
-        if listsRexSessions(access) { return "Rex sessions" }
-        let command = commandOnConnect(access)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    /// What the host row says a terminal runs.
+    var startupLabel: String {
+        if opensRexSessions { return "Rex sessions" }
+        let command = startupCommand?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return command.isEmpty ? "Login shell" : command
     }
 
     /// The multiplexer the host's form shows: Rex, else the one its Run on
-    /// Connect command starts, else none. The saved choice; the form shows what
-    /// the experiments allow (`available(in:)`).
+    /// Connect command starts, else none.
     var multiplexerChoice: SSHTerminalMultiplexerChoice {
         if opensRexSessions { return .rex }
         switch SSHTerminalMultiplexerKind.detected(in: startupCommand) {
@@ -154,18 +150,9 @@ struct SSHTerminalProfile: Codable, Equatable, Sendable, Identifiable {
         }
     }
 
-    // MARK: - Experiments
-
-    /// Whether a tap opens the host's Rex sessions: saved with Multiplexer: Rex,
-    /// while the Rex experiment is on. Off, the host opens its plain shell and
-    /// keeps the saved choice, so turning the experiment on restores the screen.
-    func listsRexSessions(_ access: SSHTerminalExperimentAccess = .current) -> Bool {
-        opensRexSessions && access.rex
-    }
-
     /// What the host's own terminal runs: its Run on Connect command, unless that
     /// starts Herdr while Herdr is off (the saved host keeps the command).
-    func commandOnConnect(_ access: SSHTerminalExperimentAccess = .current) -> String? {
+    func commandOnConnect(_ access: SSHTerminalMultiplexerAccess = .all) -> String? {
         guard let command = startupCommand, !access.herdr,
               SSHTerminalMultiplexerKind.detected(in: command) == .herdr else { return startupCommand }
         return nil
@@ -214,40 +201,17 @@ enum SSHTerminalMultiplexerChoice: CaseIterable, Equatable, Sendable {
         }
     }
 
-    /// The choice as the experiments allow it: Rex or Herdr reads as None while
-    /// its experiment is off, and the saved host keeps what it had.
-    func available(in access: SSHTerminalExperimentAccess) -> Self {
-        switch self {
-        case .rex: access.rex ? .rex : .none
-        case .herdr: access.herdr ? .herdr : .none
-        case .none, .tmux: self
-        }
-    }
-
-    /// The choices the host form offers: the ones whose experiment is on, and
-    /// None and tmux, which are not experiments.
-    static func offered(in access: SSHTerminalExperimentAccess = .current) -> [Self] {
-        allCases.filter { $0.available(in: access) == $0 }
-    }
 }
 
-/// Which of the terminal's experiment multiplexers this device may use.
-///
-/// Rex and Herdr are experiments (Settings → Experiments), off by default, and
-/// `AppPreferences.Experiments` is the one answer for whether each is on. A host
-/// saved with one keeps the saved setting while its experiment is off: it opens
-/// as a plain shell, and turning the experiment on restores it, because nothing
-/// here rewrites a saved host.
-struct SSHTerminalExperimentAccess: Equatable, Sendable {
+/// Which of Rex and Herdr a terminal may use: what the window's server offers (its Rex and
+/// Herdr switches, `ServerFeature`). A host saved with one keeps the saved setting while the
+/// server has it off: it opens as a plain shell, and turning the switch on restores it,
+/// because nothing here rewrites a saved host.
+struct SSHTerminalMultiplexerAccess: Equatable, Sendable {
     var rex: Bool
     var herdr: Bool
 
-    /// What this device has turned on now.
-    static var current: Self {
-        Self(rex: AppPreferenceStore.Experiments.rexEnabled, herdr: AppPreferenceStore.Experiments.herdrEnabled)
-    }
-
-    /// Both experiments on: what a test or a preview asks for explicitly.
+    /// Both allowed: a terminal with no server (Settings → Terminal, a terminal already open).
     static let all = Self(rex: true, herdr: true)
 
     /// What a server offers of the two: its Rex and Herdr switches (`ServerFeature`). Nil, a
@@ -261,12 +225,6 @@ struct SSHTerminalExperimentAccess: Equatable, Sendable {
     @MainActor
     static func offered(by serverId: String, coordinator: ConnectionCoordinator) -> Self {
         Self(rex: coordinator.server(serverId, offers: .rex), herdr: coordinator.server(serverId, offers: .herdr))
-    }
-
-    /// This access, and only what `server` also offers: a terminal page or folder terminal
-    /// opened from a server's window follows that server's switches.
-    func narrowed(to server: Self) -> Self {
-        Self(rex: rex && server.rex, herdr: herdr && server.herdr)
     }
 }
 

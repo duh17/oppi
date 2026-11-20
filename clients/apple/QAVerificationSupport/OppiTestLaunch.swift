@@ -22,17 +22,14 @@ enum OppiTestLaunch {
     static let screenEnvironmentPrefix = "SCREENSHOT_"
 
     /// The experiments (Settings → Experiments; `AppPreferences.Experiments`,
-    /// keys repeated here). A launch states each one it depends on: a test that
-    /// drives Rex or Herdr screens turns it on and a test of the app as it ships
-    /// turns both off, so a value left in the simulator's app container by
-    /// another run cannot decide the answer.
+    /// keys repeated here). A launch states each one it depends on, so a value
+    /// left in the simulator's app container by another run cannot decide the
+    /// answer.
     enum Experiment: String, Sendable {
-        case rex, herdr, godotPane
+        case godotPane
 
         var key: String {
             switch self {
-            case .rex: "dev.chenda.Oppi.experiments.rex"
-            case .herdr: "dev.chenda.Oppi.experiments.herdr"
             case .godotPane: "dev.chenda.Oppi.experiments.godotPane"
             }
         }

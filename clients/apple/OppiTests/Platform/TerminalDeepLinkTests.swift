@@ -63,12 +63,9 @@ struct TerminalDeepLinkTests {
         _ link: Result<TerminalDeepLink, TerminalDeepLinkError>? = nil,
         host: String? = "mac-studio.tail1234.ts.net",
         profiles: [SSHTerminalProfile],
-        rex: Bool = true,
         serverRex: Bool = true
     ) -> TerminalLinkRoute {
-        TerminalLinkRoute.decide(
-            link: link ?? good, serverHost: host, profiles: profiles, rexEnabled: rex, serverOffersRex: serverRex
-        )
+        TerminalLinkRoute.decide(link: link ?? good, serverHost: host, profiles: profiles, serverOffersRex: serverRex)
     }
 
     @Test func opensOnTheSavedRexHostForTheServer() {
@@ -85,7 +82,6 @@ struct TerminalDeepLinkTests {
     @Test func plainErrorsNeverGuessAHost() {
         let notRex = profile("mac-studio", rex: false)
         #expect(decide(profiles: [notRex]) == .hostNotRex(notRex))
-        #expect(decide(profiles: [notRex], rex: false) == .rexOff)
         #expect(decide(host: nil, profiles: [notRex]) == .noServerHost)
         #expect(decide(.failure(.missing("block")), profiles: [notRex]) == .invalid(.missing("block")))
     }
@@ -93,8 +89,6 @@ struct TerminalDeepLinkTests {
     /// A server with its Rex switch off opens none of its Rex links, even with a saved Rex host.
     @Test func aServerWithRexOffSaysSoInsteadOfOpening() {
         let rex = profile("mac-studio", rex: true)
-        #expect(decide(profiles: [rex], serverRex: false) == .rexOffOnServer)
-        // The device's own experiment is named first: that is the switch this person can flip.
-        #expect(decide(profiles: [rex], rex: false, serverRex: false) == .rexOff)
+        #expect(decide(profiles: [rex], serverRex: false) == .rexOff)
     }
 }

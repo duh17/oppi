@@ -16,7 +16,7 @@ final class SSHTerminalHostListViewController:
     private let profileStore: @Sendable () -> SSHTerminalProfileStore
 
     /// A host row's terminal follows the window's server switches, as the page does.
-    private lazy var session = SSHTerminalConnectSession(access: { [weak self] in self?.access ?? .current })
+    private lazy var session = SSHTerminalConnectSession(access: { [weak self] in self?.access ?? .all })
     private var chrome: SSHTerminalConnectChrome?
     private var profiles: [SSHTerminalProfile] = []
     private var connectingProfile = SSHTerminalProfile()
@@ -43,12 +43,10 @@ final class SSHTerminalHostListViewController:
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    /// This device's experiments, narrowed to what the window's server offers (its Rex and
-    /// Herdr switches): what a host's terminal may run.
-    private var access: SSHTerminalExperimentAccess {
-        SSHTerminalExperimentAccess.current.narrowed(
-            to: .offered(by: AppRootEnvironment.near(self)?.windowConnection)
-        )
+    /// What the window's server offers (its Rex and Herdr switches): what a host's terminal
+    /// may run.
+    private var access: SSHTerminalMultiplexerAccess {
+        .offered(by: AppRootEnvironment.near(self)?.windowConnection)
     }
 
     override func viewDidLoad() {

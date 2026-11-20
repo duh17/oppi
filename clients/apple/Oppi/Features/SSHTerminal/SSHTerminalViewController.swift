@@ -176,8 +176,6 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     private var reduceMotion = UIAccessibility.isReduceMotionEnabled
     private var lastThemeID: ThemeID?
     private var defaultsObserver: NSObjectProtocol?
-    /// The Rex and Herdr experiments changing while this terminal is on screen.
-    private var experimentObserver: NSObjectProtocol?
     private var reduceMotionObserver: NSObjectProtocol?
     private var keyboardObserver: NSObjectProtocol?
 
@@ -244,13 +242,6 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             MainActor.assumeIsolated {
                 self?.reduceMotionChanged()
             }
-        }
-        experimentObserver = NotificationCenter.default.addObserver(
-            forName: AppPreferences.Experiments.didChangeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.experimentChanged() }
         }
         keyboardObserver = NotificationCenter.default.addObserver(
             forName: UIResponder.keyboardWillChangeFrameNotification,
@@ -388,10 +379,6 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         if let barLayoutObserver {
             NotificationCenter.default.removeObserver(barLayoutObserver)
             self.barLayoutObserver = nil
-        }
-        if let experimentObserver {
-            NotificationCenter.default.removeObserver(experimentObserver)
-            self.experimentObserver = nil
         }
     }
 
@@ -1789,8 +1776,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
 
     /// The Herdr this terminal reads, the one its bar button opens.
     private var readableHerdr: HerdrMonitor? {
-        // Herdr hidden from the bar (in a Rex pane, or with its experiment
-        // off) has nothing to read: no button, no poll, no dot.
+        // Herdr hidden from the bar (in a Rex pane) has nothing to read: no
+        // button, no poll, no dot.
         guard !barContext.hidden.contains(.herdr) else { return nil }
         // Herdr is read with side commands, which a terminal without SSH has none of.
         return channel.sideCommandsUnavailable == nil && !channel.sideCommandsSignInPending ? herdr : nil
@@ -1798,7 +1785,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
 
     /// Rex panes that need you, for the Back dot. A Herdr terminal leaves Rex out.
     private var rexWaiting: Int {
-        guard SSHTerminalExperimentAccess.current.rex, barContext != .herdr, rex.available else { return 0 }
+        guard barContext != .herdr, rex.available else { return 0 }
         return rex.needsAttention
     }
 
@@ -2265,22 +2252,6 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         return "\(reason) \(target.folderName) did not open in \(multiplexer.name)."
     }
 
-    /// The Experiments switch changed: the bar's Herdr button, the Rex and
-    /// Herdr polls, and Customize Bar follow it now. A Rex terminal is a pane
-    /// of a session Oppi may no longer read, and the registry ends it where it
-    /// was the one that turned off.
-    private func experimentChanged() {
-        if !AppPreferenceStore.Experiments.rexEnabled {
-            rexPoll?.cancel()
-            rexPoll = nil
-        }
-        if !AppPreferenceStore.Experiments.herdrEnabled {
-            herdrPoll?.cancel()
-            herdrPoll = nil
-        }
-        setNeedsUpdateProperties()
-    }
-
     /// A terminal's Rex monitor tells the Terminal tab what it found on the
     /// host (`SSHTerminalRexHostStore`): a host Rex was read on gets a live Rex
     /// section there, and one with no `rex` loses it. It reaches the host's
@@ -2322,7 +2293,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
                 let channel = channel
                 herdrPoll = Task { await herdr.run(on: channel) }
             }
-            if rexPoll == nil, SSHTerminalExperimentAccess.current.rex {
+            if rexPoll == nil {
                 let channel = channel
                 let rex = rex
                 rexPoll = Task { await rex.run(on: channel) }

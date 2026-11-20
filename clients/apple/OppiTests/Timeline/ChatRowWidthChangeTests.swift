@@ -196,7 +196,7 @@ struct ChatRowWidthChangeTests {
     | Panes | Drag a pane to the bottom edge: the highlight now shows the full bottom half |
     | Schedules (iPad) | Month view fills the card, with only the top-right arrows |
     | MCP Servers | Opens instantly |
-    | Rex pane | New pane → Rex (with the Rex experiment on) |
+    | Rex pane | New pane → Rex |
     | Live Activity | Off unless you turn it on under Settings → Experiments |
     """
 }

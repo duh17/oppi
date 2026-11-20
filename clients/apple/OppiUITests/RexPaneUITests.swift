@@ -1,8 +1,8 @@
 import XCTest
 
 /// The Rex pane in the production shell over the chat-routes fixtures
-/// (`SCREENSHOT_SCREEN=pane-restore`, `PANE_RESTORE_REX=1`) on the iPad mini,
-/// with the Rex experiment on. The saved host's Rex is a fake one in process
+/// (`SCREENSHOT_SCREEN=pane-restore`, `PANE_RESTORE_REX=1`) on the iPad mini.
+/// The saved host's Rex is a fake one in process
 /// (`RexFakeWorld`), and a session opens a fake Rex session terminal
 /// (`RexFakeSession`), so the launcher, the list and the terminal are the real
 /// screens inside a real pane.
@@ -35,7 +35,6 @@ final class RexPaneUITests: XCTestCase, PreviewUITestCase {
             screen: "pane-restore",
             environment: ["PANE_RESTORE_REX": "1"],
             colorScheme: "dark",
-            arguments: OppiTestLaunch.experimentArguments([.rex: true]),
             ready: nil
         )
         let row = app.descendants(matching: .any)[sessionRow]
@@ -98,7 +97,6 @@ final class RexPaneUITests: XCTestCase, PreviewUITestCase {
             screen: "pane-restore",
             environment: ["PANE_RESTORE_REX": "1"],
             colorScheme: "dark",
-            arguments: OppiTestLaunch.experimentArguments([.rex: true]),
             ready: nil
         )
         let row = app.descendants(matching: .any)[sessionRow]

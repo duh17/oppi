@@ -214,7 +214,7 @@ Oppi Control sessions work on every server, whether or not [Durable Sessions](#d
 - [Sandbox workspaces](sandbox.md) run agent file tools and shell commands in a Gondolin VM.
 - [Oppi Mirror](oppi-mirror.md) shows a live terminal Pi session in Oppi.
 - [Terminal](ssh-terminal.md) opens a shell on a host saved on this device (**Terminal** below **MCP Servers**; **Settings → Terminal** is the terminal's settings). A workspace's or chat's **Terminal** button opens that folder on the saved host.
-- [Rex](ssh-terminal.md#the-rex-screen), below **Terminal** while the Rex experiment is on, lists the Rex sessions this device reaches: first the Rex servers on your tailnet, reached without SSH, then your saved hosts' Rex.
+- [Rex](ssh-terminal.md#the-rex-screen), below **Terminal**, lists the Rex sessions this device reaches: first the Rex servers on your tailnet, reached without SSH, then your saved hosts' Rex.
 
 ## Durable Sessions
 

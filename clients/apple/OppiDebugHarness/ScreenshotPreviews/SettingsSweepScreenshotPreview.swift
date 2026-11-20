@@ -17,7 +17,8 @@ import UIKit
 /// saved hosts), `ssh-term-settings` (Settings › Terminal, over App Settings, so
 /// Settings → Terminal is one Back away) and `ssh-term-tailnet`
 /// (Settings › Terminal › Rex on Your Tailnet). Server Settings and
-/// its pages: `server-settings`, `paired-devices` (`paired-devices-offline`:
+/// its pages: `server-settings` (`SCREENSHOT_FEATURES_OFF` turns feature switches off),
+/// `paired-devices` (`paired-devices-offline`:
 /// the devices request answers 404) and `about` (`about-failed`: the server info
 /// request answers 404). `ssh-setup-install-ask`: Set Up a Computer after a
 /// check of a Mac without Oppi, with Install & Start's shell profile question up.
@@ -767,6 +768,10 @@ final class SettingsSweepPreviewController: PreviewRootController {
         if page == "theme-import-failed" {
             SettingsSweepFixtureURLProtocol.routes["/themes"] = nil
         }
+        // Server Features answers the switches `/server/info` lists (`SCREENSHOT_FEATURES_OFF`).
+        let off = Set((ProcessInfo.processInfo.environment["SCREENSHOT_FEATURES_OFF"] ?? "").split(separator: ",").map(String.init))
+        let switches = Dictionary(uniqueKeysWithValues: ServerFeature.allCases.map { ($0.rawValue, !off.contains($0.rawValue)) })
+        SettingsSweepFixtureURLProtocol.routes["/server/features"] = try? JSONEncoder().encode(switches)
         // Paired Devices with a read that fails: the kit's one failed row.
         if page == "paired-devices-offline" {
             SettingsSweepFixtureURLProtocol.routes["/auth/devices"] = nil

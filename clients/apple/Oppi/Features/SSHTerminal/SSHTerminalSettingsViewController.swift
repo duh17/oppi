@@ -38,25 +38,17 @@ final class SSHTerminalSettingsViewController: ListScreenController<
     /// The Bottom Bar's layout and the custom keys it draws.
     private let barStore: SSHTerminalBarStore
 
-    /// The experiments: Rex on Your Tailnet exists, and the Bottom Bar summary names
-    /// Rex and Herdr, only while each switch is on (Settings → Experiments).
-    private let experiments: @MainActor () -> SSHTerminalExperimentAccess
-    /// The experiments' switch changing while this page is up.
-    private var experimentObserver: NSObjectProtocol?
-
     init(
         profileStore: @escaping @Sendable () -> SSHTerminalProfileStore = { SSHTerminalProfileStore() },
         rexStore: RexDirectStore = RexDirectStore(),
         reach: @escaping @MainActor () -> RexTailnetReach = { .current },
         barStore: SSHTerminalBarStore = SSHTerminalBarStore(),
-        experiments: @escaping @MainActor () -> SSHTerminalExperimentAccess = { .current },
         settings: SettingsStore = .liveDevice()
     ) {
         self.profileStore = profileStore
         self.rexStore = rexStore
         self.reach = reach
         self.barStore = barStore
-        self.experiments = experiments
         super.init(
             title: String(localized: "Terminal"),
             listIdentifier: "settings.sshTerminal.list",
@@ -65,23 +57,10 @@ final class SSHTerminalSettingsViewController: ListScreenController<
             headers: true,
             footers: true
         )
-        // A switch turned over this page (in Settings → Experiments) takes effect
-        // here without a relaunch.
-        experimentObserver = NotificationCenter.default.addObserver(
-            forName: AppPreferences.Experiments.didChangeNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.setNeedsUpdateProperties() }
-        }
-    }
-
-    isolated deinit {
-        if let experimentObserver { NotificationCenter.default.removeObserver(experimentObserver) }
     }
 
     override func sections() -> [ListSection<Section, Item>] {
-        // The Rex row is left out of the page while its experiment is off, rather
-        // than listed and disabled: there is nothing to open.
-        [hostsSection()] + (experiments().rex ? [rexTailnetSection()] : []) + [barSection(), typingSection()]
+        [hostsSection(), rexTailnetSection(), barSection(), typingSection()]
     }
 
     override func showsHeader(for section: Section) -> Bool { true }
@@ -127,18 +106,11 @@ final class SSHTerminalSettingsViewController: ListScreenController<
     }
 
     /// The buttons the bar draws now: the layout's shown items, named as the bar
-    /// names them, without one a plain shell's bar hides (Herdr while its
-    /// experiment is off).
+    /// names them.
     private var barSummary: String {
         let layout = barStore.layout
         let keys = barStore.customKeys
-        let hidden = SSHTerminalBarContext.plain.hidden(experiments())
-        let shown = layout.order.filter { item in
-            guard layout.isShown(item) else { return false }
-            guard case .action(let action) = item else { return true }
-            return !hidden.contains(action)
-        }
-        return shown.map { $0.title(customKeys: keys) }.joined(separator: ", ")
+        return layout.order.filter(layout.isShown).map { $0.title(customKeys: keys) }.joined(separator: ", ")
     }
 
     private var tailnetSummary: String {

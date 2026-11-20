@@ -56,15 +56,12 @@ final class WorkspaceSidebarViewController: UIViewController {
     /// What `AppStorage` read before: the same defaults keys.
     private struct Defaults: Equatable {
         var workspacesExpanded: Bool
-        /// The Rex experiment, which shows or hides the Rex row.
-        var rex: Bool
 
         static func read() -> Self {
             let defaults = UserDefaults.standard
             return Self(
                 workspacesExpanded: defaults.object(forKey: AppIdentifiers.workspaceSidebarExpandedKey) as? Bool
-                    ?? WorkspaceSidebarDisclosurePolicy.defaultExpanded,
-                rex: AppPreferenceStore.Experiments.rexEnabled
+                    ?? WorkspaceSidebarDisclosurePolicy.defaultExpanded
             )
         }
     }
@@ -235,8 +232,7 @@ final class WorkspaceSidebarViewController: UIViewController {
         let plugins = connection?.serverCapabilities?.pluginSidebar ?? []
         let items = WorkspaceSidebarPlaces.items(
             plugins: plugins,
-            pinsAvailable: connection?.pinsAvailable == true,
-            rexExperiment: defaults.rex
+            pinsAvailable: connection?.pinsAvailable == true
         ) { connection?.offers($0) ?? true }
         for item in items {
             model.places[item.place] = PlaceRow(item: item, isSelected: item.place == currentPlace)

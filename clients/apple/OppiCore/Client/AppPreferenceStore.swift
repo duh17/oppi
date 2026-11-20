@@ -245,12 +245,10 @@ enum AppPreferenceStore {
     /// Features on trial, kept on this device (Settings → Experiments). Every flag
     /// defaults to off, and this is the one place their keys live,
     /// so iOS `AppPreferences.Experiments` and `SettingsCatalog` read one value. An
-    /// Experiment only hides an unfinished feature; whether Rex, Herdr, the Godot pane
-    /// or a plugin page exists on a server is that server's switch (`ServerFeature`),
-    /// and a feature shows only where both allow it.
+    /// Experiment only hides an unfinished feature; whether the Godot pane or a plugin
+    /// page exists on a server is that server's switch (`ServerFeature`), and a feature
+    /// shows only where both allow it.
     enum Experiments {
-        static let rexKey = "\(AppIdentifiers.subsystem).experiments.rex"
-        static let herdrKey = "\(AppIdentifiers.subsystem).experiments.herdr"
         static let calendarEventsKey = "\(AppIdentifiers.subsystem).experiments.calendarEvents"
         static let godotPaneKey = "\(AppIdentifiers.subsystem).experiments.godotPane"
         static let liveActivityKey = "\(AppIdentifiers.subsystem).experiments.liveActivity"
@@ -259,12 +257,6 @@ enum AppPreferenceStore {
         static let calendarEventsHiddenKey = "\(AppIdentifiers.subsystem).experiments.calendarEvents.hidden"
         /// What nothing stored means; both declarations use it.
         static let enabledDefault = false
-
-        /// Rex: the Terminal tab's Rex sections, Rex screens, panes and tailnet list.
-        static var rexEnabled: Bool { flag(rexKey) }
-
-        /// Herdr: its bar button, agents and workspaces, and opening a folder inside it.
-        static var herdrEnabled: Bool { flag(herdrKey) }
 
         /// Calendar Events: this device's events in the Schedules calendar.
         static var calendarEventsEnabled: Bool { flag(calendarEventsKey) }

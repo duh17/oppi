@@ -44,20 +44,21 @@ struct ServerFeatureTests {
             // A workspace-only entry opens from Workspace Settings, never the sidebar.
             PluginScreenSidebarEntry(id: "acme.local", title: "Local", icon: "network", order: 15, scopes: ["workspace"]),
         ]
-        let all = WorkspaceSidebarPlaces.items(plugins: plugins, pinsAvailable: true, rexExperiment: true) { _ in true }
+        let all = WorkspaceSidebarPlaces.items(plugins: plugins, pinsAvailable: true) { _ in true }
         #expect(all.map(\.place) == [
             .allSessions, .utility(.pluginScreen("acme.early")), .utility(.pinned), .utility(.agents), .utility(.schedules),
             .utility(.extensions), .utility(.pluginScreen("acme.things")), .utility(.sshTerminal), .utility(.rex),
         ])
         #expect(all.first { $0.place == .utility(.pluginScreen("acme.things")) }?.title == "Things")
         // Every switch off leaves home; a server without pins has no Pinned.
-        let plain = WorkspaceSidebarPlaces.items(plugins: [], pinsAvailable: false, rexExperiment: true) { _ in false }
+        let plain = WorkspaceSidebarPlaces.items(plugins: [], pinsAvailable: false) { _ in false }
         #expect(plain.map(\.place) == [.allSessions])
-        let terminalOnly = WorkspaceSidebarPlaces.items(plugins: [], pinsAvailable: false, rexExperiment: true) { $0 == .terminal }
+        let terminalOnly = WorkspaceSidebarPlaces.items(plugins: [], pinsAvailable: false) { $0 == .terminal }
         #expect(terminalOnly.map(\.place) == [.allSessions, .utility(.sshTerminal)])
-        // Rex needs the server's switch and this device's experiment.
-        let rexOff = WorkspaceSidebarPlaces.items(plugins: [], pinsAvailable: true, rexExperiment: false) { _ in true }
-        #expect(!rexOff.map(\.place).contains(.utility(.rex)))
+        // Rex stands alone: a server with Terminal off and Rex on lists Rex without Terminal.
+        let rexServer = Self.capabilities(features: ["terminal": false])
+        let rexOnly = WorkspaceSidebarPlaces.items(plugins: [], pinsAvailable: false, offers: rexServer.offers)
+        #expect(rexOnly.map(\.place) == [.allSessions, .utility(.agents), .utility(.schedules), .utility(.extensions), .utility(.rex)])
     }
 
     @Test("A new pane offers Terminal, Rex, Web Page and Godot only where the server does")
@@ -66,11 +67,7 @@ struct ServerFeatureTests {
         #expect(Choice.offered { _ in false } == [.sessions, .files])
         #expect(Choice.offered { $0 == .terminal } == [.sessions, .files, .terminal])
         #expect(Choice.offered { $0 == .browserPane } == [.sessions, .files, .web])
-        // Rex also needs this device's Rex experiment.
-        let rexServer: (ServerFeature) -> Bool = { $0 == .terminal || $0 == .rex }
-        #expect(Choice.offered(by: rexServer, rexExperiment: true) == [.sessions, .files, .terminal, .rex])
-        #expect(Choice.offered(by: rexServer, rexExperiment: false) == [.sessions, .files, .terminal])
-        #expect(Choice.offered(by: { $0 == .terminal }, rexExperiment: true) == [.sessions, .files, .terminal])
+        #expect(Choice.offered { $0 == .rex } == [.sessions, .files, .rex])
     }
 
     @Test("Open Terminal Here on a Herdr host opens a plain shell in the folder while the server turns Herdr off")
@@ -84,7 +81,7 @@ struct ServerFeatureTests {
 
         let off = SSHTerminalFolderTarget(
             serverHost: "mac-studio.local", folder: "/Users/alex/app", label: "app",
-            serverOffers: SSHTerminalExperimentAccess(rex: true, herdr: false)
+            serverOffers: SSHTerminalMultiplexerAccess(rex: true, herdr: false)
         )
         SSHTerminalFolderEntry.prepare(session: session, profile: herdr, target: off)
         #expect(session.multiplexerFolder == nil)
@@ -106,11 +103,31 @@ struct ServerFeatureTests {
         #expect(switches.allSatisfy { store.read($0).current == false })
     }
 
-    @Test("Rex and Herdr are part of Terminal: off with it")
-    func rexAndHerdrNeedTerminal() {
+    @Test("Herdr is part of Terminal and goes off with it; Rex stands alone")
+    func herdrNeedsTerminalRexDoesNot() {
         let terminalOff = Self.capabilities(features: ["terminal": false])
-        #expect(!terminalOff.offers(.rex) && !terminalOff.offers(.herdr))
+        #expect(!terminalOff.offers(.herdr))
+        #expect(terminalOff.offers(.rex))
         #expect(Self.capabilities(features: ["rex": false]).offers(.herdr))
+    }
+
+    @Test("With the server's Rex off, a Rex pane's reconnect, a Rex screen, and a Rex on the tailnet say so instead of dialing")
+    func rexConnectWhileServerOffSaysSo() {
+        let profile = SSHTerminalProfile(host: "mac-studio.local", username: "alex", rexTailnet: URL(string: "https://rex.tail.ts.net"))
+        let pane = RexPaneTarget(sessionID: "session:1", blockID: "block:1", label: "shell")
+        let off = SSHTerminalMultiplexerAccess(rex: false, herdr: true)
+        for ask in ["pane", "list", "tailnet"] {
+            let session = SSHTerminalConnectSession(registry: SSHTerminalRegistry(), access: { off })
+            switch ask {
+            case "pane": session.rexPane = pane
+            case "list": session.listsRexSessions = true
+            default: break
+            }
+            session.connect(profile: profile)
+            #expect(session.failure == "Rex is off for this server in Server Settings › Features.", "\(ask)")
+            #expect(!session.connecting, "\(ask) must not dial")
+            #expect(session.channel == nil && session.rexSessions == nil, "\(ask)")
+        }
     }
 
     @Test("A switch saved from this device applies to the connection's capabilities at once")

@@ -9,7 +9,7 @@ import UIKit
 /// server's, and Server Settings tracks it so a server switch closes it.
 @MainActor
 final class ServerFeaturesViewController: ListScreenController<ServerFeaturesViewController.Section, ServerFeaturesViewController.Item> {
-    enum Section: Hashable, Sendable { case presets, screens, schedules, mcp, terminal, panes }
+    enum Section: Hashable, Sendable { case presets, screens, schedules, mcp, terminal, rex, panes }
 
     enum Item: Hashable, Sendable {
         case feature(ServerFeature)
@@ -22,7 +22,8 @@ final class ServerFeaturesViewController: ListScreenController<ServerFeaturesVie
         (.screens, [.agents, .skills, .extensions]),
         (.schedules, [.schedules]),
         (.mcp, [.mcp]),
-        (.terminal, [.terminal, .rex, .herdr]),
+        (.terminal, [.terminal, .herdr]),
+        (.rex, [.rex]),
         (.panes, [.godotPane, .browserPane]),
     ]
 
@@ -79,7 +80,9 @@ final class ServerFeaturesViewController: ListScreenController<ServerFeaturesVie
         case .mcp:
             String(localized: "Hides MCP Servers, and new sessions load no MCP tools.")
         case .terminal:
-            String(localized: "Hides Terminal in the sidebar, new panes and the chat bar. Rex and Herdr need Terminal, and each also needs its Experiment on each device. Terminal settings and terminals already open stay on each device.")
+            String(localized: "Hides Terminal in the sidebar, new panes and the chat bar. Herdr runs inside Terminal and needs it. Terminal settings and terminals already open stay on each device.")
+        case .rex:
+            String(localized: "Hides Rex in the sidebar, new panes and Rex links. Rex terminals already open stay.")
         case .panes:
             String(localized: "Godot Pane hides Godot games in panes; sessions keep their Godot tools. Godot Pane also needs the Experiment on each device. With Web Pages in Panes off, web links open in a sheet.")
         case .presets:
@@ -87,15 +90,15 @@ final class ServerFeaturesViewController: ListScreenController<ServerFeaturesVie
         }
     }
 
-    /// Rex and Herdr are part of Terminal: held off while it is off.
+    /// Herdr is part of Terminal: held off while it is off.
     private var terminalOn: Bool {
         settings?.read(SettingsCatalog.feature(.terminal)).current ?? true
     }
 
     override func inputs(of item: Item) -> AnyHashable {
         switch item {
-        case .feature(let feature) where feature == .rex || feature == .herdr:
-            AnyHashable([settingInputs(SettingsCatalog.feature(feature)), AnyHashable(terminalOn)])
+        case .feature(.herdr):
+            AnyHashable([settingInputs(SettingsCatalog.feature(.herdr)), AnyHashable(terminalOn)])
         case .feature(let feature): settingInputs(SettingsCatalog.feature(feature))
         case .failure(let id): settingFailureInputs(id)
         case .plainPi, .allOn: AnyHashable(ServerFeature.allCases.map { settingInputs(SettingsCatalog.feature($0)) })
@@ -129,7 +132,7 @@ final class ServerFeaturesViewController: ListScreenController<ServerFeaturesVie
 
     override func configure(_ cell: UICollectionViewListCell, item: Item) {
         guard case .feature(let feature) = item else { return }
-        let partOfTerminal = feature == .rex || feature == .herdr
+        let partOfTerminal = feature == .herdr
         settingToggleRow(cell, SettingsCatalog.feature(feature), isEnabled: !partOfTerminal || terminalOn)
         cell.indentationLevel = partOfTerminal ? 1 : 0
     }

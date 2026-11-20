@@ -13,7 +13,6 @@ extension AppOpener {
             link: open.link,
             serverHost: serverId.flatMap { serverStore.server(for: $0)?.host },
             profiles: SSHTerminalProfileStore().load(),
-            rexEnabled: SSHTerminalExperimentAccess.current.rex,
             serverOffersRex: serverId.map { coordinator.server($0, offers: .rex) } ?? true
         )
         // The host's shell is behind this link, so a locked server asks first.
@@ -43,8 +42,6 @@ enum TerminalLinkPresenter {
         case .invalid:
             toast(String(localized: "This terminal link is not valid."))
         case .rexOff:
-            toast(String(localized: "Turn on the Rex experiment in Settings → Experiments to open this pane."))
-        case .rexOffOnServer:
             toast(String(localized: "Rex is turned off on this server. Turn it on in Server Settings › Features."))
         case .noServerHost:
             toast(String(localized: "Connect to a server first, then tap the terminal link again."))

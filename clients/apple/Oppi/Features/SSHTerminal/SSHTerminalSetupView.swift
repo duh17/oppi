@@ -230,21 +230,14 @@ final class SSHTerminalSetupViewController: ListScreenController<
     }
 
     private var multiplexerFooter: String {
-        let access = SSHTerminalExperimentAccess.current
-        var parts = [access.herdr
-            ? String(localized: "Herdr and tmux run in this host’s terminal: choosing one sets Run on Connect.")
-            : String(localized: "tmux runs in this host’s terminal: choosing it sets Run on Connect.")]
-        if access.rex {
-            parts.append(String(localized: "With Rex, Connect opens the host’s Rex sessions instead of a terminal; tap a pane to open it here, or Shell for the login shell."))
-        }
-        return parts.joined(separator: " ")
+        [
+            String(localized: "Herdr and tmux run in this host’s terminal: choosing one sets Run on Connect."),
+            String(localized: "With Rex, Connect opens the host’s Rex sessions instead of a terminal; tap a pane to open it here, or Shell for the login shell."),
+        ].joined(separator: " ")
     }
 
     private var startupFooter: String {
-        // The Herdr note only while the form offers Herdr.
-        let exits = SSHTerminalExperimentAccess.current.herdr
-            ? String(localized: "The connection ends when the command exits (for Herdr, detach with Ctrl-B Q).")
-            : String(localized: "The connection ends when the command exits.")
+        let exits = String(localized: "The connection ends when the command exits (for Herdr, detach with Ctrl-B Q).")
         var text = String(localized: "Runs this command in the terminal instead of a login shell, like `ssh -t host 'command'` or OpenSSH RemoteCommand. \(exits) The command must be on the PATH that SSH commands see.")
         if folderTerminal != nil {
             text += "\n\nTerminal from a workspace or chat starts its own login shell in that folder and ignores this command."
@@ -276,7 +269,7 @@ final class SSHTerminalSetupViewController: ListScreenController<
         case .authentication:
             AnyHashable([AnyHashable(profile.authentication), AnyHashable(isConnecting)])
         case .multiplexer:
-            AnyHashable([AnyHashable(profile.multiplexerChoice), AnyHashable(isConnecting), experimentKey])
+            AnyHashable([AnyHashable(profile.multiplexerChoice), AnyHashable(isConnecting)])
         case .savePassword:
             AnyHashable([AnyHashable(profile.savesPassword), AnyHashable(isConnecting)])
         case .colors:
@@ -300,12 +293,6 @@ final class SSHTerminalSetupViewController: ListScreenController<
         case .trustUnknown, .trustMismatch, .deleteHost:
             AnyHashable(0)
         }
-    }
-
-    /// The experiments decide which choices the Multiplexer row offers.
-    private var experimentKey: AnyHashable {
-        let access = SSHTerminalExperimentAccess.current
-        return AnyHashable([AnyHashable(access.herdr), AnyHashable(access.rex)])
     }
 
     // MARK: - Cells
@@ -408,22 +395,16 @@ final class SSHTerminalSetupViewController: ListScreenController<
     }
 
     /// Herdr and tmux write the Run on Connect command below; Rex hides it.
-    ///
-    /// The menu offers the choices whose experiment is on (`SSHTerminalExperimentAccess`):
-    /// Rex and Herdr are experiments (Settings → Experiments), and a host saved
-    /// with one reads as None while its experiment is off, without rewriting what
-    /// the host saved. Choosing what the row already shows writes nothing, so a
-    /// saved Rex or Herdr choice survives the switch being off.
+    /// Choosing what the row already shows writes nothing.
     private func configureMultiplexer(_ cell: SettingsMenuRowCell) {
-        let access = SSHTerminalExperimentAccess.current
-        let current = profile.multiplexerChoice.available(in: access)
+        let current = profile.multiplexerChoice
         cell.configure(
             title: "Multiplexer",
             identifier: "sshTerminal.multiplexer",
             isEnabled: !isConnecting,
             value: current.label,
             menu: { [weak self] in
-                SSHTerminalMultiplexerChoice.offered(in: access).map { choice in
+                SSHTerminalMultiplexerChoice.allCases.map { choice in
                     SettingsMenuOption(title: choice.label, selected: choice == current) { [weak self] in
                         guard choice != current else { return }
                         self?.profile.choose(choice)
@@ -708,9 +689,8 @@ final class SSHTerminalSetupViewController: ListScreenController<
         // multiplexer terminal, a folder terminal running its attach command, or
         // the plain login shell in the folder.
         let profile = normalizedProfile()
-        // A Rex host opens its sessions screen, which signs in on its own, while the
-        // Rex experiment is on: off, the host is a plain shell.
-        if profile.listsRexSessions(), folderTerminal == nil {
+        // A Rex host opens its sessions screen, which signs in on its own.
+        if profile.opensRexSessions, folderTerminal == nil {
             session.saveHost(profile: profile, suppliedPassword: password, sudoPassword: suppliedSudoPassword) { [weak self] saved in
                 guard let self else { return }
                 self.applySaved(saved)

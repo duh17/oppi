@@ -184,7 +184,6 @@ final class NavigationJourneyUITests: XCTestCase, PreviewUITestCase {
             screen: "pane-restore",
             environment: ["PANE_RESTORE_REX": "1"],
             colorScheme: "dark",
-            arguments: OppiTestLaunch.experimentArguments([.rex: true]),
             ready: nil
         )
         if orientation.isLandscape {

@@ -21,8 +21,6 @@ final class SSHTerminalRexLivePanesUITests: XCTestCase {
 
     private func launch() {
         app = OppiTestLaunch.makeApp()
-        // Rex is an experiment (Settings → Experiments): this test asks for it.
-        app.launchArguments += OppiTestLaunch.experimentArguments([.rex: true])
         app.launchArguments += ["--screenshot-preview"]
         app.launchEnvironment["SCREENSHOT_SCREEN"] = "ssh-terminal-rex-panes"
         app.launchEnvironment["SCREENSHOT_COLOR_SCHEME"] = "dark"

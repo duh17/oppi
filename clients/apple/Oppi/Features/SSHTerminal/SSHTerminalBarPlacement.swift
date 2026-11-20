@@ -95,16 +95,11 @@ enum SSHTerminalBarContext: Equatable, Sendable {
         }
     }
 
-    /// The actions this terminal leaves out everywhere.
-    var hidden: Set<SSHTerminalBarAction> { hidden() }
-
-    /// Herdr in a Rex pane, and Herdr anywhere while its experiment is off; the
+    /// The actions this terminal leaves out everywhere: Herdr in a Rex pane; the
     /// saved layout keeps its place. A hidden overview is not read either
     /// (`SSHTerminalViewController.overview`). Rex is not a bar overview: the
     /// terminal reads it on its own (`SSHTerminalViewController.updatePolling`).
-    func hidden(_ access: SSHTerminalExperimentAccess = .current) -> Set<SSHTerminalBarAction> {
-        self == .rex || !access.herdr ? [.herdr] : []
-    }
+    var hidden: Set<SSHTerminalBarAction> { self == .rex ? [.herdr] : [] }
 
     /// Whether the program-status symbol has a place in the bar's pill. A Rex
     /// pane draws the status on the pane switcher's icon instead.

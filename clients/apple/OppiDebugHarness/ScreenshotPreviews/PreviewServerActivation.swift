@@ -43,7 +43,9 @@ extension ConnectionCoordinator {
         if ProcessInfo.processInfo.environment["PANE_RESTORE_PINS"] == "1" {
             capabilities.pins = .init(version: 3)
         }
-        return ServerInfo(
+        // `SCREENSHOT_FEATURES_OFF=terminal,herdr`: the server's feature switches turned off.
+        let off = ProcessInfo.processInfo.environment["SCREENSHOT_FEATURES_OFF"]?.split(separator: ",") ?? []
+        var info = ServerInfo(
             name: "Preview",
             version: ServerReleaseVersion.minimumSupported,
             uptime: 1,
@@ -65,6 +67,10 @@ extension ConnectionCoordinator {
                 modelCount: 0
             )
         )
+        if !off.isEmpty {
+            info.features = Dictionary(uniqueKeysWithValues: off.map { (String($0), false) })
+        }
+        return info
     }
 }
 #endif

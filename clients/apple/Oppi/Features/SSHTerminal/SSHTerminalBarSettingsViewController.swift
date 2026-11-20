@@ -20,8 +20,7 @@ import UIKit
 ///
 /// The terminal opens this screen as a sheet from its … menu (Customize Bar…).
 /// It leaves out the rows the terminal's bar hides (`SSHTerminalBarContext`:
-/// a Rex pane has no Herdr row, and neither has any terminal while Herdr's
-/// experiment is off), for presentation only: the saved layout keeps those
+/// a Rex pane has no Herdr row), for presentation only: the saved layout keeps those
 /// actions' places and switches, and reordering moves only the rows shown.
 /// Opened from Settings it is a plain shell's list.
 final class SSHTerminalBarSettingsViewController: BarCustomizeViewController<
@@ -126,9 +125,9 @@ final class SSHTerminalBarSettingsViewController: BarCustomizeViewController<
     }
 
     /// The multiplexers this screen can offer (Herdr's button, Rex's panel
-    /// choices): the terminal has not ruled one out, and its experiment is on.
+    /// choices): the ones the terminal has not ruled out.
     private static func offeredMultiplexers(context: SSHTerminalBarContext) -> (herdr: Bool, rex: Bool) {
-        (!context.hidden.contains(.herdr), SSHTerminalExperimentAccess.current.rex && context != .herdr)
+        (!context.hidden.contains(.herdr), context != .herdr)
     }
 
     /// The list's footer, naming only the multiplexers the bar can draw.

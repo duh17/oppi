@@ -1,8 +1,7 @@
 import UIKit
 
 /// What a fresh split shows: the workspace's Sessions, Files, a Terminal,
-/// Rex (with the Rex experiment on), a Web Page or Godot (with the Godot Pane
-/// experiment on), as large choices. Terminal, Rex, Web Page and Godot show only
+/// Rex, a Web Page or Godot (with the Godot Pane experiment on), as large choices. Terminal, Rex, Web Page and Godot show only
 /// while the leaf's server offers them (`ServerFeature`). Picking one replaces the
 /// launcher in its leaf; Rex opens the Terminal page's Rex list, Web Page
 /// the browser with its address field up, Godot the server's Godot projects. New Session
@@ -32,19 +31,12 @@ final class PaneLauncherViewController: UIViewController {
             }
         }
 
-        /// The choices for a leaf on a server that `offers` these features: Rex and Godot
-        /// also need their experiments on this device.
-        static func offered(
-            by offers: (ServerFeature) -> Bool,
-            rexExperiment: Bool = SSHTerminalExperimentAccess.current.rex
-        ) -> [Self] {
+        /// The choices for a leaf on a server that `offers` these features: Godot also needs
+        /// its experiment on this device.
+        static func offered(by offers: (ServerFeature) -> Bool) -> [Self] {
             allCases.filter { choice in
                 guard choice.feature.map(offers) ?? true else { return false }
-                switch choice {
-                case .rex: return rexExperiment
-                case .godot: return GodotPaneAvailability.isOn
-                default: return true
-                }
+                return choice != .godot || GodotPaneAvailability.isOn
             }
         }
     }

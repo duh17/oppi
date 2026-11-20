@@ -121,21 +121,16 @@ enum WorkspaceSidebarPlaces {
     /// The sidebar's places, in `order`: the built-in ones this window's server offers (`offers`,
     /// its feature switches) and its plugin entries that have a sidebar row; an entry sorts after
     /// a built-in place of the same order. The server lists only plugin entries whose feature is
-    /// on. Pinned needs a server that keeps pins (`ServerConnection.pinsAvailable`), and Rex this
-    /// device's Rex experiment.
+    /// on. Pinned needs a server that keeps pins (`ServerConnection.pinsAvailable`).
     static func items(
         plugins: [PluginScreenSidebarEntry],
         pinsAvailable: Bool,
-        rexExperiment: Bool = SSHTerminalExperimentAccess.current.rex,
         offers: (ServerFeature) -> Bool
     ) -> [WorkspaceSidebarPlace] {
         func isOffered(_ place: NavigationPlace) -> Bool {
             guard case .utility(let utility) = place else { return true }
-            switch utility {
-            case .pinned: return pinsAvailable
-            case .rex: return rexExperiment && offers(.rex)
-            default: return utility.serverFeature.map(offers) ?? true
-            }
+            if utility == .pinned { return pinsAvailable }
+            return utility.serverFeature.map(offers) ?? true
         }
         let native = builtIn.filter { isOffered($0.place) }.map { (rank: 0, item: $0) }
         let added = plugins.filter { $0.scopes.contains("server") }.map { entry in

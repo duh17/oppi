@@ -174,11 +174,12 @@ struct ServerInfo: Codable, Sendable, Equatable {
             return url.scheme == "http" && loopback ? url : nil
         }
 
-        /// Whether the server offers `feature`: its switch is not off, and Rex and Herdr also
-        /// need Terminal.
+        /// Whether the server offers `feature`: its switch is not off, and Herdr, which runs
+        /// inside an SSH shell, also needs Terminal. Rex stands alone: it is reached on its own
+        /// server, so Terminal off leaves it.
         func offers(_ feature: ServerFeature) -> Bool {
             guard features?[feature.rawValue] != false else { return false }
-            if feature == .rex || feature == .herdr { return offers(.terminal) }
+            if feature == .herdr { return offers(.terminal) }
             return true
         }
     }

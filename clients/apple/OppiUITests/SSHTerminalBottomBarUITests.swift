@@ -20,15 +20,8 @@ final class SSHTerminalBottomBarUITests: XCTestCase, PreviewUITestCase {
         continueAfterFailure = false
     }
 
-    /// Every screen this class drives is Rex or Herdr: both are experiments
-    /// (Settings → Experiments), off by default, so the launch asks for both.
     private func launch(screen: String) {
-        launchPreview(
-            screen: screen,
-            colorScheme: "dark",
-            arguments: OppiTestLaunch.experimentArguments([.rex: true, .herdr: true]),
-            ready: nil
-        )
+        launchPreview(screen: screen, colorScheme: "dark", ready: nil)
     }
 
     private func element(_ identifier: String) -> XCUIElement {

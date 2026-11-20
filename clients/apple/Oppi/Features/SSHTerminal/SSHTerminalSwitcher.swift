@@ -58,8 +58,7 @@ enum SSHTerminalSwitcher {
     private static func detail(profile: SSHTerminalProfile, folder: String?, rexPane: RexPaneTarget?) -> String {
         if let rexPane { return "Rex \u{00B7} " + rexPane.label }
         if let folder { return folderName(folder) }
-        // What the terminal runs, as the experiments allow it: a Herdr command is
-        // left out while the Herdr experiment is off, so the shell is plain.
+        // What the terminal runs.
         let command = profile.commandOnConnect()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return command.isEmpty ? "Login shell" : command
     }

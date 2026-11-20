@@ -19,15 +19,11 @@ final class SSHTerminalSettingsUITests: XCTestCase, PreviewUITestCase {
         XCUIDevice.shared.orientation = .portrait
     }
 
-    /// The sweep page with both experiments on: this page's Rex row (and the Rex
-    /// host the sweep seeds) exist only while Rex's switch is on, and a launch that
-    /// does not say so gets the app's stored answer.
     private func launch(page: String) {
         launchPreview(
             screen: "settings-sweep",
             environment: ["SCREENSHOT_SWEEP_PAGE": page],
-            colorScheme: "dark",
-            arguments: OppiTestLaunch.experimentArguments([.rex: true, .herdr: true])
+            colorScheme: "dark"
         )
     }
 

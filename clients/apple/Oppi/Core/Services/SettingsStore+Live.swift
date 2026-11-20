@@ -53,11 +53,9 @@ extension SettingsStore {
     }
 
     /// What a stored write triggers: the screen's idle timer follows Keep Awake
-    /// After Activity the moment it changes, an open editor hears Auto-Save, an
-    /// experiment switch is announced to the screens that re-read it (a Rex
-    /// terminal has nothing left to show once its experiment is off), the Live Activity
-    /// experiment reaches every connection's card and push registration, and no other
-    /// setting has an effect.
+    /// After Activity the moment it changes, an open editor hears Auto-Save, the Live
+    /// Activity experiment reaches every connection's card and push registration, and no
+    /// other setting has an effect.
     static func liveAfterWrite(
         screenAwake: ScreenAwakeController,
         coordinator: ConnectionCoordinator? = nil
@@ -78,14 +76,6 @@ extension SettingsStore {
             case SettingsCatalog.remoteImages.id:
                 // Images already on screen that wait for a tap load now.
                 NotificationCenter.default.post(name: AppPreferences.RemoteImages.didChangeNotification, object: nil)
-            case SettingsCatalog.experimentRex.id, SettingsCatalog.experimentHerdr.id:
-                // Out of an experiment at once, without a relaunch: a Rex terminal is a
-                // pane of a session Oppi may no longer read, so it ends rather than
-                // keeping a connection the switch just turned off.
-                if !AppPreferenceStore.Experiments.rexEnabled {
-                    SSHTerminalRegistry.shared.closeRexTerminals(reason: String(localized: "The Rex experiment was turned off."))
-                }
-                NotificationCenter.default.post(name: AppPreferences.Experiments.didChangeNotification, object: nil)
             case SettingsCatalog.experimentLiveActivity.id:
                 // Server Settings redraws from the store; the cards and servers follow here.
                 coordinator?.liveActivityExperimentChanged()

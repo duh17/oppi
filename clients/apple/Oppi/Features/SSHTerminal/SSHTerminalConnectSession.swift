@@ -82,15 +82,15 @@ final class SSHTerminalConnectSession {
     /// Whether this device has a route onto the tailnet (`RexTailnetPath`);
     /// tests pin it.
     @ObservationIgnored private let rexTailnetUsable: @Sendable () -> Bool
-    /// The experiments: a Rex path asks this before it dials anything.
-    @ObservationIgnored private let access: @MainActor () -> SSHTerminalExperimentAccess
+    /// What the window's server offers: a Rex path asks this before it dials anything.
+    @ObservationIgnored private let access: @MainActor () -> SSHTerminalMultiplexerAccess
 
     init(
         registry: SSHTerminalRegistry = .shared,
         profileStore: @escaping @Sendable () -> SSHTerminalProfileStore = { SSHTerminalProfileStore() },
         openRexDirect: @escaping RexLink.OpenDirect = RexTLSStream.open,
         rexTailnetUsable: @escaping @Sendable () -> Bool = { RexTailnetPath.usable() },
-        access: @escaping @MainActor () -> SSHTerminalExperimentAccess = { .current }
+        access: @escaping @MainActor () -> SSHTerminalMultiplexerAccess = { .all }
     ) {
         self.access = access
         self.registry = registry
@@ -112,11 +112,11 @@ final class SSHTerminalConnectSession {
         overSSH: Bool = false,
         onSaved: ((SSHTerminalProfile) -> Void)? = nil
     ) {
-        // Every Rex path needs the experiment: a reconnect of a closed Rex pane, a
+        // Every Rex path needs the server's Rex: a reconnect of a closed Rex pane, a
         // Rex sessions screen, or a Rex reached over Tailscale says so instead of
         // dialing Rex nothing may read.
         if rexPane != nil || listsRexSessions || profile.rexTailnet != nil, !access().rex {
-            failure = "Rex is off in Settings → Experiments."
+            failure = "Rex is off for this server in Server Settings › Features."
             return
         }
         if let host = profile.rexTailnet.flatMap({ RexTailnetHost(url: $0) }) {
