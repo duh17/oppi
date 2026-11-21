@@ -1,1 +1,1 @@
-- **Client:** The sidebar on iPad and the drawer on iPhone now show the app's icon at the top in place of the written "Oppi" title.
+- **Client:** The sidebar on iPad and the drawer on iPhone now show the app icon's π at the top in place of the written "Oppi" title, drawn straight on the sidebar. Every so often two tiny elves push, carry, or swap its blocks, so the π slowly rearranges itself while keeping its shape. The π holds still with Reduce Motion or Low Power Mode on.

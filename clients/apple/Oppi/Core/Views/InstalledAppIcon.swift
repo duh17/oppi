@@ -1,7 +1,8 @@
 import UIKit
 
 /// The installed app icon from the bundle, or nil when it has none: the
-/// onboarding hero, the App Lock cover, and the sidebar show it.
+/// onboarding hero and the App Lock cover show it. The sidebar draws its own
+/// living π (`LivingPiMarkView`) and labels it with `displayName`.
 enum InstalledAppIcon {
     /// The name the Home Screen shows under the icon, for the icon's
     /// accessibility label, so renaming the bundle renames the label.

@@ -21,9 +21,10 @@ final class WorkspaceSidebarViewController: UIViewController {
     private var navigation: SceneNavigation { root.navigation }
     private var coordinator: ConnectionCoordinator { root.coordinator }
 
-    /// The app's icon heads the column in place of a written name, with the
-    /// Edit Sidebar glyph at the row's trailing end.
-    private let appIconView = UIImageView()
+    /// The app icon's π heads the column in place of a written name, drawn
+    /// on the sidebar itself with its elves at work, with the Edit Sidebar
+    /// glyph at the row's trailing end.
+    private let appIconView = LivingPiMarkView()
     private let editButton = UIButton(configuration: .plain())
     private let list: UICollectionView
     private let footerList: FooterListView
@@ -121,14 +122,6 @@ final class WorkspaceSidebarViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        appIconView.image = InstalledAppIcon.image
-        appIconView.contentMode = .scaleAspectFit
-        appIconView.layer.cornerRadius = Self.appIconSide * 0.225
-        appIconView.layer.cornerCurve = .continuous
-        // A dark icon on a dark sidebar loses its edge without a hairline
-        // (coloured with the theme in `updateProperties()`).
-        appIconView.layer.borderWidth = 1 / max(1, traitCollection.displayScale)
-        appIconView.clipsToBounds = true
         appIconView.isAccessibilityElement = true
         appIconView.accessibilityLabel = InstalledAppIcon.displayName
         appIconView.accessibilityTraits = [.image, .header]
@@ -217,7 +210,7 @@ final class WorkspaceSidebarViewController: UIViewController {
         if themeChanged {
             appliedThemeID = themeID
             view.backgroundColor = themeID.palette.ui.bg
-            appIconView.layer.borderColor = themeID.palette.ui.comment.withAlphaComponent(0.5).cgColor
+            appIconView.inkColor = themeID.palette.ui.fg
             // Secondary, like the Workspaces header: a quiet control, not a link.
             editButton.tintColor = themeID.palette.ui.comment
         }
