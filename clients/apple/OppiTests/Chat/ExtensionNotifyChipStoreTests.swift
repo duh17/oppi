@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UIKit
 @testable import Oppi
 
 @MainActor
@@ -24,7 +25,8 @@ struct ExtensionNotifyChipStoreTests {
         #expect(conn.extensionToast == nil)
         let state = conn.extensionNotifyChipStore.state(for: "s1")
         #expect(state?.newest.message == "Heads up")
-        #expect(state?.newest.extensionDisplayName == "Review Helper")
+        #expect(state?.newest.title == "Review Helper")
+        #expect(state?.newest.source == .extensionNotify(name: "Review Helper"))
         conn.extensionNotifyChipStore.dismiss(sessionId: "s1")
     }
 
@@ -319,6 +321,152 @@ struct ExtensionNotifyChipStoreTests {
         store.apply(message: "   ", notifyType: "info", displayName: "Ext", sessionId: "s1")
         store.apply(message: nil, notifyType: "info", displayName: "Ext", sessionId: "s1")
         #expect(store.state(for: "s1") == nil)
+    }
+
+    // MARK: - Session launch warnings
+
+    /// A launch's warnings are one notice from the session itself: trimmed, deduped, and titled
+    /// by its source, never by the server's text.
+    @Test func warningsBecomeOneSessionNotice() {
+        let store = ExtensionNotifyChipStore(environment: hangingClock())
+        store.applyWarnings(
+            ["  Routes warning one.  ", "", "Routes warning one.", "Routes warning two."],
+            sessionId: "s1"
+        )
+
+        let state = testUnwrap(store.state(for: "s1"))
+        #expect(state.count == 1, "a launch's warnings are one notice, however many the server lists")
+        #expect(state.newest.source == .session)
+        #expect(state.newest.notifyType == "warning")
+        #expect(state.newest.title == "Warning")
+        #expect(state.newest.originLabel == "From this session")
+        #expect(state.newest.message == "Routes warning one.\n\nRoutes warning two.")
+        #expect(ExtensionNotifyChipStore.messages(from: nil).isEmpty)
+        #expect(ExtensionNotifyChipStore.messages(from: ["", "  "]).isEmpty)
+        #expect(ExtensionNotifyChipStore.messages(from: ["alpha", "beta"]) == ["alpha", "beta"])
+        store.dismiss(sessionId: "s1")
+    }
+
+    @Test func warningsShowOncePerSession() {
+        let store = ExtensionNotifyChipStore(environment: hangingClock())
+        store.applyWarnings(["Routes warning."], sessionId: "s1")
+        #expect(store.state(for: "s1")?.count == 1)
+        store.dismiss(sessionId: "s1")
+
+        // A repaint, a chat re-entry, or the person's own dismiss must not bring it back.
+        store.applyWarnings(["Routes warning."], sessionId: "s1")
+        #expect(store.state(for: "s1") == nil)
+
+        store.applyWarnings(["Routes warning two."], sessionId: "s1")
+        #expect(store.state(for: "s1")?.newest.message == "Routes warning two.", "a new launch's warning shows")
+        store.dismiss(sessionId: "s1")
+    }
+
+    @Test func warningsFollowTheNoticePolicy() async throws {
+        var durations: [Duration] = []
+        let store = ExtensionNotifyChipStore(environment: NoticeTimerEnvironment(
+            sleep: { duration in durations.append(duration) }
+        ))
+        let warning = "Configured Agent tools are unavailable and was dropped from this session: mcp__a, mcp__b."
+        store.applyWarnings([warning], sessionId: "s1")
+
+        try await waitUntil { store.state(for: "s1") == nil }
+        #expect(
+            durations == [NoticeDismiss.duration(forMessage: warning)],
+            "a session warning times out on the extension notice's policy: \(durations)"
+        )
+    }
+
+    /// The reported bug, in a window: the launch warning was a banner above the composer that
+    /// held its whole text forever. It is the strip's notice now: a compact pill with the short
+    /// title, the text in the drawer a tap opens, and the notice timer removes it on its own.
+    @Test func launchWarningRidesTheNoticePillInAWindow() async throws {
+        let sessionId = "launch-warning-\(UUID().uuidString)"
+        let (connection, _) = await makeTestConnection(sessionId: sessionId)
+        var session = makeTestSession(id: sessionId, status: .ready)
+        session.warnings = [Self.longLaunchWarning]
+        connection.sessionStore.upsert(session)
+        let chat = ChatViewController(sessionId: sessionId, connection: connection, navigation: SceneNavigation())
+        chat.sessionManager._loadHistoryForTesting = { _, _ in nil }
+        let window = makeSceneWindow()
+        window.traitOverrides.appRootEnvironment = makeTestAppRoot()
+        window.rootViewController = chat
+        window.makeKeyAndVisible()
+        defer {
+            window.rootViewController = UIViewController()
+            window.isHidden = true
+            chat.sessionManager.cleanup()
+            connection.disconnectStream()
+        }
+
+        let appeared = await waitForMainActorCondition(timeout: .seconds(3)) {
+            chat.view.layoutIfNeeded()
+            return Self.control("chat.extensionNotify.chip", in: chat.view) != nil
+        }
+        #expect(appeared, "the launch warning shows on the strip")
+        let pill = testUnwrap(Self.control("chat.extensionNotify.chip", in: chat.view) as? UIControl)
+        let label = pill.accessibilityLabel ?? "nil"
+        #expect(label.hasPrefix("Session warning: "), "the pill says what it is: \(label)")
+        #expect(
+            pill.bounds.height <= ExtensionStripPillMetrics.hitHeight,
+            "collapsed, the warning draws as a strip pill, not a banner: \(pill.frame)"
+        )
+        #expect(
+            !Self.subviews(of: UILabel.self, in: chat.view).contains { $0.text?.contains("mcp__gmail__account") == true },
+            "the full text stays off the chat until the drawer opens"
+        )
+        #expect(!Self.shown("chat.extensionNotify.expanded", in: chat.view), "the drawer waits for a tap")
+
+        pill.sendActions(for: .touchUpInside)
+        let opened = await waitForMainActorCondition(timeout: .seconds(2)) {
+            chat.view.layoutIfNeeded()
+            return Self.shown("chat.extensionNotify.expanded", in: chat.view)
+                && Self.subviews(of: UITextView.self, in: chat.view)
+                    .contains { $0.text?.contains("mcp__gmail__account") == true }
+        }
+        #expect(opened, "a tap shows the server's full text in the drawer")
+
+        // Collapsing resumes the notice timer, which was held while the drawer was open.
+        pill.sendActions(for: .touchUpInside)
+        #expect(connection.extensionNotifyChipStore.state(for: sessionId)?.isExpanded == false)
+        let dismissed = await waitForMainActorCondition(timeout: .seconds(20)) {
+            connection.extensionNotifyChipStore.state(for: sessionId) == nil
+        }
+        #expect(dismissed, "the notice policy removes the launch warning without a tap")
+    }
+
+    /// The warning a classic Agent launch writes when the server drops the MCP tools its
+    /// allowlist named: the report's long text.
+    private static let longLaunchWarning =
+        "Configured Agent tools are unavailable and was dropped from this session: "
+        + ["mcp__gmail__account", "mcp__gmail__search", "mcp__gmail__read", "mcp__gmail__thread",
+           "mcp__gmail__labels", "mcp__gmail__save_attachments", "mcp__gmail__modify",
+           "mcp__gmail__archive", "mcp__gmail__trash", "mcp__gmail__spam", "mcp__gmail__draft",
+           "mcp__gmail__send", "mcp__coros__queryDailyHealthData", "mcp__coros__querySleepOverview",
+           "mcp__coros__queryRecoveryStatus", "mcp__coros__queryTrainingLoadAssessment",
+           "mcp__coros__getActivityDetail", "mcp__coros__createScheduledWorkout"].joined(separator: ", ")
+        + ". The session continues with the remaining allowed tools. Edit the Agent's Allowed "
+        + "Tools or selected Extensions to stop this warning."
+
+    private static func control(_ identifier: String, in root: UIView) -> UIView? {
+        ([root] + subviews(of: UIView.self, in: root)).first { $0.accessibilityIdentifier == identifier }
+    }
+
+    /// Whether the control and every view between it and `root` are shown.
+    private static func shown(_ identifier: String, in root: UIView) -> Bool {
+        guard let view = control(identifier, in: root) else { return false }
+        var node: UIView? = view
+        while let current = node, current !== root {
+            if current.isHidden { return false }
+            node = current.superview
+        }
+        return true
+    }
+
+    private static func subviews<T: UIView>(of type: T.Type, in root: UIView) -> [T] {
+        root.subviews.flatMap { child -> [T] in
+            ((child as? T).map { [$0] } ?? []) + subviews(of: type, in: child)
+        }
     }
 
     @Test func expandedMessageKeepsAllHTTPLinksAndSuffix() {

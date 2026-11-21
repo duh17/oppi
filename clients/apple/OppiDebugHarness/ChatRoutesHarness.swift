@@ -27,8 +27,9 @@ import UIKit
 /// `CHAT_ROUTES_SURFACE_FILE=<path>[,<path>...]` publishes the
 /// surface JSON in those files instead (a server's rendered `ExtensionUISurface`, so a panel is shown
 /// as the phone receives it). `CHAT_ROUTES_REVIEW_COMMENT=none` stages no review comment, leaving
-/// the strip to the surfaces. `CHAT_ROUTES_WARNINGS=N` adds N warning rows
-/// above the composer.
+/// the strip to the surfaces. `CHAT_ROUTES_WARNINGS=N` gives the session N launch warnings, and
+/// `CHAT_ROUTES_WARNINGS=launch` one long MCP-drop warning as the server writes it; both show on
+/// the notice chip above the composer, the text only in the drawer a tap opens.
 /// `SCREENSHOT_COLOR_SCHEME=light` shows the chat in the light theme.
 /// `CHAT_ROUTES_SESSION_TITLE=<title>` names the chat (a long-title check).
 /// `CHAT_ROUTES_LONG_FILE=1` serves a long file with wide lines;
@@ -656,11 +657,31 @@ enum ChatRoutesFixture {
         )
     }
 
-    /// `CHAT_ROUTES_WARNINGS=N`: N session warnings, each a row of the footer between the
-    /// strip and the composer, so a drawer has less room above the composer.
+    /// `CHAT_ROUTES_WARNINGS=N`: N session launch warnings, on the notice chip above the
+    /// composer. `CHAT_ROUTES_WARNINGS=launch`: the one long warning a classic Agent launch
+    /// writes when the server drops every MCP tool its allowlist named.
     private static var warnings: [String]? {
-        guard let count = environment["CHAT_ROUTES_WARNINGS"].flatMap(Int.init), count > 0 else { return nil }
-        return (1...count).map { "Routes warning \($0): the fixture server keeps this notice on screen." }
+        switch environment["CHAT_ROUTES_WARNINGS"] {
+        case "launch":
+            return [
+                "Configured Agent tools are unavailable and was dropped from this session: "
+                    + ["mcp__gmail__account", "mcp__gmail__search", "mcp__gmail__read", "mcp__gmail__thread",
+                       "mcp__gmail__labels", "mcp__gmail__save_attachments", "mcp__gmail__modify",
+                       "mcp__gmail__archive", "mcp__gmail__trash", "mcp__gmail__spam", "mcp__gmail__draft",
+                       "mcp__gmail__send", "mcp__coros__queryDailyHealthData", "mcp__coros__querySleepOverview",
+                       "mcp__coros__queryRecoveryStatus", "mcp__coros__queryTrainingLoadAssessment",
+                       "mcp__coros__getActivityDetail", "mcp__coros__createScheduledWorkout"].joined(separator: ", ")
+                    + ". The session continues with the remaining allowed tools. Edit the Agent's Allowed "
+                    + "Tools or selected Extensions to stop this warning.",
+            ]
+        case let raw? where (Int(raw) ?? 0) > 0:
+            let count = Int(raw) ?? 0
+            return (1...count).map {
+                "Routes warning \($0): the fixture session launched without this one configured tool."
+            }
+        default:
+            return nil
+        }
     }
 
     static let sessionStats: JSONValue = [

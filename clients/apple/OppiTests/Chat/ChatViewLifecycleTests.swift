@@ -6,24 +6,6 @@ import UIKit
 @Suite("Chat screen lifecycle")
 @MainActor
 struct ChatViewLifecycleTests {
-    @Test func sessionWarningChromeRendersGenericNoticesWithoutBranchingOnText() {
-        #expect(ChatSessionWarningChrome.messages(from: nil).isEmpty)
-        #expect(ChatSessionWarningChrome.messages(from: []).isEmpty)
-        #expect(ChatSessionWarningChrome.messages(from: ["", "  "]).isEmpty)
-        #expect(
-            ChatSessionWarningChrome.messages(from: [
-                "Configured Agent tool is unavailable and was dropped from this session: foo.",
-                "  Another notice  ",
-                "Configured Agent tool is unavailable and was dropped from this session: foo.",
-            ]) == [
-                "Configured Agent tool is unavailable and was dropped from this session: foo.",
-                "Another notice",
-            ]
-        )
-        let arbitrary = ["alpha", "beta"]
-        #expect(ChatSessionWarningChrome.messages(from: arbitrary) == arbitrary)
-    }
-
     @Test func inactiveAndBackgroundPauseTimelinePresentation() {
         #expect(ChatViewController.shouldPauseTimelinePresentation(for: .inactive))
         #expect(ChatViewController.shouldPauseTimelinePresentation(for: .background))

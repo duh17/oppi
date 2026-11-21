@@ -1,7 +1,7 @@
 import UIKit
 
-/// Link detection for extension `ctx.ui.notify()` messages: http(s) links
-/// only, never file or app URLs.
+/// Link detection and tones for notice messages: http(s) links only, never
+/// file or app URLs.
 enum ExtensionNotifyChip {
     static func attributedMessage(_ message: String) -> AttributedString {
         var attributed = AttributedString(message)
@@ -50,7 +50,8 @@ enum ExtensionNotifyChip {
     }
 }
 
-/// Strip pill for extension `ctx.ui.notify()`, on the above-composer row.
+/// Strip pill for the notices above the composer (an extension's `ctx.ui.notify()`, the
+/// session's launch warnings): the short source title collapsed, the text only in the drawer.
 final class ExtensionNotifyChipView: ExtensionStripPillControl {
     var onToggleExpanded: (() -> Void)?
     private let icon = UIImageView()
@@ -73,7 +74,7 @@ final class ExtensionNotifyChipView: ExtensionStripPillControl {
         let newest = state.newest
         let tint = ExtensionNotifyChip.tint(for: newest.notifyType, palette: palette)
         icon.image = UIImage.scaledSymbol(ExtensionNotifyChip.iconName(for: newest.notifyType), style: .caption1, weight: .bold, color: tint)
-        nameLabel.text = newest.extensionDisplayName
+        nameLabel.text = newest.title
         nameLabel.textColor = palette.ui.fg
         countLabel.text = "\(state.count)"
         countLabel.textColor = palette.ui.comment
@@ -81,15 +82,15 @@ final class ExtensionNotifyChipView: ExtensionStripPillControl {
         chevron.image = UIImage.scaledSymbol(state.isExpanded ? "chevron.down" : "chevron.right", style: .caption2, weight: .bold, color: palette.ui.comment)
         surface.apply(palette: palette, active: state.isExpanded ? tint : nil)
 
-        let base = "Notification from \(newest.extensionDisplayName): \(newest.message)"
-        accessibilityLabel = state.count > 1 ? "\(base). \(state.count) notifications" : base
-        accessibilityHint = state.isExpanded ? "Collapses the notification" : "Expands the notification"
+        let base = newest.voiceLabel
+        accessibilityLabel = state.count > 1 ? String(localized: "\(base). \(state.count) notices") : base
+        accessibilityHint = state.isExpanded ? "Collapses the notice" : "Expands the notice"
         accessibilityValue = state.isExpanded ? "Expanded" : "Collapsed"
     }
 }
 
-/// Drawer under the above-composer strip for extension `ctx.ui.notify()`:
-/// who sent it, collapse and dismiss, then every notification, newest first.
+/// Drawer under the above-composer strip for the notices there: who sent them, collapse and
+/// dismiss, then every notice's full text, newest first.
 final class ExtensionNotifyDrawerView: ExtensionDrawerPanelView {
     var onCollapse: (() -> Void)?
     var onDismiss: (() -> Void)?
@@ -140,9 +141,9 @@ final class ExtensionNotifyDrawerView: ExtensionDrawerPanelView {
         shown = (state, themeID)
         let palette = themeID.palette
         surface.apply(palette: palette)
-        titleLabel.text = "From extension · \(state.newest.extensionDisplayName)"
+        titleLabel.text = state.newest.originLabel
         titleLabel.textColor = palette.ui.fg
-        countLabel.text = "\(state.count) notifications"
+        countLabel.text = String(localized: "\(state.count) notices")
         countLabel.textColor = palette.ui.comment
         countLabel.isHidden = state.count <= 1
 
@@ -155,7 +156,7 @@ final class ExtensionNotifyDrawerView: ExtensionDrawerPanelView {
         dismissButton.tintColor = palette.ui.fgDim
 
         for view in entries.arrangedSubviews { view.removeFromSuperview() }
-        let showsNames = Set(state.entries.map(\.extensionDisplayName)).count > 1
+        let showsNames = Set(state.entries.map(\.title)).count > 1
         for (index, entry) in state.entries.enumerated() {
             entries.addArrangedSubview(entryView(entry, showsName: showsNames && index > 0, palette: palette))
         }
@@ -172,7 +173,7 @@ final class ExtensionNotifyDrawerView: ExtensionDrawerPanelView {
         stack.spacing = 4
         if showsName {
             let name = ExtensionChromeFont.label(.caption2)
-            name.text = "From extension · \(entry.extensionDisplayName)"
+            name.text = entry.originLabel
             name.textColor = palette.ui.fgDim
             stack.addArrangedSubview(name)
         }
@@ -192,7 +193,7 @@ final class ExtensionNotifyDrawerView: ExtensionDrawerPanelView {
         stack.addArrangedSubview(message)
         if !ExtensionNotifyChip.containsHTTPLinks(attributed) {
             stack.isAccessibilityElement = true
-            stack.accessibilityLabel = "From extension · \(entry.extensionDisplayName). \(entry.message)"
+            stack.accessibilityLabel = "\(entry.originLabel). \(entry.message)"
         }
         return stack
     }

@@ -329,6 +329,7 @@ extension ChatViewController {
             sessionTitle: session?.displayTitle,
             sessionModel: session?.model,
             sessionStatus: session?.status,
+            sessionWarnings: ExtensionNotifyChipStore.messages(from: session?.warnings),
             entryState: sessionManager.entryState,
             askRequestID: activeComposerAskRequest?.id,
             toolsExpanded: extensionSurfaceState.toolsExpanded,
@@ -369,6 +370,9 @@ extension ChatViewController {
         }
         if previous.sessionStatus != next.sessionStatus {
             handleSessionStatusChange(next.sessionStatus)
+        }
+        if previous.sessionWarnings != next.sessionWarnings {
+            applySessionWarnings()
         }
         if previous.entryState != next.entryState, let entryState = next.entryState {
             handleEntryStateChange(entryState)
@@ -489,6 +493,7 @@ extension ChatViewController {
         }
         voiceInputManager.loadPreferences()
         attachComposerDraftIfPossible()
+        applySessionWarnings()
         if let wsId = session?.workspaceId, let api = connection.apiClient {
             let ws = connection.workspaceStore.workspaces.first { $0.id == wsId }
             connection.gitStatusStore.loadInitial(
@@ -779,6 +784,7 @@ struct ChatObservedValues: Equatable {
     var sessionTitle: String?
     var sessionModel: String?
     var sessionStatus: SessionStatus?
+    var sessionWarnings: [String] = []
     var entryState: ChatSessionManager.SessionEntryState?
     var askRequestID: String?
     var toolsExpanded: Bool?
@@ -797,6 +803,7 @@ struct ChatObservedValues: Equatable {
         sessionTitle: String?,
         sessionModel: String?,
         sessionStatus: SessionStatus?,
+        sessionWarnings: [String],
         entryState: ChatSessionManager.SessionEntryState,
         askRequestID: String?,
         toolsExpanded: Bool?,
@@ -813,6 +820,7 @@ struct ChatObservedValues: Equatable {
         self.sessionTitle = sessionTitle
         self.sessionModel = sessionModel
         self.sessionStatus = sessionStatus
+        self.sessionWarnings = sessionWarnings
         self.entryState = entryState
         self.askRequestID = askRequestID
         self.toolsExpanded = toolsExpanded

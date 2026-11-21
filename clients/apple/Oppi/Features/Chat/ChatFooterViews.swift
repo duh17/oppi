@@ -130,9 +130,9 @@ private func footerInset(_ view: UIView, top: CGFloat = 0, side: CGFloat = 16, b
 // MARK: - Above the composer
 
 /// The rows above the composer: the extension strip with the review-comment
-/// and now-playing pills and the notification chip, their drawers, the
-/// reconnect failure, and session warnings. Each row is 8pt from the next,
-/// and from the composer.
+/// and now-playing pills and the notice chip, their drawers, and the reconnect
+/// failure. Each row is 8pt from the next, and from the composer. Session launch
+/// warnings are notices on the strip's own chip, never a row here.
 final class ChatFooterAboveView: UIView {
     weak var chat: ChatViewController?
 
@@ -249,7 +249,6 @@ final class ChatFooterAboveView: UIView {
             showsNotifyChip: notifyState != nil
         )
         let reconnectFailure = chat.actionHandler.reconnectFailureMessage
-        let warnings = ChatSessionWarningChrome.messages(from: chat.session?.warnings)
 
         panelRow.setHiddenIfChanged(!showsStrip)
         if showsStrip {
@@ -304,31 +303,30 @@ final class ChatFooterAboveView: UIView {
             notifyDrawer.apply(notifyState, themeID: themeID)
         }
 
-        let notices = Notices(reconnectFailure: reconnectFailure, warnings: warnings, themeID: themeID)
+        let notices = Notices(reconnectFailure: reconnectFailure, themeID: themeID)
         if notices != shownNotices {
             shownNotices = notices
             for view in noticeStack.arrangedSubviews { view.removeFromSuperview() }
-            let messages: [(String, UIColor)] = (reconnectFailure.map { [($0, palette.ui.red)] } ?? [])
-                + warnings.map { ($0, palette.ui.yellow) }
-            for (text, color) in messages {
-                noticeStack.addArrangedSubview(ChatFooterNoticeView(text: text, color: color, palette: palette))
+            if let reconnectFailure {
+                noticeStack.addArrangedSubview(
+                    ChatFooterNoticeView(text: reconnectFailure, color: palette.ui.red, palette: palette)
+                )
             }
         }
         noticeStack.setHiddenIfChanged(notices.isEmpty)
         setHiddenIfChanged(!showsStrip && notices.isEmpty)
     }
 
-    /// The reconnect failure and warnings shown; rebuilt only when they change.
+    /// The reconnect failure shown; rebuilt only when it changes.
     private struct Notices: Equatable {
         let reconnectFailure: String?
-        let warnings: [String]
         let themeID: ThemeID
 
-        var isEmpty: Bool { reconnectFailure == nil && warnings.isEmpty }
+        var isEmpty: Bool { reconnectFailure == nil }
     }
 }
 
-/// A reconnect failure or session warning above the composer.
+/// A reconnect failure above the composer.
 private final class ChatFooterNoticeView: UIView {
     init(text: String, color: UIColor, palette: ThemePalette) {
         super.init(frame: .zero)

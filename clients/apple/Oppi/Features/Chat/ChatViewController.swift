@@ -18,19 +18,6 @@ struct TreeNavigationViewUpdate: Equatable {
     }
 }
 
-enum ChatSessionWarningChrome {
-    static func messages(from warnings: [String]?) -> [String] {
-        var seen = Set<String>()
-        var result: [String] = []
-        for warning in warnings ?? [] {
-            let trimmed = warning.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, seen.insert(trimmed).inserted else { continue }
-            result.append(trimmed)
-        }
-        return result
-    }
-}
-
 /// The chat screen's own state: what it opens, what its footer and drawers
 /// show, and the composer values that are not the draft. The controller and
 /// its UIKit footer, title, and bar items read it in `updateProperties()`,

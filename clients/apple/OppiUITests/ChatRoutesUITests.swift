@@ -710,13 +710,6 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         runAskCustomAnswer(environment: ["CHAT_ROUTES_SURFACE": "tall"], opensDrawer: true)
     }
 
-    func testAskCustomAnswerSendsWithTheDrawerOpenAmongWarnings() {
-        runAskCustomAnswer(
-            environment: ["CHAT_ROUTES_SURFACE": "tall", "CHAT_ROUTES_WARNINGS": "6", "CHAT_ROUTES_STATUS": "busy"],
-            opensDrawer: true
-        )
-    }
-
     func testAskCustomAnswerSendsWithoutADrawer() {
         runAskCustomAnswer(environment: [:], opensDrawer: false)
     }
@@ -895,28 +888,58 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
     /// socket. The session's activity clock ticks under the open drawer, as a busy session's does,
     /// and each tick repaints the footer; the button must live through that.
     func testTallSurfaceDrawerScrollsAboveTheComposerAndDispatchesItsAction() {
-        runTallSurfaceDrawer(shotSuffix: "", environment: [:])
+        runTallSurfaceDrawer()
     }
 
-    /// The same drawer with session warnings between the strip and the composer, so the space
-    /// between the bar and the composer is smaller than the drawer's natural height.
-    func testTallSurfaceDrawerFitsBetweenTheBarAndTheComposerAmongWarnings() {
-        runTallSurfaceDrawer(shotSuffix: "-warnings", environment: ["CHAT_ROUTES_WARNINGS": "6"])
+    /// The session's launch warnings are the strip's notice, never a banner: collapsed, the pill
+    /// carries the short title only; a tap opens the drawer with the server's full text; Dismiss
+    /// drops it.
+    func testSessionLaunchWarningRidesTheNoticePillWithItsTextInTheDrawer() {
+        launch(environment: ["CHAT_ROUTES_WARNINGS": "launch"])
+        let pill = app.descendants(matching: .any)["chat.extensionNotify.chip"]
+        XCTAssertTrue(pill.waitUntilExists(timeout: 10), "A launch warning shows its notice pill")
+        XCTAssertTrue(pill.label.hasPrefix("Session warning"), "The pill names what it is: \(pill.label)")
+        XCTAssertLessThanOrEqual(pill.frame.height, 44, "The warning is a strip pill, not a banner: \(pill.frame)")
+        let drawer = app.descendants(matching: .any)["chat.extensionNotify.expanded"]
+        XCTAssertFalse(drawer.exists, "The text waits for a tap")
+        let fullText = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", "mcp__gmail__account"))
+        XCTAssertEqual(fullText.count, 1, "Collapsed, the text is the pill's own label and no banner's")
+        attachScreenshot("launch-warning-collapsed")
+
+        pill.tap()
+        XCTAssertTrue(drawer.waitUntilExists(timeout: 5), "Tapping the pill opens the drawer")
+        XCTAssertTrue(fullText.firstMatch.waitUntilExists(timeout: 5), "The drawer shows the full warning")
+        attachScreenshot("launch-warning-expanded")
+
+        app.buttons["chat.extensionNotify.dismiss"].tap()
+        XCTAssertTrue(pill.waitUntilGone(timeout: 5), "Dismiss drops the warning")
+        assertRunning()
     }
 
-    private func runTallSurfaceDrawer(shotSuffix: String, environment: [String: String]) {
-        launch(environment: environment.merging(["CHAT_ROUTES_SURFACE": "tall"]) { $1 })
+    /// The same pill follows the notice policy: it leaves on its own after its reading time, so
+    /// nothing about the launch stays above the composer.
+    func testSessionLaunchWarningLeavesOnTheNoticePolicy() {
+        launch(environment: ["CHAT_ROUTES_WARNINGS": "launch"])
+        let pill = app.descendants(matching: .any)["chat.extensionNotify.chip"]
+        XCTAssertTrue(pill.waitUntilExists(timeout: 10), "A launch warning shows its notice pill")
+        XCTAssertTrue(pill.waitUntilGone(timeout: 25), "The notice policy removes the pill on its own")
+        assertRunning()
+    }
+
+    private func runTallSurfaceDrawer() {
+        launch(environment: ["CHAT_ROUTES_SURFACE": "tall"])
         let pill = app.descendants(matching: .any)["extension-strip-aboveEditor-pill-surface-query"]
         XCTAssertTrue(pill.waitUntilExists(timeout: 10), "The published surface shows its pill")
         let composer = app.descendants(matching: .any)["chat.input"]
         XCTAssertTrue(composer.waitUntilExists(timeout: 10))
-        attachScreenshot("surface-collapsed\(shotSuffix)")
+        attachScreenshot("surface-collapsed")
         pill.tap()
 
         let drawer = app.descendants(matching: .any)["extension-strip-aboveEditor-drawer-surface-query"]
         let again = app.buttons["extension.surface.query.actions.again"]
         XCTAssertTrue(drawer.waitUntilExists(timeout: 5), "Tapping the pill opens its drawer")
-        attachScreenshot("surface-expanded\(shotSuffix)")
+        attachScreenshot("surface-expanded")
         XCTAssertLessThanOrEqual(
             drawer.frame.maxY, composer.frame.minY,
             "The drawer must end above the composer: \(drawer.frame) vs \(composer.frame)"
@@ -930,9 +953,9 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
             "The drawer must start below the bar: \(drawer.frame)"
         )
 
-        // The drawer's own scroll view takes the swipe: among warnings the viewport is a band
-        // inside the drawer (its title row and padding stay put), and a swipe aimed at the
-        // whole drawer's center can start on the title row, where nothing scrolls.
+        // The drawer's own scroll view takes the swipe: its viewport is a band inside the drawer
+        // (the title row and padding stay put), and a swipe aimed at the whole drawer's center can
+        // start on the title row, where nothing scrolls.
         let viewport = drawer.scrollViews.firstMatch
         for _ in 0..<8 where !(again.exists && again.isHittable) {
             viewport.swipeUp(velocity: .slow)
@@ -942,7 +965,7 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
             again.frame.maxY, composer.frame.minY,
             "Run again must sit above the composer: \(again.frame)"
         )
-        attachScreenshot("surface-scrolled\(shotSuffix)")
+        attachScreenshot("surface-scrolled")
         // Held, so a repaint lands while the finger is down: a button replaced under it never
         // sends.
         again.press(forDuration: 0.5)

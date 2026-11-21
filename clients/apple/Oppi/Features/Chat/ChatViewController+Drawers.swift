@@ -30,6 +30,13 @@ extension ChatViewController {
         notifyChipState != nil
     }
 
+    /// Session launch warnings ride the notify chip, so they get its pill, its drawer, and its
+    /// dismiss policy instead of a banner that stays above the composer. The store shows a
+    /// session's warnings once, so calling this on every repaint costs nothing.
+    func applySessionWarnings() {
+        connection.extensionNotifyChipStore.applyWarnings(session?.warnings, sessionId: sessionId)
+    }
+
     // MARK: - Drawers
 
     func toggleNowPlayingDrawer() {
