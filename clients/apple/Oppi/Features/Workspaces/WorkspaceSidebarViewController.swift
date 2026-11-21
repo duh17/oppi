@@ -21,8 +21,8 @@ final class WorkspaceSidebarViewController: UIViewController {
     private var navigation: SceneNavigation { root.navigation }
     private var coordinator: ConnectionCoordinator { root.coordinator }
 
-    /// The app's icon heads the column in place of a written name, with Edit
-    /// (Edit Sidebar) at the row's trailing end.
+    /// The app's icon heads the column in place of a written name, with the
+    /// Edit Sidebar glyph at the row's trailing end.
     private let appIconView = UIImageView()
     private let editButton = UIButton(configuration: .plain())
     private let list: UICollectionView
@@ -135,14 +135,14 @@ final class WorkspaceSidebarViewController: UIViewController {
         appIconView.accessibilityIdentifier = "workspace.sidebar.appIcon"
         appIconView.translatesAutoresizingMaskIntoConstraints = false
 
-        editButton.configuration?.title = String(localized: "Edit")
-        editButton.configuration?.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
-            var attributes = attributes
-            attributes.font = Self.font(.body, .regular)
-            return attributes
-        }
-        editButton.configuration?.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
+        // Sliders read as arranging the sidebar: not the gear App Settings
+        // uses below, nor a pencil-and-square that reads as composing a new
+        // session. Sized like the places' glyphs.
+        editButton.configuration?.image = UIImage(systemName: "slider.horizontal.3")
+        editButton.configuration?.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(textStyle: .title3)
+        editButton.configuration?.contentInsets = .zero
         editButton.accessibilityIdentifier = "workspace.sidebar.edit"
+        editButton.accessibilityLabel = String(localized: "Edit Sidebar")
         editButton.accessibilityHint = String(localized: "Shows, hides, and orders the sidebar's places on this device")
         editButton.addAction(UIAction { [weak self] _ in self?.presentEditSidebar() }, for: .primaryActionTriggered)
         editButton.setContentHuggingPriority(.required, for: .horizontal)
@@ -171,11 +171,12 @@ final class WorkspaceSidebarViewController: UIViewController {
             appIconView.leadingAnchor.constraint(equalTo: safeArea.leadingAnchor, constant: 20),
             appIconView.widthAnchor.constraint(equalToConstant: Self.appIconSide),
             appIconView.heightAnchor.constraint(equalToConstant: Self.appIconSide),
-            // The title's trailing edge mirrors the icon's 20 pt leading inset;
-            // a large text size never runs Edit into the icon.
-            editButton.trailingAnchor.constraint(equalTo: safeArea.trailingAnchor, constant: -12),
+            // A 44 pt square centred on the glyph; the glyph's trailing edge
+            // sits about 20 pt in, mirroring the icon's leading inset.
+            editButton.trailingAnchor.constraint(equalTo: safeArea.trailingAnchor, constant: -8),
             editButton.centerYAnchor.constraint(equalTo: appIconView.centerYAnchor),
             editButton.leadingAnchor.constraint(greaterThanOrEqualTo: appIconView.trailingAnchor, constant: 8),
+            editButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
             editButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             list.topAnchor.constraint(equalTo: appIconView.bottomAnchor, constant: 12),
             list.leadingAnchor.constraint(equalTo: safeArea.leadingAnchor),
@@ -217,7 +218,8 @@ final class WorkspaceSidebarViewController: UIViewController {
             appliedThemeID = themeID
             view.backgroundColor = themeID.palette.ui.bg
             appIconView.layer.borderColor = themeID.palette.ui.comment.withAlphaComponent(0.5).cgColor
-            editButton.tintColor = themeID.palette.ui.blue
+            // Secondary, like the Workspaces header: a quiet control, not a link.
+            editButton.tintColor = themeID.palette.ui.comment
         }
         let previous = model
         model = makeModel()

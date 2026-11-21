@@ -41,6 +41,8 @@ final class SidebarEditUITests: XCTestCase, PreviewUITestCase {
         let edit = app.buttons["workspace.sidebar.edit"]
         XCTAssertTrue(edit.waitUntilExists(timeout: 5), "The sidebar header has no Edit")
         let icon = app.descendants(matching: .any)["workspace.sidebar.appIcon"]
+        XCTAssertEqual(edit.label, "Edit Sidebar", "The glyph speaks as Edit Sidebar")
+        XCTAssertGreaterThanOrEqual(min(edit.frame.width, edit.frame.height), 44, "Edit keeps a 44 pt target")
         XCTAssertEqual(edit.frame.midY, icon.frame.midY, accuracy: 1, "Edit is centred on the app icon")
         XCTAssertGreaterThanOrEqual(edit.frame.minX - icon.frame.maxX, 8, "Edit keeps at least 8 pt from the icon")
         let initial = sidebarOrder()
