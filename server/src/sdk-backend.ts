@@ -83,6 +83,7 @@ import {
   isBuiltinExtensionPath,
 } from "./host-mcp-extensions.js";
 import { classicSandboxMcp, sandboxMcpForWorkspace } from "./sandbox-mcp.js";
+import { loadPiMcpInternals } from "./pi-mcp-internals.js";
 import { createLifecycleJournalExtension } from "./lifecycle-journal-extension.js";
 import { createNotifyExtension } from "./session-notify-extension.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
@@ -786,21 +787,77 @@ export class QueuedModelTurnsReconciliationError extends Error {
 }
 
 /**
- * Allowed tool names from a saved Agent's sessionDefaults that no active
- * tool matches at launch. These names are stale: the running Pi session can
- * never activate them, so launches drop them from the effective tool set and
- * surface a session warning instead of failing the whole launch. The saved
- * Agent definition is never mutated.
+ * Whether an allowlist entry names a dynamic MCP tool that can still register
+ * after `session_start` once MCP servers connect. On host, any MCP tool name is
+ * exempt while an MCP extension is loaded; in a sandbox, only tools whose
+ * server namespace is in `workspace.sandboxConfig.mcpServers` (or MCP resource
+ * tools when at least one server is picked) can connect.
+ */
+function isPendingMcpToolEntry(
+  entry: string,
+  options: {
+    mcpRegisteredDynamically: boolean;
+    /** Sandbox only: `mcpNamespace(name)` for each picked server. Undefined on host. */
+    sandboxMcpNamespaces?: ReadonlySet<string>;
+    isMcpToolName: (name: string) => boolean;
+    createToolNameMatcher: (entries: readonly string[]) => (name: string) => boolean;
+  },
+): boolean {
+  if (!options.mcpRegisteredDynamically || !options.isMcpToolName(entry)) return false;
+  const allowedNamespaces = options.sandboxMcpNamespaces;
+  if (!allowedNamespaces) return true;
+  if (allowedNamespaces.size === 0) return false;
+  if (!entry.startsWith("mcp__")) return true;
+  const sep = entry.indexOf("__", "mcp__".length);
+  if (sep > "mcp__".length) {
+    const namespace = entry.slice(0, sep);
+    if (!namespace.includes("*")) return allowedNamespaces.has(namespace);
+    const matcher = options.createToolNameMatcher([namespace]);
+    return [...allowedNamespaces].some((candidate) => matcher(candidate));
+  }
+  if (!entry.includes("*")) return false;
+  const matcher = options.createToolNameMatcher([entry]);
+  return [...allowedNamespaces].some((candidate) => matcher(`${candidate}__`));
+}
+
+/**
+ * Allowed tool names from a saved Agent's sessionDefaults that no registered
+ * non-hidden tool matches at launch. These names are stale: the running Pi
+ * session can never activate them, so launches drop them from the effective
+ * tool set and surface a session warning instead of failing the whole launch.
+ * The saved Agent definition is never mutated.
+ *
+ * When the MCP extension is loaded, MCP tool names (`mcp__*` and MCP resource
+ * tools) register asynchronously after `session_start` once their servers
+ * connect (and stay inactive when `deferred` or `codemode`), so they cannot be
+ * judged unavailable before `bindExtensions()`.
  */
 function findUnavailableConfiguredAgentTools(
   configuredAllowed: readonly string[] | undefined,
   configuredExcluded: readonly string[] | undefined,
-  activeToolNames: readonly string[],
+  availableToolNames: readonly string[],
+  options: {
+    mcpRegisteredDynamically: boolean;
+    sandboxMcpNamespaces?: ReadonlySet<string>;
+    isMcpToolName: (name: string) => boolean;
+    createToolNameMatcher: (entries: readonly string[]) => (name: string) => boolean;
+  },
 ): string[] {
   if (!configuredAllowed) return [];
-  const excluded = new Set(configuredExcluded ?? []);
-  const active = new Set(activeToolNames);
-  return [...new Set(configuredAllowed)].filter((name) => !excluded.has(name) && !active.has(name));
+  const excludedEntries = configuredExcluded ?? [];
+  const excludedExact = new Set(excludedEntries);
+  const excludedMatcher =
+    excludedEntries.length > 0 ? options.createToolNameMatcher(excludedEntries) : undefined;
+  const available = new Set(availableToolNames);
+  return [...new Set(configuredAllowed)].filter((entry) => {
+    if (excludedExact.has(entry) || excludedMatcher?.(entry)) return false;
+    if (isPendingMcpToolEntry(entry, options)) return false;
+    if (entry.includes("*")) {
+      const matcher = options.createToolNameMatcher([entry]);
+      return !availableToolNames.some((name) => matcher(name));
+    }
+    return !available.has(entry);
+  });
 }
 
 /**
@@ -1667,11 +1724,32 @@ export class SdkBackend implements AgentBackend {
       }
 
       if (agentDefinition && launchToolPolicy?.allowed) {
-        const activeToolNames = createResult.session.agent.state.tools.map((tool) => tool.name);
+        const { isMcpToolName, createToolNameMatcher, mcpNamespace } = await loadPiMcpInternals();
+        const mcpRegisteredDynamically =
+          (!sandboxMode || sandboxMcpPicks.length > 0) &&
+          loader
+            .getExtensions()
+            .extensions.some(
+              (extension) =>
+                extension.path === MCP_BUILTIN_EXTENSION_PATH || extension.commands.has("mcp"),
+            );
+        const sandboxMcpNamespaces = sandboxMode
+          ? new Set(sandboxMcpPicks.map((name) => mcpNamespace(name)))
+          : undefined;
+        const availableToolNames = createResult.session
+          .getAllTools()
+          .filter((tool) => tool.exposure !== "hidden")
+          .map((tool) => tool.name);
         const missingTools = findUnavailableConfiguredAgentTools(
           launchToolPolicy.allowed,
           launchToolPolicy.excluded,
-          activeToolNames,
+          availableToolNames,
+          {
+            mcpRegisteredDynamically,
+            ...(sandboxMcpNamespaces ? { sandboxMcpNamespaces } : {}),
+            isMcpToolName,
+            createToolNameMatcher,
+          },
         );
         if (missingTools.length > 0) {
           // Warn and start: stale allowlist names never enter the running

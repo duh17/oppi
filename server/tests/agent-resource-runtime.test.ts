@@ -1,11 +1,13 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-import type { ResourceLoader } from "@earendil-works/pi-coding-agent";
+import { ProjectTrustStore, type ResourceLoader } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 
 import type { AgentDefinition } from "../src/agent-launch-service.js";
+import * as GondolinManagerModule from "../src/gondolin-manager.js";
 import { SdkBackend } from "../src/sdk-backend.js";
 import { serverResourceId } from "../src/server-resource-id.js";
 import type { Session, Workspace } from "../src/types.js";
@@ -435,6 +437,337 @@ describe("saved Agent exact resource selection", { concurrent: false }, () => {
       rmSync(agentDir, { recursive: true, force: true });
     }
   });
+
+  it("does not falsely drop MCP allowlist tools before builtin:mcp connects, while still warning on real stale tools", async () => {
+    const fixture = fileURLToPath(new URL("./fixtures/mcp-echo-server.mjs", import.meta.url));
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-agent-mcp-tools-cwd-"));
+    const agentDir = mkdtempSync(join(tmpdir(), "oppi-agent-mcp-tools-agent-"));
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    mkdirSync(join(cwd, ".pi"), { recursive: true });
+    writeFileSync(join(agentDir, "auth.json"), "{}");
+    writeFileSync(
+      join(cwd, ".pi", "mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          direct_echo: {
+            command: process.execPath,
+            args: [fixture],
+            exposure: "direct",
+          },
+          deferred_echo: {
+            command: process.execPath,
+            args: [fixture],
+            exposure: "deferred",
+          },
+        },
+      }),
+    );
+    new ProjectTrustStore(agentDir).set(cwd, true);
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+
+    let cleanBackend: SdkBackend | undefined;
+    let staleBackend: SdkBackend | undefined;
+    let disabledMcpBackend: SdkBackend | undefined;
+    let omittedMcpBackend: SdkBackend | undefined;
+    try {
+      // 1. Inherited extension discovery loads builtin:mcp + builtin:tool-search:
+      // neither direct nor deferred MCP allowlist entries (nor wildcards) warn as dropped,
+      // and both servers' tools register once session_start connects them.
+      const cleanSession = makeSession();
+      cleanSession.launch = {
+        ...cleanSession.launch,
+        status: "launching",
+        requestedAt: cleanSession.createdAt,
+        agentId: "agent-mcp-clean",
+        tools: {
+          allowed: [
+            "read",
+            "tool_search",
+            "mcp__direct_echo__echo",
+            "mcp__deferred_echo__echo",
+            "mcp__wildcard__*",
+          ],
+        },
+      };
+
+      cleanBackend = await SdkBackend.create({
+        session: cleanSession,
+        workspace: {
+          id: "workspace-1",
+          name: "Agent MCP Clean Test",
+          runtime: "host",
+          hostMount: cwd,
+        } as Workspace,
+        agentDefinition: {
+          name: "Agent MCP Clean",
+          resources: { skillPaths: [] },
+        },
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+      });
+
+      expect(cleanSession.warnings).toBeUndefined();
+      expect(cleanBackend.session.agent.state.tools.map((tool) => tool.name)).toContain(
+        "tool_search",
+      );
+
+      // Wait for both project MCP servers to finish connecting after session_start.
+      await vi.waitFor(
+        () => {
+          const allNames = cleanBackend!.session.getAllTools().map((tool) => tool.name);
+          expect(allNames).toContain("mcp__direct_echo__echo");
+          expect(allNames).toContain("mcp__deferred_echo__echo");
+        },
+        { timeout: 10_000 },
+      );
+      // Direct MCP tool becomes active; deferred stays registered for tool_search.
+      expect(cleanBackend.session.agent.state.tools.map((tool) => tool.name)).toContain(
+        "mcp__direct_echo__echo",
+      );
+      expect(cleanBackend.session.agent.state.tools.map((tool) => tool.name)).not.toContain(
+        "mcp__deferred_echo__echo",
+      );
+
+      // 2. A genuine stale non-MCP tool still warns without blaming MCP tools.
+      const staleSession = makeSession();
+      staleSession.launch = {
+        ...staleSession.launch,
+        status: "launching",
+        requestedAt: staleSession.createdAt,
+        agentId: "agent-mcp-stale",
+        tools: {
+          allowed: ["read", "mcp__direct_echo__echo", "genuinely_missing_tool"],
+        },
+      };
+
+      staleBackend = await SdkBackend.create({
+        session: staleSession,
+        workspace: {
+          id: "workspace-1",
+          name: "Agent MCP Stale Test",
+          runtime: "host",
+          hostMount: cwd,
+        } as Workspace,
+        agentDefinition: {
+          name: "Agent MCP Stale",
+          resources: { skillPaths: [] },
+        },
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+      });
+
+      expect(staleSession.warnings).toHaveLength(1);
+      expect(staleSession.warnings?.[0]).toContain("genuinely_missing_tool");
+      expect(staleSession.warnings?.[0]).not.toContain("mcp__direct_echo__echo");
+
+      // 3. When MCP is turned off (or excluded from extensionIds), MCP allowlist tools
+      // really are unavailable and still warn.
+      const disabledSession = makeSession();
+      disabledSession.launch = {
+        ...disabledSession.launch,
+        status: "launching",
+        requestedAt: disabledSession.createdAt,
+        agentId: "agent-mcp-off",
+        tools: {
+          allowed: ["read", "mcp__direct_echo__echo"],
+        },
+      };
+
+      disabledMcpBackend = await SdkBackend.create({
+        session: disabledSession,
+        workspace: {
+          id: "workspace-1",
+          name: "Agent MCP Off Test",
+          runtime: "host",
+          hostMount: cwd,
+        } as Workspace,
+        agentDefinition: {
+          name: "Agent MCP Off",
+          resources: { skillPaths: [] },
+        },
+        mcpEnabled: () => false,
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+      });
+
+      expect(disabledSession.warnings).toHaveLength(1);
+      expect(disabledSession.warnings?.[0]).toContain("mcp__direct_echo__echo");
+
+      // 4. An exact extensionIds selection without builtin:mcp also still warns on MCP tools.
+      const omittedMcpSession = makeSession();
+      omittedMcpSession.launch = {
+        ...omittedMcpSession.launch,
+        status: "launching",
+        requestedAt: omittedMcpSession.createdAt,
+        agentId: "agent-mcp-omitted",
+        tools: {
+          allowed: ["read", "mcp__direct_echo__echo"],
+        },
+      };
+
+      omittedMcpBackend = await SdkBackend.create({
+        session: omittedMcpSession,
+        workspace: {
+          id: "workspace-1",
+          name: "Agent MCP Omitted Test",
+          runtime: "host",
+          hostMount: cwd,
+        } as Workspace,
+        agentDefinition: {
+          name: "Agent MCP Omitted",
+          resources: { skillPaths: [], extensionIds: [] },
+        },
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+      });
+
+      expect(omittedMcpSession.warnings).toHaveLength(1);
+      expect(omittedMcpSession.warnings?.[0]).toContain("mcp__direct_echo__echo");
+    } finally {
+      if (cleanBackend) await cleanBackend.dispose();
+      if (staleBackend) await staleBackend.dispose();
+      if (disabledMcpBackend) await disabledMcpBackend.dispose();
+      if (omittedMcpBackend) await omittedMcpBackend.dispose();
+      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      rmSync(cwd, { recursive: true, force: true });
+      rmSync(agentDir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it("in a sandbox, exempts only picked sandboxConfig.mcpServers namespaces and warns on unpicked MCP servers", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-agent-sandbox-mcp-cwd-"));
+    const agentDir = mkdtempSync(join(tmpdir(), "oppi-agent-sandbox-mcp-agent-"));
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    writeFileSync(join(agentDir, "auth.json"), "{}");
+    writeFileSync(
+      join(agentDir, "mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          "picked-server": { url: "https://picked.example.com/mcp", exposure: "deferred" },
+          "unpicked-server": { url: "https://unpicked.example.com/mcp", exposure: "deferred" },
+        },
+      }),
+    );
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+
+    const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
+    const execResult = { exitCode: 0, stdout: "", stdoutBuffer: Buffer.alloc(0), ok: true };
+    const vm = {
+      fs: {
+        access: vi.fn(async () => {
+          throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+        }),
+        mkdir: vi.fn(async () => undefined),
+        readFile: vi.fn(async () => Buffer.alloc(0)),
+        writeFile: vi.fn(async () => undefined),
+        readdir: vi.fn(async () => []),
+      },
+      exec: vi.fn(() =>
+        Object.assign(Promise.resolve(execResult), {
+          output: async function* () {},
+          write: () => {},
+          end: () => {},
+        }),
+      ),
+    };
+    const sdkBackendType = SdkBackend as unknown as {
+      _gondolinManager?: { ensureWorkspaceVm: () => Promise<typeof vm> };
+    };
+    const previousManager = sdkBackendType._gondolinManager;
+    sdkBackendType._gondolinManager = { ensureWorkspaceVm: vi.fn(async () => vm) };
+
+    let pickedBackend: SdkBackend | undefined;
+    let emptyPicksBackend: SdkBackend | undefined;
+    try {
+      const pickedSession = makeSession();
+      pickedSession.launch = {
+        ...pickedSession.launch,
+        status: "launching",
+        requestedAt: pickedSession.createdAt,
+        agentId: "agent-sandbox-mcp",
+        tools: {
+          allowed: [
+            "read",
+            "tool_search",
+            "mcp__picked_server__echo",
+            "mcp__picked_server__*",
+            "mcp__unpicked_server__echo",
+          ],
+        },
+      };
+
+      pickedBackend = await SdkBackend.create({
+        session: pickedSession,
+        workspace: {
+          id: "workspace-sandbox-mcp",
+          name: "Sandbox MCP Agent Test",
+          runtime: "sandbox",
+          hostMount: cwd,
+          sandboxConfig: {
+            allowedHosts: [],
+            mcpServers: ["picked-server"],
+          },
+        } as Workspace,
+        agentDefinition: {
+          name: "Sandbox MCP Agent",
+          resources: { skillPaths: [] },
+        },
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+      });
+
+      expect(pickedSession.warnings).toHaveLength(1);
+      expect(pickedSession.warnings?.[0]).toContain("mcp__unpicked_server__echo");
+      expect(pickedSession.warnings?.[0]).not.toContain("mcp__picked_server__echo");
+      expect(pickedSession.warnings?.[0]).not.toContain("mcp__picked_server__*");
+
+      // With no sandboxConfig.mcpServers picked, every MCP tool warns.
+      const emptyPicksSession = makeSession();
+      emptyPicksSession.launch = {
+        ...emptyPicksSession.launch,
+        status: "launching",
+        requestedAt: emptyPicksSession.createdAt,
+        agentId: "agent-sandbox-mcp-none",
+        tools: {
+          allowed: ["read", "mcp__picked_server__echo", "list_mcp_resources"],
+        },
+      };
+
+      emptyPicksBackend = await SdkBackend.create({
+        session: emptyPicksSession,
+        workspace: {
+          id: "workspace-sandbox-mcp-none",
+          name: "Sandbox MCP Empty Picks Test",
+          runtime: "sandbox",
+          hostMount: cwd,
+          sandboxConfig: {
+            allowedHosts: [],
+            mcpServers: [],
+          },
+        } as Workspace,
+        agentDefinition: {
+          name: "Sandbox MCP Empty Picks",
+          resources: { skillPaths: [] },
+        },
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+      });
+
+      expect(emptyPicksSession.warnings).toHaveLength(1);
+      expect(emptyPicksSession.warnings?.[0]).toContain("mcp__picked_server__echo");
+      expect(emptyPicksSession.warnings?.[0]).toContain("list_mcp_resources");
+    } finally {
+      if (pickedBackend) await pickedBackend.dispose();
+      if (emptyPicksBackend) await emptyPicksBackend.dispose();
+      sdkBackendType._gondolinManager = previousManager;
+      qemuSpy.mockRestore();
+      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      rmSync(cwd, { recursive: true, force: true });
+      rmSync(agentDir, { recursive: true, force: true });
+    }
+  }, 20_000);
 
   it("resolves selected Extension IDs that are only available at project scope", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-agent-project-extension-cwd-"));
