@@ -153,10 +153,6 @@ struct LivingPiPlanner {
         (Cell(col: 5, row: 6), .ink), (Cell(col: 6, row: 6), .ink),
     ]
     static let slotCells = Set(slots.map(\.0))
-    /// The icon's faint scenery: growth (0.42) and scatter (0.18). Elves walk
-    /// over it and blocks slide over it.
-    static let growth = [Cell(col: 0, row: 2), Cell(col: 0, row: 3), Cell(col: 7, row: 7), Cell(col: 5, row: 8)]
-    static let scatter = [Cell(col: 1, row: 0), Cell(col: 2, row: 0), Cell(col: 0, row: 4), Cell(col: 1, row: 7)]
     /// Inside the arch, the right leg's gap and the cell beside it, and the
     /// two cells under the arch.
     static let noPark: Set<Cell> = {

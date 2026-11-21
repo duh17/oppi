@@ -3,7 +3,9 @@ import UIKit
 
 /// The sidebar's mark: the app icon's π drawn cell by cell straight on the
 /// sidebar's background, with two elves moving its blocks around
-/// (`LivingPiPlanner` decides the moves and keeps the π a π).
+/// (`LivingPiPlanner` decides the moves and keeps the π a π). Only the
+/// blocks and the elves are drawn: no scenery, and a slot a block left is
+/// plain background.
 ///
 /// The app wakes once per job: it plans the job, hands each layer that moves
 /// one keyframe group sampled at 20 fps (at 32 pt that reads the same as 30
@@ -17,47 +19,33 @@ import UIKit
 /// the running animations: the layers already hold the job's end state, which
 /// is where the next job starts.
 final class LivingPiMarkView: UIView {
-    /// The icon's accent colours. Its white cells, the faint scenery and the
-    /// elves take the theme's foreground (`inkColor`).
+    /// The icon's accent colours. Its white cells and the elves take the
+    /// theme's foreground (`inkColor`).
     private static let accents: [LivingPiPlanner.Tint: UIColor] = [
         .amber: rgb(0xF5A02C), .red: rgb(0xF05A2D), .blue: rgb(0x3D8CF0),
         .sky: rgb(0x4397FF), .periwinkle: rgb(0x86A7FF), .lavender: rgb(0x9CACFF),
     ]
     private static let blockOpacity: Float = 0.94
     private static let elfOpacity: Float = 0.92
-    private static let growthOpacity: Float = 0.42
-    private static let scatterOpacity: Float = 0.18
-    /// An empty slot shows a faint socket, so a missing block reads as
-    /// missing rather than as a different shape.
-    private static let socketOpacity = 0.13
     /// The icon's cells: 85 px on a 97 px pitch, corners 23 px.
     private static let cellFraction: CGFloat = 85.0 / 97.0
     private static let cornerFraction: CGFloat = 23.0 / 85.0
     private static let elfFraction: CGFloat = 0.4
     private static let frameRate = CAFrameRateRange(minimum: 10, maximum: 20, preferred: 20)
 
-    /// The theme's foreground: the π's white cells, the scenery and the elves.
+    /// The theme's foreground: the π's white cells and the elves.
     var inkColor: UIColor = .label {
         didSet { applyColors() }
     }
 
     /// A new seed each launch, so the show differs every time.
     private var planner = LivingPiPlanner(seed: .random(in: .min ... .max))
-    private let sceneryLayers: [(layer: CALayer, cell: LivingPiPlanner.Cell)]
-    private let socketLayers: [CALayer]
     private let blockLayers: [CALayer]
     private let elfLayers: [CALayer]
     private var wakeTimer: Timer?
     private var sceneIsInBackground = false
 
     override init(frame: CGRect) {
-        let scenery = LivingPiPlanner.growth.map { ($0, Self.growthOpacity) } + LivingPiPlanner.scatter.map { ($0, Self.scatterOpacity) }
-        sceneryLayers = scenery.map { cell, opacity in
-            let layer = CALayer()
-            layer.opacity = opacity
-            return (layer, cell)
-        }
-        socketLayers = LivingPiPlanner.slots.map { _ in CALayer() }
         blockLayers = LivingPiPlanner.slots.map { _ in
             let layer = CALayer()
             layer.opacity = Self.blockOpacity
@@ -71,7 +59,7 @@ final class LivingPiMarkView: UIView {
         super.init(frame: frame)
         isOpaque = false
         backgroundColor = .clear
-        for layer in sceneryLayers.map(\.layer) + socketLayers + blockLayers + elfLayers {
+        for layer in blockLayers + elfLayers {
             layer.cornerCurve = .continuous
             self.layer.addSublayer(layer)
         }
@@ -101,12 +89,10 @@ final class LivingPiMarkView: UIView {
         let elfSide = pitch * Self.elfFraction
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        for layer in sceneryLayers.map(\.layer) + socketLayers + blockLayers {
+        for layer in blockLayers {
             layer.bounds = cellBounds
             layer.cornerRadius = side * Self.cornerFraction
         }
-        for (layer, cell) in sceneryLayers { layer.position = point(Double(cell.col), Double(cell.row)) }
-        for (layer, slot) in zip(socketLayers, LivingPiPlanner.slots) { layer.position = point(Double(slot.0.col), Double(slot.0.row)) }
         for layer in elfLayers {
             layer.bounds = CGRect(x: 0, y: 0, width: elfSide, height: elfSide)
             layer.cornerRadius = elfSide / 2
@@ -138,7 +124,7 @@ final class LivingPiMarkView: UIView {
         let ink = inkColor.resolvedColor(with: traitCollection).cgColor
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        for layer in sceneryLayers.map(\.layer) + socketLayers + elfLayers { layer.backgroundColor = ink }
+        for layer in elfLayers { layer.backgroundColor = ink }
         for (layer, block) in zip(blockLayers, planner.blocks) {
             layer.backgroundColor = color(block.tint).resolvedColor(with: traitCollection).cgColor
         }
@@ -159,15 +145,6 @@ final class LivingPiMarkView: UIView {
             layer.transform = CATransform3DIdentity
             layer.zPosition = 2
         }
-        let poses = planner.blocks.map { LivingPiPlanner.Pose($0.cell) }
-        for (layer, slot) in zip(socketLayers, LivingPiPlanner.slots) {
-            layer.opacity = Self.socketOpacity(slot.0, poses)
-        }
-    }
-
-    private static func socketOpacity(_ slot: LivingPiPlanner.Cell, _ blocks: [LivingPiPlanner.Pose]) -> Float {
-        let gap = blocks.map { hypot($0.x - Double(slot.col), $0.y - Double(slot.row)) }.min() ?? 1
-        return gap > 0.05 ? Float(socketOpacity * min(1, gap)) : 0
     }
 
     // MARK: Running
@@ -194,7 +171,7 @@ final class LivingPiMarkView: UIView {
         } else {
             wakeTimer?.invalidate()
             wakeTimer = nil
-            for layer in socketLayers + blockLayers + elfLayers { layer.removeAllAnimations() }
+            for layer in blockLayers + elfLayers { layer.removeAllAnimations() }
         }
     }
 
@@ -243,8 +220,7 @@ final class LivingPiMarkView: UIView {
     // MARK: Animation
 
     /// Turns one planned job into keyframe groups: positions and sizes for
-    /// what moves, a lifted block's brightening, and the sockets fading as
-    /// blocks leave and fill their slots. The model values are set to the
+    /// what moves, and a lifted block's brightening. The model values are set to the
     /// job's end first, so the layers stay there when the animations end.
     private func play(_ job: LivingPiPlanner.Job) {
         let frames = max(1, Int((job.duration / LivingPiPlanner.frameInterval).rounded(.up)))
@@ -290,14 +266,6 @@ final class LivingPiMarkView: UIView {
         }
         for (i, track) in job.elfTracks.enumerated() where !track.isStill {
             animate(elfLayers[i], motion(times.map(track.at)))
-        }
-        let blockPoses = times.map { t in job.blockTracks.map { $0.at(t) } }
-        for (layer, slot) in zip(socketLayers, LivingPiPlanner.slots) {
-            let values = blockPoses.map { Self.socketOpacity(slot.0, $0) }
-            guard Set(values).count > 1 else { continue }
-            let fade = CAKeyframeAnimation(keyPath: "opacity")
-            fade.values = values
-            animate(layer, [fade])
         }
         CATransaction.commit()
     }
