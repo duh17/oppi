@@ -1,6 +1,7 @@
 import UIKit
 
-/// A saved Agent: its definition, system prompt, Pi session defaults,
+/// A saved Agent: its icon as a large circle at the top of the page, which opens
+/// the icon picker, then its definition, system prompt, Pi session defaults,
 /// resources, launch constraints, and Run (schedule, start). Edit opens the native
 /// editor; the actions menu offers Archive; an active Agent's Start Session
 /// row (under Schedule Recurring Run) opens Quick Session with the Agent, and
@@ -14,9 +15,9 @@ import UIKit
 /// its rows, its bar items, the composer, and the sheets it opens.
 @MainActor
 final class AgentDetailViewController: ListScreenController<AgentDetailViewController.Section, AgentDetailViewController.Item> {
-    enum Section: Hashable, Sendable { case definition, status, prompt, defaults, resources, constraints, run }
+    enum Section: Hashable, Sendable { case hero, definition, status, prompt, defaults, resources, constraints, run }
     enum Item: Hashable, Sendable {
-        case icon
+        case hero
         case value(title: String, value: String)
         case block(title: String, value: String)
         case resourceList(title: String, value: String)
@@ -172,13 +173,19 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
 
     // MARK: - List
 
+    /// The hero's circle. Large enough to read as the Agent's portrait on an
+    /// iPhone and on the iPad mini, and small enough to leave the Definition card
+    /// on the first screen.
+    private static let heroSide: CGFloat = 96
+
     override func sections() -> [ListSection<Section, Item>] {
         // Without an Agent there are no rows: the page is its state.
         guard let agent else { return [] }
         let definition = agent.definition
-        var sections: [ListSection<Section, Item>] = []
+        // The icon is the page's portrait above the heading, not a row in it.
+        var sections: [ListSection<Section, Item>] = [ListSection(.hero, items: [.hero])]
 
-        var items: [Item] = [.icon, .value(title: "Name", value: definition.name)]
+        var items: [Item] = [.value(title: "Name", value: definition.name)]
         if let description = definition.description, !description.isEmpty {
             items.append(.block(title: "Description", value: description))
         }
@@ -229,8 +236,9 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
     override func loadConnection() -> ServerConnection? { connection }
 
     /// The definition, resources, and run carry headings; the state row, which
-    /// has none of its own, gets no empty header above it.
-    override func showsHeader(for section: Section) -> Bool { section != .status }
+    /// has none of its own, gets no empty header above it, and neither does the
+    /// hero above the Definition heading.
+    override func showsHeader(for section: Section) -> Bool { section != .status && section != .hero }
 
     /// A failed load keeps the rows it already had and says so under them, with
     /// Retry; with no Agent there is nothing to list, so the page is its whole
@@ -243,7 +251,7 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
 
     override func inputs(of item: Item) -> AnyHashable {
         switch item {
-        case .icon:
+        case .hero:
             // `IconChoiceUIView` redraws itself when artwork arrives, so a load
             // never rebuilds the row (and restarts a playing image).
             return AnyHashable(agent?.definition.icon)
@@ -320,7 +328,7 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
         let palette = palette
         let rowInsets = NSDirectionalEdgeInsets(top: 11, leading: 0, bottom: 11, trailing: 0)
         switch item {
-        case .icon:
+        case .hero:
             guard let agent else { return }
             ListScreen.buttonRow(
                 cell,
@@ -331,21 +339,19 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
             ) { [weak self] in
                 self?.showsIconPicker = true
             }
+            // A portrait, not a card: the circle sits on the page itself.
+            ListScreen.background(cell, grouped: false, palette: palette)
             let assets = connection.iconAssetCache
-            cell.contentConfiguration = ControlViewContent(insets: .init(top: 6, leading: 0, bottom: 6, trailing: 0)) {
-                // The Agent's own page plays its icon, like the picker.
-                let icon = IconChoiceUIView(frameSize: 32, animates: true)
+            cell.contentConfiguration = ControlViewContent(
+                insets: .init(top: 20, leading: 0, bottom: 12, trailing: 0)
+            ) {
+                // The Agent's own page plays its icon, like the picker, and shows
+                // it as a circle.
+                let icon = IconChoiceUIView(frameSize: Self.heroSide, animates: true, shape: .circle)
                 icon.apply(.choice(agent.definition.icon, purpose: .agent, sandbox: false), assetCache: assets)
                 icon.accessibilityIdentifier = "agents.detail.iconImage"
-                let row = ControlRowViews.stack([
-                    ControlRowViews.label("Icon", style: .body, color: palette.ui.comment, lines: 1),
-                    ControlRowViews.spacer(),
-                    icon,
-                ], axis: .horizontal, spacing: 12, alignment: .center)
-                row.heightAnchor.constraint(greaterThanOrEqualToConstant: 32).isActive = true
-                return row
+                return ControlRowViews.stack([icon], spacing: 0, alignment: .center)
             }
-            cell.accessories = [.disclosureIndicator()]
         case .value(let title, let value):
             ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent(insets: rowInsets) {

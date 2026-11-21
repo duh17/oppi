@@ -2,7 +2,8 @@ import UIKit
 
 /// Agents: Pi (the server's global Pi configuration) and the saved Agents,
 /// with the guided composer to describe a new one. A row pushes its detail,
-/// which reports edits back.
+/// which reports edits back. A row's icon plays, as an Agent's icon does
+/// everywhere it is its own: a reused row stops when it leaves its window.
 ///
 /// A `ListScreenController`: the base owns the list, the loading and failure
 /// row, and the load on appearance and pull to refresh. This page keeps its
@@ -221,9 +222,11 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
     /// Room above and below each row, so the tiles and two-line captions breathe.
     private static let rowInsets = NSDirectionalEdgeInsets(top: 12, leading: 0, bottom: 12, trailing: 0)
 
-    /// Pi's and every Agent's icon in the list: one 36 pt tile.
+    /// Pi's and every Agent's icon in the list: one 36 pt tile. An Agent's icon
+    /// plays here as it does on the Agent's own page; Pi's mark has nothing to
+    /// play.
     private static func icon(_ content: IconChoiceUIView.Content, assets: IconAssetCache? = nil) -> IconChoiceUIView {
-        let icon = IconChoiceUIView(frameSize: 36)
+        let icon = IconChoiceUIView(frameSize: 36, animates: true)
         icon.apply(content, assetCache: assets)
         return icon
     }

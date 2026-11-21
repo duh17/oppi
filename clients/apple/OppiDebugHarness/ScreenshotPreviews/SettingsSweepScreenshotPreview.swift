@@ -240,6 +240,11 @@ final class SettingsSweepPreviewController: PreviewRootController {
         let connection = ServerConnection()
         connection.setPreviewServerId(server.id)
         connection.setPreviewAPIClient(client)
+        // Artwork loads through the connection's icon cache, which a preview client
+        // does not install: the capture's own icon asset needs one.
+        if Self.agentIconGIF != nil {
+            connection.setIconAssetCacheForTesting(IconAssetCache(apiClient: client))
+        }
         connection.serverResourceStore.replaceSkills(Self.skills, serverId: server.id)
         // `extensions-unavailable` has no cached catalog; its page clears the disk cache first.
         if page != "extensions-unavailable" {
@@ -551,11 +556,25 @@ final class SettingsSweepPreviewController: PreviewRootController {
         keyThumbprint: "thumb"
     )
 
+    /// The Agents capture's icon: an animated GIF read from the path
+    /// `SCREENSHOT_AGENT_ICON_GIF` names on this Mac, so a capture shows a real
+    /// animated icon without a server holding one. Without it the Agent keeps its
+    /// default icon. The id is one `IconChoice` accepts (`ia_` and 43 URL-safe
+    /// characters); any other string decodes as the default icon.
+    private static let agentIconAssetId = "ia_" + String(repeating: "b", count: 43)
+    private static let agentIconGIF: Data? = ProcessInfo.processInfo.environment["SCREENSHOT_AGENT_ICON_GIF"]
+        .flatMap { FileManager.default.contents(atPath: $0) }
+    private static let agentIcon: IconChoice = agentIconGIF == nil
+        ? .defaultValue
+        : .image(assetId: agentIconAssetId)
+
     private static let agent = StoredAgentDefinition(
-        id: "agent-design", name: "Design Reviewer", icon: .defaultValue, description: "Reviews UI changes.",
+        id: "agent-design", name: "Design Reviewer", icon: agentIcon, description: "Reviews UI changes.",
         status: .active, version: 2,
         definition: AgentDefinition(
             name: "Design Reviewer",
+            // The page draws the definition's icon; the summary carries the same one.
+            icon: agentIcon,
             instructions: AgentInstructions(text: "Review the change against the HIG.")
         ),
         createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1), archivedAt: nil
@@ -664,6 +683,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
             )),
             "/server/resources/extensions/oppi-control": json(controlDetail),
             "/agents": json(Agents(agents: [agentSummary])),
+            "/icon-assets/\(agentIconAssetId)": agentIconGIF ?? Data(),
             "/schedules/\(schedule.id)/runs": Data(#"{"runs":[]}"#.utf8),
         ]
         // A record's reads and writes answer from one state, so a save is what

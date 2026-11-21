@@ -8,15 +8,15 @@ import UIKit
 /// other pills. `EntityIcon` owns the pixels; this view places them in its
 /// frame, which the tile fills, and redraws when artwork lands.
 ///
-/// An animated image shows its first frame and a symbol's effect does not play,
-/// like everywhere else in the app, unless the view `animates` (the icon's own
-/// page, an Agent's or a workspace's, and the icon picker): then they play
-/// while the view is in a window and Reduce Motion, Low Power Mode, and the
-/// system's Auto-Play Animated Images allow it, with a sandbox workspace's lock
-/// mark kept over them. A view that never animates can still play one short
-/// `playBurst()` — a session row's icon when its session needs the person — and
-/// rests on its still drawing after it. Only the chat timeline animates
-/// anything else.
+/// An animated image loops and a symbol's effect plays on the icon's own page
+/// (the Agent's, which shows it in a circle, and a workspace's form), in the
+/// icon picker, and in an Agent's row in the Agents list; everywhere else the
+/// first frame draws still. A playing view stops when it leaves its window and
+/// whenever Reduce Motion, Low Power Mode, or the system's Auto-Play Animated
+/// Images takes it away, with a sandbox workspace's lock mark kept over it. A
+/// view that never animates can still play one short `playBurst()` — a session
+/// row's icon when its session needs the person — and rests on its still drawing
+/// after it. Only the chat timeline animates anything else.
 @MainActor
 final class IconChoiceUIView: UIView {
     enum Content: Equatable {
@@ -50,6 +50,9 @@ final class IconChoiceUIView: UIView {
             }
         }
     }
+    /// The shape the icon draws in: its tile, or the circle its own page shows.
+    let shape: IconShape
+
     private let imageView = UIImageView()
     /// Over the tile while something plays: an animated image's frames, clipped
     /// to the tile, or a symbol running its effect.
@@ -72,16 +75,17 @@ final class IconChoiceUIView: UIView {
     /// The pending end of a `playBurst()`; nil when nothing bursts.
     private var burst: Task<Void, Never>?
 
-    init(frameSize: CGFloat, animates: Bool = false) {
+    init(frameSize: CGFloat, animates: Bool = false, shape: IconShape = .tile) {
         self.frameSize = frameSize
         self.animates = animates
+        self.shape = shape
         super.init(frame: .zero)
         isUserInteractionEnabled = false
         isAccessibilityElement = false
         imageView.contentMode = .center
         liveView.isHidden = true
         liveView.clipsToBounds = true
-        liveView.layer.cornerRadius = EntityIcon.tileCornerRadius(frameSize)
+        liveView.layer.cornerRadius = EntityIcon.cornerRadius(frameSize, shape: shape)
         liveView.layer.cornerCurve = .continuous
         markView.isHidden = true
         for view in [imageView, liveView, markView] {
@@ -188,13 +192,13 @@ final class IconChoiceUIView: UIView {
                 data: data,
                 size: min(512, frameSize * max(2, traitCollection.displayScale))
             ).image
-            imageView.image = decoded.map { EntityIcon.tile(side: frameSize, filledWith: $0) }
+            imageView.image = decoded.map { EntityIcon.tile(side: frameSize, filledWith: $0, shape: shape) }
         case .choice(let choice, let purpose, let sandbox):
             let entity: IconEntity = switch purpose {
             case .agent: .agent(choice)
             case .workspace: .workspace(choice, sandbox: sandbox)
             }
-            imageView.image = EntityIcon.image(entity, size: frameSize, assets: assetCache)
+            imageView.image = EntityIcon.image(entity, size: frameSize, assets: assetCache, shape: shape)
         }
         startPlayingIfAllowed()
     }
@@ -301,7 +305,7 @@ final class IconChoiceUIView: UIView {
     private func playSymbol(_ name: String, effect: IconSymbolEffect, repeats: Bool) {
         guard let symbol = EntityIcon.tileSymbol(name, side: frameSize) else { return }
         isPlaying = true
-        imageView.image = EntityIcon.tile(side: frameSize)
+        imageView.image = EntityIcon.tile(side: frameSize, shape: shape)
         liveView.contentMode = .center
         liveView.image = symbol
         liveView.isHidden = false
@@ -337,7 +341,7 @@ final class IconChoiceUIView: UIView {
                 render()
                 return
             }
-            imageView.image = EntityIcon.tile(side: frameSize)
+            imageView.image = EntityIcon.tile(side: frameSize, shape: shape)
             playback.start(data: data, imageView: liveView, maxPixelSize: frameSize * traitCollection.displayScale)
             // Frames fill the tile edge to edge, like the still drawing.
             liveView.contentMode = .scaleAspectFill

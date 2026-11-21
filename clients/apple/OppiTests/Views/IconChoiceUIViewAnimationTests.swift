@@ -6,8 +6,9 @@ import UniformTypeIdentifiers
 @testable import Oppi
 
 /// The animation rule for image icons: an icon view plays an animated image only
-/// when it was made to (`animates`, the Agent page and the icon picker), and
-/// stops when it leaves its window. Everywhere else it draws the first frame.
+/// when it was made to (`animates`: an Agent's page, its row in the Agents list,
+/// a workspace's form, and the icon picker), or for one short burst, and stops
+/// when it leaves its window. Everywhere else it draws the first frame.
 @Suite("Icon image animation")
 @MainActor
 struct IconChoiceUIViewAnimationTests {
@@ -211,4 +212,81 @@ struct IconBurstTests {
         view.playBurst()
         #expect(liveLayers(of: view) == 2)
     }
+}
+
+/// The Agent's page draws its icon as a circle: a symbol icon sits large on a
+/// round background whose corners are clear, and an animated image plays inside
+/// the same circle.
+@Suite("Icon circle")
+@MainActor
+struct IconCircleShapeTests {
+    @Test func aCircleClipsTheIconToACircle() throws {
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 220))
+        window.isHidden = false
+        defer { hideTestWindow(window) }
+
+        let tile = IconChoiceUIView(frameSize: 96)
+        let circle = IconChoiceUIView(frameSize: 96, shape: .circle)
+        for (index, view) in [tile, circle].enumerated() {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            window.addSubview(view)
+            NSLayoutConstraint.activate([
+                view.leadingAnchor.constraint(equalTo: window.leadingAnchor, constant: CGFloat(index) * 120),
+                view.topAnchor.constraint(equalTo: window.topAnchor),
+            ])
+            view.apply(.choice(.defaultValue, purpose: .agent, sandbox: false))
+        }
+        window.layoutIfNeeded()
+
+        // A point a tile paints and a circle does not: inside the rounded corner's
+        // arc, outside the circle's radius.
+        let corner = CGPoint(x: 12, y: 12)
+        let centre = CGPoint(x: 48, y: 48)
+        #expect(iconAlpha(of: circle, at: corner) < 0.02, "a circle leaves its corners clear")
+        #expect(iconAlpha(of: circle, at: centre) > 0.05, "a circle still draws the icon's tint")
+        #expect(iconAlpha(of: tile, at: corner) > 0.05, "a tile fills its corners")
+        #expect(circle.shape == .circle && tile.shape == .tile)
+    }
+
+    @Test func aCirclePlaysItsAnimatedImage() async throws {
+        let gif = try animatedGIFFrames([.systemRed, .systemGreen, .systemBlue])
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+        window.isHidden = false
+        defer { hideTestWindow(window) }
+
+        let playing = IconChoiceUIView(frameSize: 96, animates: true, shape: .circle)
+        playing.translatesAutoresizingMaskIntoConstraints = false
+        window.addSubview(playing)
+        NSLayoutConstraint.activate([
+            playing.leadingAnchor.constraint(equalTo: window.leadingAnchor),
+            playing.topAnchor.constraint(equalTo: window.topAnchor),
+        ])
+        playing.apply(.importedImage(gif))
+        window.layoutIfNeeded()
+
+        let seen = try await centreSwatches(of: playing, for: .milliseconds(900))
+        #expect(seen.isSuperset(of: [.red, .green, .blue]), "the circle plays every frame: \(seen)")
+    }
+}
+
+/// The alpha of `view`'s pixel at `point` in its still drawing.
+@MainActor
+private func iconAlpha(of view: UIView, at point: CGPoint) -> CGFloat {
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    format.opaque = false
+    let image = UIGraphicsImageRenderer(bounds: view.bounds, format: format).image { context in
+        view.layer.render(in: context.cgContext)
+    }
+    guard let cgImage = image.cgImage,
+          let pixel = cgImage.cropping(to: CGRect(x: point.x, y: point.y, width: 1, height: 1)) else { return 0 }
+    var rgba = [UInt8](repeating: 0, count: 4)
+    rgba.withUnsafeMutableBytes { storage in
+        guard let context = CGContext(
+            data: storage.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return }
+        context.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+    }
+    return CGFloat(rgba[3]) / 255
 }

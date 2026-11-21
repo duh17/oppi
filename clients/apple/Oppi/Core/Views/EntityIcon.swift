@@ -18,13 +18,21 @@ extension Notification.Name {
     static let oppiEntityIconDidLoad = Notification.Name("\(AppIdentifiers.subsystem).oppiEntityIconDidLoad")
 }
 
+/// The shape an icon draws in: the rounded square every row, pill, and menu
+/// shows, or the circle an Agent's own page shows its icon as.
+enum IconShape: Hashable, Sendable {
+    case tile
+    case circle
+}
+
 /// The one owner of entity artwork.
 ///
-/// An Agent, Pi, or workspace icon sits in one tile: a rounded square in the
-/// theme's tint that fills the frame it is asked for, with a symbol, an emoji,
-/// a Genmoji, or the Pi mark centred on it and an imported image filling it
-/// edge to edge. Every kind has the same shape and size in a given place, and
-/// the tint follows the theme (the raster cache keys on it).
+/// An Agent, Pi, or workspace icon sits in one tile: a rounded square (or, on its
+/// own page, a circle) in the theme's tint that fills the frame it is asked for,
+/// with a symbol, an emoji, a Genmoji, or the Pi mark centred on it and an
+/// imported image filling it edge to edge. Every kind has the same shape and
+/// size in a given place, and the tint follows the theme (the raster cache keys
+/// on it and on the shape).
 ///
 /// `image` draws now and never waits: a Genmoji or an imported image (its first
 /// frame) comes from the server's icon cache
@@ -80,15 +88,16 @@ enum EntityIcon {
         _ entity: IconEntity,
         size: CGFloat,
         contentSize: CGFloat? = nil,
-        assets: IconAssetCache? = nil
+        assets: IconAssetCache? = nil,
+        shape: IconShape = .tile
     ) -> UIImage {
         let size = max(1, size)
         let content = max(1, contentSize ?? size)
-        let key = cacheKey(entity, size: size, content: content, assets: assets)
+        let key = cacheKey(entity, size: size, content: content, assets: assets, shape: shape)
         if let cached = rasters.object(forKey: key as NSString) {
             return cached
         }
-        let drawn = draw(entity, frame: size, content: content, assets: assets)
+        let drawn = draw(entity, frame: size, content: content, assets: assets, shape: shape)
         // Baked, not template: a `UIMenu` draws a template image in its own gray.
         let image = drawn.image.withRenderingMode(.alwaysOriginal)
         // A drawing that may still become artwork is not kept, so the next pass
@@ -104,6 +113,15 @@ enum EntityIcon {
     /// The tile's corner radius for a `side`-point tile (continuous corners).
     static func tileCornerRadius(_ side: CGFloat) -> CGFloat {
         side * tileCornerShare
+    }
+
+    /// What a `side`-point icon is clipped to in `shape`: the tile's continuous
+    /// corners, or a full circle.
+    static func cornerRadius(_ side: CGFloat, shape: IconShape) -> CGFloat {
+        switch shape {
+        case .tile: tileCornerRadius(side)
+        case .circle: side / 2
+        }
     }
 
     /// The tile's colour: the theme's blue, translucent, so it reads on a card,
@@ -122,47 +140,50 @@ enum EntityIcon {
     }
 
     /// The empty tile, for a view that draws live content over it.
-    static func tile(side: CGFloat) -> UIImage {
-        raster(side) { rect in fillTile(rect) }
+    static func tile(side: CGFloat, shape: IconShape = .tile) -> UIImage {
+        raster(side) { rect in fillTile(rect, shape: shape) }
     }
 
     /// An image on the tile, filling it edge to edge: an imported picture before
     /// it is stored, drawn like a stored one.
-    static func tile(side: CGFloat, filledWith artwork: UIImage) -> UIImage {
-        raster(side) { rect in drawFilling(artwork, in: rect) }
+    static func tile(side: CGFloat, filledWith artwork: UIImage, shape: IconShape = .tile) -> UIImage {
+        raster(side) { rect in drawFilling(artwork, in: rect, shape: shape) }
     }
 
-    private static func tilePath(_ rect: CGRect) -> UIBezierPath {
-        UIBezierPath(roundedRect: rect, cornerRadius: tileCornerRadius(rect.width))
+    private static func tilePath(_ rect: CGRect, shape: IconShape) -> UIBezierPath {
+        switch shape {
+        case .tile: UIBezierPath(roundedRect: rect, cornerRadius: tileCornerRadius(rect.width))
+        case .circle: UIBezierPath(ovalIn: rect)
+        }
     }
 
-    private static func fillTile(_ rect: CGRect) {
+    private static func fillTile(_ rect: CGRect, shape: IconShape) {
         tileColor().setFill()
-        tilePath(rect).fill()
+        tilePath(rect, shape: shape).fill()
     }
 
     /// The tile, then `artwork` aspect-filled and clipped to it, so a
     /// transparent image keeps the tile behind it.
-    private static func drawFilling(_ artwork: UIImage, in rect: CGRect) {
-        fillTile(rect)
+    private static func drawFilling(_ artwork: UIImage, in rect: CGRect, shape: IconShape) {
+        fillTile(rect, shape: shape)
         guard let context = UIGraphicsGetCurrentContext() else { return }
         context.saveGState()
-        tilePath(rect).addClip()
+        tilePath(rect, shape: shape).addClip()
         artwork.draw(in: aspectFill(artwork.size, in: rect))
         context.restoreGState()
     }
 
     /// The tile with `content` centred on it.
-    private static func tiled(_ side: CGFloat, content: (CGRect) -> Void) -> UIImage {
+    private static func tiled(_ side: CGFloat, shape: IconShape, content: (CGRect) -> Void) -> UIImage {
         raster(side) { rect in
-            fillTile(rect)
+            fillTile(rect, shape: shape)
             content(rect)
         }
     }
 
-    private static func tiledSymbol(_ name: String, side: CGFloat) -> UIImage? {
+    private static func tiledSymbol(_ name: String, side: CGFloat, shape: IconShape) -> UIImage? {
         guard let symbol = tileSymbol(name, side: side) else { return nil }
-        return tiled(side) { rect in drawCentred(symbol, in: rect) }
+        return tiled(side, shape: shape) { rect in drawCentred(symbol, in: rect) }
     }
 
     // MARK: - Drawing
@@ -171,12 +192,13 @@ enum EntityIcon {
         _ entity: IconEntity,
         frame: CGFloat,
         content: CGFloat,
-        assets: IconAssetCache?
+        assets: IconAssetCache?,
+        shape: IconShape
     ) -> (image: UIImage, isFinal: Bool) {
         switch entity {
         case .pi:
             let mark = PiAvatarRenderer.render(size: frame * tileArtworkShare)
-            return (tiled(frame) { rect in drawCentred(mark, in: rect) }, true)
+            return (tiled(frame, shape: shape) { rect in drawCentred(mark, in: rect) }, true)
         case .server(_, let badge):
             return (symbol(badge.symbolName, size: frame) ?? UIImage(), true)
         case .provider(let provider):
@@ -184,12 +206,12 @@ enum EntityIcon {
         case .model(let model):
             return (providerMark(modelProviderKey(model) ?? model, size: frame), true)
         case .agent(let choice):
-            return iconChoice(choice, fallback: fallbackSymbol(entity), box: content, assets: assets)
+            return iconChoice(choice, fallback: fallbackSymbol(entity), box: content, assets: assets, shape: shape)
         case .workspace(let choice, let sandbox):
             guard sandbox else {
-                return iconChoice(choice, fallback: fallbackSymbol(entity), box: content, assets: assets)
+                return iconChoice(choice, fallback: fallbackSymbol(entity), box: content, assets: assets, shape: shape)
             }
-            let glyph = iconChoice(choice, fallback: fallbackSymbol(entity), box: content, assets: assets)
+            let glyph = iconChoice(choice, fallback: fallbackSymbol(entity), box: content, assets: assets, shape: shape)
             let image = raster(frame) { rect in
                 drawCentred(glyph.image, in: rect)
                 drawSandboxMark(in: rect)
@@ -202,25 +224,26 @@ enum EntityIcon {
         _ choice: IconChoice?,
         fallback: String,
         box: CGFloat,
-        assets: IconAssetCache?
+        assets: IconAssetCache?,
+        shape: IconShape
     ) -> (image: UIImage, isFinal: Bool) {
-        let fallbackTile = tiledSymbol(fallback, side: box) ?? tile(side: box)
+        let fallbackTile = tiledSymbol(fallback, side: box, shape: shape) ?? tile(side: box, shape: shape)
         switch AgentIconContent.resolve(choice) {
         case .symbol(let name):
             // A symbol's effect plays only in `IconChoiceUIView`, which animates or bursts it.
-            return (tiledSymbol(name, side: box) ?? fallbackTile, true)
+            return (tiledSymbol(name, side: box, shape: shape) ?? fallbackTile, true)
         case .text(let emoji):
             let font = UIFont.systemFont(ofSize: box * tileEmojiShare)
-            return (tiled(box) { rect in drawCentred(emoji, font: font, in: rect) }, true)
+            return (tiled(box, shape: shape) { rect in drawCentred(emoji, font: font, in: rect) }, true)
         case .genmoji(let assetId, _), .image(let assetId):
             // An animated image draws its first frame here; only
             // `IconChoiceUIView` plays it, when it animates or bursts.
             if let assets, let artwork = assets.cachedImage(assetId: assetId, size: artworkSize(box)) {
                 let image = raster(box) { rect in
                     if case .image = choice {
-                        drawFilling(artwork, in: rect)
+                        drawFilling(artwork, in: rect, shape: shape)
                     } else {
-                        fillTile(rect)
+                        fillTile(rect, shape: shape)
                         let inner = contentRect(inFrame: rect.width, content: rect.width * tileArtworkShare)
                         artwork.draw(in: aspectFit(artwork.size, in: inner))
                     }
@@ -425,10 +448,11 @@ enum EntityIcon {
         _ entity: IconEntity,
         size: CGFloat,
         content: CGFloat,
-        assets: IconAssetCache?
+        assets: IconAssetCache?,
+        shape: IconShape
     ) -> String {
         let cache = assets.map { "\(ObjectIdentifier($0))" } ?? "none"
-        return "\(entity)|\(size)|\(content)|\(ThemeRuntimeState.currentThemeID().rawValue)|\(cache)|\(AppPreferences.Appearance.piIconStyle.rawValue)"
+        return "\(entity)|\(size)|\(content)|\(shape)|\(ThemeRuntimeState.currentThemeID().rawValue)|\(cache)|\(AppPreferences.Appearance.piIconStyle.rawValue)"
     }
 }
 
