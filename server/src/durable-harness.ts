@@ -274,11 +274,13 @@ const REQUIRED_PLUGINS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Built-in plugins that ship off, by plugin name: the examples plugin authors read and copy. A
- * session selects one only while the server config lists its extension in
+ * Built-in plugins that ship off, by plugin name: the examples plugin authors read and copy, and
+ * `cached-compaction`, which changes how a session's compactions are summarized. A session
+ * selects one only while the server config lists its extension in
  * `experimental.durableExtensions.enabled`; the `disabled` list is for every other plugin.
  */
 const OFF_BY_DEFAULT_PLUGINS: ReadonlySet<string> = new Set([
+  "oppi-cached-compaction",
   "oppi-example-board",
   "oppi-example-bookmarks",
   "oppi-example-release-notes",

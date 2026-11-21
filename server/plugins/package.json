@@ -1,7 +1,7 @@
 {
   "name": "oppi-built-in-plugins",
   "private": true,
-  "description": "Oppi's built-in plugins, in install order: the order of their prompt sections. auto-name is not listed: it loads as an opt-in Pi package. The example-* plugins ship off (OFF_BY_DEFAULT_PLUGINS).",
+  "description": "Oppi's built-in plugins, in install order: the order of their prompt sections. auto-name is not listed: it loads as an opt-in Pi package. cached-compaction and the example-* plugins ship off (OFF_BY_DEFAULT_PLUGINS).",
   "chord": {
     "plugins": [
       "./file-tools",
@@ -17,6 +17,7 @@
       "./godot",
       "./mcp-screen",
       "./skills-screen",
+      "./cached-compaction",
       "./example-bookmarks",
       "./example-board",
       "./example-shelf",

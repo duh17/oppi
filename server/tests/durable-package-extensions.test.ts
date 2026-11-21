@@ -302,8 +302,9 @@ describe("plugins from Pi packages", () => {
       disabled: ["probe", "sql-explorer"],
     });
     const listed = await f.rows();
-    // The examples ship off.
+    // The examples and cached-compaction ship off.
     expect(listed.filter((row) => row.plugin && !row.plugin.enabled)).toEqual([
+      expect.objectContaining({ name: "oppi-cached-compaction", state: "off" }),
       expect.objectContaining({ name: "oppi-example-board", state: "off" }),
       expect.objectContaining({ name: "oppi-example-bookmarks", state: "off" }),
       expect.objectContaining({ name: "oppi-example-release-notes", state: "off" }),
