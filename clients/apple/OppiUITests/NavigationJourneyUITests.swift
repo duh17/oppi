@@ -323,7 +323,8 @@ final class NavigationJourneyUITests: XCTestCase, PreviewUITestCase {
     }
 
     /// iPad mini in landscape: a chat opened from All Sessions slides in over
-    /// the list (a push, not a new root), and Back returns to All Sessions.
+    /// the list (a push, not a new root), and Back returns to All Sessions,
+    /// which keeps the sidebar the person left it with.
     func testAChatOpenedFromAllSessionsSlidesInAndBackReturnsToAllSessions() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "The split view needs the iPad mini in landscape")
         launchShell(orientation: .landscapeLeft)
@@ -359,7 +360,20 @@ final class NavigationJourneyUITests: XCTestCase, PreviewUITestCase {
         back.tap()
         XCTAssertTrue(back.waitUntilGone(timeout: 5), "Back popped the chat")
         XCTAssertTrue(search.waitUntilExists(timeout: 5) && session.waitUntilExists(timeout: 5), "Back returned to All Sessions")
+        XCTAssertTrue(waitFor(isShowing(sidebarRow)), "All Sessions shows the sidebar it derives from itself")
+
+        // The sidebar the person hid on the list is still hidden after a chat
+        // opened from it and Back.
+        toggle.tap()
+        XCTAssertTrue(waitFor(!isShowing(sidebarRow)), "The list hid its sidebar")
+        session.tap()
+        XCTAssertTrue(back.waitUntilExists(timeout: 10), "The chat opened over the list")
         hold()
+        back.tap()
+        XCTAssertTrue(back.waitUntilGone(timeout: 5), "Back popped the chat")
+        XCTAssertTrue(search.waitUntilExists(timeout: 5), "Back returned to All Sessions")
+        hold()
+        XCTAssertTrue(waitFor(!isShowing(sidebarRow)), "Back showed the sidebar the person had hidden on the list")
         assertRunning()
     }
 

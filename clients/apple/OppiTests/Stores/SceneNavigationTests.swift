@@ -452,7 +452,7 @@ struct SceneNavigationShellRoutingTests {
         #expect(resolved.workspaceId == nil)
     }
 
-    @Test func splitSidebarFollowsTheTopScreenAndThePersonsChoiceHoldsUntilTheyNavigate() {
+    @Test func splitSidebarFollowsTheTopScreenAndKeepsThePersonsChoiceForThatScreen() {
         let navigation = SceneNavigation()
         navigation.setWorkspaceNavigationPresentation(.split)
         navigation.open(.place(.utility(.schedules)))
@@ -472,7 +472,8 @@ struct SceneNavigationShellRoutingTests {
         #expect(navigation.splitColumnVisibility == .detailOnly)
         navigation.open(.chat(.init(serverId: "server-1", sessionId: "run-2")))
         navigation.popShownStack(toDepth: 0)
-        #expect(navigation.splitColumnVisibility == .all, "Navigating drops the choice; Back shows the sidebar again")
+        #expect(navigation.splitColumnVisibility == .detailOnly,
+                "Back to the screen the person hid the sidebar on keeps it hidden")
 
         let browser = FileBrowserNavTarget(serverId: "server-1", workspaceId: "workspace-1", path: "")
         navigation.open(.page(.fileBrowser(browser)))

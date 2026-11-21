@@ -112,6 +112,96 @@ struct ServerPagePaneSidebarTests {
     }
 }
 
+/// The sidebar's own show or hide in the split shell: Back to a list keeps
+/// what the person left there, and only going somewhere else takes that
+/// place's own answer.
+@MainActor
+@Suite("The sidebar choice on Back", .serialized)
+struct SidebarChoiceBackTests {
+    private let chat = WorkspaceSessionNavTarget(serverId: "server-a", sessionId: "s-1", workspaceId: "ws-1")
+
+    /// The person hid the sidebar on All Sessions, opened a chat, and went
+    /// back: the list is still alone in the window.
+    @Test func backFromAChatLeavesTheSidebarAsHiddenAsThePersonLeftIt() async throws {
+        let shell = try ShellWindow()
+        defer { shell.hide() }
+        let navigation = shell.root.navigation
+        navigation.toggleSplitSidebar()
+        #expect(await shell.settles { shell.split.displayMode == .secondaryOnly },
+                "All Sessions alone is what hiding the sidebar shows")
+
+        navigation.open(.chat(chat))
+        #expect(await shell.settles {
+            navigation.mainPaneRoute.stack == [.session(chat)] && shell.stack.viewControllers.count == 2
+        }, "the chat opened on the list")
+        #expect(await shell.settles { shell.split.displayMode == .secondaryOnly }, "a chat takes the whole window")
+
+        shell.stack.popViewController(animated: false)
+        #expect(await shell.settles { navigation.showsAllSessionsRoot && shell.stack.viewControllers.count == 1 },
+                "Back reached the list")
+        #expect(navigation.splitColumnVisibility == .detailOnly, "Back kept the sidebar the person hid")
+        #expect(await shell.settles { shell.split.displayMode == .secondaryOnly },
+                "the window still shows the list alone")
+    }
+
+    /// The list showed its sidebar, a chat opened, and Back brings it back.
+    @Test func backFromAChatReturnsTheSidebarTheListShowed() async throws {
+        let shell = try ShellWindow()
+        defer { shell.hide() }
+        let navigation = shell.root.navigation
+        #expect(await shell.settles { shell.split.displayMode == .oneBesideSecondary },
+                "All Sessions shows its sidebar")
+
+        navigation.open(.chat(chat))
+        #expect(await shell.settles { shell.split.displayMode == .secondaryOnly }, "a chat takes the whole window")
+
+        shell.stack.popViewController(animated: false)
+        #expect(await shell.settles { navigation.showsAllSessionsRoot && shell.stack.viewControllers.count == 1 },
+                "Back reached the list")
+        #expect(navigation.splitColumnVisibility == .all, "the list keeps the sidebar it showed")
+        #expect(await shell.settles { shell.split.displayMode == .oneBesideSecondary },
+                "the window shows the list beside its sidebar")
+    }
+
+    /// Another place is not the screen the person hid the sidebar on: it
+    /// starts from what it shows.
+    @Test func anotherPlaceTakesItsOwnSidebar() async throws {
+        let shell = try ShellWindow()
+        defer { shell.hide() }
+        let navigation = shell.root.navigation
+        navigation.toggleSplitSidebar()
+        #expect(await shell.settles { shell.split.displayMode == .secondaryOnly })
+
+        navigation.open(.place(.utility(.appSettings)))
+        #expect(await shell.settles { shell.split.displayMode == .oneBesideSecondary },
+                "Settings sits beside the sidebar the person hid on All Sessions")
+        #expect(navigation.splitColumnVisibility == .all)
+    }
+
+    /// The same from a workspace's list, which sits on a place of its own.
+    @Test func backFromAChatKeepsAWorkspaceListsSidebarAsItWas() async throws {
+        let shell = try ShellWindow()
+        defer { shell.hide() }
+        let navigation = shell.root.navigation
+        let workspace = WorkspaceNavTarget(serverId: "server-a", workspace: makeTestWorkspace(id: "ws-1"))
+        navigation.open(.place(.sessions(workspace)))
+        #expect(await shell.settles { navigation.currentPlace.workspace?.workspace.id == "ws-1" },
+                "the workspace list shows")
+        navigation.toggleSplitSidebar()
+        #expect(await shell.settles { shell.split.displayMode == .secondaryOnly }, "the person hid the sidebar")
+
+        navigation.open(.chat(chat), from: .screen(workspace: workspace))
+        #expect(await shell.settles { shell.split.displayMode == .secondaryOnly }, "a chat takes the whole window")
+
+        shell.stack.popViewController(animated: false)
+        #expect(await shell.settles { navigation.mainPaneRoute == PaneStack(place: .sessions(workspace)) },
+                "Back reached the workspace list")
+        #expect(navigation.splitColumnVisibility == .detailOnly, "its sidebar stays as the person hid it")
+        #expect(await shell.settles { shell.split.displayMode == .secondaryOnly },
+                "the window still shows the workspace list alone")
+    }
+}
+
 /// The real workspace shell in an iPad mini landscape window, so it mounts
 /// the split layout.
 @MainActor

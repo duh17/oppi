@@ -604,7 +604,8 @@ struct PaneRestorationTests: PaneFixtureBuilding {
     }
 
     /// A deferred restore (after App Lock unlock) writes the main route through
-    /// `SceneNavigation.mainPaneRoute`, clearing a pre-existing `sidebarChoice`.
+    /// `SceneNavigation.mainPaneRoute`. The sidebar choice made on All Sessions
+    /// belongs to that screen, so the restored place derives its own.
     @Test func aDeferredRestoreClearsPreExistingSidebarChoice() async throws {
         let store = try makeStore()
         let before = try await makeRoot(sessions: [])

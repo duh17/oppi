@@ -335,21 +335,30 @@ final class SceneNavigation {
     /// The split shell's columns: what the detail column shows decides
     /// (`PaneStack.visibility`), unless the person showed or hid the
     /// sidebar themselves (its toggle, Toggle Sidebar, the system's sidebar
-    /// gesture). Theirs holds until they go somewhere else: any change of the
-    /// stack, or of shell, drops it. Beside split panes a server page is the
-    /// routed pane's content, so the sidebar stays out of the panes' room.
+    /// gesture). Theirs is the answer for the screen they set it on, so Back
+    /// to that screen keeps it and anything else derives its own; a change of
+    /// shell drops it. Beside split panes a server page is the routed pane's
+    /// content, so the sidebar stays out of the panes' room.
     var splitColumnVisibility: SplitColumnVisibility {
         get {
             guard isSplit else { return .automatic }
-            if let sidebarChoice { return sidebarChoice }
+            if let sidebarChoice, sidebarChoice.route == mainPaneRoute { return sidebarChoice.visibility }
             if mainPaneRoute.showsServerPage, !panes.splitLeaves.isEmpty { return .detailOnly }
             return mainPaneRoute.visibility
         }
-        set { sidebarChoice = newValue }
+        set { sidebarChoice = SidebarChoice(route: mainPaneRoute, visibility: newValue) }
     }
 
-    /// The person's own show or hide of the sidebar, until they navigate.
-    private var sidebarChoice: SplitColumnVisibility?
+    /// What the person last chose for one screen: showing or hiding the
+    /// sidebar, and the route they were on.
+    private struct SidebarChoice {
+        let route: PaneStack
+        let visibility: SplitColumnVisibility
+    }
+
+    /// The person's own show or hide of the sidebar, for the route it answers
+    /// for (`SidebarChoice.route`).
+    private var sidebarChoice: SidebarChoice?
 
     /// Session-list search lives on navigation so it survives a list's
     /// remount after Back or a change of shell.
@@ -378,8 +387,10 @@ final class SceneNavigation {
 
     /// The main leaf's route (`ScenePanes.stacks[mainLeafID]`). Only
     /// `open(_:from:)` and the owners of a route's own changes (a pop, a file
-    /// browser's drill, restoration) write it; a change drops the person's own
-    /// sidebar override and checks an active AVKit overlay's snapshot.
+    /// browser's drill, restoration) write it; the person's own sidebar
+    /// override answers only for the screen they set it on
+    /// (`SidebarChoice.route`), and a change checks an active AVKit overlay's
+    /// snapshot.
     var mainPaneRoute: PaneStack {
         get { panes.stacks[panes.mainLeafID] ?? PaneStack(place: .allSessions) }
         set {
@@ -388,7 +399,6 @@ final class SceneNavigation {
             let changed = mainPaneRoute != newValue
             panes.setStack(newValue, for: panes.mainLeafID)
             guard changed, !isRestoringMediaOverlay else { return }
-            sidebarChoice = nil
             restoreMediaOverlayRouteIfNeeded(
                 snapshotCount: mediaOverlaySnapshot?.route.elements.count ?? 0,
                 currentCount: workspaceStackRouteElements.count
