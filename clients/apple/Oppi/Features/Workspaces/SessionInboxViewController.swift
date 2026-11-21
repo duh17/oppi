@@ -176,8 +176,11 @@ final class SessionInboxViewController: UIViewController {
 
         search.install(on: self, alwaysVisible: false)
         search.bind(
-            get: { [weak self] in self?.navigation.inboxSessionSearch ?? .init() },
-            set: { [weak self] in self?.navigation.inboxSessionSearch = $0 }
+            get: { [weak self] in self.map { $0.navigation.search(of: $0.searchKey) } ?? .init() },
+            set: { [weak self] in
+                guard let self else { return }
+                navigation.setSearch($0, of: searchKey)
+            }
         )
         SessionListBarItems.updatesWithVerticalBarEdge(self)
         // The card's stage lives in UserDefaults: a first finished session, a dismissal, or
@@ -209,7 +212,7 @@ final class SessionInboxViewController: UIViewController {
         super.viewDidAppear(animated)
         search.hostDidAppear(self)
         // A search asked for while covered starts on return.
-        search.setPresented(navigation.inboxSessionSearch.isSearchPresented)
+        search.setPresented(navigation.search(of: searchKey).isSearchPresented)
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -262,7 +265,7 @@ final class SessionInboxViewController: UIViewController {
             selectedId: activeServerId,
             from: coordinator.serverStore.servers
         )
-        let searchState = navigation.inboxSessionSearch
+        let searchState = navigation.search(of: searchKey)
         let hasActivePlayback = connection?.audioPlayer.hasActivePlayback == true
         let showsVersionNotice = selectedServer != nil
             && ServerReleaseVersion.isBelowMinimum(connection?.connectedServerVersion)
@@ -449,8 +452,8 @@ final class SessionInboxViewController: UIViewController {
     /// make runs another pass.
     private func reactToChanges() {
         let current = Observed(
-            searchText: navigation.inboxSessionSearch.searchText,
-            isSearchPresented: navigation.inboxSessionSearch.isSearchPresented,
+            searchText: navigation.search(of: searchKey).searchText,
+            isSearchPresented: navigation.search(of: searchKey).isSearchPresented,
             covered: isSearchListCoveredByDestination,
             activeServerId: root.windowServerId,
             stackCount: navigation.workspaceStackRouteElements.count
@@ -512,7 +515,7 @@ final class SessionInboxViewController: UIViewController {
         serverTaskServerId = .some(serverId)
         serverTask = Task { [weak self] in
             guard let self else { return }
-            if SessionListSearchPresentation.hasQuery(navigation.inboxSessionSearch.searchText) {
+            if SessionListSearchPresentation.hasQuery(navigation.search(of: searchKey).searchText) {
                 refreshSearch()
             }
             providerSetupState = .unknown
@@ -535,23 +538,30 @@ final class SessionInboxViewController: UIViewController {
     }
 
     private var isSearchListCoveredByDestination: Bool {
-        navigation.sessionListCovered(workspaceId: nil)
+        navigation.sessionListCovered(workspaceId: nil, in: paneLeaf)
+    }
+
+    /// All Sessions' search, kept in `SceneNavigation` across pushes, in the
+    /// pane the list is drawn in.
+    private var searchKey: SessionListSearchKey {
+        SessionListSearchKey(pane: paneLeaf ?? navigation.panes.mainLeafID, workspaceId: nil)
     }
 
     private func applySearchNavigation(_ event: SessionListSearchNavigationPersistence.Event) {
+        let state = navigation.search(of: searchKey)
         let next = SessionListSearchNavigationPersistence.reduce(
-            navigation.inboxSessionSearch,
+            state,
             event: event,
             isCoveredByDestination: isSearchListCoveredByDestination
         )
-        if next != navigation.inboxSessionSearch {
-            navigation.inboxSessionSearch = next
+        if next != state {
+            navigation.setSearch(next, of: searchKey)
         }
     }
 
     private func refreshSearch() {
         searchStore.search(
-            query: navigation.inboxSessionSearch.searchText,
+            query: navigation.search(of: searchKey).searchText,
             workspaceId: nil,
             apiClient: root.windowConnection?.apiClient
         )
@@ -559,9 +569,9 @@ final class SessionInboxViewController: UIViewController {
 
     private func resetLocalHostState() {
         applySearchNavigation(.reset)
-        navigation.workspaceSessionSearchByID = [:]
+        navigation.clearSearch(in: paneLeaf)
         let reset = SessionInboxHostChange.reset(
-            searchText: navigation.inboxSessionSearch.searchText,
+            searchText: navigation.search(of: searchKey).searchText,
             expandedStoppedGroupIDs: expandedStoppedGroupIDs,
             collapsedStoppedGroupIDs: collapsedStoppedGroupIDs,
             searchStore: searchStore
@@ -858,7 +868,7 @@ final class SessionInboxViewController: UIViewController {
         let workspaceTarget = item.workspace.map { WorkspaceNavTarget(serverId: item.serverId, workspace: $0) }
         navigation.open(
             .chat(WorkspaceSessionNavTarget(serverId: item.serverId, sessionId: item.session.id, routeScope: routeScope)),
-            from: .screen(workspace: workspaceTarget)
+            from: .row(navigation.panes.mainLeafID, workspace: workspaceTarget)
         )
     }
 

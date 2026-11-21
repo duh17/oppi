@@ -1,88 +1,59 @@
 import UIKit
 
 // The workspace shell's stacks. `SceneNavigation` is the single source of truth
-// for which screens are open: one place and the stack over it
-// (`PaneStack`), which the split shell shows from the place and the compact
-// stack over All Sessions (`PaneStack.shellRoutes(split:)`).
-// The shell controllers (`WorkspaceShellController.swift`) read that state in
-// `updateProperties()` and give each stack the routes it shows.
+// for which screens are open: one place and the stack over it (`PaneStack`)
+// for the main leaf, and the screens over its content for a side leaf, which
+// the shell shows from the place and the compact stack over All Sessions
+// (`PaneStack.routes(split:)`).
+// The shell controllers (`WorkspaceShellController.swift`) read the main leaf's
+// state in `updateProperties()` and give its stack the routes it shows; the
+// pane host does the same for each side leaf (`PaneHostController+Tree`).
 // `ShellNavigationController` turns routes into hosted screens, and
 // when the user leaves one (Back, swipe, a screen's own `finish()` or
-// `dismiss()`) it reports the pop so `SceneNavigation` follows.
+// `dismiss()`) it reports the pop so the leaf's route follows.
 //
 // Each route's screen is a UIKit controller built by `ShellRouteScreens` (`ShellRouteScreens.swift`).
 
-/// One screen of the workspace shell.
-enum ShellRoute: Hashable {
-    /// All Sessions: the compact stack's root, and the split detail column's
-    /// when it is the place.
-    case inbox
-    /// The workspace list in the split shell's primary column.
-    case sidebar
-    case workspace(WorkspaceNavTarget)
-    case session(WorkspaceSessionNavTarget)
-    case fileBrowser(FileBrowserNavTarget)
-    case linkedFile(WorkspaceLinkedFileNavTarget)
-    case chatReader(ChatReaderNavTarget)
-    case workspaceConfiguration(WorkspaceNavTarget)
-    case utility(WorkspaceUtilityNavTarget)
-    case serverDetails(ServerDetailsNavTarget)
-    case modelProviders(ModelProvidersNavTarget)
-    case serverResourceDetail(ServerResourceDetailNavTarget)
-    /// A restored or linked pane entry, shown through its leaf state until
-    /// its content can open (`PaneLeafStateViewController`).
-    case paneEntry(PaneStackEntry)
-    /// A terminal its opener made (`TerminalNavTarget`).
-    case terminal(TerminalNavTarget)
-
-    /// The screen a route shows. A workspace route whose workspace was
-    /// refreshed is the same screen with newer content.
-    fileprivate var screenIdentity: AnyHashable {
-        switch self {
-        case .workspace(let target):
-            AnyHashable(["workspace", target.serverId, target.workspace.id])
-        case .workspaceConfiguration(let target):
-            AnyHashable(["workspaceConfiguration", target.serverId, target.workspace.id])
-        default:
-            AnyHashable(self)
-        }
-    }
-
-    /// A place's screen: All Sessions, a workspace's sessions, a utility.
-    init(_ place: NavigationPlace) {
-        switch place {
-        case .sessions(let workspace): self = workspace.map { .workspace($0) } ?? .inbox
-        case .utility(let utility): self = .utility(utility)
-        }
-    }
-
-    /// A screen of the window's stack.
-    init(_ element: WorkspaceStackRouteElement) {
-        switch element {
-        case .workspace(let target): self = .workspace(target)
-        case .session(let target): self = .session(target)
-        case .fileBrowser(let target): self = .fileBrowser(target)
-        case .linkedFile(let target): self = .linkedFile(target)
-        case .chatReader(let target): self = .chatReader(target)
-        case .workspaceConfiguration(let target): self = .workspaceConfiguration(target)
-        case .utility(let target): self = .utility(target)
-        case .serverDetails(let target): self = .serverDetails(target)
-        case .modelProviders(let target): self = .modelProviders(target)
-        case .serverResourceDetail(let target): self = .serverResourceDetail(target)
-        case .paneEntry(let entry): self = .paneEntry(entry)
-        case .terminal(let target): self = .terminal(target)
-        }
-    }
-
-}
-
-/// One UIKit stack of the workspace shell.
+/// One UIKit stack of a leaf's route.
 ///
 /// A stack that knows which of its screens a route made, as against a page a screen
 /// pushed itself (`Router.push`).
 @MainActor
 protocol RoutedScreenStack: UINavigationController {
+    /// The leaf whose route this stack draws; nil for the window's own stacks
+    /// (the main pane, the split detail, the sidebar).
+    var leaf: PaneID? { get }
     func isRouted(_ screen: UIViewController) -> Bool
+}
+
+extension WorkspaceStackRouteElement {
+    /// The screen a route shows. A workspace route whose workspace was
+    /// refreshed is the same screen with newer content.
+    var screenIdentity: AnyHashable {
+        switch self {
+        case .workspace(let target):
+            AnyHashable(["workspace", target.serverId, target.workspace.id])
+        case .workspaceConfiguration(let target):
+            AnyHashable(["workspaceConfiguration", target.serverId, target.workspace.id])
+        case .entry(let entry):
+            AnyHashable(["entry", entry.screenIdentity])
+        default:
+            AnyHashable(self)
+        }
+    }
+}
+
+extension PaneStackEntry {
+    /// Which screen an `.entry` route shows. A web page keeps its screen for
+    /// every address it loads, so a link that loads in place does not rebuild
+    /// it; anything else is its own screen.
+    var screenIdentity: AnyHashable {
+        switch route {
+        case .browser: AnyHashable(["webPage", serverId])
+        case .local(let token) where PaneLocalScreen(token) == .browser: AnyHashable(["webPage", serverId])
+        default: AnyHashable(self)
+        }
+    }
 }
 
 /// `setRoutes` shows exactly these routes, the first as the root, and keeps
@@ -91,9 +62,23 @@ protocol RoutedScreenStack: UINavigationController {
 final class ShellNavigationController: UINavigationController, UINavigationControllerDelegate,
     RoutedScreenStack {
     private let root: AppRootEnvironment
+    let leaf: PaneID?
     /// The user left routed screens; the argument is how many routes, root
     /// included, are still on the stack.
     var onRoutesPopped: ((Int) -> Void)?
+    /// A side leaf's root screen closed (Close Pane, a terminal's Back).
+    var onCloseRoot: (() -> Void)?
+
+    func closeRoot() {
+        guard let onCloseRoot else {
+            assertionFailure("Router.finish on the root of a stack that cannot close it")
+            return
+        }
+        onCloseRoot()
+    }
+    /// What a side leaf's own screens report into its route; nil for the
+    /// window's own stacks, whose screens are the shell's.
+    var sideActions: PaneSplitScreens.Actions?
     /// The sidebar the main pane's sidebar button reaches (`MainPaneSidebarItem`),
     /// set by the layout holding this stack. Nil for the split view's own
     /// sidebar stack, which has no button.
@@ -102,15 +87,16 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
     }
 
     /// The routes the stack last showed, and the ones it should show.
-    private var shownRoutes: [ShellRoute] = []
-    private var routes: [ShellRoute] = []
-    private var routeByScreen: [ObjectIdentifier: ShellRoute] = [:]
+    private var shownRoutes: [WorkspaceStackRouteElement] = []
+    private var routes: [WorkspaceStackRouteElement] = []
+    private var routeByScreen: [ObjectIdentifier: WorkspaceStackRouteElement] = [:]
     /// This stack's own push, pop, or interactive back swipe is in flight; its
     /// `didShow` applies the routes set meanwhile, and nothing else may.
     private var ownTransitionPending = false
 
-    init(root: AppRootEnvironment) {
+    init(root: AppRootEnvironment, leaf: PaneID? = nil) {
         self.root = root
+        self.leaf = leaf
         super.init(nibName: nil, bundle: nil)
         delegate = self
     }
@@ -175,7 +161,7 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
     }
 
     /// Shows `routes`, the first as the root.
-    func setRoutes(_ routes: [ShellRoute]) {
+    func setRoutes(_ routes: [WorkspaceStackRouteElement]) {
         precondition(!routes.isEmpty, "A shell stack needs a root route")
         self.routes = routes
         // A push, a pop, or the interactive back swipe of this stack ends in
@@ -185,6 +171,8 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
             applyRoutes()
             return
         }
+        // The routes are kept for `didShow`, which decides whether the person
+        // popped or the leaf moved on.
         guard !ownTransitionPending else { return }
         // A transition that is not this stack's own — a window-covering modal
         // closing over it, whose dismissal never reports a `didShow` here —
@@ -197,6 +185,16 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
         }
     }
 
+    /// Shows `routes` now, even while a transition runs: a route the app
+    /// replaced as a whole (a pane moving up a folder) is not the person's push
+    /// or pop, so it does not wait for a transition to report.
+    func replaceRoutes(_ routes: [WorkspaceStackRouteElement]) {
+        precondition(!routes.isEmpty, "A shell stack needs a root route")
+        self.routes = routes
+        ownTransitionPending = false
+        applyRoutes()
+    }
+
     /// Applies the routes a transition deferred, if they are still owed.
     private func applyPendingRoutes() {
         guard routes != shownRoutes else { return }
@@ -207,7 +205,7 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
         routeByScreen[ObjectIdentifier(screen)] != nil
     }
 
-    private var routedScreens: [(route: ShellRoute, screen: UIViewController)] {
+    private var routedScreens: [(route: WorkspaceStackRouteElement, screen: UIViewController)] {
         viewControllers.compactMap { screen in
             routeByScreen[ObjectIdentifier(screen)].map { ($0, screen) }
         }
@@ -260,7 +258,7 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
                 }
                 continue
             }
-            let screen = ShellRouteScreens.make(routes[index], root: root)
+            let screen = ShellRouteScreens.make(routes[index], root: root, side: sideActions)
             // A chevron alone, so a pushed screen's title and items keep their room.
             screen.navigationItem.backButtonDisplayMode = .minimal
             routeByScreen[ObjectIdentifier(screen)] = routes[index]
@@ -315,7 +313,13 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
         applyNavigationBar(forIncoming: viewController, animated: animated)
         // In the bar the screen comes in with, not a pass later.
         applySidebarButton(to: viewController, at: viewControllers.firstIndex(of: viewController) ?? viewControllers.count)
-        PaneHostController.containing(self)?.mainLeafWillShowScreen()
+        // The main leaf comes back into sight only for its own screens: a page
+        // opening in a side pane leaves the window's focus where the person put it.
+        if leaf == nil {
+            PaneHostController.containing(self)?.mainLeafWillShowScreen()
+        } else {
+            PaneHostController.containing(self)?.leafWillShowScreen()
+        }
     }
 
     func navigationController(
@@ -327,7 +331,18 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
         let remaining = routedScreens.map(\.route)
         forgetScreens(notIn: viewControllers)
         if remaining.count < shownRoutes.count, Array(shownRoutes.prefix(remaining.count)) == remaining {
-            // The user popped. Their stack wins over routes set meanwhile.
+            // Routes the leaf was given during the transition that differ from
+            // what the stack showed are newer than the pop (a breadcrumb, a key
+            // right after Back, a link): the stack shows them, and nothing was
+            // popped. Routes it was given that are what it already showed are
+            // the shell's own update ticks, and the pop stands.
+            let identities = routes.map(\.screenIdentity)
+            if identities != shownRoutes.map(\.screenIdentity) {
+                shownRoutes = remaining
+                applyRoutes()
+                return
+            }
+            // The user popped. Their stack wins over what it showed.
             shownRoutes = remaining
             routes = remaining
             onRoutesPopped?(remaining.count)

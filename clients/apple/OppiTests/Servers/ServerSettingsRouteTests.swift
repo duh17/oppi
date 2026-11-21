@@ -17,6 +17,7 @@ struct ServerSettingsRouteTests {
 
     /// A stack that, like the shell's, knows which screens a route made.
     private final class RoutedStack: UINavigationController, RoutedScreenStack {
+        let leaf: PaneID? = nil
         var routed: [UIViewController] = []
 
         func isRouted(_ screen: UIViewController) -> Bool {

@@ -118,10 +118,12 @@ final class PaneRestorePreviewController: PreviewRootController {
         let terminal = TerminalNavTarget {
             SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {}, hostLabel: "alex@mac-studio")
         }
-        let content = PaneOpenContent(
-            terminal: terminal, as: .terminal(workspaceId: ChatRoutesFixture.workspace.id), serverId: Self.serverId
+        let content = PaneOpenContent(terminal: terminal, serverId: Self.serverId)
+        root.navigation.open(
+            content.mainPaneDestination(coordinator: root.coordinator),
+            from: .row(host.panes.mainLeafID),
+            beside: .terminal
         )
-        host.openBeside(content, kind: .terminal, from: .pane(host.panes.mainLeafID))
     }
 
     private static func paneHost(in controller: UIViewController) -> PaneHostController? {

@@ -190,7 +190,7 @@ struct SidebarChoiceBackTests {
         navigation.toggleSplitSidebar()
         #expect(await shell.settles { shell.split.displayMode == .secondaryOnly }, "the person hid the sidebar")
 
-        navigation.open(.chat(chat), from: .screen(workspace: workspace))
+        navigation.open(.chat(chat), from: .row(navigation.panes.mainLeafID, workspace: workspace))
         #expect(await shell.settles { shell.split.displayMode == .secondaryOnly }, "a chat takes the whole window")
 
         shell.stack.popViewController(animated: false)
@@ -216,6 +216,8 @@ private struct ShellWindow {
         window.frame = CGRect(origin: .zero, size: size)
         window.traitOverrides.horizontalSizeClass = horizontalSizeClass
         window.traitOverrides.verticalSizeClass = .regular
+        // As the app's window does, so a side pane's screens find their root.
+        window.traitOverrides.appRootEnvironment = root
         controller = WorkspaceShellController(root: root)
         window.rootViewController = controller
         window.makeKeyAndVisible()

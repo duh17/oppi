@@ -1,6 +1,7 @@
 import UIKit
 
-/// The `.paneEntry` route: a restored or linked entry whose content cannot
+/// The `.entry` route in the window's own stack: a restored or linked entry
+/// whose content cannot
 /// open yet. It shows the entry's leaf state (`PaneLeafState`) from what the
 /// app knows now (the server's connection, the local stores, a lookup for a
 /// session the stores do not hold, the scoped lock) and, once the content

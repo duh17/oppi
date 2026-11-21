@@ -530,16 +530,15 @@ final class WorkspaceDetailViewController: UIViewController {
 
     // MARK: Search state
 
-    /// This workspace's search, kept in `SceneNavigation` across pushes.
+    /// This list's search, kept in `SceneNavigation` across pushes, in the
+    /// pane the list is drawn in.
     private var searchNavigation: SessionListSearchNavigationPersistence.State {
-        get { navigation.workspaceSessionSearchByID[workspaceId] ?? .init() }
-        set {
-            if newValue == .init() {
-                navigation.workspaceSessionSearchByID.removeValue(forKey: workspaceId)
-            } else {
-                navigation.workspaceSessionSearchByID[workspaceId] = newValue
-            }
-        }
+        get { navigation.search(of: searchKey) }
+        set { navigation.setSearch(newValue, of: searchKey) }
+    }
+
+    private var searchKey: SessionListSearchKey {
+        SessionListSearchKey(pane: paneLeaf ?? navigation.panes.mainLeafID, workspaceId: workspaceId)
     }
 
     private var hasSessionSearchQuery: Bool {
@@ -557,7 +556,7 @@ final class WorkspaceDetailViewController: UIViewController {
     }
 
     private var isSearchListCoveredByDestination: Bool {
-        navigation.sessionListCovered(workspaceId: workspaceId)
+        navigation.sessionListCovered(workspaceId: workspaceId, in: paneLeaf)
     }
 
     func applySearchNavigation(_ event: SessionListSearchNavigationPersistence.Event) {

@@ -1,7 +1,7 @@
 import UIKit
 
-/// The screens a split leaf shows that have no link (`PaneRoute.local`), so a
-/// relaunch does not bring them back: the launcher a fresh split opens, a
+/// The screens a side leaf shows that have no link of their own (`PaneRoute.local`),
+/// so a relaunch does not bring them back: the launcher a fresh split opens, a
 /// folder terminal, the Rex list, a web page still waiting for its address (it
 /// becomes a `.browser` entry once it loads one), and the server's game projects
 /// (a pick becomes a `.godot` entry). The token carries the workspace each
@@ -19,10 +19,8 @@ enum PaneLocalScreen: Equatable {
     /// The Godot projects the server discovered, to pick one to play.
     case godot
 
-    /// `token` may carry an open's own mark after `#` (`openedToken()`).
     init?(_ token: PaneLocalToken) {
-        let screen = token.raw.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first ?? ""
-        let parts = screen.split(separator: "/", maxSplits: 1).map(String.init)
+        let parts = token.raw.split(separator: "/", maxSplits: 1).map(String.init)
         switch (parts.first, parts.count) {
         case ("launcher", 1): self = .launcher(workspaceId: nil)
         case ("launcher", 2): self = .launcher(workspaceId: parts[1])
@@ -45,13 +43,6 @@ enum PaneLocalScreen: Equatable {
         }
     }
 
-    /// This screen's token with a mark of this open's own: a pane opened with
-    /// a screen its opener made (`PaneOpenContent(terminal:as:serverId:)`)
-    /// still reads as this kind of screen, and no other pane shares its entry.
-    func openedToken() -> PaneLocalToken {
-        PaneLocalToken(raw: "\(token.raw)#\(UUID().uuidString.lowercased())")
-    }
-
     var workspaceId: String? {
         switch self {
         case .launcher(let workspaceId): workspaceId
@@ -61,31 +52,40 @@ enum PaneLocalScreen: Equatable {
     }
 }
 
-/// Builds the root screen of a split leaf from its stack's top entry. A
-/// linked entry opens as the shell would open it; one whose content is not
-/// there yet shows its leaf state and opens in this leaf once it can.
+/// Builds a side leaf's bottom screen from its route's `.entry`: a launcher, a
+/// browser, a terminal, Rex, a game or its project list, a workspace's Git, a
+/// session list, a linked screen, or an entry's leaf state until its content
+/// can open.
 @MainActor
 enum PaneSplitScreens {
+    /// What a side leaf's own screens report back into its route.
     struct Actions {
-        /// The leaf shows another entry (a launcher choice).
+        /// The leaf shows another entry in place of all it shows (a launcher's
+        /// choice, a game project picked).
         var show: (PaneStackEntry) -> Void
-        /// The leaf's screen is ready in place of a leaf state.
-        var replaceRoot: (UIViewController) -> Void
-        var close: () -> Void
-        /// The leaf's screen moved on to `entry` by itself (a browser
-        /// followed a link): the tree records it, the screen stays.
-        var follow: (PaneStackEntry) -> Void = { _ in }
+        /// The entry's content can open: its screen takes that entry's place,
+        /// and the pages over and under it stay.
+        var replaceRoot: (PaneStackEntry, WorkspaceStackRouteElement) -> Void
+        /// Close Pane on `entry`: a page over the leaf's root pops, a root
+        /// closes the pane.
+        var close: (PaneStackEntry) -> Void
+        /// The leaf's screen moved on to `entry` by itself (a browser followed
+        /// a link): the route records it and the screen stays.
+        var follow: (PaneStackEntry) -> Void
+        /// The leaf came back with a relaunch and mounts for the first time, so
+        /// a web page waits for a tap before it loads.
+        var restored: () -> Bool
     }
 
-    /// `restored`: the leaf came back with a relaunch and mounts for the
-    /// first time, so a web page waits for a tap before it loads.
-    static func make(_ entry: PaneStackEntry, root: AppRootEnvironment?, restored: Bool = false, actions: Actions) -> UIViewController {
+    static func make(_ entry: PaneStackEntry, root: AppRootEnvironment?, actions: Actions) -> UIViewController {
         if case .browser(let url) = entry.route {
-            return browser(url, serverId: entry.serverId, paused: restored, root: root, actions: actions)
+            return browser(url, serverId: entry.serverId, paused: actions.restored(), root: root, actions: actions)
         }
         if case .godot(let project) = entry.route {
             // States its own server and project; a restored game waits for Play.
-            return GodotPaneViewController(serverId: entry.serverId, project: project, restored: restored, root: root)
+            return GodotPaneViewController(
+                serverId: entry.serverId, project: project, restored: actions.restored(), root: root
+            )
         }
         if case .local(let token) = entry.route, let screen = PaneLocalScreen(token) {
             switch screen {
@@ -102,24 +102,25 @@ enum PaneSplitScreens {
             }
         }
         guard let root else { return PaneLauncherViewController(serverId: entry.serverId, workspaceId: nil, root: nil, choose: actions.show) }
-        if let git = PaneGitScreens.screen(for: entry, root: root, inPane: true, close: actions.close) {
+        if let git = PaneGitScreens.screen(for: entry, root: root, inPane: true, close: { actions.close(entry) }) {
             return git
         }
         if case .sessions(nil) = entry.route {
             return SessionInboxViewController(root: root)
         }
         if let element = PaneEntries.element(for: entry, coordinator: root.coordinator) {
-            return screen(for: element, root: root)
+            return ShellRouteScreens.make(element, root: root)
         }
         let state = PaneLeafStateViewController(entry: entry, root: root)
-        state.onOpen = { element in actions.replaceRoot(screen(for: element, root: root)) }
-        state.onClose = actions.close
+        state.onOpen = { element in actions.replaceRoot(entry, element) }
+        state.onClose = { actions.close(entry) }
         return state
     }
 
-    /// `entry` as a page pushed onto a pane's own stack (a place a panel pane's tile opens): the
-    /// screen a split leaf would show for it, with Back to the screen under it. Its leaf state hands
-    /// the page's place to the content once it can open, and its Close Pane pops it.
+    /// `entry` as a page pushed onto a pane's own stack (a place a panel pane's
+    /// tile opens): the screen a split leaf would show for it, with Back to the
+    /// screen under it. Its leaf state hands the page's place to the content
+    /// once it can open, and its Close Pane pops it.
     static func page(_ entry: PaneStackEntry, root: AppRootEnvironment) -> UIViewController {
         weak var page: UIViewController?
         let replace: (UIViewController) -> Void = { screen in
@@ -129,11 +130,14 @@ enum PaneSplitScreens {
             screens[index] = screen
             navigation.setViewControllers(screens, animated: false)
         }
-        let screen = make(entry, root: root, actions: Actions(
+        let actions = Actions(
             show: { replace(Self.page($0, root: root)) },
-            replaceRoot: replace,
-            close: { if let page { Router.finish(page) } }
-        ))
+            replaceRoot: { _, element in replace(ShellRouteScreens.make(element, root: root)) },
+            close: { _ in if let page { Router.finish(page) } },
+            follow: { _ in },
+            restored: { false }
+        )
+        let screen = make(entry, root: root, actions: actions)
         page = screen
         return screen
     }
@@ -147,11 +151,6 @@ enum PaneSplitScreens {
         let browser = BrowserPaneViewController(url: url, paused: paused, root: root)
         browser.onNavigate = { url in actions.follow(PaneStackEntry(serverId: serverId, route: .browser(url))) }
         return browser
-    }
-
-    /// The screen the shell would show for `element`, as a leaf's root.
-    static func screen(for element: WorkspaceStackRouteElement, root: AppRootEnvironment) -> UIViewController {
-        ShellRouteScreens.make(ShellRoute(element), root: root)
     }
 
     /// The workspace's folder terminal on the saved SSH host that serves its

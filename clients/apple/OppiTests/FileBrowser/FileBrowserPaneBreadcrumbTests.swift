@@ -36,11 +36,12 @@ struct FileBrowserPaneBreadcrumbTests {
             pane.scenePanes.topEntry(of: pane.leafID).route == .files(workspace: "ws-1", path: nil)
         }
         #expect(moved, "the pane shows the workspace's root, saw \(pane.scenePanes.topEntry(of: pane.leafID).route)")
-        let rebuilt = await waitForMainActorCondition(timeout: .seconds(3)) {
-            leaf.viewControllers.count == 1 && leaf.topViewController !== opened
-                && leaf.topViewController is FileBrowserViewController
+        // The pane's one page is the workspace's root, not the folder the pane
+        // was opened at: its bar names the root crumb.
+        let showsRoot = await waitForMainActorCondition(timeout: .seconds(3)) {
+            leaf.viewControllers.count == 1 && leaf.topViewController?.navigationItem.title == "Files"
         }
-        #expect(rebuilt, "the pane's screen is the root's browser")
+        #expect(showsRoot, "the pane shows the workspace's root, saw \(leaf.viewControllers.map { $0.navigationItem.title ?? "-" })")
         #expect(pane.root.navigation.workspaceStackRouteElements.isEmpty, "the window's routes stay")
         _ = await pane.scope.settle()
     }
@@ -54,13 +55,47 @@ struct FileBrowserPaneBreadcrumbTests {
 
         try await Self.openFolder("notes.md", in: browser)
         let opened = await waitForMainActorCondition(timeout: .seconds(3)) {
-            pane.scenePanes.cellLayout.leaves.contains { leaf in
-                leaf.id != pane.leafID && leaf.stack.last?.route == .file(.workspace(id: "ws-1", worktree: nil), path: "src/a/notes.md", line: nil)
-            }
+            pane.scenePanes.cellLayout.leaves.contains(where: { (leaf: PaneLeaf) -> Bool in
+                guard leaf.id != pane.leafID,
+                      case .linkedFile(let file)? = pane.scenePanes.stack(of: leaf.id)?.top,
+                      case .workspaceFile(let path, _) = file.kind else { return false }
+                return path == "src/a/notes.md"
+            })
         }
-        #expect(opened, "the file opens in a pane of its own, saw \(pane.scenePanes.cellLayout.leaves.map { $0.stack.last?.route })")
+        #expect(opened, "the file opens in a pane of its own, saw \(pane.scenePanes.stacks)")
         #expect(pane.root.navigation.workspaceStackRouteElements.isEmpty, "the window's routes stay")
         #expect(pane.scenePanes.topEntry(of: pane.leafID).route == .files(workspace: "ws-1", path: "src/a/"), "the browser's pane keeps its folder")
+        _ = await pane.scope.settle()
+    }
+
+    /// A side pane's breadcrumb targets its own pane and never falls through to
+    /// the main pane's `showFileBrowserAncestor`, even when the side pane's
+    /// route already matches the ancestor before the leaf stack redraws.
+    @Test func aSidePaneBreadcrumbNeverChangesTheMainPaneWhenTheSideRouteAlreadyMatches() async throws {
+        let pane = try await Self.makePane(opening: "src/a/")
+        defer { pane.end() }
+        let serverId = try #require(pane.root.coordinator.serverStore.servers.first?.id)
+        let mainTarget = FileBrowserNavTarget(
+            serverId: serverId,
+            scope: .workspace(workspaceId: "ws-1", worktreeId: nil),
+            path: "src/a/b/"
+        )
+        let rootTarget = FileBrowserNavTarget(
+            serverId: serverId,
+            scope: .workspace(workspaceId: "ws-1", worktreeId: nil),
+            path: ""
+        )
+        pane.root.navigation.open(.page(.fileBrowser(mainTarget)))
+        let opened = try #require(pane.leafStack?.viewControllers.first as? FileBrowserViewController)
+        let filesCrumb = try await Self.breadcrumbButton("Files", in: opened)
+
+        // The side leaf's route moves to the root before its stack redraws, so
+        // `showInSplitPane` sees the top already matches and does nothing.
+        pane.scenePanes.show(.fileBrowser(rootTarget), in: pane.leafID)
+        filesCrumb.sendActions(for: .primaryActionTriggered)
+
+        #expect(pane.root.navigation.workspaceStackRouteElements == [.fileBrowser(mainTarget)],
+                "the side pane's breadcrumb must leave the main pane's route alone")
         _ = await pane.scope.settle()
     }
 
@@ -95,8 +130,10 @@ struct FileBrowserPaneBreadcrumbTests {
         let connection = try #require(root.coordinator.connection(for: serverId))
         connection.workspaceStore.upsert(makeTestWorkspace(id: "ws-1", name: "garden-site"), serverId: serverId)
 
-        let scenePanes = ScenePanes()
+        // The window's panes, and the window's pane area, as the shell wires them.
+        let scenePanes = root.navigation.panes
         let host = PaneHostController(primary: UINavigationController(rootViewController: UIViewController()), panes: scenePanes)
+        root.navigation.paneArea = host
         // A window in the test host's scene, so a push animates to its end.
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
@@ -133,6 +170,10 @@ struct FileBrowserPaneBreadcrumbTests {
     }
 
     private static func tapBreadcrumb(_ label: String, in browser: FileBrowserViewController) async throws {
+        try await breadcrumbButton(label, in: browser).sendActions(for: .primaryActionTriggered)
+    }
+
+    private static func breadcrumbButton(_ label: String, in browser: FileBrowserViewController) async throws -> UIButton {
         var button: UIButton?
         _ = await waitForMainActorCondition(timeout: .seconds(3)) {
             browser.view.window?.layoutIfNeeded()
@@ -145,10 +186,10 @@ struct FileBrowserPaneBreadcrumbTests {
         }
         let seen = descendants(of: browser.view).compactMap { ($0 as? UIButton)?.configuration?.attributedTitle.map { String($0.characters) } }
         let crumbs = descendants(of: browser.view).filter { $0 is FileBrowserBreadcrumbCell }.count
-        try #require(
+        return try #require(
             button,
             "breadcrumb \(label) never showed; title \(browser.navigationItem.title ?? "nil"), window \(browser.view.window != nil), crumbs \(crumbs), buttons \(seen)"
-        ).sendActions(for: .primaryActionTriggered)
+        )
     }
 
     private static func descendants(of view: UIView) -> [UIView] {

@@ -931,7 +931,7 @@ final class RexListViewController: ListScreenController<RexListViewController.Se
                     session: resolved.session.makePaneSession()
                 )
             }
-            return PaneOpenContent(terminal: screen, as: .rex, serverId: serverId)
+            return PaneOpenContent(terminal: screen, serverId: serverId)
         }
     }
 

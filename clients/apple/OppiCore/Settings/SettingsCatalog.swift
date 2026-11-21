@@ -280,7 +280,7 @@ enum SettingsCatalog {
     )
 
     /// New Panes: the side a new pane of `kind` opens on when nothing says
-    /// (`SidePanePlacement`). Listed on Settings > Panes, which a wide window shows.
+    /// (`PanePlacement.sideContent`). Listed on Settings > Panes, which a wide window shows.
     static func newPaneSide(_ kind: AppPreferenceStore.NewPanes.Kind) -> SettingDeclaration<AppPreferenceStore.NewPanes.Side> {
         SettingDeclaration(
             id: "settings.panes.\(kind.rawValue)",

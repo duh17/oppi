@@ -66,6 +66,44 @@ struct PaneSplitTests: PaneFixtureBuilding {
                 "Show in Pane goes back to the launcher for the pane's workspace")
     }
 
+    /// Undo takes back the pane it closed, not the navigation that happened
+    /// since: the main pane keeps the screen the person opened after the close.
+    @Test func undoRestoresTheClosedPanesRouteAlone() async throws {
+        let root = try await chatWindow()
+        defer { withExtendedLifetime(root) {} }
+        let panes = root.navigation.panes
+        let folder = PaneStackEntry(serverId: serverId, route: .files(workspace: "ws-1", path: "Sources"))
+        let side = try #require(panes.split(panes.mainLeafID, edge: .right, showing: .entry(folder)))
+        #expect(panes.stack(of: side)?.top == .entry(folder))
+
+        panes.close(side)
+        root.navigation.open(.place(.utility(.agents)))
+        let agentPlace = root.navigation.mainPaneRoute.place
+
+        #expect(panes.undo())
+        #expect(panes.stack(of: side)?.top == .entry(folder), "the closed pane is back with what it showed")
+        #expect(root.navigation.mainPaneRoute.place == agentPlace, "the main pane keeps where the person went")
+    }
+
+    /// Open in Pane on an already-focused side pane still records an Undo step,
+    /// even though the tree's layout and focus did not change.
+    @Test func undoTakesBackOpenInPaneOnTheFocusedPane() async throws {
+        let root = try await chatWindow()
+        defer { withExtendedLifetime(root) {} }
+        let panes = root.navigation.panes
+        let first = WorkspaceStackRouteElement.entry(entry(.files(workspace: "ws-1", path: "Sources")))
+        let second = WorkspaceStackRouteElement.entry(entry(.git(workspace: "ws-1", worktree: nil)))
+        let side = try #require(panes.split(panes.mainLeafID, edge: .right, showing: first))
+        panes.focus(side)
+        #expect(panes.cellLayout.focus == side)
+
+        panes.replace(second, inCell: side)
+        #expect(panes.stack(of: side)?.top == second)
+        #expect(panes.undoAction == ScenePanes.openInPaneAction, "replacing the focused pane offers Undo")
+        #expect(panes.undo())
+        #expect(panes.stack(of: side)?.top == first, "Undo puts the previous route back")
+    }
+
     @Test func theCompanionStaysBesideItsChatThroughSplitsAndCloses() async throws {
         let root = try await chatWindow()
         defer { withExtendedLifetime(root) {} }
@@ -103,6 +141,35 @@ struct PaneSplitTests: PaneFixtureBuilding {
         #expect(panes.companionID != nil, "the chat's panel stays")
     }
 
+    /// Split Right or Down on a terminal a launcher opened opens the
+    /// workspace's own terminal, not a launcher.
+    @Test func splittingALaunchersTerminalPaneOpensTheWorkspacesTerminal() async throws {
+        let root = try await chatWindow()
+        defer { withExtendedLifetime(root) {} }
+        let panes = root.navigation.panes
+        let workspaceTerminal = entry(.local(PaneLocalScreen.terminal(workspaceId: "ws-1").token))
+        let terminal = try #require(panes.split(panes.mainLeafID, axis: .row))
+        panes.show(workspaceTerminal, in: terminal)
+        let beside = try #require(panes.split(terminal, axis: .column))
+        #expect(panes.topEntry(of: beside) == workspaceTerminal)
+    }
+
+    /// The chat bar's Terminal beside a chat names its workspace, so a split
+    /// of it opens that workspace's terminal and not an empty launcher.
+    @Test func splittingAChatsTerminalPaneOpensTheWorkspacesTerminal() async throws {
+        let root = try await chatWindow()
+        defer { withExtendedLifetime(root) {} }
+        let panes = root.navigation.panes
+        let target = SSHTerminalFolderTarget(serverHost: "studio.local", folder: "/srv/oppi", label: "Oppi")
+        let terminal = try #require(SSHTerminalFolderEntry.terminal(for: target, workspaceId: "ws-1"))
+        let content = PaneOpenContent(terminal: terminal, serverId: serverId)
+        let beside = try #require(panes.split(panes.mainLeafID, edge: .right, showing: content.route))
+        #expect(panes.stack(of: beside)?.top == .terminal(terminal), "the chat's own terminal opens beside it")
+
+        let split = try #require(panes.split(beside, axis: .column))
+        #expect(panes.topEntry(of: split) == entry(.local(PaneLocalScreen.terminal(workspaceId: "ws-1").token)))
+    }
+
     @Test func aRelaunchBringsLinkedSplitPanesBackButNotTheLauncherOrATerminal() async throws {
         let store = try makeStore()
         let before = try await chatWindow()
@@ -131,7 +198,7 @@ struct PaneSplitTests: PaneFixtureBuilding {
         defer { withExtendedLifetime(root) {} }
         let panes = root.navigation.panes
         let file = entry(.file(.workspace(id: "ws-1", worktree: nil), path: "README.md", line: nil))
-        let above = try #require(panes.split(panes.mainLeafID, edge: .top, showing: file))
+        let above = try #require(panes.split(panes.mainLeafID, edge: .top, showing: panes.route(for: file)))
         #expect(shape(panes.tree.root) == "column[\(above.raw) 0.5, leaf-1 0.5]")
         #expect(panes.topEntry(of: above) == file)
     }

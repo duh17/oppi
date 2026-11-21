@@ -19,74 +19,63 @@ enum PaneOpenPlacement: Hashable {
     case pane(PaneID)
 }
 
-/// What an item opens as in a pane: its entry, and the shell screen it
-/// opens as when that screen needs more than the entry carries (a file
-/// opened from a chat keeps that chat's lock, which a link cannot name; its
-/// entry then has no link and does not come back after a relaunch, as the
-/// primary stack's own screens do in `PaneEntries.entry(for:)`).
+/// What an item opens as in a pane: the route its leaf shows, and the server
+/// holding a terminal opener's screen for its scoped lock.
 struct PaneOpenContent {
-    let entry: PaneStackEntry
-    let element: WorkspaceStackRouteElement?
+    let route: WorkspaceStackRouteElement
+    private let terminalServerId: String?
 
     init(entry: PaneStackEntry) {
-        self.entry = entry
-        element = nil
+        route = .entry(entry)
+        terminalServerId = nil
     }
 
-    @MainActor
     init(file target: WorkspaceLinkedFileNavTarget) {
-        let element = WorkspaceStackRouteElement.linkedFile(target)
-        self.element = element
-        entry = PaneEntries.entry(for: element)
-            ?? PaneStackEntry(serverId: target.serverId, route: .local(PaneLocalToken(raw: "file/\(UUID().uuidString)")))
+        route = .linkedFile(target)
+        terminalServerId = nil
     }
 
-    /// A folder in the File Browser; a worktree's folder has no link, so its
-    /// entry stands in for the screen as a chat's file does.
-    @MainActor
     init(folder target: FileBrowserNavTarget) {
-        let element = WorkspaceStackRouteElement.fileBrowser(target)
-        self.element = element
-        entry = PaneEntries.entry(for: element)
-            ?? PaneStackEntry(serverId: target.serverId, route: .local(PaneLocalToken(raw: "folder/\(UUID().uuidString)")))
+        route = .fileBrowser(target)
+        terminalServerId = nil
     }
 
-    /// A terminal its opener made, in a pane of `screen`'s kind (a folder
-    /// terminal, Rex). The entry's token is `screen`'s with a mark of its own,
-    /// so only this open, never a later pane of the same kind, shows the
-    /// opener's screen.
-    @MainActor
-    init(terminal: TerminalNavTarget, as screen: PaneLocalScreen, serverId: String) {
-        element = .terminal(terminal)
-        entry = PaneStackEntry(serverId: serverId, route: .local(screen.openedToken()))
+    /// A terminal its opener made (a folder terminal, Rex).
+    init(terminal: TerminalNavTarget, serverId: String) {
+        route = .terminal(terminal)
+        terminalServerId = serverId
     }
 
     /// What the item shows as in the main pane: a workspace's sessions is that
-    /// place, a file or folder its page, anything else the entry's
+    /// place, a file, folder or terminal its page, anything else the entry's
     /// leaf state, which turns into the content when it can.
     @MainActor
     func mainPaneDestination(coordinator: ConnectionCoordinator) -> NavigationDestination {
-        switch element ?? PaneEntries.element(for: entry, coordinator: coordinator) {
+        guard case .entry(let entry) = route else { return .page(route) }
+        return switch PaneEntries.element(for: entry, coordinator: coordinator) {
         case .workspace(let target)?: .place(.sessions(target))
         case .linkedFile(let target)?: .page(.linkedFile(target))
         case .fileBrowser(let target)?: .page(.fileBrowser(target))
-        default: .page(.paneEntry(entry))
+        default: .page(.entry(entry))
         }
     }
 
     /// The scoped lock that holds the item.
     @MainActor
     var lockTarget: ScopedLockTarget {
-        switch element {
-        case .linkedFile(let target)?:
-            return WorkspaceLinkedFileViewController.lockTarget(for: target)
-        case .fileBrowser(let target)?:
+        switch route {
+        case .linkedFile(let target):
+            WorkspaceLinkedFileViewController.lockTarget(for: target)
+        case .fileBrowser(let target):
             if case .workspace(let workspaceId, _) = target.scope {
-                return .workspace(serverId: target.serverId, workspaceId: workspaceId)
+                .workspace(serverId: target.serverId, workspaceId: workspaceId)
+            } else {
+                .server(target.serverId)
             }
-            return .server(target.serverId)
+        case .entry(let entry):
+            PaneEntries.lockTarget(entry)
         default:
-            return PaneEntries.lockTarget(entry)
+            .server(terminalServerId ?? "")
         }
     }
 }
@@ -118,24 +107,30 @@ struct PaneOpenChoices: Equatable {
     /// it in place of its screen, the routed leaf pushes it.
     var targets: [Target]
 
-    /// Whether a pane showing `leaf` takes a file in place of what it shows.
+    /// Whether a pane showing `route` takes a file in place of what it shows.
     /// A web page, a terminal, Rex or a game is a live surface of its own, not
     /// somewhere a file goes.
-    static func takesFile(_ leaf: PaneLeaf) -> Bool {
-        switch leaf.stack.last?.route {
-        case .browser?, .godot?: return false
-        case .local(let token)?:
-            switch PaneLocalScreen(token) {
-            case .terminal?, .rex?, .browser?: return false
-            case .launcher?, .godot?, nil: return true
+    static func takesFile(_ route: WorkspaceStackRouteElement?) -> Bool {
+        switch route {
+        case .terminal?: false
+        case .entry(let entry)?:
+            switch entry.route {
+            case .browser, .godot: false
+            case .local(let token):
+                switch PaneLocalScreen(token) {
+                case .terminal?, .rex?, .browser?: false
+                case .launcher?, .godot?, nil: true
+                }
+            default: true
             }
-        default: return true
+        default: true
         }
     }
 
     /// - Parameters:
     ///   - cells: the window's cells (`ScenePanes.cellLayout`).
     ///   - source: the cell the item sits in.
+    ///   - takesFile: whether a cell takes a file in place of what it shows.
     ///   - presentation: where a tree of cells sits in the window now.
     static func resolve(
         isWide: Bool,
@@ -143,10 +138,11 @@ struct PaneOpenChoices: Equatable {
         cells: PaneLayout,
         source: PaneID,
         title: (PaneID) -> String,
+        takesFile: (PaneID) -> Bool,
         presentation: (PaneLayout) -> PanePresentation
     ) -> Self? {
         guard isWide, cells.leaf(source) != nil else { return nil }
-        let targets = cells.leaves.filter { $0.id != source && takesFile($0) }.map { Target(id: $0.id, title: title($0.id)) }
+        let targets = cells.leaves.filter { $0.id != source && takesFile($0.id) }.map { Target(id: $0.id, title: title($0.id)) }
         guard canAddPane else { return Self(right: nil, below: nil, targets: targets) }
         func newPane(_ edge: PaneEdge) -> NewPane {
             fits(edge, of: source, in: cells, presentation: presentation) ? .beside : .full
@@ -364,6 +360,7 @@ extension PaneHostController {
             cells: panes.cellLayout,
             source: id,
             title: { [weak self] in self?.cellTitle($0) ?? "" },
+            takesFile: { [weak self] in PaneOpenChoices.takesFile(self?.panes.stack(of: $0)?.top) },
             presentation: { [weak self] in
                 self?.presentation(of: $0) ?? PanePresentation(frames: [:], overflow: [], zoomedForKeyboard: nil)
             }
@@ -375,25 +372,22 @@ extension PaneHostController {
     /// cannot sit beside its pane, fills the window; both opens offer Undo.
     func place(_ content: PaneOpenContent, at placement: PaneOpenPlacement, from source: PaneID) {
         guard let choices = openChoices(from: source), let root = AppRootEnvironment.near(self) else { return }
-        // The shell's own screen for the item, when its entry cannot say all
-        // of it; else the leaf builds it from the entry.
-        if let element = content.element { panes.remember(element, for: content.entry) }
         switch placement {
         case .here:
             return
         case .newPane(let edge):
             guard let newPane = edge == .bottom ? choices.below : choices.right,
-                  panes.newPane(content.entry, at: edge, ofCell: source, full: newPane == .full) != nil else { return }
+                  panes.newPane(content.route, at: edge, ofCell: source, full: newPane == .full) != nil else { return }
             syncSplitLeaves()
         case .pane(let id):
             guard choices.targets.contains(where: { $0.id == id }) else { return }
             if id == panes.mainLeafID {
-                // The routed leaf is the shell's stack: the item opens there.
+                // The main leaf is the shell's stack: the item opens there.
                 root.navigation.open(content.mainPaneDestination(coordinator: root.coordinator))
                 focus(cell: id)
                 return
             }
-            panes.replace(content.entry, inCell: id)
+            panes.replace(content.route, inCell: id)
             syncSplitLeaves()
         }
         relayoutCells()

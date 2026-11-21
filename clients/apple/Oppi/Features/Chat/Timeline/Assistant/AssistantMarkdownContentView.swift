@@ -557,7 +557,7 @@ enum MarkdownLinkInteractionSupport {
     /// main pane), Open in New Pane to the Right or Below, and for a file or
     /// folder Open in Pane ▸, above the system's items, on a window wide
     /// enough for panes. A tap opens it beside the chat where there is room
-    /// (`SidePanePlacement`).
+    /// (`PanePlacement.sideContent`).
     private static func withPaneItems(_ request: AppOpenRequest?, defaultMenu: UIMenu, textView: UITextView) -> UIMenu {
         guard let request, AppOpener.opensInPane(request) else { return defaultMenu }
         let isWebPage = if case .webLink = request { true } else { false }
@@ -566,7 +566,7 @@ enum MarkdownLinkInteractionSupport {
             open: { [weak textView] placement in
                 guard let textView, let opener = AppRootEnvironment.near(textView)?.opener else { return }
                 guard placement != .here else {
-                    opener.follow(request, from: .mainPane)
+                    opener.follow(request, from: .here)
                     return
                 }
                 PaneOpenMenu.place(placement, from: textView) { await opener.paneContent(for: request) }

@@ -40,7 +40,7 @@ struct SceneNavigationShellRoutingTests {
             navigation.open(.place(.sessions(workspace)))
             #expect(!navigation.sessionListCovered(workspaceId: "workspace-1"), "\(shell): the workspace's list alone")
             #expect(navigation.sessionListCovered(workspaceId: nil) == !split, "\(shell): All Sessions under the place")
-            navigation.open(.chat(chat), from: .screen(workspace: workspace))
+            navigation.open(.chat(chat), from: .row(navigation.panes.mainLeafID, workspace: workspace))
             #expect(navigation.sessionListCovered(workspaceId: "workspace-1"), "\(shell): a chat over the workspace's list")
             #expect(!navigation.sessionListCovered(workspaceId: "workspace-2"), "\(shell): another workspace's list is not in the main pane")
         }
@@ -184,14 +184,14 @@ struct SceneNavigationShellRoutingTests {
         navigation.open(.chat(locked), from: .link)
         navigation.open(.page(.chatReader(reader)))
         navigation.open(.chat(other), from: .link)
-        #expect(navigation.mainPaneRoute.shellRoutes(split: true) == [.inbox, .session(root), .session(locked), .chatReader(reader), .session(other)])
+        #expect(navigation.mainPaneRoute.routes(split: true) == [.allSessions, .session(root), .session(locked), .chatReader(reader), .session(other)])
 
         #expect(!navigation.removeSessionRoute(serverId: "server-1", sessionId: "locked"))
-        #expect(navigation.mainPaneRoute.shellRoutes(split: true) == [.inbox, .session(root), .session(other)])
+        #expect(navigation.mainPaneRoute.routes(split: true) == [.allSessions, .session(root), .session(other)])
 
         navigation.open(.page(.chatReader(reader)))
         #expect(navigation.removeSessionRoute(serverId: "server-1", sessionId: "other"), "The reader was on top")
-        #expect(navigation.mainPaneRoute.shellRoutes(split: true) == [.inbox, .session(root)])
+        #expect(navigation.mainPaneRoute.routes(split: true) == [.allSessions, .session(root)])
     }
 
     /// The split shows the same chats above its place as the compact stack does: removing one leaves the
@@ -203,13 +203,13 @@ struct SceneNavigationShellRoutingTests {
         let other = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "other", workspaceId: "w1")
         navigation.open(.chat(locked))
         #expect(navigation.removeSessionRoute(serverId: "server-1", sessionId: "locked"))
-        #expect(navigation.mainPaneRoute.shellRoutes(split: true) == [.inbox])
+        #expect(navigation.mainPaneRoute.routes(split: true) == [.allSessions])
         #expect(navigation.showsAllSessionsRoot)
 
         navigation.open(.chat(locked))
         navigation.open(.chat(other), from: .link)
         #expect(!navigation.removeSessionRoute(serverId: "server-1", sessionId: "locked"), "Another screen was on top")
-        #expect(navigation.mainPaneRoute.shellRoutes(split: true) == [.inbox, .session(other)])
+        #expect(navigation.mainPaneRoute.routes(split: true) == [.allSessions, .session(other)])
     }
 
     @Test func visibleSplitDiagnosticContextTracksNonSessionPathTop() {
@@ -247,7 +247,7 @@ struct SceneNavigationShellRoutingTests {
 
         navigation.setWorkspaceNavigationPresentation(.split)
 
-        #expect(navigation.mainPaneRoute.shellRoutes(split: true) == [.inbox, .session(source), .session(target)])
+        #expect(navigation.mainPaneRoute.routes(split: true) == [.allSessions, .session(source), .session(target)])
 
         navigation.setWorkspaceNavigationPresentation(.stack)
 
@@ -330,7 +330,7 @@ struct SceneNavigationShellRoutingTests {
 
         #expect(navigation.workspaceNavigationPresentation == .split)
         #expect(navigation.workspaceStackRouteElements == [.utility(.appSettings)])
-        #expect(navigation.mainPaneRoute.shellRoutes(split: true) == [.utility(.appSettings)])
+        #expect(navigation.mainPaneRoute.routes(split: true) == [.utility(.appSettings)])
         #expect(navigation.splitColumnVisibility == .all)
     }
 
@@ -416,7 +416,7 @@ struct SceneNavigationShellRoutingTests {
             workspace: makeTestWorkspace(id: "workspace-1")
         )
         navigation.open(.place(.sessions(workspaceTarget)))
-        navigation.open(.chat(WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")), from: .screen(workspace: workspaceTarget))
+        navigation.open(.chat(WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")), from: .row(navigation.panes.mainLeafID, workspace: workspaceTarget))
 
         #expect(navigation.workspaceStackDiagnosticContext == WorkspaceStackDiagnosticContext(
             screen: "chat",
@@ -514,7 +514,7 @@ struct SceneNavigationShellRoutingTests {
         navigation.open(.chat(sessionTarget))
 
         #expect(navigation.splitColumnVisibility == .detailOnly)
-        #expect(navigation.mainPaneRoute.shellRoutes(split: true) == [.inbox, .session(sessionTarget)])
+        #expect(navigation.mainPaneRoute.routes(split: true) == [.allSessions, .session(sessionTarget)])
     }
 
     @Test func columnDrillSurvivesStackToSplitSwap() {
@@ -525,7 +525,7 @@ struct SceneNavigationShellRoutingTests {
         )
         let rootTarget = FileBrowserNavTarget(serverId: "server-1", workspaceId: "workspace-1", path: "")
         let selected = FileBrowserSelection(path: "src/App.swift", name: "App.swift", size: 4)
-        navigation.open(.page(.fileBrowser(rootTarget)), from: .screen(workspace: workspaceTarget))
+        navigation.open(.page(.fileBrowser(rootTarget)), from: .row(navigation.panes.mainLeafID, workspace: workspaceTarget))
         navigation.recordFileBrowserColumn(
             serverId: "server-1",
             scope: .workspace(workspaceId: "workspace-1", worktreeId: nil),
@@ -536,7 +536,7 @@ struct SceneNavigationShellRoutingTests {
 
         navigation.setWorkspaceNavigationPresentation(.split)
 
-        guard case .fileBrowser(let restored) = navigation.mainPaneRoute.shellRoutes(split: true).last else {
+        guard case .fileBrowser(let restored) = navigation.mainPaneRoute.routes(split: true).last else {
             Issue.record("file browser was not restored")
             return
         }
@@ -583,7 +583,7 @@ struct SceneNavigationShellRoutingTests {
 
         navigation.open(.page(.linkedFile(target)))
 
-        #expect(navigation.mainPaneRoute.shellRoutes(split: true).last == .linkedFile(target))
+        #expect(navigation.mainPaneRoute.routes(split: true).last == .linkedFile(target))
 
         navigation.setWorkspaceNavigationPresentation(.stack)
         #expect(navigation.workspaceStackRouteElements.count == 1)
@@ -635,7 +635,7 @@ struct SceneNavigationShellRoutingTests {
         navigation.setWorkspaceNavigationPresentation(.split)
         navigation.open(.place(.sessions(workspaceTarget)))
 
-        navigation.open(.page(.fileBrowser(rootTarget)), from: .screen(workspace: workspaceTarget))
+        navigation.open(.page(.fileBrowser(rootTarget)), from: .row(navigation.panes.mainLeafID, workspace: workspaceTarget))
         navigation.open(.page(.fileBrowser(childTarget)))
         navigation.setWorkspaceNavigationPresentation(.stack)
 
@@ -650,7 +650,7 @@ struct SceneNavigationShellRoutingTests {
         )
         let sessionTarget = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
         navigation.setWorkspaceNavigationPresentation(.split)
-        navigation.open(.chat(sessionTarget), from: .screen(workspace: workspaceTarget))
+        navigation.open(.chat(sessionTarget), from: .row(navigation.panes.mainLeafID, workspace: workspaceTarget))
 
         #expect(navigation.currentPlace == .allSessions)
 
@@ -669,7 +669,7 @@ struct SceneNavigationShellRoutingTests {
         let sessionTarget = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
         navigation.setWorkspaceNavigationPresentation(.split)
         navigation.open(.place(.sessions(workspaceTarget)))
-        navigation.open(.chat(sessionTarget), from: .screen(workspace: workspaceTarget))
+        navigation.open(.chat(sessionTarget), from: .row(navigation.panes.mainLeafID, workspace: workspaceTarget))
 
         navigation.setWorkspaceNavigationPresentation(.stack)
 
@@ -685,11 +685,11 @@ struct SceneNavigationShellRoutingTests {
         )
         let sessionTarget = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
         navigation.open(.place(.sessions(workspaceTarget)))
-        navigation.open(.chat(sessionTarget), from: .screen(workspace: workspaceTarget))
+        navigation.open(.chat(sessionTarget), from: .row(navigation.panes.mainLeafID, workspace: workspaceTarget))
 
         navigation.setWorkspaceNavigationPresentation(.split)
         #expect(navigation.currentPlace == .sessions(workspaceTarget))
-        #expect(navigation.mainPaneRoute.shellRoutes(split: true) == [.workspace(workspaceTarget), .session(
+        #expect(navigation.mainPaneRoute.routes(split: true) == [.workspace(workspaceTarget), .session(
             WorkspaceSessionNavTarget(
                 serverId: "server-1",
                 sessionId: "session-1",
@@ -716,13 +716,13 @@ struct SceneNavigationShellRoutingTests {
             path: "notes/"
         )
         navigation.open(.place(.sessions(workspaceTarget)))
-        navigation.open(.page(.fileBrowser(rootTarget)), from: .screen(workspace: workspaceTarget))
+        navigation.open(.page(.fileBrowser(rootTarget)), from: .row(navigation.panes.mainLeafID, workspace: workspaceTarget))
         navigation.open(.page(.fileBrowser(childTarget)))
 
         navigation.setWorkspaceNavigationPresentation(.split)
 
         #expect(navigation.currentPlace == .sessions(workspaceTarget))
-        #expect(navigation.mainPaneRoute.shellRoutes(split: true) == [.workspace(workspaceTarget), .fileBrowser(rootTarget), .fileBrowser(childTarget)])
+        #expect(navigation.mainPaneRoute.routes(split: true) == [.workspace(workspaceTarget), .fileBrowser(rootTarget), .fileBrowser(childTarget)])
         #expect(navigation.splitColumnVisibility == .detailOnly)
     }
 
@@ -733,7 +733,7 @@ struct SceneNavigationShellRoutingTests {
             workspace: makeTestWorkspace(id: "workspace-1")
         )
         navigation.open(.place(.sessions(workspaceTarget)))
-        navigation.open(.chat(WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")), from: .screen(workspace: workspaceTarget))
+        navigation.open(.chat(WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")), from: .row(navigation.panes.mainLeafID, workspace: workspaceTarget))
         navigation.popShownStack(toDepth: navigation.workspaceStackRouteElements.count - 1)
 
         navigation.setWorkspaceNavigationPresentation(.split)
@@ -892,7 +892,7 @@ struct SceneNavigationShellRoutingTests {
         navigation.setWorkspaceNavigationPresentation(.split)
 
         #expect(navigation.currentPlace == .sessions(workspaceTarget))
-        #expect(navigation.mainPaneRoute.shellRoutes(split: true) == [.workspace(workspaceTarget), .workspaceConfiguration(workspaceTarget)])
+        #expect(navigation.mainPaneRoute.routes(split: true) == [.workspace(workspaceTarget), .workspaceConfiguration(workspaceTarget)])
         #expect(navigation.splitColumnVisibility == .all)
     }
 
@@ -916,8 +916,8 @@ struct SceneNavigationShellRoutingTests {
 
         let workspaceSession = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1", workspaceId: "workspace-1")
         navigation.open(.place(.sessions(workspace)))
-        navigation.open(.chat(workspaceSession), from: .screen(workspace: workspace))
-        #expect(navigation.mainPaneRoute.shellRoutes(split: true) == [.workspace(workspace), .session(workspaceSession)])
+        navigation.open(.chat(workspaceSession), from: .row(navigation.panes.mainLeafID, workspace: workspace))
+        #expect(navigation.mainPaneRoute.routes(split: true) == [.workspace(workspace), .session(workspaceSession)])
         #expect(navigation.currentPlace == .sessions(workspace), "The chat keeps its workspace's row selected")
         navigation.open(.place(.allSessions))
         #expect(navigation.workspaceStackRouteElements.isEmpty)

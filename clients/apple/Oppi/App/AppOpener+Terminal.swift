@@ -33,7 +33,7 @@ extension AppOpener {
     /// the window's front screen, the one the link was tapped in.
     private var linkSourceScreen: UIViewController? {
         guard let window = navigation.window else { return nil }
-        if sideContentOrigin == .external, let host = PaneHostController.focused(in: window) {
+        if followOrigin == .external, let host = PaneHostController.focused(in: window) {
             return host.frontScreen(ofCell: host.panes.mainLeafID)
         }
         return Router.focusedScreen(in: window)
@@ -70,10 +70,8 @@ enum TerminalLinkPresenter {
             } else {
                 // The host's Rex list beside `screen`'s pane, else over `screen`.
                 let list = TerminalNavTarget { SSHTerminalRexSessionsViewController(profile: profile, opening: pane) }
-                let content = PaneOpenContent(terminal: list, as: .rex, serverId: serverId ?? "")
-                PaneHostController.openBeside(content, kind: .rex, from: screen) {
-                    list.show(from: screen)
-                }
+                let content = PaneOpenContent(terminal: list, serverId: serverId ?? "")
+                PaneHostController.openBeside(content, kind: .rex, from: screen)
             }
         }
     }

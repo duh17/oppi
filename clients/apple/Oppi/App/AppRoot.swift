@@ -76,7 +76,8 @@ struct AppRootEnvironment {
         chatReaderPayloadStore: ChatReaderPayloadStore,
         sessionRows: SessionRowDisplayStore,
         liveVoiceCalls: LiveVoiceCallCenter = LiveVoiceCallCenter(),
-        deviceCalendar: DeviceCalendar = DeviceCalendar()
+        deviceCalendar: DeviceCalendar = DeviceCalendar(),
+        godot: GodotEngineHost = .shared
     ) {
         self.init(
             coordinator: coordinator,
@@ -92,7 +93,8 @@ struct AppRootEnvironment {
                 navigation: navigation,
                 composerDraftStore: composerDraftStore
             ),
-            deviceCalendar: deviceCalendar
+            deviceCalendar: deviceCalendar,
+            godot: godot
         )
     }
 }

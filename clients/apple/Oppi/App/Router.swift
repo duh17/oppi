@@ -154,10 +154,6 @@ protocol RouterModalContainer: UIViewController {
 final class RouterNavigationController: UINavigationController, RouterModalContainer,
     UINavigationControllerDelegate {
     var onDismissed: (() -> Void)?
-    /// How the root screen closes when this stack is not presented: a split
-    /// pane's stack closes its pane. Nil for a stack that never shows a root
-    /// on its own (a modal, which `Router.finish` dismisses instead).
-    var onCloseRoot: (() -> Void)?
     var interfaceStyle: (() -> UIUserInterfaceStyle)? {
         didSet { setNeedsUpdateProperties() }
     }
@@ -183,14 +179,6 @@ final class RouterNavigationController: UINavigationController, RouterModalConta
     ) {
         // A page pushed inside a pane's companion hears the leaf's visibility.
         PaneHostController.containing(self)?.leafDidShowScreen()
-    }
-
-    func closeRoot() {
-        guard let onCloseRoot else {
-            assertionFailure("Router.finish on the root of a stack that cannot close it")
-            return
-        }
-        onCloseRoot()
     }
 
     override func updateProperties() {
@@ -381,7 +369,7 @@ enum Router {
     /// pops it (and anything above it) when it was pushed, otherwise dismisses
     /// the modal it is the root of, including a presented navigation
     /// controller's root, where `dismiss()` does nothing. The root of a side
-    /// pane's stack closes its pane (`RouterNavigationController.closeRoot`).
+    /// pane's stack closes its pane (`ShellNavigationController.closeRoot`).
     /// A shell stack's root is a place, which has nothing to close to.
     static func finish(_ screen: UIViewController) {
         if pop(screen) { return }
@@ -390,7 +378,7 @@ enum Router {
             dismiss(container)
             return
         }
-        guard let stack = screen.navigationController as? RouterNavigationController else {
+        guard let stack = screen.navigationController as? ShellNavigationController else {
             assertionFailure("Router.finish on \(type(of: screen)), which is neither pushed nor presented")
             return
         }

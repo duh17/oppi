@@ -895,18 +895,12 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     private func pushDirectory(path: String) {
         let target = navTarget(path: path)
         guard !isShellRouted, navigationController != nil else {
-            navigation.open(.page(.fileBrowser(target)))
+            navigation.open(.page(.fileBrowser(target)), from: paneLeaf.map { .row($0) })
             return
         }
         let page = FileBrowserViewController(root: root, target: target)
         page.navigationItem.backButtonDisplayMode = .minimal
         Router.push(page, from: self)
-    }
-
-    /// Whether this browser is in a split pane, not the window's routed one.
-    private var isInSplitPane: Bool {
-        guard let host = PaneHostController.containing(self), let cell = host.cell(holding: self) else { return false }
-        return host.splitLeaves[cell] != nil
     }
 
     /// Whether the window's routes made this browser: its stack is then the
@@ -938,8 +932,8 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     /// An ancestor in the breadcrumb: the stack holding this browser goes
     /// back to that folder's page when one is below, as Back does (the shell
     /// hears it as the person's pop). A browser opened at a deeper folder has
-    /// no such page, so its place shows the folder instead: the shell's
-    /// route, or the split pane's entry.
+    /// no such page, so its place shows the folder instead: the pane's route,
+    /// the window's for the main pane.
     private func popToBreadcrumbDepth(_ targetDepth: Int) {
         guard currentDepth > targetDepth else { return }
         let path = breadcrumbPath(for: targetDepth)
@@ -952,10 +946,14 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             return
         }
         let target = navTarget(path: path)
+        // A side pane shows the ancestor in its own route, and never in the
+        // window's: its breadcrumb is its own, whether or not it had to move.
+        if paneLeaf != nil {
+            PaneHostController.containing(self)?.showInSplitPane(holding: self, .fileBrowser(target))
+            return
+        }
         if isShellRouted {
             navigation.showFileBrowserAncestor(target)
-        } else if let host = PaneHostController.containing(self), host.showInSplitPane(holding: self, .fileBrowser(target)) {
-            return
         } else {
             showDirectoryInPlace(path)
         }
@@ -1013,7 +1011,8 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             scope: scope,
             routePath: initialPath,
             directoryPath: currentDirectoryPath,
-            selectedFile: state.selectedFile
+            selectedFile: state.selectedFile,
+            in: paneLeaf
         )
     }
 
@@ -1038,11 +1037,11 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             fileName: selection.name,
             navigationContext: context
         )
-        guard isInSplitPane else {
+        guard paneLeaf != nil else {
             navigation.open(.page(.linkedFile(target)))
             return
         }
-        PaneHostController.openBeside(PaneOpenContent(file: target), kind: .file, from: self, otherwise: pushReader)
+        PaneHostController.openBeside(PaneOpenContent(file: target), kind: .file, from: self)
     }
 
     func readerRequest(
@@ -1910,7 +1909,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             // A split pane's browser opens files on its own pane at any width
             // (`openCompactFile`): the reader sits beside the list only in the
             // primary, and a sheet over every pane could not be zoomed.
-            if showsColumn, !isInSplitPane {
+            if showsColumn, paneLeaf == nil {
                 state.selectedContext = context
                 selectFile(selection)
             } else {

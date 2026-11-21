@@ -41,6 +41,10 @@ struct PaneOpenChoicesTests: PaneFixtureBuilding {
             cells: cells,
             source: id(source),
             title: { "Title \($0.raw)" },
+            takesFile: { id in
+                guard let entry = cells.leaf(id)?.stack.last else { return true }
+                return PaneOpenChoices.takesFile(.entry(entry))
+            },
             presentation: window(width: width, liveCap: liveCap)
         )
     }

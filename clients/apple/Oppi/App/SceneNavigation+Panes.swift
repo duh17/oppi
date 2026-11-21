@@ -1,10 +1,12 @@
 import Foundation
 
-// The main leaf's route and the `.paneEntry` screens that show a restored or
+// The main leaf's route and the `.entry` screens that show a restored or
 // linked entry's leaf state (`PaneLeafStateViewController`) until its content
 // can open.
 extension SceneNavigation {
-    /// Applies the main leaf's restored route through `mainPaneRoute`'s setter.
+    /// Applies the main leaf's restored route through `mainPaneRoute`'s setter:
+    /// the window's route is written here, by its owner, never by the panes
+    /// (`uikit-structure-guard` counts a main-pane stack write outside it).
     func restoreMainRoute(_ route: PaneStack) { mainPaneRoute = route }
 
     /// The entry's content can open: its screen takes the entry's place. A
@@ -16,7 +18,7 @@ extension SceneNavigation {
             open(.place(.sessions(target)))
             return
         }
-        guard let index = mainPaneRoute.stack.firstIndex(of: .paneEntry(entry)) else { return }
+        guard let index = mainPaneRoute.stack.firstIndex(of: .entry(entry)) else { return }
         let before = workspaceStackRouteElements
         mainPaneRoute.stack[index] = element
         panes.mainEntryResolved(from: before, to: workspaceStackRouteElements)
@@ -26,7 +28,7 @@ extension SceneNavigation {
     /// go, and with them a restored chat's panel and position still waiting.
     func closePaneEntry(_ entry: PaneStackEntry) {
         panes.dropRestoredHandoffs()
-        guard let index = mainPaneRoute.stack.firstIndex(of: .paneEntry(entry)) else { return }
+        guard let index = mainPaneRoute.stack.firstIndex(of: .entry(entry)) else { return }
         mainPaneRoute.stack.removeLast(mainPaneRoute.stack.count - index)
     }
 
@@ -42,7 +44,7 @@ extension SceneNavigation {
     /// never reaches it. A session's route goes together with the screens
     /// pushed from that chat (a reader, whose lock origin was fixed when it
     /// opened), up to the next session route: another session's chat is not
-    /// under this lock, so it and what is over it stay. A `.paneEntry` for the
+    /// under this lock, so it and what is over it stay. A `.entry` for the
     /// session counts as its route. Returns true when the removed screens
     /// reached the top, so the person was still in this session's screens.
     @discardableResult
@@ -56,7 +58,7 @@ extension SceneNavigation {
             switch element {
             case .session(let target):
                 return target
-            case .paneEntry(let entry):
+            case .entry(let entry):
                 switch entry.route {
                 case .session(let id), .panel(let id, _), .read(let id, _):
                     return WorkspaceSessionNavTarget(serverId: entry.serverId, sessionId: id)

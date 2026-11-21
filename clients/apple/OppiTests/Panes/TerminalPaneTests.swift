@@ -97,10 +97,10 @@ struct TerminalPaneTests {
         let chat = try #require(host.screen.navigationController)
         let folder = SSHTerminalFolderViewController(profile: profile, target: target)
         if inPane {
-            let content = PaneOpenContent(terminal: TerminalNavTarget { folder }, as: .terminal(workspaceId: "w"), serverId: "s")
+            let content = PaneOpenContent(terminal: TerminalNavTarget { folder }, serverId: "s")
             var opened = false
             host.act {
-                opened = host.panes.openBeside(content, kind: .terminal, from: .pane(host.scenePanes.mainLeafID))
+                opened = host.openBeside(content, kind: .terminal, from: .row(host.scenePanes.mainLeafID))
             }
             try #require(opened, "the terminal opened in a pane beside the chat")
         } else {
@@ -122,6 +122,42 @@ struct TerminalPaneTests {
                     "Back returned to the chat past the connecting page: \(chat.viewControllers)")
             #expect(SSHTerminalRegistry.shared.holds(channel), "the terminal stays to return to")
             #expect(channel.connected)
+        }
+    }
+
+    /// The chat bar's Terminal and a Rex link open through the screen-side
+    /// wrapper (`PaneHostController.openBeside`), which builds the destination
+    /// from what the opener made. That screen must survive: in a pane beside on
+    /// a wide window, and in the main pane on a compact one, never a leaf state
+    /// that only knows the entry's recipe.
+    @Test(arguments: [false, true])
+    func aTerminalItsScreenOpenedKeepsItsScreen(compact: Bool) async throws {
+        let host = PaneTestHost(width: compact ? 402 : 1133, height: compact ? 874 : 744, inNavigation: true)
+        defer { host.hide() }
+        if compact {
+            host.act {
+                host.window.traitOverrides.horizontalSizeClass = .compact
+                host.panes.updatePropertiesIfNeeded()
+            }
+        }
+        let profile = SSHTerminalProfile(host: "mac-studio.invalid", username: "alex").normalized()
+        let target = SSHTerminalFolderTarget(serverHost: profile.host, folder: "/Users/alex/routed")
+        let screen = SSHTerminalFolderViewController(profile: profile, target: target)
+        let terminal = TerminalNavTarget { screen }
+        let content = PaneOpenContent(terminal: terminal, serverId: "s")
+        let opener = host.screen
+
+        host.act { PaneHostController.openBeside(content, kind: .terminal, from: opener) }
+
+        let shown = host.scenePanes.stack(of: host.scenePanes.cellLayout.focus)?.top
+            ?? host.root.navigation.mainPaneRoute.top
+        #expect(shown == .terminal(terminal), "the opener's screen is the route, saw \(String(describing: shown))")
+        if !compact {
+            #expect(screen.view.window != nil, "the pane beside shows the opener's screen")
+        }
+        if compact {
+            #expect(host.scenePanes.splitLeaves.isEmpty, "a compact window keeps one pane")
+            #expect(host.root.navigation.mainPaneRoute.top == .terminal(terminal), "in the main pane")
         }
     }
 

@@ -328,8 +328,9 @@ final class PaneHostController: UIViewController {
         // Observation tracking re-runs this when the theme store changes.
         cover.backgroundColor = AppRootEnvironment.near(self)?.themeStore.backgroundColor ?? .systemBackground
         // Reading the tree here re-runs this when a split, close, focus or
-        // weight changes it.
+        // weight changes it, and the routes when a leaf shows something else.
         _ = panes.tree
+        _ = panes.stacks
         // And a sheet waiting its turn, for its pane's grip.
         _ = panes.sheets.waitingOwners
         syncSplitLeaves()

@@ -195,7 +195,9 @@ final class WorkspaceShellController: UIViewController {
         stack.onRoutesPopped = { remaining in
             navigation.popShownStack(toDepth: remaining - 1)
         }
-        return WorkspacePaneArea(stack: stack, host: PaneHostController(primary: stack, panes: navigation.panes))
+        let host = PaneHostController(primary: stack, panes: navigation.panes)
+        navigation.paneArea = host
+        return WorkspacePaneArea(stack: stack, host: host)
     }
 
     /// Shows `next` in place of the current layout. The pane area moves
@@ -292,7 +294,8 @@ final class WorkspaceSplitController: UISplitViewController, UISplitViewControll
         minimumPrimaryColumnWidth = 320
         preferredPrimaryColumnWidth = 380
         maximumPrimaryColumnWidth = 460
-        sidebarStack.setRoutes([.sidebar])
+        // The sidebar column is never routed: one screen, no route.
+        sidebarStack.setViewControllers([WorkspaceSidebarViewController(root: root)], animated: false)
         setViewController(sidebarStack, for: .primary)
     }
 
@@ -358,7 +361,7 @@ final class WorkspaceSplitController: UISplitViewController, UISplitViewControll
         // empty; a new root laid out inside the columns' animation would
         // grow out of a corner with them.
         applyColumnVisibility(navigation.panes.fullScreenCell != nil ? .detailOnly : navigation.splitColumnVisibility)
-        area?.stack.setRoutes(navigation.mainPaneRoute.shellRoutes(split: true))
+        area?.stack.setRoutes(navigation.mainPaneRoute.routes(split: true))
     }
 
     private func applyColumnVisibility(_ visibility: SplitColumnVisibility) {
@@ -522,7 +525,7 @@ final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDele
         // The corner cutouts the rounded foreground reveals show the theme,
         // never the bare window.
         view.backgroundColor = root.themeStore.backgroundColor
-        stack?.setRoutes(navigation.mainPaneRoute.shellRoutes(split: false))
+        stack?.setRoutes(navigation.mainPaneRoute.routes(split: false))
     }
 
     override func accessibilityPerformEscape() -> Bool {

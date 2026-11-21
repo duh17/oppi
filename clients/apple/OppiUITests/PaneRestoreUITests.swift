@@ -119,6 +119,36 @@ final class PaneRestoreUITests: XCTestCase, PreviewUITestCase {
         attachScreenshot("missing-file")
     }
 
+    /// A folder page opened in a side pane is part of that pane's route: Back
+    /// pops it in the pane, and a relaunch brings the pane's page back.
+    func testASidePanesFolderPagePopsAndComesBackAfterARelaunch() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Side panes need the iPad mini")
+        let landscape: UIDeviceOrientation = .landscapeLeft
+        addTeardownBlock { @MainActor in XCUIDevice.shared.orientation = .portrait }
+        // Three panes: the workspace's sessions, its folder, and its Git.
+        launchShell(environment: ["PANE_RESTORE_SEED": "splits"], orientation: landscape)
+        let folder = app.buttons["fileBrowser.row.Sources/"]
+        XCTAssertTrue(folder.waitUntilExists(timeout: 15), "The folder's pane lists the workspace")
+        folder.tap()
+        let page = app.navigationBars["Sources"]
+        XCTAssertTrue(page.waitUntilExists(timeout: 10), "The folder page opened in the pane")
+        attachScreenCapture("side-pane-folder-page")
+
+        // Back pops the pane's page, and the pane shows its folder again.
+        page.buttons.firstMatch.tap()
+        XCTAssertTrue(page.waitUntilGone(timeout: 10), "Back popped the pane's page")
+        XCTAssertTrue(folder.waitUntilExists(timeout: 10), "The pane is back at the workspace")
+        folder.tap()
+        XCTAssertTrue(page.waitUntilExists(timeout: 10), "The folder page opened again")
+        // Past the 500 ms settle, so the tree is written before the process dies.
+        RunLoop.current.run(until: Date().addingTimeInterval(1.5))
+        attachScreenCapture("side-pane-before-relaunch")
+
+        launchShell(orientation: landscape)
+        XCTAssertTrue(page.waitUntilExists(timeout: 15), "The side pane's page is back after a relaunch")
+        attachScreenCapture("side-pane-after-relaunch")
+    }
+
     private func launchShell(environment: [String: String] = [:], orientation: UIDeviceOrientation = .portrait) {
         XCUIDevice.shared.orientation = orientation
         launchPreview(screen: "pane-restore", environment: environment, ready: nil)

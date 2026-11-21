@@ -288,7 +288,7 @@ struct AppOpenerTests {
         await harness.settle()
 
         #expect(harness.navigation.workspaceStackRouteElements == [
-            .paneEntry(PaneStackEntry(serverId: "unpaired-server", route: .session("child"))),
+            .entry(PaneStackEntry(serverId: "unpaired-server", route: .session("child"))),
         ])
         #expect(harness.opener._parkedRequestForTesting == nil)
     }
@@ -662,7 +662,7 @@ struct AppOpenerTests {
         await harness.settle()
 
         #expect(harness.navigation.workspaceStackRouteElements == [
-            .paneEntry(PaneStackEntry(serverId: "unpaired-server", route: .session("child"))),
+            .entry(PaneStackEntry(serverId: "unpaired-server", route: .session("child"))),
         ])
         #expect(harness.opener._parkedRequestForTesting == nil)
     }
@@ -670,7 +670,7 @@ struct AppOpenerTests {
     // MARK: - Thread links
 
     @Test func threadURLsMapToAThreadRequestWithTheSessionLinksValidation() throws {
-        func request(_ raw: String, origin: MainPaneOrigin = .external, server: String? = nil) throws -> AppOpenRequest {
+        func request(_ raw: String, origin: OpenOrigin = .external, server: String? = nil) throws -> AppOpenRequest {
             AppOpenRequest(url: try #require(URL(string: raw)), origin: origin, sourceServerID: server)
         }
 

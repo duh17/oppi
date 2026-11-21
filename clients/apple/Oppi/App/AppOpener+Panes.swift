@@ -20,12 +20,11 @@ extension AppOpener {
         if case .browser(let url) = link.route {
             // Beside where side content opens; else as a tapped web link
             // opens (Oppi's browser or the system's, by the Browser setting).
-            if let serverId = link.server ?? sourceServerID ?? windowServerId,
-               let window = navigation.window, let host = PaneHostController.focused(in: window),
-               host.openBeside(
-                   PaneOpenContent(entry: PaneStackEntry(serverId: serverId, route: link.route)), kind: .webPage, from: sideContentOrigin
-               ) {
-                return .finished
+            if let serverId = link.server ?? sourceServerID ?? windowServerId {
+                let destination = NavigationDestination.page(.entry(PaneStackEntry(serverId: serverId, route: link.route)))
+                if navigation.open(destination, from: followOrigin, beside: .webPage, opensInMainPane: false).showsBeside {
+                    return .finished
+                }
             }
             presentWebLink(url)
             return .finished
@@ -49,7 +48,7 @@ extension AppOpener {
         // server does not switch under the lock.
         guard serverStore.server(for: serverId) != nil,
               !ScopedLockService.shared.isLocked(PaneEntries.lockTarget(entry)) else {
-            navigation.open(.page(.paneEntry(entry)))
+            navigation.open(.page(.entry(entry)))
             return .finished
         }
         let previousServerId = windowServerId
@@ -57,7 +56,7 @@ extension AppOpener {
         guard isCurrent(generation) else { return .finished }
         guard switched else {
             // The leaf shows the server offline and opens once it connects.
-            navigation.open(.page(.paneEntry(entry)))
+            navigation.open(.page(.entry(entry)))
             return .finished
         }
         if case .sessions(nil) = link.route {
@@ -102,7 +101,7 @@ extension AppOpener {
         if let kind {
             openSideContent(PaneOpenContent(entry: entry), kind: kind)
         } else {
-            navigation.open(.page(.paneEntry(entry)))
+            navigation.open(.page(.entry(entry)))
         }
         return .finished
     }
@@ -111,25 +110,25 @@ extension AppOpener {
     /// file pill opens, when the chat shows with room for its panels; else as
     /// side content, telling the chat before the file covers it.
     func openLinkedFile(_ target: WorkspaceLinkedFileNavTarget, reference: ResourceReference) {
-        if sideContentOrigin != .mainPane, let sessionId = reference.sourceSessionID, let serverId = reference.sourceServerID,
+        if followOrigin != .here, let sessionId = reference.sourceSessionID, let serverId = reference.sourceServerID,
            navigation.panes.openLinkedFileBesideChat(target, sessionId: sessionId, serverId: serverId) {
             return
         }
-        openSideContent(PaneOpenContent(file: target), kind: .file) {
+        openSideContent(PaneOpenContent(file: target), kind: .file) { [self] in
             postWorkspaceLinkedFileWillOpen(reference: reference)
         }
     }
 
     /// Side content a link opens: beside the pane the request's origin names
-    /// (`SidePaneOrigin`), where `SidePanePlacement` puts it; else in the main
-    /// pane after `beforeMainPane`. Beside needs a wide window, room for a
-    /// pane, and no sheet in front.
-    func openSideContent(_ content: PaneOpenContent, kind: PaneContentKind, beforeMainPane: () -> Void = {}) {
-        if let window = navigation.window, let host = PaneHostController.focused(in: window),
-           host.openBeside(content, kind: kind, from: sideContentOrigin) {
-            return
-        }
-        beforeMainPane()
-        navigation.open(content.mainPaneDestination(coordinator: coordinator))
+    /// (`OpenOrigin`), where `PanePlacement` puts it; else in the main pane,
+    /// after `beforeMainPane` tells the chat it is about to be covered. Beside
+    /// needs a wide window, room for a pane, and no sheet in front.
+    func openSideContent(_ content: PaneOpenContent, kind: PaneContentKind, beforeMainPane: @escaping () -> Void = {}) {
+        navigation.open(
+            content.mainPaneDestination(coordinator: coordinator),
+            from: followOrigin,
+            beside: kind,
+            beforeMain: beforeMainPane
+        )
     }
 }

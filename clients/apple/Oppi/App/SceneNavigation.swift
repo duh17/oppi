@@ -112,15 +112,16 @@ struct ModelProvidersNavTarget: Hashable, Sendable {
     let serverId: String
 }
 
-/// One pane leaf's route: its root place (nil for a content-rooted split
-/// leaf), which the sidebar and drawer highlight on the main leaf, and the
-/// screens opened over it. The split shell shows the place at its detail root;
-/// the compact stack keeps All Sessions under it (`shellRoutes(split:)`).
+/// One pane leaf's route: its root place (nil for a side leaf, whose bottom
+/// screen is its content), which the sidebar and drawer highlight on the main
+/// leaf, and the screens opened over it. The split shell shows the place at its
+/// detail root; the compact stack keeps All Sessions under it
+/// (`routes(split:)`).
 struct PaneStack: Equatable {
     var place: NavigationPlace?
     /// What opened on the place: content and its pages. On the compact
     /// stack the host switcher's Usage and Server Metrics are pages here too
-    /// (`MainPanePlacement.replacingServerPages`).
+    /// (`PanePlacement.replacingServerPages`).
     var stack: [WorkspaceStackRouteElement] = []
 
     /// The place's own screen (none for All Sessions), then the stack.
@@ -131,16 +132,18 @@ struct PaneStack: Equatable {
     /// The screen on top.
     var top: WorkspaceStackRouteElement? { stack.last ?? place?.screen }
 
-    /// What the shell shows, root first (no place layer when `place` is nil).
-    func shellRoutes(split: Bool) -> [ShellRoute] {
-        let above = stack.map(ShellRoute.init)
-        guard let place else { return above }
-        guard !split, place != .allSessions else { return [ShellRoute(place)] + above }
-        return [.inbox, ShellRoute(place)] + above
+    /// What the leaf's stack shows, root first: its content alone for a side
+    /// leaf, and the place's screen under the stack, with All Sessions under
+    /// it on the compact stack.
+    func routes(split: Bool) -> [WorkspaceStackRouteElement] {
+        guard let place else { return stack }
+        let root = place.screen ?? .allSessions
+        guard !split, place != .allSessions else { return [root] + stack }
+        return [.allSessions, root] + stack
     }
 
-    /// Back to `depth` screens above the root of `shellRoutes(split:)`. On
-    /// the compact stack, popping the place's own screen opens All Sessions.
+    /// Back to `depth` screens above the root of `routes(split:)`. On the
+    /// compact stack, popping the place's own screen opens All Sessions.
     mutating func pop(toDepth depth: Int, split: Bool) {
         let placeLayer = split || place == nil || place == .allSessions ? 0 : 1
         guard depth < placeLayer + stack.count else { return }
@@ -156,7 +159,7 @@ struct PaneStack: Equatable {
     /// beside a list, a configuration, a utility or a server page.
     var visibility: SplitColumnVisibility {
         switch stack.last {
-        case .session?, .fileBrowser?, .linkedFile?, .chatReader?, .paneEntry?, .terminal?: .detailOnly
+        case .session?, .fileBrowser?, .linkedFile?, .chatReader?, .entry?, .terminal?: .detailOnly
         default: .all
         }
     }
@@ -182,9 +185,12 @@ enum NavigationPlace: Hashable {
     static let allSessions = Self.sessions(nil)
 }
 
-/// A screen of the main pane: a place's own screen (`NavigationPlace.screen`)
-/// or one opened over it (`PaneStack.stack`).
+/// A screen of a leaf's route: a place's own screen (`NavigationPlace.screen`)
+/// or one opened over it (`PaneStack.stack`). Every shell route is one of
+/// these, so a leaf's stack is its route in both shells.
 enum WorkspaceStackRouteElement: Hashable {
+    /// All Sessions, under a place or a chat on the compact stack.
+    case allSessions
     case workspace(WorkspaceNavTarget)
     case session(WorkspaceSessionNavTarget)
     case fileBrowser(FileBrowserNavTarget)
@@ -195,10 +201,48 @@ enum WorkspaceStackRouteElement: Hashable {
     case serverDetails(ServerDetailsNavTarget)
     case modelProviders(ModelProvidersNavTarget)
     case serverResourceDetail(ServerResourceDetailNavTarget)
-    /// A restored or linked pane entry shown through its leaf state.
-    case paneEntry(PaneStackEntry)
+    /// A screen no link names: a launcher, a browser's page, a game, Rex, a
+    /// terminal, a workspace's Git, or a restored entry shown through its leaf
+    /// state until its content can open.
+    case entry(PaneStackEntry)
     /// A terminal: a live shell, or the screen that connects one.
     case terminal(TerminalNavTarget)
+}
+
+extension WorkspaceStackRouteElement {
+    /// What a pane beside takes this screen as; nil for the window's own
+    /// screens (a place, a chat, a settings page, a reader). A terminal is a
+    /// kind of its own: a split of it opens the workspace's terminal.
+    var contentKind: PaneContentKind? {
+        switch self {
+        case .fileBrowser: .folder
+        case .linkedFile: .file
+        case .entry(let entry): PaneContentKind(entry.route)
+        case .terminal: .terminal
+        default: nil
+        }
+    }
+
+    /// Whether the screen is a chat: one shows in one pane, the window's main
+    /// one, so it never opens beside.
+    var isChat: Bool {
+        switch self {
+        case .session: true
+        case .entry(let entry):
+            switch entry.route {
+            case .session, .panel, .read: true
+            default: false
+            }
+        default: false
+        }
+    }
+
+    /// Whether the screen is a New Pane launcher, the empty pane a kind fills.
+    var isLauncher: Bool {
+        if case .entry(let entry) = self, case .local(let token) = entry.route,
+           case .launcher? = PaneLocalScreen(token) { return true }
+        return false
+    }
 }
 
 /// A terminal as a route: the live shell a connect flow reached (a host,
@@ -217,8 +261,13 @@ enum WorkspaceStackRouteElement: Hashable {
 final class TerminalNavTarget: Hashable {
     private let make: () -> UIViewController
     private weak var made: UIViewController?
+    /// The workspace the terminal works in, when its opener knows one (the
+    /// chat bar's folder terminal): a split of its pane opens that
+    /// workspace's own terminal. Nil for a Rex pane or a Rex link's list.
+    let workspaceId: String?
 
-    init(_ make: @escaping () -> UIViewController) {
+    init(workspaceId: String? = nil, _ make: @escaping () -> UIViewController) {
+        self.workspaceId = workspaceId
         self.make = make
     }
 
@@ -241,7 +290,8 @@ final class TerminalNavTarget: Hashable {
     /// `opener` is one of its routed screens or a page one of them pushed,
     /// else pushed in `opener`'s own stack (a side pane, a sheet).
     func show(from opener: UIViewController) {
-        if opener.navigationController is RoutedScreenStack, let navigation = AppRootEnvironment.near(opener)?.navigation {
+        if let stack = opener.navigationController as? ShellNavigationController, stack.leaf == nil,
+           let navigation = AppRootEnvironment.near(opener)?.navigation {
             navigation.open(.page(.terminal(self)))
         } else {
             Router.push(screen, from: opener)
@@ -274,6 +324,10 @@ final class SceneNavigation {
     /// opens with no screen of its own (a link, a keyboard command) opens in
     /// its focused leaf (`Router.focusedScreen(in:)`), never another window's.
     @ObservationIgnored weak var window: UIWindow?
+    /// The window's pane area, which draws and lays out its panes. The shell
+    /// sets it as it makes the area, which moves between layouts but stays one
+    /// host; side content opens through it (`PanePlacement.sideContent`).
+    @ObservationIgnored weak var paneArea: PaneHostController?
 
     init(app: AppState = AppState()) {
         self.app = app
@@ -360,10 +414,26 @@ final class SceneNavigation {
     /// for (`SidebarChoice.route`).
     private var sidebarChoice: SidebarChoice?
 
-    /// Session-list search lives on navigation so it survives a list's
-    /// remount after Back or a change of shell.
-    var inboxSessionSearch = SessionListSearchNavigationPersistence.State()
-    var workspaceSessionSearchByID: [String: SessionListSearchNavigationPersistence.State] = [:]
+    /// Session-list search lives on navigation so it survives a list's remount
+    /// after Back or a change of shell. Each pane's list keeps its own, so a
+    /// list in a side pane never shares the main pane's query.
+    var sessionListSearch: [SessionListSearchKey: SessionListSearchNavigationPersistence.State] = [:]
+
+    /// The search the list for `key` kept, and the one it keeps now.
+    func search(of key: SessionListSearchKey) -> SessionListSearchNavigationPersistence.State {
+        sessionListSearch[key] ?? .init()
+    }
+
+    func setSearch(_ state: SessionListSearchNavigationPersistence.State, of key: SessionListSearchKey) {
+        sessionListSearch[key] = state
+    }
+
+    /// A pane keeps no list search: its own, when a list resets its host or
+    /// leaves the window.
+    func clearSearch(in pane: PaneID?) {
+        let pane = pane ?? panes.mainLeafID
+        for key in sessionListSearch.keys where key.pane == pane { sessionListSearch[key] = nil }
+    }
 
     /// Set after a fresh pairing when the server had no workspaces.
     /// The workspace navigation shell consumes this to present guided creation.
@@ -410,14 +480,27 @@ final class SceneNavigation {
     /// (`PaneStack.elements`).
     var workspaceStackRouteElements: [WorkspaceStackRouteElement] { mainPaneRoute.elements }
 
+    /// A leaf's route; the main leaf's through `mainPaneRoute`, so the
+    /// person's sidebar choice and an AVKit overlay follow a change there.
+    func setRoute(_ route: PaneStack, in pane: PaneID) {
+        if pane == panes.mainLeafID {
+            mainPaneRoute = route
+        } else {
+            panes.setStack(route, for: pane)
+        }
+    }
+
     /// The place the main pane shows, which the sidebar and the drawer highlight.
     var currentPlace: NavigationPlace { mainPaneRoute.place ?? .allSessions }
 
-    /// Whether a screen covers a session list in the main pane, for its
-    /// search: All Sessions (`workspaceId` nil) or a workspace's. The place's
-    /// list is covered by anything opened on it; All Sessions also by any
-    /// place on the compact stack, which keeps it underneath.
-    func sessionListCovered(workspaceId: String?) -> Bool {
+    /// Whether a screen covers a session list in `pane` (the main leaf when
+    /// nil), for its search: All Sessions (`workspaceId` nil) or a
+    /// workspace's. The place's list is covered by anything opened on it; All
+    /// Sessions also by any place on the compact stack, which keeps it
+    /// underneath. A side leaf's list is its route's root, so nothing in the
+    /// window's route covers it.
+    func sessionListCovered(workspaceId: String?, in pane: PaneID? = nil) -> Bool {
+        if let pane, pane != panes.mainLeafID { return false }
         if case .sessions(let shown) = currentPlace, shown?.workspace.id == workspaceId {
             return !mainPaneRoute.stack.isEmpty
         }
@@ -637,8 +720,8 @@ final class SceneNavigation {
             return .coveringPage(sourceSessionId: nil)
         case .linkedFile(let target):
             return .coveringPage(sourceSessionId: coveringSourceSessionId(for: target))
-        case .workspace, .fileBrowser, .workspaceConfiguration, .utility,
-             .serverDetails, .modelProviders, .serverResourceDetail, .paneEntry, .terminal:
+        case .allSessions, .workspace, .fileBrowser, .workspaceConfiguration, .utility,
+             .serverDetails, .modelProviders, .serverResourceDetail, .entry, .terminal:
             return .other
         }
     }
@@ -698,17 +781,21 @@ final class SceneNavigation {
         scope: FileBrowserScope,
         routePath: String,
         directoryPath: String,
-        selectedFile: FileBrowserSelection?
+        selectedFile: FileBrowserSelection?,
+        in pane: PaneID? = nil
     ) {
-        guard let index = mainPaneRoute.stack.lastIndex(where: { element in
-            if case .fileBrowser(let target) = element {
-                return target.serverId == serverId && target.scope == scope && target.path == routePath
-            }
-            return false
-        }), case .fileBrowser(var target) = mainPaneRoute.stack[index] else { return }
-        target.columnDirectoryPath = directoryPath
-        target.columnSelectedFile = selectedFile
-        mainPaneRoute.stack[index] = .fileBrowser(target)
+        let target = pane ?? panes.mainLeafID
+        guard var route = panes.stack(of: target),
+              let index = route.stack.lastIndex(where: { element in
+                  if case .fileBrowser(let page) = element {
+                      return page.serverId == serverId && page.scope == scope && page.path == routePath
+                  }
+                  return false
+              }), case .fileBrowser(var page) = route.stack[index] else { return }
+        page.columnDirectoryPath = directoryPath
+        page.columnSelectedFile = selectedFile
+        route.stack[index] = .fileBrowser(page)
+        setRoute(route, in: target)
     }
 
     var visibleHostSwitcherDestination: HostSwitcherDestination {
@@ -742,7 +829,7 @@ final class SceneNavigation {
     var pendingThreadFocus: ThreadFocus?
 
     /// Shows All Sessions (the matching list in a split layout) with the thread of `rootId` open.
-    func showThread(serverId: String, rootId: String, from origin: MainPaneOrigin = .screen()) {
+    func showThread(serverId: String, rootId: String, from origin: OpenOrigin? = nil) {
         open(.place(.allSessions), from: origin)
         pendingThreadFocus = ThreadFocus(serverId: serverId, rootId: rootId)
     }
@@ -817,6 +904,7 @@ final class SceneNavigation {
         for element: WorkspaceStackRouteElement
     ) -> WorkspaceStackDiagnosticContext {
         switch element {
+        case .allSessions: WorkspaceStackDiagnosticContext(screen: "workspace_inbox_all", sessionId: nil, workspaceId: nil)
         case .workspace(let target): workspaceInboxDiagnosticContext(target)
         case .session(let target): sessionDiagnosticContext(target)
         case .fileBrowser(let target): fileBrowserDiagnosticContext(target)
@@ -828,7 +916,7 @@ final class SceneNavigation {
         case .modelProviders: modelProvidersDiagnosticContext
         case .serverResourceDetail: serverResourceDetailDiagnosticContext
         case .terminal: terminalDiagnosticContext
-        case .paneEntry(let entry): paneEntryDiagnosticContext(entry)
+        case .entry(let entry): paneEntryDiagnosticContext(entry)
         }
     }
 
@@ -965,6 +1053,13 @@ final class SceneNavigation {
     }
 }
 
+/// Which session list keeps a search: the pane it is drawn in, and the
+/// workspace it lists (nil for All Sessions).
+struct SessionListSearchKey: Hashable {
+    let pane: PaneID
+    let workspaceId: String?
+}
+
 struct QuickSessionLaunchContext: Equatable, Sendable {
     let serverId: String
     let agentId: String?
@@ -1012,4 +1107,10 @@ struct QuickSessionNav {
         self.autoSendAttachments = autoSendAttachments
         self.startsLiveVoice = startsLiveVoice
     }
+}
+
+extension UIViewController {
+    /// The pane this screen's route is drawn in: its leaf's stack, or nil for
+    /// the window's own stack (the main pane, the split detail, the sidebar).
+    var paneLeaf: PaneID? { (navigationController as? RoutedScreenStack)?.leaf }
 }

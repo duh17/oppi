@@ -199,7 +199,7 @@ extension WorkspaceDetailViewController {
         let workspace = connection.map { currentWorkspace($0) } ?? routeWorkspace
         navigation.open(
             .chat(WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId, workspaceId: workspace.id)),
-            from: .screen(workspace: WorkspaceNavTarget(serverId: serverId, workspace: workspace))
+            from: .row(navigation.panes.mainLeafID, workspace: WorkspaceNavTarget(serverId: serverId, workspace: workspace))
         )
     }
 

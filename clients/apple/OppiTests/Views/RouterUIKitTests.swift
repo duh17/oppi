@@ -88,7 +88,7 @@ struct RouterUIKitTests {
 
         let entry = PaneStackEntry(serverId: "server-unpaired", route: .session("linked"))
         navigation.open(.place(.utility(.extensions)))
-        navigation.open(.page(.paneEntry(entry)))
+        navigation.open(.page(.entry(entry)))
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
             shellStack.transitionCoordinator == nil && shellStack.viewControllers.count == 3
         })
@@ -100,7 +100,7 @@ struct RouterUIKitTests {
             shellStack.transitionCoordinator == nil && shellStack.viewControllers.count == 4
         })
         shellStack.popViewController(animated: false)
-        #expect(navigation.workspaceStackRouteElements == [.utility(.extensions), .paneEntry(entry)])
+        #expect(navigation.workspaceStackRouteElements == [.utility(.extensions), .entry(entry)])
 
         // Back from a route pops it from SceneNavigation too.
         shellStack.popViewController(animated: false)
@@ -413,7 +413,7 @@ struct ShellStackRoutesTests {
     @Test("a route update during the stack's own push waits for didShow and lands once")
     func ownPushDefersToDidShow() async throws {
         let stack = ShellNavigationController(root: makeTestAppRoot())
-        stack.setRoutes([.inbox])
+        stack.setRoutes([.allSessions])
         let inbox = try #require(stack.viewControllers.first)
 
         let window = try makeShellWindow(root: stack)
@@ -422,7 +422,7 @@ struct ShellStackRoutesTests {
 
         // An addition of the stack's own: the routes set its screens animated,
         // so a transition of this stack's is in flight.
-        stack.setRoutes([.inbox, .sidebar])
+        stack.setRoutes([.allSessions, .utility(.appSettings)])
         #expect(
             await waitForMainActorCondition(timeout: .seconds(3)) { stack.transitionCoordinator != nil },
             "the stack's own transition never started"
@@ -430,7 +430,7 @@ struct ShellStackRoutesTests {
         #expect(stack.viewControllers.count == 2)
 
         // The routes change back while that transition runs.
-        stack.setRoutes([.inbox])
+        stack.setRoutes([.allSessions])
         #expect(stack.viewControllers.count == 2, "an own transition must not apply routes early")
 
         #expect(
@@ -442,6 +442,108 @@ struct ShellStackRoutesTests {
         #expect(stack.viewControllers.first === inbox, "the inbox was replaced instead of kept")
     }
 
+    /// The shell re-sends its routes on observation ticks (a streaming
+    /// session, a workspace refresh), including while the person's Back runs.
+    /// Those routes are what the stack was already told, so the pop stands and
+    /// is reported: Back never fails because something else updated.
+    @Test("routes re-sent unchanged during a pop leave the pop standing")
+    func unchangedRoutesDuringAPopKeepThePop() async throws {
+        let stack = ShellNavigationController(root: makeTestAppRoot())
+        var popped: [Int] = []
+        stack.onRoutesPopped = { popped.append($0) }
+        stack.setRoutes([.allSessions, .utility(.appSettings)])
+
+        let window = try makeShellWindow(root: stack)
+        defer { window.isHidden = true }
+        stack.view.layoutIfNeeded()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { stack.viewControllers.count == 2 })
+
+        // The person's Back, animated as the bar's is.
+        stack.popViewController(animated: true)
+        #expect(
+            await waitForMainActorCondition(timeout: .seconds(3)) { stack.transitionCoordinator != nil },
+            "the pop never started"
+        )
+        // An observation tick meanwhile: the same routes the stack has.
+        stack.setRoutes([.allSessions, .utility(.appSettings)])
+
+        #expect(
+            await waitForMainActorCondition(timeout: .seconds(5)) {
+                stack.transitionCoordinator == nil && stack.viewControllers.count == 1
+            },
+            "the pop was undone by unchanged routes: \(stack.viewControllers.count) screens"
+        )
+        #expect(popped == [1], "the pop was not reported: \(popped)")
+    }
+
+    /// The shell re-sends a refreshed workspace target (same screen, newer
+    /// content) on its update ticks. That is not a route that moved on, so the
+    /// pop stands.
+    @Test("a refreshed workspace re-sent during a pop leaves the pop standing")
+    func aRefreshedWorkspaceDuringAPopKeepsThePop() async throws {
+        let stack = ShellNavigationController(root: makeTestAppRoot())
+        var popped: [Int] = []
+        stack.onRoutesPopped = { popped.append($0) }
+        let workspace = makeTestWorkspace(id: "ws-1", name: "garden-site")
+        let target = WorkspaceNavTarget(serverId: "s", workspace: workspace)
+        stack.setRoutes([.allSessions, .workspace(target)])
+
+        let window = try makeShellWindow(root: stack)
+        defer { window.isHidden = true }
+        stack.view.layoutIfNeeded()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { stack.viewControllers.count == 2 })
+
+        stack.popViewController(animated: true)
+        #expect(
+            await waitForMainActorCondition(timeout: .seconds(3)) { stack.transitionCoordinator != nil },
+            "the pop never started"
+        )
+        var refreshed = workspace
+        refreshed.name = "garden-site-renamed"
+        stack.setRoutes([.allSessions, .workspace(WorkspaceNavTarget(serverId: "s", workspace: refreshed))])
+
+        #expect(
+            await waitForMainActorCondition(timeout: .seconds(5)) {
+                stack.transitionCoordinator == nil && stack.viewControllers.count == 1
+            },
+            "the refreshed workspace undid the pop: \(stack.viewControllers.count) screens"
+        )
+        #expect(popped == [1], "the pop was not reported: \(popped)")
+    }
+
+    /// A route that really moved on during the pop is the leaf's newer state, so
+    /// the stack shows it and no pop is reported.
+    @Test("a route that moved on during a pop wins over the pop")
+    func aRouteThatMovedOnDuringAPopWins() async throws {
+        let stack = ShellNavigationController(root: makeTestAppRoot())
+        var popped: [Int] = []
+        stack.onRoutesPopped = { popped.append($0) }
+        stack.setRoutes([.allSessions, .utility(.appSettings)])
+
+        let window = try makeShellWindow(root: stack)
+        defer { window.isHidden = true }
+        stack.view.layoutIfNeeded()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { stack.viewControllers.count == 2 })
+
+        stack.popViewController(animated: true)
+        #expect(
+            await waitForMainActorCondition(timeout: .seconds(3)) { stack.transitionCoordinator != nil },
+            "the pop never started"
+        )
+        // Navigation elsewhere: the top is another screen now.
+        stack.setRoutes([.allSessions, .utility(.extensions)])
+
+        #expect(
+            await waitForMainActorCondition(timeout: .seconds(5)) {
+                stack.transitionCoordinator == nil && stack.viewControllers.count == 2
+            },
+            "the newer route did not land: \(stack.viewControllers.count) screens"
+        )
+        #expect(stack.viewControllers.last?.navigationItem.title == "Extensions" || stack.topViewController is ServerExtensionsViewController,
+                "the newer screen is on top: \(String(describing: stack.topViewController))")
+        #expect(popped.isEmpty, "a route that moved on is not a pop: \(popped)")
+    }
+
     /// `didShow` reports only a screen that was displayed, so a cancelled back
     /// swipe never sends it. This is the shape of that risk: after the stack's
     /// own transition, a transition it does not own must still apply its routes.
@@ -451,18 +553,18 @@ struct ShellStackRoutesTests {
     @Test("an own transition does not stop a later transition from applying routes")
     func ownTransitionDoesNotStrandALaterTransition() async throws {
         let stack = ShellNavigationController(root: makeTestAppRoot())
-        stack.setRoutes([.inbox])
+        stack.setRoutes([.allSessions])
 
         let window = try makeShellWindow(root: stack)
         defer { window.isHidden = true }
         stack.view.layoutIfNeeded()
 
         // An own transition, run to completion first.
-        stack.setRoutes([.inbox, .sidebar])
+        stack.setRoutes([.allSessions, .utility(.appSettings)])
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             stack.transitionCoordinator == nil && stack.viewControllers.count == 2
         })
-        stack.setRoutes([.inbox])
+        stack.setRoutes([.allSessions])
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             stack.transitionCoordinator == nil && stack.viewControllers.count == 1
         })
@@ -476,7 +578,7 @@ struct ShellStackRoutesTests {
             await waitForMainActorCondition(timeout: .seconds(3)) { stack.transitionCoordinator != nil },
             "the dismissal transition never started"
         )
-        stack.setRoutes([.inbox, .sidebar])
+        stack.setRoutes([.allSessions, .utility(.appSettings)])
 
         #expect(
             await waitForMainActorCondition(timeout: .seconds(5)) { stack.viewControllers.count == 2 },

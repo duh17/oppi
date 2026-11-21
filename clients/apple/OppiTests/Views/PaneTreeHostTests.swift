@@ -309,6 +309,61 @@ struct PaneTreeHostTests {
         #expect(drop.zone == landed, "preview \(String(describing: drop.zone)), landed \(landed)")
     }
 
+    /// Navigation in a side pane stays in that pane: a collapsed main leaf is
+    /// not expanded or focused by a page opening beside it.
+    @Test func aSidePanesPageDoesNotRevealTheMainPane() throws {
+        let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
+        defer { host.hide() }
+        let panes = host.scenePanes
+        let side = try #require(panes.split(panes.mainLeafID, axis: .row))
+        host.act { host.panes.collapse(panes.mainLeafID) }
+        host.act { host.panes.focus(cell: side) }
+        #expect(panes.collapsedCells.contains(panes.mainLeafID), "the chat is folded to its strip")
+
+        let folder = FileBrowserNavTarget(serverId: "s", workspaceId: "w", path: "Sources/")
+        host.act { host.root.navigation.open(.page(.fileBrowser(folder)), from: .row(side)) }
+
+        #expect(panes.collapsedCells.contains(panes.mainLeafID), "the chat stays folded")
+        #expect(panes.cellLayout.focus == side, "focus stays in the pane that navigated")
+    }
+
+    /// A game a link names is a `.godot` side pane: the app's own screen for it,
+    /// not a leaf state and not a second kind of route.
+    @Test func aGodotEntryOpensAsItsOwnPane() throws {
+        let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
+        defer { host.hide() }
+        let panes = host.scenePanes
+        let entry = PaneStackEntry(serverId: "s", route: .godot(project: "tide-runner"))
+        let game = try #require(panes.split(panes.mainLeafID, edge: .right, showing: .entry(entry)))
+        host.act { host.panes.syncSplitLeaves() }
+
+        #expect(panes.stack(of: game)?.top == .entry(entry), "the pane's route is the game")
+        let screen = try #require(host.panes.splitLeaves[game]?.controller.viewControllers.first as? GodotPaneViewController)
+        #expect(screen.gameSlot.project == "tide-runner", "the pane plays the game the entry names")
+        #expect(screen.navigationItem.title == "tide-runner")
+    }
+
+    /// A closed pane leaves nothing behind: no route, and no session-list search
+    /// of its own.
+    @Test func aClosedPaneForgetsItsRouteAndSearch() throws {
+        let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
+        defer { host.hide() }
+        let panes = host.scenePanes
+        let navigation = host.root.navigation
+        let side = try #require(panes.split(panes.mainLeafID, axis: .row))
+        // Launch wires the window's navigation into its panes; a harness does
+        // it here so the panes can forget what a closed pane kept.
+        panes.restore(navigation: navigation, coordinator: host.root.coordinator, applying: false)
+        navigation.setSearch(.init(), of: SessionListSearchKey(pane: side, workspaceId: nil))
+        #expect(navigation.sessionListSearch[SessionListSearchKey(pane: side, workspaceId: nil)] != nil)
+
+        host.act { host.panes.closePane(side) }
+
+        #expect(panes.stack(of: side) == nil, "the closed pane keeps no route")
+        #expect(navigation.sessionListSearch[SessionListSearchKey(pane: side, workspaceId: nil)] == nil,
+                "the closed pane keeps no search")
+    }
+
     /// Close Pane removes the split leaf and its grip; one pane left has none.
     @Test func closePaneLeavesOnePaneWithNoGrip() throws {
         let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
@@ -582,7 +637,7 @@ struct PaneTreeHostTests {
         }
 
         var opened = false
-        host.act { opened = host.panes.openBeside(file("/tmp/a.md"), kind: .file) }
+        host.act { opened = host.openBeside(file("/tmp/a.md"), kind: .file) }
         #expect(opened)
         let pane = try #require(host.scenePanes.splitLeaves.first?.id)
         guard case .split(let splitAxis, let children, _) = host.scenePanes.cellLayout.root else {
@@ -600,7 +655,7 @@ struct PaneTreeHostTests {
 
         host.act {
             host.panes.focus(cell: routed)
-            _ = host.panes.openBeside(file("/tmp/b.md"), kind: .file)
+            _ = host.openBeside(file("/tmp/b.md"), kind: .file)
         }
         #expect(host.scenePanes.splitLeaves.map(\.id) == [pane], "no second pane")
         #expect(host.scenePanes.topEntry(of: pane).route == .file(.host, path: "/tmp/b.md", line: nil))
@@ -609,7 +664,7 @@ struct PaneTreeHostTests {
         host.act {
             host.scenePanes.show(terminal, in: pane)
             host.panes.focus(cell: routed)
-            _ = host.panes.openBeside(file("/tmp/c.md"), kind: .file)
+            _ = host.openBeside(file("/tmp/c.md"), kind: .file)
         }
         #expect(host.scenePanes.topEntry(of: pane) == terminal, "the terminal keeps its pane")
         #expect(host.scenePanes.splitLeaves.count == 2, "the file got a pane of its own")
@@ -626,19 +681,19 @@ struct PaneTreeHostTests {
         let file = { (path: String) in
             PaneOpenContent(entry: PaneStackEntry(serverId: "s", route: .file(.host, path: path, line: nil)))
         }
-        host.act { _ = host.panes.openBeside(file("/tmp/a.md"), kind: .file) }
+        host.act { _ = host.openBeside(file("/tmp/a.md"), kind: .file) }
         let pane = try #require(host.scenePanes.splitLeaves.first?.id)
         #expect(host.scenePanes.cellLayout.focus == pane)
 
         var opened = false
-        host.act { opened = host.panes.openBeside(file("/tmp/b.md"), kind: .file, from: .external) }
+        host.act { opened = host.openBeside(file("/tmp/b.md"), kind: .file, from: .external) }
         #expect(opened)
         #expect(host.scenePanes.splitLeaves.map(\.id) == [pane], "still one side pane")
         #expect(host.scenePanes.topEntry(of: pane).route == .file(.host, path: "/tmp/b.md", line: nil))
 
         host.act {
             host.panes.focus(cell: pane)
-            _ = host.panes.openBeside(file("/tmp/c.md"), kind: .file)
+            _ = host.openBeside(file("/tmp/c.md"), kind: .file)
         }
         #expect(host.scenePanes.splitLeaves.count == 2, "a link tapped in the file's pane opens beside it")
     }
@@ -680,16 +735,16 @@ struct PaneTreeHostTests {
             defer { host.hide() }
             try await newPanes(host, right ? [.terminal: .right] : [:])
             let screen = UIViewController()
-            let content = PaneOpenContent(terminal: TerminalNavTarget { screen }, as: .terminal(workspaceId: "w"), serverId: "s")
-            let entry = content.entry
+            let terminal = TerminalNavTarget { screen }
+            let content = PaneOpenContent(terminal: terminal, serverId: "s")
             var opened = false
             host.act {
-                opened = host.panes.openBeside(content, kind: .terminal, from: .pane(host.scenePanes.mainLeafID))
+                opened = host.openBeside(content, kind: .terminal, from: .row(host.scenePanes.mainLeafID))
             }
             #expect(opened)
             let (axis, pane) = try splitBesideChat(host)
             #expect(host.scenePanes.cellLayout.focus == pane, "the terminal's pane has focus")
-            #expect(host.scenePanes.topEntry(of: pane) == entry)
+            #expect(host.scenePanes.stack(of: pane)?.top == .terminal(terminal))
             #expect(screen.view.window != nil && host.panes.cell(holding: screen) == pane, "the pane shows the terminal's screen")
             return (axis, try #require(leafView(host, pane)).frame)
         }
@@ -719,15 +774,13 @@ struct PaneTreeHostTests {
         #expect(try splitBesideChat(host).axis == .row)
         host.act { host.panes.undoPanes() }
         #expect(host.scenePanes.splitLeaves.isEmpty)
-        host.act { _ = host.panes.openBeside(file, kind: .file) }
+        host.act { _ = host.openBeside(file, kind: .file) }
         #expect(try splitBesideChat(host).axis == .column, "a tap follows the setting")
     }
 
     /// A file the terminal resolved, opened as the terminal opens it.
-    private func openFromTerminal(_ content: PaneOpenContent, from terminal: UIViewController, makeScreen: () -> UIViewController) {
-        PaneHostController.openBeside(content, kind: .file, from: terminal) {
-            SSHTerminalOpenRoute.push(from: terminal, makeScreen: makeScreen)
-        }
+    private func openFromTerminal(_ content: PaneOpenContent, from terminal: UIViewController) {
+        PaneHostController.openBeside(content, kind: .file, from: terminal)
     }
 
     private func terminalFile(_ host: PaneTestHost) -> (WorkspaceLinkedFileNavTarget, () -> UIViewController) {
@@ -754,13 +807,13 @@ struct PaneTreeHostTests {
         host.act { host.panes.focus(cell: terminalPane) }
         let (target, makeScreen) = terminalFile(host)
 
-        host.act { openFromTerminal(PaneOpenContent(file: target), from: terminal, makeScreen: makeScreen) }
+        host.act { openFromTerminal(PaneOpenContent(file: target), from: terminal) }
 
         #expect(terminal.navigationController?.topViewController === terminal, "nothing pushed over the terminal")
         #expect(host.scenePanes.topEntry(of: terminalPane) == terminalEntry, "the terminal keeps its pane")
         let filePane = try #require(host.scenePanes.splitLeaves.map(\.id).first { $0 != terminalPane })
         #expect(host.scenePanes.cellLayout.focus == filePane)
-        guard case .linkedFile(let shown)? = host.scenePanes.standIns[host.scenePanes.topEntry(of: filePane)] else {
+        guard case .linkedFile(let shown)? = host.scenePanes.stack(of: filePane)?.top else {
             Issue.record("no file in the new pane: \(host.scenePanes.topEntry(of: filePane))")
             return
         }
@@ -772,8 +825,8 @@ struct PaneTreeHostTests {
         #expect(besideRight || besideBelow, "beside the terminal: \(terminalFrame) \(fileFrame)")
     }
 
-    /// On a compact window the file is pushed over the terminal in the
-    /// terminal's own navigation, as before panes.
+    /// On a compact window the file is a page in the main pane's route, over
+    /// the terminal, as before panes.
     @Test func aTerminalFileIsPushedOverTheTerminalOnACompactWindow() throws {
         let host = PaneTestHost(width: 390, height: 844, inNavigation: true)
         defer { host.hide() }
@@ -782,12 +835,11 @@ struct PaneTreeHostTests {
             host.panes.updatePropertiesIfNeeded()
         }
         let terminal = host.screen
-        let (target, makeScreen) = terminalFile(host)
+        let (target, _) = terminalFile(host)
 
-        host.act { openFromTerminal(PaneOpenContent(file: target), from: terminal, makeScreen: makeScreen) }
+        host.act { openFromTerminal(PaneOpenContent(file: target), from: terminal) }
 
         #expect(host.scenePanes.splitLeaves.isEmpty, "no pane")
-        let pushed = terminal.navigationController?.topViewController as? WorkspaceLinkedFileViewController
-        #expect(pushed?.target.lineAnchor == target.lineAnchor, "pushed over the terminal at the link's line")
+        #expect(host.root.navigation.mainPaneRoute.top == .linkedFile(target), "over the terminal at the link's line")
     }
 }

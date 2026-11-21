@@ -2,14 +2,15 @@ import Foundation
 import Testing
 @testable import Oppi
 
-/// Where a new pane lands when nothing says, from the pane it was opened
-/// from: a pane already showing that kind of thing or an empty launcher
-/// before a new pane; a new pane on the kind's New Panes side (a terminal
-/// below, the rest to the right in landscape and below in portrait), by the
-/// fit rule; the main pane on a compact window or with no pane left to make.
-/// The chat, terminals, Rex and games are never replaced.
-@Suite("Side pane placement")
-struct SidePanePlacementTests: PaneFixtureBuilding {
+/// Where side content lands in a pane beside, from the pane it was opened
+/// from: a pane already showing that kind of thing or an empty launcher before
+/// a new pane; a new pane on the kind's New Panes side (a terminal below, the
+/// rest to the right in landscape and below in portrait), by the fit rule;
+/// nothing (the open falls back to its opener's pane or the main pane) on a
+/// compact window or with no pane left to make. The chat, terminals, Rex and
+/// games are never replaced.
+@Suite("Side content placement")
+struct PaneSideContentTests: PaneFixtureBuilding {
     private typealias Side = AppPreferenceStore.NewPanes.Side
 
     private let file = PaneRoute.file(.workspace(id: "w", worktree: nil), path: "a.md", line: nil)
@@ -52,22 +53,31 @@ struct SidePanePlacementTests: PaneFixtureBuilding {
     private func place(
         _ kind: PaneContentKind,
         in cells: PaneLayout,
-        from source: String = "chat",
+        from origin: OpenOrigin? = nil,
+        focused: String = "chat",
         size: CGSize = landscape,
         side: Side? = nil,
         isWide: Bool = true,
         canAddPane: Bool = true
-    ) -> SidePanePlacement {
-        SidePanePlacement.resolve(
+    ) -> PanePlacement? {
+        let origin = origin ?? .row(id("chat"))
+        return PanePlacement.sideContent(
             kind,
+            from: origin,
             side: side ?? AppPreferenceStore.NewPanes.sideDefault(kind.setting),
             isWide: isWide,
             canAddPane: canAddPane,
             cells: cells,
-            source: id(source),
+            focused: id(focused),
             mainLeaf: id("chat"),
             isPortrait: size.height > size.width,
-            shown: { SidePanePlacement.shown($0.stack.last) },
+            shown: { leaf in
+                // The test's cells carry the entry their pane shows; the window
+                // weighs that as the kind it is.
+                guard let entry = leaf.stack.last else { return .other }
+                if case .local(let token) = entry.route, case .launcher? = PaneLocalScreen(token) { return .launcher }
+                return WorkspaceStackRouteElement.entry(entry).contentKind.map(PanePlacement.Shown.kind) ?? .other
+            },
             fits: { target, edge in
                 PaneOpenChoices.fits(edge, of: target, in: cells, showing: route(of: kind), presentation: window(size))
             }
@@ -111,9 +121,9 @@ struct SidePanePlacementTests: PaneFixtureBuilding {
     /// pane. A side the person set falls back the same way.
     @Test func withNoRoomOnTheChosenSideTheOtherSideTakesIt() {
         let cells = row([(leaf("chat"), 0.5), (leaf("t", terminal), 0.5)])
-        #expect(place(.file, in: cells, size: CGSize(width: 813, height: 744)) == .split(id("t"), .bottom))
-        #expect(place(.file, in: cells, size: CGSize(width: 813, height: 500)) == .split(id("t"), .right))
-        #expect(place(.webPage, in: cells, size: CGSize(width: 813, height: 744), side: .right) == .split(id("t"), .bottom))
+        #expect(place(.file, in: cells, from: .row(id("t")), size: CGSize(width: 813, height: 744)) == .split(id("t"), .bottom))
+        #expect(place(.file, in: cells, from: .row(id("t")), size: CGSize(width: 813, height: 500)) == .split(id("t"), .right))
+        #expect(place(.webPage, in: cells, from: .row(id("t")), size: CGSize(width: 813, height: 744), side: .right) == .split(id("t"), .bottom))
         let short = CGSize(width: 1400, height: 500)
         #expect(place(.terminal, in: chatAlone, size: short) == .split(id("chat"), .right), "too short for a terminal below")
         #expect(place(.terminal, in: chatAlone, size: CGSize(width: 500, height: 400)) == .split(id("chat"), .bottom),
@@ -159,9 +169,9 @@ struct SidePanePlacementTests: PaneFixtureBuilding {
     @Test func theChatTheSourceTerminalsRexAndGamesAreNeverReplaced() {
         let wide = CGSize(width: 2400, height: 744)
         var cells = row([(leaf("chat"), 0.3), (leaf("t", terminal), 0.2), (leaf("rex", rex), 0.2), (leaf("doc", file), 0.3)])
-        #expect(place(.file, in: cells, from: "doc", size: wide) == .split(id("doc"), .right))
-        #expect(place(.terminal, in: cells, from: "doc", size: wide, side: .right) == .split(id("doc"), .right))
-        #expect(place(.rex, in: cells, from: "doc", size: wide, side: .right) == .split(id("doc"), .right))
+        #expect(place(.file, in: cells, from: .row(id("doc")), size: wide) == .split(id("doc"), .right))
+        #expect(place(.terminal, in: cells, from: .row(id("doc")), size: wide, side: .right) == .split(id("doc"), .right))
+        #expect(place(.rex, in: cells, from: .row(id("doc")), size: wide, side: .right) == .split(id("doc"), .right))
         cells.collapsed[id("doc")] = 0.3
         #expect(place(.file, in: cells, size: wide) == .split(id("t"), .right))
         let playing = row([(leaf("chat"), 0.5), (leaf("game", game), 0.5)])
@@ -171,46 +181,42 @@ struct SidePanePlacementTests: PaneFixtureBuilding {
     @Test func aCompactWindowOpensInTheMainPaneAsBefore() {
         let cells = row([(leaf("chat"), 0.5), (leaf("new", launcher), 0.5)])
         for kind in PaneContentKind.allCases {
-            #expect(place(kind, in: cells, isWide: false) == .mainPane, "\(kind)")
-            #expect(place(kind, in: chatAlone, isWide: false) == .mainPane, "\(kind)")
+            #expect(place(kind, in: cells, isWide: false) == nil, "\(kind)")
+            #expect(place(kind, in: chatAlone, isWide: false) == nil, "\(kind)")
         }
     }
 
     @Test func aWindowAtItsMostPanesStillReusesOne() {
         let full = row([(leaf("chat"), 0.5), (leaf("t", terminal), 0.5)])
-        #expect(place(.file, in: full, canAddPane: false) == .mainPane)
-        #expect(place(.terminal, in: full, canAddPane: false) == .mainPane)
+        #expect(place(.file, in: full, canAddPane: false) == nil)
+        #expect(place(.terminal, in: full, canAddPane: false) == nil)
         let withLauncher = row([(leaf("chat"), 0.5), (leaf("new", launcher), 0.5)])
         #expect(place(.file, in: withLauncher, canAddPane: false) == .reuse(id("new")))
     }
 
-    /// What each pane shows, as the placement weighs it.
+    /// What a pane shows, as the table weighs it: the kind an entry names, and
+    /// the launcher a fresh pane offers.
     @Test func panesAreClassifiedByWhatTheyShow() throws {
         let entry = { (route: PaneRoute) in PaneStackEntry(serverId: "s", route: route) }
-        #expect(SidePanePlacement.shown(entry(file)) == .kind(.file))
-        #expect(SidePanePlacement.shown(entry(folder)) == .kind(.folder))
-        #expect(SidePanePlacement.shown(entry(.hostFiles(path: "~/notes"))) == .kind(.folder))
-        #expect(SidePanePlacement.shown(entry(try page())) == .kind(.webPage))
-        #expect(SidePanePlacement.shown(entry(.local(PaneLocalScreen.browser.token))) == .kind(.webPage))
-        #expect(SidePanePlacement.shown(entry(.sessions(workspace: "w"))) == .kind(.sessions))
-        #expect(SidePanePlacement.shown(entry(terminal)) == .kind(.terminal))
-        #expect(SidePanePlacement.shown(entry(rex)) == .kind(.rex))
-        #expect(SidePanePlacement.shown(entry(game)) == .kind(.game))
-        #expect(SidePanePlacement.shown(entry(.local(PaneLocalScreen.godot.token))) == .kind(.game))
-        #expect(SidePanePlacement.shown(entry(launcher)) == .launcher)
-        #expect(SidePanePlacement.shown(entry(.git(workspace: "w", worktree: nil))) == .kind(.git))
-        #expect(SidePanePlacement.shown(entry(.commit(workspace: "w", sha: "9f86d08"))) == .kind(.git))
-        for other in [PaneRoute.session("s")] {
-            #expect(SidePanePlacement.shown(entry(other)) == .other, "\(other)")
+        func shown(_ route: PaneRoute) -> PanePlacement.Shown {
+            let element = WorkspaceStackRouteElement.entry(entry(route))
+            if case .local(let token) = route, case .launcher? = PaneLocalScreen(token) { return .launcher }
+            return element.contentKind.map(PanePlacement.Shown.kind) ?? .other
         }
-    }
-
-    /// Where `kind` from `origin` lands with focus on pane `focused`, as
-    /// `PaneHostController.openBeside` places it; nil when it opens in the main pane without trying beside.
-    private func place(
-        _ kind: PaneContentKind, in cells: PaneLayout, origin: SidePaneOrigin, focused: String, size: CGSize = landscape
-    ) -> SidePanePlacement? {
-        SidePanePlacement.source(of: origin, focused: id(focused), mainLeaf: id("chat")).map { place(kind, in: cells, from: $0.raw, size: size) }
+        #expect(shown(file) == .kind(.file))
+        #expect(shown(folder) == .kind(.folder))
+        #expect(shown(.hostFiles(path: "~/notes")) == .kind(.folder))
+        #expect(shown(try page()) == .kind(.webPage))
+        #expect(shown(.local(PaneLocalScreen.browser.token)) == .kind(.webPage))
+        #expect(shown(.sessions(workspace: "w")) == .kind(.sessions))
+        #expect(shown(terminal) == .kind(.terminal))
+        #expect(shown(rex) == .kind(.rex))
+        #expect(shown(game) == .kind(.game))
+        #expect(shown(.local(PaneLocalScreen.godot.token)) == .kind(.game))
+        #expect(shown(launcher) == .launcher)
+        #expect(shown(.git(workspace: "w", worktree: nil)) == .kind(.git))
+        #expect(shown(.commit(workspace: "w", sha: "9f86d08")) == .kind(.git))
+        #expect(shown(.session("s")) == .other)
     }
 
     /// A link from outside the app (`oppi://file`, a share) has no pane of its
@@ -222,12 +228,12 @@ struct SidePanePlacementTests: PaneFixtureBuilding {
     @Test func anOutsideLinkOpensBesideTheMainPaneWhicheverPaneHasFocus() {
         let cells = row([(leaf("chat"), 0.5), (leaf("doc", file), 0.5)])
         let wide = CGSize(width: 2400, height: 744)
-        #expect(place(.file, in: cells, origin: .external, focused: "doc", size: wide) == .reuse(id("doc")))
-        #expect(place(.file, in: cells, origin: .external, focused: "chat", size: wide) == .reuse(id("doc")), "the same from either pane")
-        #expect(place(.folder, in: cells, origin: .external, focused: "doc", size: wide) == .split(id("doc"), .right))
-        #expect(place(.file, in: cells, origin: .focusedPane, focused: "doc", size: wide) == .split(id("doc"), .right))
-        #expect(place(.file, in: cells, origin: .focusedPane, focused: "chat", size: wide) == .reuse(id("doc")))
-        #expect(place(.file, in: cells, origin: .pane(id("doc")), focused: "chat", size: wide) == .split(id("doc"), .right))
-        #expect(place(.file, in: cells, origin: .mainPane, focused: "doc", size: wide) == nil)
+        #expect(place(.file, in: cells, from: .external, focused: "doc", size: wide) == .reuse(id("doc")))
+        #expect(place(.file, in: cells, from: .external, focused: "chat", size: wide) == .reuse(id("doc")), "the same from either pane")
+        #expect(place(.folder, in: cells, from: .external, focused: "doc", size: wide) == .split(id("doc"), .right))
+        #expect(place(.file, in: cells, from: .link, focused: "doc", size: wide) == .split(id("doc"), .right))
+        #expect(place(.file, in: cells, from: .link, focused: "chat", size: wide) == .reuse(id("doc")))
+        #expect(place(.file, in: cells, from: .row(id("doc")), focused: "chat", size: wide) == .split(id("doc"), .right))
+        #expect(place(.file, in: cells, from: .here, focused: "doc", size: wide) == nil)
     }
 }

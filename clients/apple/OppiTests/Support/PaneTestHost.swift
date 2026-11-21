@@ -15,20 +15,29 @@ struct PaneTestHost {
     /// The window's pane state; a host of its own starts with no remembered width.
     let scenePanes: ScenePanes
     let window: UIWindow
-    let root = makeTestAppRoot()
+    let root: AppRootEnvironment
 
     init(
         width: CGFloat,
         height: CGFloat = 900,
         inNavigation: Bool = false,
         parkedViewLifetime: TimeInterval = 10,
-        scenePanes: ScenePanes = ScenePanes()
+        scenePanes: ScenePanes? = nil,
+        godot: GodotEngineHost = .shared
     ) {
+        root = makeTestAppRoot(godot: godot)
         let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
         guard let scene else { fatalError("Missing UIWindowScene for a pane test host") }
+        // The window's panes are the window's `SceneNavigation`'s, so an open
+        // through the navigation lands in the panes this host draws.
+        let scenePanes = scenePanes ?? root.navigation.panes
         let screen = PaneLeafScreen()
         let primary: UIViewController = inNavigation ? UINavigationController(rootViewController: screen) : screen
         let panes = PaneHostController(primary: primary, panes: scenePanes, parkedViewLifetime: parkedViewLifetime)
+        // The app's root is the window's here, so a side leaf's screens find
+        // their stores and theme as they do inside the real shell.
+        panes.traitOverrides.appRootEnvironment = root
+        root.navigation.paneArea = panes
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: width, height: height)
         window.traitOverrides.horizontalSizeClass = .regular
@@ -99,6 +108,15 @@ struct PaneTestHost {
     func hide() {
         window.isHidden = true
         window.rootViewController = nil
+    }
+}
+
+extension PaneTestHost {
+    /// Side content opened the way the app opens it: through the window's one
+    /// entry, in the panes this host draws, beside the focused pane by default.
+    @discardableResult
+    func openBeside(_ content: PaneOpenContent, kind: PaneContentKind, from origin: OpenOrigin = .link) -> Bool {
+        root.navigation.open(content.mainPaneDestination(coordinator: root.coordinator), from: origin, beside: kind).showsBeside
     }
 }
 

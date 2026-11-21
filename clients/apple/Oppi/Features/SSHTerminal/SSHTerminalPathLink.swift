@@ -411,10 +411,10 @@ enum SSHTerminalMenuHeader {
 }
 
 /// Where the terminal shows a file or folder it resolved when no pane beside
-/// takes it (`PaneHostController.openBeside(_:kind:from:otherwise:)`: a compact
-/// window, a full window of panes) or Open Here asks: pushed over the terminal
-/// in the terminal's own navigation, never onto the Workspaces stack a chat
-/// link falls back to, since the terminal may sit on the Terminal tab.
+/// takes it (`PaneHostController.openBeside(_:kind:from:)`: a compact window, a
+/// full window of panes) or Open Here asks: pushed over the terminal in the
+/// terminal's own navigation, never onto the Workspaces stack a chat link falls
+/// back to, since the terminal may sit on the Terminal tab.
 @MainActor
 enum SSHTerminalOpenRoute {
     /// Over the terminal, unless something already covers it (Back before

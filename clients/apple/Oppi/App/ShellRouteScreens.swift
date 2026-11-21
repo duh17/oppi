@@ -7,12 +7,14 @@ import UIKit
 /// the shell shows in their place.
 @MainActor
 enum ShellRouteScreens {
-    static func make(_ route: ShellRoute, root: AppRootEnvironment) -> UIViewController {
+    /// The screen a leaf's route shows. A side leaf's `.entry` is its content
+    /// (`PaneSplitScreens`), which reports back into the leaf's route; the
+    /// window's own stack shows a linked or restored entry through its leaf
+    /// state until its content can open.
+    static func make(_ route: WorkspaceStackRouteElement, root: AppRootEnvironment, side: PaneSplitScreens.Actions? = nil) -> UIViewController {
         switch route {
-        case .inbox:
+        case .allSessions:
             return SessionInboxViewController(root: root)
-        case .sidebar:
-            return WorkspaceSidebarViewController(root: root)
         case .workspace(let target):
             return WorkspaceDetailViewController(root: root, target: target)
         case .session(let target):
@@ -35,20 +37,9 @@ enum ShellRouteScreens {
             return ModelProvidersViewController(target: target, root: root)
         case .serverResourceDetail(let target):
             return ServerExtensionDetailViewController(target: target, root: root)
-        case .paneEntry(let entry):
-            // A game states its own server and project (a Godot link on a
-            // compact window, or with no room for a pane beside).
-            if case .godot(let project) = entry.route {
-                return GodotPaneViewController(serverId: entry.serverId, project: project, restored: false, root: root)
-            }
-            // A workspace's Git or a commit, pushed (a link on a compact window,
-            // or with no room for a pane beside); its close pops it.
-            weak var pushed: UIViewController?
-            if let git = PaneGitScreens.screen(for: entry, root: root, inPane: false, close: { if let pushed { Router.finish(pushed) } }) {
-                pushed = git
-                return git
-            }
-            return PaneLeafStateViewController(entry: entry, root: root)
+        case .entry(let entry):
+            if let side { return PaneSplitScreens.make(entry, root: root, actions: side) }
+            return entryScreen(entry, root: root)
         case .terminal(let target):
             let screen = target.screen
             if screen.traitOverrides.appRootEnvironment == nil {
@@ -56,6 +47,24 @@ enum ShellRouteScreens {
             }
             return screen
         }
+    }
+
+    /// An entry the window's own stack shows: a game, a workspace's Git or a
+    /// commit (pushed, with Back to close it), else its leaf state, which hands
+    /// its place to the content once it can open.
+    private static func entryScreen(_ entry: PaneStackEntry, root: AppRootEnvironment) -> UIViewController {
+        // A game states its own server and project (a Godot link on a compact
+        // window, or with no room for a pane beside).
+        if case .godot(let project) = entry.route {
+            return GodotPaneViewController(serverId: entry.serverId, project: project, restored: false, root: root)
+        }
+        // A pushed page's own close pops it.
+        weak var pushed: UIViewController?
+        if let git = PaneGitScreens.screen(for: entry, root: root, inPane: false, close: { if let pushed { Router.finish(pushed) } }) {
+            pushed = git
+            return git
+        }
+        return PaneLeafStateViewController(entry: entry, root: root)
     }
 
     private static func utilityScreen(_ target: WorkspaceUtilityNavTarget, root: AppRootEnvironment) -> UIViewController {
@@ -88,7 +97,7 @@ enum ShellRouteScreens {
 
     /// Newer content for the same screen (a refreshed workspace). The main
     /// pane's sidebar button is the stack's, not the screen's.
-    static func update(_ screen: UIViewController, route: ShellRoute) {
+    static func update(_ screen: UIViewController, route: WorkspaceStackRouteElement) {
         if let detail = screen as? WorkspaceDetailViewController, case .workspace(let target) = route {
             detail.update(workspace: target.workspace)
         }

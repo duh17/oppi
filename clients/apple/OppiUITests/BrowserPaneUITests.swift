@@ -210,9 +210,13 @@ final class BrowserPaneUITests: XCTestCase, PreviewUITestCase {
         XCTAssertFalse(webView.exists, "Nothing loaded behind it")
         attachScreenCapture("restored-paused")
 
-        app.buttons["Load Page"].tap()
-        XCTAssertTrue(waitFor(state.value as? String != "paused", timeout: 10), "A tap loads the page")
+        let loadPage = app.buttons["Load Page"]
+        loadPage.tap()
+        XCTAssertTrue(loadPage.waitUntilGone(timeout: 10), "A tap leaves the paused state")
         XCTAssertTrue(webView.waitUntilExists(timeout: 5), "The page's web view is back")
+        // While the load is in flight `browser.state` is hidden; once the invalid
+        // host fails DNS it reappears as `failed`. Never read `.value` when hidden.
+        XCTAssertFalse(state.exists && (state.value as? String) == "paused", "A tap loads the page")
     }
 
     /// The owner's portrait report: Split Down, the lower pane dragged as

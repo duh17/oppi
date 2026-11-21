@@ -1,13 +1,12 @@
 import Foundation
 
-// The one way to show something in the window's main pane. Every sidebar row,
-// list row, button, link, notification and key that shows a place, a chat or
-// a page calls `SceneNavigation.open(_:from:)`, and
-// `PaneStack.placement(of:from:split:)` is the one table that says where it
-// goes. Content that can open in a pane beside (`SidePanePlacement`) comes here
-// only when it opens in the main pane.
+// The one way to show something in the window. Every sidebar row, list row,
+// button, link, notification and key calls `SceneNavigation.open(_:from:)`,
+// and `PanePlacement` is the one table that says where it lands: the main
+// pane's route, or a pane beside for side content (a file, a folder, a web
+// page, a session list, Git, a terminal, a game).
 
-/// What an open shows in the main pane.
+/// What an open shows.
 enum NavigationDestination: Equatable {
     /// A sidebar row: All Sessions, a workspace's sessions, a utility.
     case place(NavigationPlace)
@@ -63,33 +62,6 @@ enum NavigationDestination: Equatable {
     }
 }
 
-/// Where an open comes from, which decides what Back returns to.
-enum MainPaneOrigin: Equatable {
-    /// A row, button, sidebar row or key on one of the window's screens.
-    /// `workspace` is the workspace that screen belongs to: a chat opens on
-    /// its list.
-    case screen(workspace: WorkspaceNavTarget? = nil)
-    /// A link inside a chat or another page: it keeps the back stack.
-    case link
-    /// A notification, an `oppi://` link, Siri or a Shortcut: no screen of its own.
-    case external
-}
-
-/// Where the main pane puts an open.
-enum MainPanePlacement: Equatable {
-    /// The place is the main pane's root with nothing over it.
-    case root(NavigationPlace)
-    /// On the place, in place of what covered it: Back returns to the place.
-    case onPlace(NavigationPlace)
-    /// On top of what shows: Back returns to it.
-    case push
-    /// In place of the server pages on top: the host switcher's jobs replace
-    /// each other on the compact stack.
-    case replacingServerPages
-    /// It already shows.
-    case stay
-}
-
 extension NavigationPlace {
     /// The place's screen in the stack: nil for All Sessions, the stack's bottom.
     var screen: WorkspaceStackRouteElement? {
@@ -106,105 +78,92 @@ extension NavigationPlace {
 }
 
 extension SceneNavigation {
-    /// Shows `destination` in the main pane where
-    /// `PaneStack.placement(of:from:split:)` puts it, once its scoped lock
+    /// Shows `destination` where the table puts it, once its scoped lock
     /// allows: a locked destination asks for device authentication and opens
     /// after success; cancel leaves the window as it was. The destination's screen gates again, which covers an unlock that
     /// expires under an open screen. Anything but an outside open is the
     /// person's own navigation, so it ends an AVKit full screen's hold on the stack.
-    func open(_ destination: NavigationDestination, from origin: MainPaneOrigin = .screen()) {
+    ///
+    /// `origin` is what the open acted in; nil is the main pane's own screens.
+    /// `beside` names what kind of side content the destination is: a pane
+    /// already showing that kind (or a launcher) takes it in place of what it
+    /// showed, else a new pane opens beside the pane `origin` names, else the
+    /// content falls back to its opener's pane or the main pane.
+    /// `beforeMain` runs just before that main-pane open (a chat freezes its
+    /// viewport before a file covers it), and `opensInMainPane` is false for a
+    /// caller that shows its own fallback and only reads where it landed.
+    @discardableResult
+    func open(
+        _ destination: NavigationDestination,
+        from origin: OpenOrigin? = nil,
+        beside kind: PaneContentKind? = nil,
+        opensInMainPane: Bool = true,
+        beforeMain: @escaping () -> Void = {}
+    ) -> PanePlacement {
+        let origin = origin ?? .row(panes.mainLeafID)
         var destination = destination
-        if case .chat(let chat) = destination, case .screen(let workspace?) = origin {
+        if case .chat(let chat) = destination, let workspace = origin.workspace {
             destination = .chat(chat.withWorkspaceIdIfMissing(workspace.workspace.id))
         }
-        if let lock = destination.lockTarget, !ScopedLockService.shared.gate(lock, onUnlock: { [weak self, destination] in
-            self?.open(destination, from: origin)
+        if let lock = destination.lockTarget, !ScopedLockService.shared.gate(lock, onUnlock: { [weak self, destination, origin, kind, opensInMainPane, beforeMain] in
+            self?.open(destination, from: origin, beside: kind, opensInMainPane: opensInMainPane, beforeMain: beforeMain)
         }) {
-            return
+            return .stay
         }
         if origin != .external { mediaOverlayYieldsToUserNavigation() }
-        let screen = destination.screen
-        let placement = mainPaneRoute.placement(of: destination, from: origin, split: workspaceNavigationPresentation == .split)
+        if let kind, let route = destination.screen,
+           let beside = paneArea?.sidePlacement(of: kind, showing: route, from: origin),
+           let pane = paneArea, pane.showBeside(route, kind: kind, beside) {
+            return beside
+        }
+        let placement = fallback(of: destination, from: origin)
+        // A caller that shows its own fallback (Safari's sheet for a web link)
+        // reads the placement instead of opening anything.
+        guard opensInMainPane else { return placement }
+        beforeMain()
+        apply(placement, destination)
+        return placement
+    }
+
+    /// Where the open lands when no pane beside takes it: over the pane that
+    /// opened it (a screen's own row), else where the main pane's rule puts it.
+    private func fallback(of destination: NavigationDestination, from origin: OpenOrigin) -> PanePlacement {
+        if case .row(let pane, _) = origin, case .page(let page) = destination, !page.isChat, pane != panes.mainLeafID {
+            return .push(pane)
+        }
+        let main = panes.mainLeafID
+        guard let route = panes.stack(of: main) else { return .push(main) }
+        return route.placement(of: destination, from: origin, in: main, split: isSplit)
+    }
+
+    /// `isSplit` reads the window's shell.
+    private var isSplit: Bool { workspaceNavigationPresentation == .split }
+
+    /// Shows a main-pane placement. A pane beside is the host's arm, already
+    /// taken before this (`PaneHostController.showBeside`).
+    private func apply(_ placement: PanePlacement, _ destination: NavigationDestination) {
         switch placement {
-        case .root(let place):
-            mainPaneRoute = PaneStack(place: place)
-        case .onPlace(let place):
-            mainPaneRoute = PaneStack(place: place, stack: [screen].compactMap { $0 })
-        case .push:
-            if let screen { mainPaneRoute.stack.append(screen) }
-        case .replacingServerPages:
-            var route = mainPaneRoute
+        case .root(let pane, let place):
+            setRoute(PaneStack(place: place), in: pane)
+        case .onPlace(let pane, let place):
+            setRoute(PaneStack(place: place, stack: [destination.screen].compactMap { $0 }), in: pane)
+        case .push(let pane):
+            guard let screen = destination.screen else { return }
+            var route = panes.stack(of: pane) ?? PaneStack()
+            route.stack.append(screen)
+            setRoute(route, in: pane)
+        case .replacingServerPages(let pane):
+            var route = panes.stack(of: pane) ?? PaneStack()
             while Self.hostSwitcherDestination(from: route.stack.last) != nil { route.stack.removeLast() }
             // A server page at the root (Usage, kept from the split shell) goes too.
             if route.stack.isEmpty, Self.hostSwitcherDestination(from: route.place?.screen) != nil {
                 route.place = NavigationPlace.allSessions
             }
-            route.stack += [screen].compactMap { $0 }
-            mainPaneRoute = route
-        case .stay:
+            // All Sessions is the stack's bottom, so its job adds no screen.
+            route.stack += [destination.screen].compactMap { $0 }
+            setRoute(route, in: pane)
+        case .reuse, .split, .stay:
             break
         }
-    }
-}
-
-extension PaneStack {
-    /// The rule, read from this route and the window's shell alone. A place
-    /// replaces the main pane's stack in both shells, whatever opens it: the
-    /// sidebar, the drawer, a link or a key (the compact stack keeps All
-    /// Sessions under it). A chat from a list sits on that list; from a link,
-    /// over the screen the link is in; from outside, on the list the window
-    /// shows. A page (a terminal too) sits over its opener. Workspace
-    /// Settings sits on its workspace's list. The host switcher's jobs
-    /// replace each other.
-    func placement(of destination: NavigationDestination, from origin: MainPaneOrigin, split: Bool) -> MainPanePlacement {
-        // A leaf rooted at its content has no place, and the main leaf's is All
-        // Sessions when it has none: both read as the window's list.
-        let place = place ?? .allSessions
-        switch destination {
-        case .place(let place):
-            return .root(place)
-        case .chat(let chat):
-            switch origin {
-            case .link:
-                return shownChat.map { SceneNavigation.isSameSession($0, chat) } == true ? .stay : .push
-            case .external:
-                return .onPlace(split ? .sessions(place.workspace) : .allSessions)
-            case .screen(let workspace):
-                if split {
-                    switch place {
-                    case .utility: return .push
-                    case .sessions(let listed): return .onPlace(.sessions(listed.map { workspace ?? $0 }))
-                    }
-                }
-                // The compact stack changes the place only from one workspace's list to
-                // another's; over All Sessions or a utility the chat is pushed.
-                guard let workspace, case .sessions(_?) = place else { return .push }
-                return .onPlace(.sessions(workspace))
-            }
-        case .page(.workspaceConfiguration(let workspace)):
-            return .onPlace(.sessions(workspace))
-        case .page(let page):
-            return page == top ? .stay : .push
-        case .serverJob(let job, _):
-            guard job.shouldNavigate(from: hostSwitcherDestination) else { return .stay }
-            guard split else { return .replacingServerPages }
-            // Each job replaces the detail column beside the sidebar.
-            return switch destination.screen {
-            case nil: .root(.allSessions)
-            case .utility(let utility)?: .root(.utility(utility))
-            default: .onPlace(.allSessions)
-            }
-        }
-    }
-
-    /// The session whose chat is on top.
-    var shownChat: WorkspaceSessionNavTarget? {
-        guard case .session(let chat)? = stack.last else { return nil }
-        return chat
-    }
-
-    /// The host switcher's job the screen on top shows, else All Sessions.
-    var hostSwitcherDestination: HostSwitcherDestination {
-        SceneNavigation.hostSwitcherDestination(from: top) ?? .inbox
     }
 }

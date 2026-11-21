@@ -238,7 +238,7 @@ struct PaneRestorationTests: PaneFixtureBuilding {
         let root = try await makeRoot(sessions: [])
         root.navigation.panes.connect(scene: "scene-offline", store: store)
         root.navigation.panes.restore(navigation: root.navigation, coordinator: root.coordinator)
-        #expect(root.navigation.workspaceStackRouteElements == [.paneEntry(PaneStackEntry(serverId: serverId, route: .session("s-offline")))])
+        #expect(root.navigation.workspaceStackRouteElements == [.entry(PaneStackEntry(serverId: serverId, route: .session("s-offline")))])
         root.navigation.panes.flush()
 
         let saved = try #require(store.load(scene: "scene-offline"))
@@ -251,7 +251,7 @@ struct PaneRestorationTests: PaneFixtureBuilding {
     @Test func aPanelWithoutItsChatOpensTheChatWithThePanelBesideIt() async throws {
         let root = try await makeRoot(sessions: [session("s-1")])
         let entry = PaneStackEntry(serverId: serverId, route: .panel(session: "s-1", id: "jobs"))
-        root.navigation.open(.page(.paneEntry(entry)))
+        root.navigation.open(.page(.entry(entry)))
         let screen = PaneLeafStateViewController(entry: entry, root: root)
         let window = try makeWindow()
         window.rootViewController = screen
@@ -287,7 +287,7 @@ struct PaneRestorationTests: PaneFixtureBuilding {
         root.navigation.panes.connect(scene: "scene-b", store: store)
         root.navigation.panes.restore(navigation: root.navigation, coordinator: root.coordinator)
 
-        #expect(root.navigation.workspaceStackRouteElements == [.paneEntry(gone), .paneEntry(unpaired)])
+        #expect(root.navigation.workspaceStackRouteElements == [.entry(gone), .entry(unpaired)])
         #expect(PaneEntries.state(of: unpaired, coordinator: root.coordinator) == .missing(.server))
         // The test server has no live transport, so its badge says offline:
         // a session it might still have waits on the server, never "missing".
@@ -300,7 +300,7 @@ struct PaneRestorationTests: PaneFixtureBuilding {
     @Test func aRemovedServersLeafOffersCloseAndLeavesTheStack() async throws {
         let root = try await makeRoot(sessions: [])
         let entry = PaneStackEntry(serverId: "sha256:removed", route: .session("s-1"))
-        root.navigation.open(.page(.paneEntry(entry)))
+        root.navigation.open(.page(.entry(entry)))
         let screen = PaneLeafStateViewController(entry: entry, root: root)
         let window = try makeWindow()
         window.rootViewController = screen
@@ -319,7 +319,7 @@ struct PaneRestorationTests: PaneFixtureBuilding {
     @Test func anEntryOpensItsContentOnceTheStoresHoldIt() async throws {
         let root = try await makeRoot(sessions: [])
         let entry = PaneStackEntry(serverId: serverId, route: .session("s-late"))
-        root.navigation.open(.page(.paneEntry(entry)))
+        root.navigation.open(.page(.entry(entry)))
         let screen = PaneLeafStateViewController(entry: entry, root: root)
         let window = try makeWindow()
         window.rootViewController = screen
@@ -353,7 +353,7 @@ struct PaneRestorationTests: PaneFixtureBuilding {
         #expect(saved.layout.leaves.flatMap(\.stack).map(\.route) == [.sessions(workspace: "ws-1")])
 
         let placeholder = PaneStackEntry(serverId: serverId, route: .session("s-1"))
-        root.navigation.mainPaneRoute = PaneStack(place: .allSessions, stack: [.paneEntry(placeholder)])
+        root.navigation.mainPaneRoute = PaneStack(place: .allSessions, stack: [.entry(placeholder)])
         root.navigation.removeSessionRoute(serverId: serverId, sessionId: "s-1")
         #expect(root.navigation.workspaceStackRouteElements.isEmpty)
     }
@@ -464,7 +464,7 @@ struct PaneRestorationTests: PaneFixtureBuilding {
             return makeTestSession(id: id, workspaceId: "ws-other")
         }
         let entry = PaneStackEntry(serverId: "sha256:other", route: .session("s-elsewhere"))
-        root.navigation.open(.page(.paneEntry(entry)))
+        root.navigation.open(.page(.entry(entry)))
         let screen = PaneLeafStateViewController(entry: entry, root: root)
         let window = try makeWindow()
         window.rootViewController = screen
@@ -523,7 +523,7 @@ struct PaneRestorationTests: PaneFixtureBuilding {
         showChat("s-1", in: root.navigation)
         let panes = root.navigation.panes
         let files = PaneStackEntry(serverId: serverId, route: .files(workspace: "ws-1", path: "Sources"))
-        let side = try #require(panes.split(panes.mainLeafID, edge: .right, showing: files))
+        let side = try #require(panes.split(panes.mainLeafID, edge: .right, showing: .entry(files)))
 
         let expectedMain = PaneStack(
             place: .sessions(WorkspaceNavTarget(serverId: serverId, workspace: workspace)),
@@ -548,7 +548,7 @@ struct PaneRestorationTests: PaneFixtureBuilding {
 
     /// Restoring scrubs the main leaf's restored stack out of `tree` so `tree`
     /// never carries a stale copy after navigating away: `PaneOpenChoices.takesFile`
-    /// still targets the main pane, and `SidePanePlacement`'s game dedup does
+    /// still targets the main pane, and `PanePlacement.sideContent`'s game dedup does
     /// not match a stale `.godot` entry on `mainLeafID`.
     @Test func restoringScrubsMainLeafStackFromTree() async throws {
         let godot = PaneStackEntry(serverId: serverId, route: .godot(project: "tide-runner"))
@@ -582,7 +582,7 @@ struct PaneRestorationTests: PaneFixtureBuilding {
             root.navigation.open(.place(.allSessions))
             let mainLeaf = try #require(panes.cellLayout.leaf(panes.mainLeafID))
             #expect(mainLeaf.stack.last?.route == .sessions(workspace: nil), "main.stack was scrubbed for \(name)")
-            #expect(PaneOpenChoices.takesFile(mainLeaf), "takesFile targets the main pane after \(name)")
+            #expect(PaneOpenChoices.takesFile(panes.stack(of: panes.mainLeafID)?.top), "takesFile targets the main pane after \(name)")
 
             let host = PaneTestHost(width: 1133, height: 744, inNavigation: true, scenePanes: panes)
             defer { host.hide() }
@@ -592,13 +592,13 @@ struct PaneRestorationTests: PaneFixtureBuilding {
             if restoredEntry == godot {
                 var opened = false
                 host.act {
-                    opened = host.panes.openBeside(PaneOpenContent(entry: godot), kind: .game, from: .pane(side.id))
+                    opened = host.openBeside(PaneOpenContent(entry: godot), kind: .game, from: .row(side.id))
                 }
                 #expect(opened)
                 #expect(panes.splitLeaves.count == 2, "game dedup must not match scrubbed mainLeafID")
                 let gameLeaf = try #require(panes.splitLeaves.first { $0.id != side.id })
                 #expect(panes.cellLayout.focus == gameLeaf.id, "focused the new game pane, not main")
-                #expect(gameLeaf.stack.last == godot)
+                #expect(panes.stack(of: gameLeaf.id)?.top == .entry(godot))
             }
         }
     }
@@ -694,7 +694,7 @@ struct PaneRestorationTests: PaneFixtureBuilding {
                     serverId: serverId, workspaceId: "ws-1", worktreeId: nil,
                     path: "Sources/App.swift", lineAnchor: SourceLineAnchor(startLine: 12, endLine: 12)
                 )),
-                .paneEntry(PaneStackEntry(serverId: serverId, route: .session("s-offline"))),
+                .entry(PaneStackEntry(serverId: serverId, route: .session("s-offline"))),
                 .session(WorkspaceSessionNavTarget(serverId: serverId, sessionId: "s-1", workspaceId: "ws-1")),
             ]
         ))
@@ -707,6 +707,194 @@ struct PaneRestorationTests: PaneFixtureBuilding {
             instead of \(String(decoding: written, as: UTF8.self))
             """)
         #expect(root.navigation.panes.takeRestoredScroll(for: "s-1") == PaneChatScroll(sessionId: "s-1", itemId: "item-9", relativeY: 0.25))
+    }
+
+    /// The tree `main` (34c3ee195) wrote for three leaves: a workspace's list
+    /// with a folder page and its chat, the folder a file was pushed from, and
+    /// the workspace's Git a commit was pushed from. A side pane saved only the
+    /// page it was opened with, because what was pushed inside it lived in UIKit
+    /// alone. This build makes each side pane a route, restores all three, and
+    /// saves the same bytes back.
+    ///
+    /// The bytes are the encoder's own, not hand-written: `PaneLayoutArchive`
+    /// and `PaneLayout` are byte-identical to `34c3ee195`
+    /// (`git diff 34c3ee195 -- OppiCore/Panes` is empty), so the file is
+    /// generated by running this suite with `OPPI_PRINT_PANE_FIXTURE=1` and
+    /// saving the printed JSON, which
+    /// `theSidePanesFixtureIsWhatTheEncoderWrites` checks on every run.
+    @Test func anArchiveMainWroteForSidePanesSavesBackUnchanged() async throws {
+        let written = try Data(contentsOf: TestFixtures.url("pane-archive-side-panes.json"))
+        #expect(PaneLayoutArchive.decode(written) != nil, "the fixture decodes")
+
+        let store = try makeStore()
+        store.defaults.set(written, forKey: PaneTreeStore.key(forScene: "scene-side-panes"))
+        let root = try await makeRoot(sessions: [session("s-1")])
+        let panes = root.navigation.panes
+        panes.connect(scene: "scene-side-panes", store: store)
+        panes.restore(navigation: root.navigation, coordinator: root.coordinator)
+
+        #expect(panes.mainLeafID == id("leaf-1"))
+        #expect(root.navigation.mainPaneRoute == PaneStack(
+            place: .sessions(WorkspaceNavTarget(serverId: serverId, workspace: workspace)),
+            stack: [
+                .fileBrowser(FileBrowserNavTarget(serverId: serverId, workspaceId: "ws-1", path: "Sources/")),
+                .session(WorkspaceSessionNavTarget(serverId: serverId, sessionId: "s-1", workspaceId: "ws-1")),
+            ]
+        ))
+        #expect(panes.stack(of: id("leaf-2"))?.top == .fileBrowser(FileBrowserNavTarget(
+            serverId: serverId, workspaceId: "ws-1", path: "Sources/"
+        )))
+        #expect(panes.stack(of: id("leaf-3"))?.top == .entry(PaneStackEntry(
+            serverId: serverId, route: .git(workspace: "ws-1", worktree: nil)
+        )))
+
+        panes.flush()
+        let saved = try #require(store.defaults.data(forKey: PaneTreeStore.key(forScene: "scene-side-panes")))
+        #expect(saved == written, """
+            re-saved as \(String(decoding: saved, as: UTF8.self))
+            instead of \(String(decoding: written, as: UTF8.self))
+            """)
+    }
+
+    /// A leaf state's content takes that entry's own place in the leaf's route:
+    /// the pages under it stay, and so do the pages over it (`ScenePanes.replace`).
+    @Test func aLeavesEntryTakesItsOwnPlaceInTheRoute() async throws {
+        let root = try await makeRoot(sessions: [])
+        let panes = root.navigation.panes
+        let folder = PaneStackEntry(serverId: serverId, route: .files(workspace: "ws-1", path: "Sources"))
+        let late = PaneStackEntry(serverId: serverId, route: .session("s-late"))
+        let over = PaneStackEntry(serverId: serverId, route: .file(.workspace(id: "ws-1", worktree: nil), path: "README.md", line: nil))
+        let side = try #require(panes.split(panes.mainLeafID, edge: .right, showing: .entry(folder)))
+        panes.setStack(PaneStack(stack: [.entry(folder), .entry(late), .entry(over)]), for: side)
+
+        let opened = WorkspaceStackRouteElement.session(
+            WorkspaceSessionNavTarget(serverId: serverId, sessionId: "s-late", workspaceId: "ws-1")
+        )
+        panes.replace(late, with: opened, in: side)
+
+        #expect(panes.stack(of: side)?.stack == [.entry(folder), opened, .entry(over)], """
+            the entry's place is its own: \(String(describing: panes.stack(of: side)))
+            """)
+    }
+
+    /// Close on a page pushed over a side pane's root pops that page, and only a
+    /// root's Close closes the pane.
+    @Test func closeOnAPushedPagePopsItInsteadOfClosingThePane() async throws {
+        let root = try await makeRoot(sessions: [])
+        let panes = root.navigation.panes
+        let folder = PaneStackEntry(serverId: serverId, route: .files(workspace: "ws-1", path: nil))
+        let side = try #require(panes.split(panes.mainLeafID, edge: .right, showing: .entry(folder)))
+        let missing = PaneStackEntry(serverId: serverId, route: .session("s-gone"))
+        panes.show(PaneStackEntry(serverId: serverId, route: .files(workspace: "ws-1", path: "Sources")), in: side)
+        panes.setStack(PaneStack(stack: [.entry(folder), .entry(missing)]), for: side)
+        let host = PaneTestHost(width: 1133, height: 744, inNavigation: true, scenePanes: panes)
+        defer { host.hide() }
+
+        let leaf = try #require(host.panes.splitLeaves[side]?.controller)
+        let state = try #require(leaf.viewControllers.compactMap { $0 as? PaneLeafStateViewController }
+            .first { $0.entry == missing })
+        host.act { state.onClose?() }
+
+        #expect(panes.stack(of: side)?.stack == [.entry(folder)], "the pushed page popped: \(String(describing: panes.stack(of: side)))")
+    }
+
+    /// A restored browser side pane mounts paused with no web view and its
+    /// state view showing `paused`. Tapping Load Page unpauses it in place
+    /// (keeping the same screen) and builds the web view.
+    @Test func aRestoredBrowserPaneMountsPausedAndUnpausesInPlaceOnTap() async throws {
+        let store = try makeStore()
+        let url = try #require(URL(string: "https://pane-browser.invalid/restored"))
+        let before = try await makeRoot(sessions: [session("s-1")])
+        showChat("s-1", in: before.navigation)
+        let saved = before.navigation.panes
+        let page = try #require(saved.split(saved.mainLeafID, axis: .row))
+        saved.show(PaneStackEntry(serverId: serverId, route: .browser(url)), in: page)
+        save(saved, scene: "scene-browser-paused", store: store)
+
+        let after = try await makeRoot(sessions: [session("s-1")])
+        after.navigation.panes.connect(scene: "scene-browser-paused", store: store)
+        after.navigation.panes.restore(navigation: after.navigation, coordinator: after.coordinator)
+        let host = PaneTestHost(width: 1133, height: 744, inNavigation: true, scenePanes: after.navigation.panes)
+        defer { host.hide() }
+
+        let browser = try #require(host.panes.frontScreen(ofCell: page) as? BrowserPaneViewController)
+        browser.updatePropertiesIfNeeded()
+        let stateView = try #require(browser.view.subviews.first { $0.accessibilityIdentifier == "browser.state" } as? UIContentUnavailableView)
+        #expect(browser.isPaused, "a restored browser pane starts paused")
+        #expect(browser.webView == nil, "nothing loads until tapped")
+        #expect(!stateView.isHidden)
+        #expect(stateView.accessibilityValue == "paused")
+
+        let config = try #require(stateView.configuration as? UIContentUnavailableConfiguration)
+        host.act { config.buttonProperties.primaryAction?.performWithSender(nil, target: nil) }
+        browser.updatePropertiesIfNeeded()
+
+        #expect(host.panes.frontScreen(ofCell: page) === browser, "unpausing keeps the same browser screen")
+        #expect(!browser.isPaused, "tapping Load Page unpauses the pane")
+        #expect(browser.webView != nil, "the web view is created to load the page")
+        #expect(after.navigation.panes.stack(of: page)?.top == .entry(PaneStackEntry(serverId: serverId, route: .browser(url))))
+    }
+
+    /// The side-panes fixture is what `PaneLayoutArchive.encoded()` writes for
+    /// its window: the same encoder `34c3ee195` has, so the file is that build's
+    /// archive and not a hand-written guess. With `OPPI_PRINT_PANE_FIXTURE=1` it
+    /// prints the bytes to save.
+    @Test func theSidePanesFixtureIsWhatTheEncoderWrites() throws {
+        let workspace = makeTestWorkspace(id: "ws-1", name: "Oppi")
+        func entry(_ route: PaneRoute) -> PaneStackEntry { PaneStackEntry(serverId: serverId, route: route) }
+        func leaf(_ id: PaneID, _ stack: [PaneStackEntry]) -> PaneNode {
+            .leaf(PaneLeaf(id: id, name: nil, stack: stack, attachedTo: nil, origin: .split))
+        }
+        let layout = PaneLayout(
+            root: .split(axis: .row, children: [
+                leaf(id("leaf-1"), [
+                    entry(.sessions(workspace: workspace.id)),
+                    entry(.files(workspace: workspace.id, path: "Sources")),
+                    entry(.session("s-1")),
+                ]),
+                .split(axis: .column, children: [
+                    leaf(id("leaf-2"), [entry(.files(workspace: workspace.id, path: "Sources"))]),
+                    leaf(id("leaf-3"), [entry(.git(workspace: workspace.id, worktree: nil))]),
+                ], weights: [0.5, 0.5]),
+            ], weights: [0.6, 0.4]),
+            focus: id("leaf-2"),
+            recency: [id("leaf-2"), id("leaf-1"), id("leaf-3")]
+        )
+        let written = try #require(PaneLayoutArchive(restorable: layout)).encoded()
+        if ProcessInfo.processInfo.environment["OPPI_PRINT_PANE_FIXTURE"] == "1" {
+            print("PANE-FIXTURE:" + String(decoding: written, as: UTF8.self))
+        }
+        let tracked = try Data(contentsOf: TestFixtures.url("pane-archive-side-panes.json"))
+        #expect(written == tracked, """
+            the fixture is not what the encoder writes:
+            \(String(decoding: written, as: UTF8.self))
+            """)
+    }
+
+    /// A page opened over a side pane's own screen is part of the leaf's route,
+    /// so it comes back after a relaunch with the page under it.
+    @Test func aSidePanesPushedPageComesBackAfterRelaunch() async throws {
+        let store = try makeStore()
+        let before = try await makeRoot(sessions: [session("s-1")])
+        let panes = before.navigation.panes
+        panes.connect(scene: "scene-side-push", store: store)
+        panes.restore(navigation: before.navigation, coordinator: before.coordinator)
+        let folder = FileBrowserNavTarget(serverId: serverId, workspaceId: "ws-1", path: "Sources/")
+        let side = try #require(panes.split(panes.mainLeafID, edge: .right, showing: .fileBrowser(folder)))
+        let file = WorkspaceLinkedFileNavTarget.workspaceFile(
+            serverId: serverId, workspaceId: "ws-1", path: "Sources/App.swift"
+        )
+        before.navigation.open(.page(.linkedFile(file)), from: .row(side))
+        #expect(panes.stack(of: side)?.stack == [.fileBrowser(folder), .linkedFile(file)], "the file over the folder")
+        panes.flush()
+
+        let after = try await makeRoot(sessions: [session("s-1")])
+        let restored = after.navigation.panes
+        restored.connect(scene: "scene-side-push", store: store)
+        restored.restore(navigation: after.navigation, coordinator: after.coordinator)
+        #expect(restored.stack(of: side)?.stack == [.fileBrowser(folder), .linkedFile(file)], """
+            restored \(String(describing: restored.stack(of: side)))
+            """)
     }
 
     /// The tree `main` wrote for a chat with its Git panel beside it restores

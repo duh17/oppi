@@ -55,6 +55,7 @@ func makeTestAppRoot(
     composerDraftStore: ComposerDraftStore? = nil,
     sessionRows: SessionRowDisplayStore = SessionRowDisplayStore(fixed: SessionRowDisplay()),
     liveVoiceCalls: LiveVoiceCallCenter = LiveVoiceCallCenter(),
+    godot: GodotEngineHost = .shared,
     settings: SettingsStore? = nil,
     serverSettings: ((String) -> SettingsStore)? = nil
 ) -> AppRootEnvironment {
@@ -73,7 +74,8 @@ func makeTestAppRoot(
         ),
         chatReaderPayloadStore: ChatReaderPayloadStore(),
         sessionRows: sessionRows,
-        liveVoiceCalls: liveVoiceCalls
+        liveVoiceCalls: liveVoiceCalls,
+        godot: godot
     )
 }
 

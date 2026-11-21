@@ -62,7 +62,7 @@ struct WorkspaceMediaOverlayNavigationTests {
         navigation.setWorkspaceNavigationPresentation(.split)
 
         #expect(navigation.workspaceNavigationPresentation == .split)
-        #expect(navigation.mainPaneRoute.shellRoutes(split: true).last == .session(
+        #expect(navigation.mainPaneRoute.routes(split: true).last == .session(
             WorkspaceSessionNavTarget(
                 serverId: "server-b",
                 sessionId: "chat-1",
@@ -141,7 +141,7 @@ struct WorkspaceMediaOverlayNavigationTests {
             sessionId: "chat-1",
             workspaceId: "ws-b"
         )
-        navigation.open(.chat(session), from: .screen(workspace: workspace))
+        navigation.open(.chat(session), from: .row(navigation.panes.mainLeafID, workspace: workspace))
         #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.currentPlace == .allSessions)
 
@@ -169,10 +169,10 @@ struct WorkspaceMediaOverlayNavigationTests {
             workspaceId: "ws-b"
         )
         navigation.setWorkspaceNavigationPresentation(.split)
-        navigation.open(.chat(session), from: .screen(workspace: workspace))
+        navigation.open(.chat(session), from: .row(navigation.panes.mainLeafID, workspace: workspace))
 
         #expect(navigation.currentPlace == .allSessions)
-        #expect(navigation.mainPaneRoute.shellRoutes(split: true) == [.inbox, .session(session)])
+        #expect(navigation.mainPaneRoute.routes(split: true) == [.allSessions, .session(session)])
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
         navigation.mainPaneRoute = PaneStack(place: .sessions(workspace))
@@ -180,7 +180,7 @@ struct WorkspaceMediaOverlayNavigationTests {
         let restoreServer = navigation.endMediaOverlay(currentServerId: "server-a")
         #expect(restoreServer == "server-b")
         #expect(navigation.currentPlace == .allSessions)
-        #expect(navigation.mainPaneRoute.shellRoutes(split: true) == [.inbox, .session(session)])
+        #expect(navigation.mainPaneRoute.routes(split: true) == [.allSessions, .session(session)])
     }
 
     @Test func overlayRestoresLostVisitedWorkspaceChatRoute() {
@@ -195,7 +195,7 @@ struct WorkspaceMediaOverlayNavigationTests {
             workspaceId: "ws-b"
         )
         navigation.open(.place(.sessions(workspace)))
-        navigation.open(.chat(session), from: .screen(workspace: workspace))
+        navigation.open(.chat(session), from: .row(navigation.panes.mainLeafID, workspace: workspace))
         #expect(navigation.workspaceStackRouteElements.count == 2)
         #expect(navigation.currentPlace == .sessions(workspace))
 
@@ -277,7 +277,7 @@ struct WorkspaceMediaOverlayNavigationTests {
             workspaceId: "ws-b"
         )
         navigation.open(.place(.sessions(workspace)))
-        navigation.open(.chat(session), from: .screen(workspace: workspace))
+        navigation.open(.chat(session), from: .row(navigation.panes.mainLeafID, workspace: workspace))
         #expect(navigation.workspaceStackRouteElements.count == 2)
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
@@ -303,16 +303,16 @@ struct WorkspaceMediaOverlayNavigationTests {
         )
         navigation.setWorkspaceNavigationPresentation(.split)
         navigation.open(.chat(session))
-        #expect(navigation.mainPaneRoute.shellRoutes(split: true) == [.inbox, .session(session)])
+        #expect(navigation.mainPaneRoute.routes(split: true) == [.allSessions, .session(session)])
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
         // The chat's Back pops it off its list.
         navigation.popShownStack(toDepth: 0)
-        #expect(navigation.mainPaneRoute.shellRoutes(split: true) == [.inbox])
+        #expect(navigation.mainPaneRoute.routes(split: true) == [.allSessions])
         #expect(!navigation.isMediaOverlayActive)
 
         #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
-        #expect(navigation.mainPaneRoute.shellRoutes(split: true) == [.inbox])
+        #expect(navigation.mainPaneRoute.routes(split: true) == [.allSessions])
     }
 
     @Test func ipadSidebarWorkspaceOpenDuringFullscreenEndsTheOverlayAndStands() {
@@ -328,16 +328,16 @@ struct WorkspaceMediaOverlayNavigationTests {
         )
         navigation.setWorkspaceNavigationPresentation(.split)
         navigation.open(.place(.sessions(workspace)))
-        navigation.open(.chat(session), from: .screen(workspace: workspace))
+        navigation.open(.chat(session), from: .row(navigation.panes.mainLeafID, workspace: workspace))
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
         // Opening a workspace from the sidebar is the person's navigation.
         navigation.open(.place(.sessions(workspace)))
 
         #expect(!navigation.isMediaOverlayActive)
-        #expect(navigation.mainPaneRoute.shellRoutes(split: true) == [.workspace(workspace)])
+        #expect(navigation.mainPaneRoute.routes(split: true) == [.workspace(workspace)])
         #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
-        #expect(navigation.mainPaneRoute.shellRoutes(split: true) == [.workspace(workspace)])
+        #expect(navigation.mainPaneRoute.routes(split: true) == [.workspace(workspace)])
     }
 
     @Test func ipadAllSessionsDuringFullscreenEndsTheOverlayAndStands() {
@@ -353,16 +353,16 @@ struct WorkspaceMediaOverlayNavigationTests {
         )
         navigation.setWorkspaceNavigationPresentation(.split)
         navigation.open(.place(.sessions(workspace)))
-        navigation.open(.chat(session), from: .screen(workspace: workspace))
+        navigation.open(.chat(session), from: .row(navigation.panes.mainLeafID, workspace: workspace))
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
         // All Sessions from the drawer or the server switcher.
         navigation.open(.place(.allSessions))
 
         #expect(!navigation.isMediaOverlayActive)
-        #expect(navigation.mainPaneRoute.shellRoutes(split: true) == [.inbox])
+        #expect(navigation.mainPaneRoute.routes(split: true) == [.allSessions])
         #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
-        #expect(navigation.mainPaneRoute.shellRoutes(split: true) == [.inbox])
+        #expect(navigation.mainPaneRoute.routes(split: true) == [.allSessions])
     }
 
     @Test func ipadInboxSessionOpenDuringFullscreenEndsTheOverlayAndStands() {
@@ -383,16 +383,16 @@ struct WorkspaceMediaOverlayNavigationTests {
         )
         navigation.setWorkspaceNavigationPresentation(.split)
         navigation.open(.place(.sessions(workspace)))
-        navigation.open(.chat(first), from: .screen(workspace: workspace))
+        navigation.open(.chat(first), from: .row(navigation.panes.mainLeafID, workspace: workspace))
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
         // Opening another session from the list replaces the chat over it.
-        navigation.open(.chat(second), from: .screen(workspace: workspace))
+        navigation.open(.chat(second), from: .row(navigation.panes.mainLeafID, workspace: workspace))
 
         #expect(!navigation.isMediaOverlayActive)
-        #expect(navigation.mainPaneRoute.shellRoutes(split: true) == [.workspace(workspace), .session(second)])
+        #expect(navigation.mainPaneRoute.routes(split: true) == [.workspace(workspace), .session(second)])
         #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
-        #expect(navigation.mainPaneRoute.shellRoutes(split: true) == [.workspace(workspace), .session(second)])
+        #expect(navigation.mainPaneRoute.routes(split: true) == [.workspace(workspace), .session(second)])
     }
 
     @Test func anotherServersChatDuringFullscreenKeepsItsServerAfterTheLateEnd() {
@@ -418,7 +418,7 @@ struct WorkspaceMediaOverlayNavigationTests {
 
         // The late end must not put server-b back under server-a's chat.
         #expect(navigation.endMediaOverlay(currentServerId: "server-a") == nil)
-        #expect(navigation.mainPaneRoute.shellRoutes(split: true).last == .session(otherServerChat))
+        #expect(navigation.mainPaneRoute.routes(split: true).last == .session(otherServerChat))
     }
 
     // MARK: The app root's observer

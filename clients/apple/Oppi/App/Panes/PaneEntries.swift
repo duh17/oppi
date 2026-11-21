@@ -9,7 +9,8 @@ enum PaneEntries {
 
     /// A leaf's stack as it is saved: the place's session list first (All
     /// Sessions when the place names no workspace), then each screen, with
-    /// `.local` for a screen that has no link.
+    /// `.local` for a screen that has no link. A side leaf (no place) saves its
+    /// screens alone.
     static func entries(of stack: PaneStack, rootServerId: String) -> [PaneStackEntry] {
         let local = PaneStackEntry(serverId: rootServerId, route: .local(PaneLocalToken(raw: "screen")))
         let above = stack.stack.map { entry(for: $0) ?? local }
@@ -37,9 +38,13 @@ enum PaneEntries {
         case .fileBrowser(let target):
             switch target.scope {
             case .workspace(let workspaceId, nil):
+                // The browser names a folder `a/b/`; a link names it without the
+                // slash, so the two forms are inverses and a saved tree keeps its
+                // bytes (see `element(for:)`).
+                let path = target.path.count > 1 && target.path.hasSuffix("/") ? String(target.path.dropLast()) : target.path
                 return PaneStackEntry(
                     serverId: target.serverId,
-                    route: .files(workspace: workspaceId, path: target.path.isEmpty ? nil : target.path)
+                    route: .files(workspace: workspaceId, path: path.isEmpty ? nil : path)
                 )
             case .hostHome:
                 let path = FileBrowserHostHomePath.rawPath(relativePath: target.path)
@@ -63,9 +68,9 @@ enum PaneEntries {
             case .hostFile:
                 return nil
             }
-        case .paneEntry(let entry):
+        case .entry(let entry):
             return entry
-        case .chatReader, .workspaceConfiguration, .utility, .serverDetails, .modelProviders,
+        case .allSessions, .chatReader, .workspaceConfiguration, .utility, .serverDetails, .modelProviders,
              .serverResourceDetail, .terminal:
             return nil
         }

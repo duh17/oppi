@@ -7,10 +7,9 @@ import UIKit
 // keyboard and accessibility run. The tree lives in `ScenePanes`; the host
 // draws it and runs the operations the controls ask for.
 
-/// A split leaf's stack and the entry its root shows.
+/// A split leaf's stack and the shell stack drawing it.
 struct PaneSplitLeaf {
-    let controller: RouterNavigationController
-    var entry: PaneStackEntry
+    let controller: ShellNavigationController
     /// The width class the leaf was last given; nil before its first layout.
     var isRegular: Bool?
 }
@@ -136,7 +135,11 @@ extension PaneHostController {
     /// screen with no link is a list, but for a page waiting for its address.
     func minimumSize(of leaf: PaneLeaf) -> CGSize {
         if leaf.id == panes.mainLeafID { return PaneMinimumSize.chat }
-        let route = leaf.stack.last?.route ?? .sessions(workspace: nil)
+        // A leaf the panes do not hold yet (a drop's probe) states what it will
+        // show in its own stack; a leaf they hold states it in its route.
+        let entry = panes.stack(of: leaf.id)
+            .flatMap { PaneEntries.entries(of: $0, rootServerId: "").last } ?? leaf.stack.last
+        let route = entry?.route ?? .sessions(workspace: nil)
         if case .local(let token) = route, case .browser? = PaneLocalScreen(token) { return PaneMinimumSize.browser }
         if case .local(let token) = route, case .godot? = PaneLocalScreen(token) { return PaneMinimumSize.list }
         return PaneMinimumSize.standard(for: route) ?? PaneMinimumSize.list
@@ -326,8 +329,9 @@ extension PaneHostController {
 
     // MARK: Leaves
 
-    /// Mounts a stack for each split leaf the tree has, rebuilds one whose
-    /// entry changed, and removes the leaves the tree no longer has.
+    /// Mounts a stack for each split leaf the tree has, gives each the routes
+    /// its leaf's route names (keeping every screen whose route stays), and
+    /// removes the leaves the tree no longer has.
     func syncSplitLeaves() {
         let leaves = panes.splitLeaves
         let ids = Set(leaves.map(\.id))
@@ -338,50 +342,41 @@ extension PaneHostController {
             grips.removeValue(forKey: id)?.removeFromSuperview()
         }
         for leaf in leaves {
-            guard let entry = leaf.stack.last else { continue }
+            guard let stack = panes.stack(of: leaf.id), !stack.stack.isEmpty else { continue }
+            let routes = stack.routes(split: true)
             if let shown = splitLeaves[leaf.id] {
-                guard shown.entry != entry else { continue }
-                splitLeaves[leaf.id]?.entry = entry
-                shown.controller.setViewControllers([makeScreen(entry, leaf: leaf.id)], animated: false)
-                // The new screen's bar parts (a search field) arrive a turn later.
-                DispatchQueue.main.async { [weak self] in self?.view.setNeedsLayout() }
+                shown.controller.setRoutes(routes)
                 continue
             }
-            let controller = RouterNavigationController(rootViewController: makeScreen(entry, leaf: leaf.id))
-            let root = AppRootEnvironment.near(self)
-            controller.interfaceStyle = { root?.themeStore.userInterfaceStyle ?? .unspecified }
-            controller.view.backgroundColor = root?.themeStore.backgroundColor ?? .systemBackground
-            // A pane's first screen that finishes (Back on a terminal it
-            // opened) closes the pane, as Close Pane would.
-            let id = leaf.id
-            controller.onCloseRoot = { [weak self] in self?.closePane(id) }
-            controller.view.accessibilityIdentifier = "pane.leaf.\(leaf.id.raw)"
-            controller.view.focusGroupIdentifier = "pane.\(leaf.id.raw)"
-            addChild(controller)
-            view.insertSubview(controller.view, belowSubview: cover)
-            controller.didMove(toParent: self)
-            splitLeaves[leaf.id] = PaneSplitLeaf(controller: controller, entry: entry)
+            guard let root = AppRootEnvironment.near(self) else { continue }
+            let controller = makeLeaf(leaf.id, root: root)
+            controller.setRoutes(routes)
+            splitLeaves[leaf.id] = PaneSplitLeaf(controller: controller)
+            // The new screen's bar parts (a search field) arrive a turn later.
+            DispatchQueue.main.async { [weak self] in self?.view.setNeedsLayout() }
         }
     }
 
-    private func makeScreen(_ entry: PaneStackEntry, leaf id: PaneID) -> UIViewController {
-        // A terminal's opener made its screen; it needs nothing from the window.
-        if case .terminal(let terminal)? = panes.standIns[entry] { return terminal.screen }
-        if let element = panes.standIns[entry], let root = AppRootEnvironment.near(self) {
-            return PaneSplitScreens.screen(for: element, root: root)
-        }
-        let restored = panes.takeRestored(id)
-        return PaneSplitScreens.make(entry, root: AppRootEnvironment.near(self), restored: restored, actions: PaneSplitScreens.Actions(
-            show: { [weak self] entry in
-                self?.panes.show(entry, in: id)
-                self?.focus(cell: id)
-            },
-            replaceRoot: { [weak self] screen in
-                self?.splitLeaves[id]?.controller.setViewControllers([screen], animated: false)
-            },
-            close: { [weak self] in self?.closePane(id) },
-            follow: { [weak self] entry in self?.leaf(id, follows: entry) }
-        ))
+    /// The shell stack a side leaf's route is drawn in. Back pops a routed
+    /// page into the leaf's route, its own root's Close closes the pane, and
+    /// its screens report what they show into the same route.
+    private func makeLeaf(_ id: PaneID, root: AppRootEnvironment) -> ShellNavigationController {
+        let controller = ShellNavigationController(root: root, leaf: id)
+        controller.onRoutesPopped = { [weak self] remaining in self?.panes.pop(id, to: remaining) }
+        controller.onCloseRoot = { [weak self] in self?.closePane(id) }
+        controller.sideActions = PaneSplitScreens.Actions(
+            show: { [weak self] entry in self?.panes.show(entry, in: id) },
+            replaceRoot: { [weak self] entry, element in self?.panes.replace(entry, with: element, in: id) },
+            close: { [weak self] entry in self?.panes.close(entry, in: id) },
+            follow: { [weak self] entry in self?.panes.show(entry, in: id) },
+            restored: { [weak self] in self?.panes.takeRestored(id) ?? false }
+        )
+        controller.view.accessibilityIdentifier = "pane.leaf.\(id.raw)"
+        controller.view.focusGroupIdentifier = "pane.\(id.raw)"
+        addChild(controller)
+        view.insertSubview(controller.view, belowSubview: cover)
+        controller.didMove(toParent: self)
+        return controller
     }
 
     /// The front screen of a cell, for its title and the grip's place.
@@ -651,7 +646,7 @@ extension PaneHostController {
         return axis
     }
 
-    /// A cell's title: its front screen's, else what its entry names.
+    /// A cell's title: its front screen's, else what its route names.
     func cellTitle(_ id: PaneID) -> String {
         let screen = frontScreen(ofCell: id)
         return screen?.navigationItem.title ?? screen?.title ?? Self.title(of: panes.topEntry(of: id))
@@ -817,12 +812,12 @@ extension PaneHostController {
 
     /// The split pane holding `screen` shows `element` in place of all it
     /// shows, as a launcher choice does, so a relaunch brings that back.
-    /// False when `screen` is not in a split pane or `element` has no link.
-    func showInSplitPane(holding screen: UIViewController, _ element: WorkspaceStackRouteElement) -> Bool {
-        guard let id = cell(holding: screen), splitLeaves[id] != nil,
-              let entry = PaneEntries.entry(for: element) else { return false }
-        panes.show(entry, in: id)
-        return true
+    func showInSplitPane(holding screen: UIViewController, _ element: WorkspaceStackRouteElement) {
+        guard let id = cell(holding: screen), let controller = splitLeaves[id]?.controller,
+              panes.stack(of: id)?.top != element else { return }
+        panes.show(element, in: id)
+        if let stack = panes.stack(of: id) { controller.replaceRoutes(stack.routes(split: true)) }
+        relayoutCells()
     }
 
     /// Undo, Restore Panes, Split Right and Split Down for the pane holding

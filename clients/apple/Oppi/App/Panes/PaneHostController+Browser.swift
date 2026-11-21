@@ -2,7 +2,7 @@ import UIKit
 
 // Browser leaves (build plan Stage 9): a web page opened in-app on a wide
 // window opens in a pane beside the pane it came from (§1.6 rule 1 and 2),
-// and a browser leaf's own navigation is written into the tree without
+// and a browser leaf's own navigation is written into the leaf's route without
 // rebuilding the leaf.
 extension PaneHostController {
     /// The window's pane host in front of `window`'s focus, when that focus
@@ -13,21 +13,22 @@ extension PaneHostController {
     }
 
     /// Opens `url` in a pane beside the focused one, where a web page goes
-    /// (`openBeside`): a web page pane already open loads it in place. Says
-    /// which pane took it, by what that pane was before the tap. Nil when it
-    /// belongs in Safari's sheet: on a compact window, with no room for a
-    /// pane, or when the focused pane's server turned its Web Pages in Panes
-    /// switch off.
+    /// (`PanePlacement.sideContent`): a web page pane already open loads it in
+    /// place. Says which pane took it, by what that pane was before the tap.
+    /// Nil when it belongs in Safari's sheet: on a compact window, with no
+    /// room for a pane, or when the focused pane's server turned its Web Pages
+    /// in Panes switch off.
     @discardableResult
     func openBrowser(_ url: URL) -> WebLinkBranch? {
         let serverId = panes.context(of: focusedCell).serverId
-        guard AppRootEnvironment.near(self)?.coordinator.server(serverId, offers: .browserPane) ?? true else { return nil }
+        guard let root = AppRootEnvironment.near(self),
+              root.coordinator.server(serverId, offers: .browserPane) else { return nil }
+        let destination = NavigationDestination.page(.entry(PaneStackEntry(serverId: serverId, route: .browser(url))))
         let before = panes.cellLayout
         let framesBefore = cellPresentation?.frames ?? [:]
-        guard openBeside(PaneOpenContent(entry: PaneStackEntry(serverId: serverId, route: .browser(url))), kind: .webPage) else {
-            return nil
-        }
-        // `openBeside` focuses the pane that shows the page.
+        let placement = root.navigation.open(destination, from: .row(focusedCell), beside: .webPage, opensInMainPane: false)
+        guard placement.showsBeside else { return nil }
+        // The open focuses the pane that shows the page.
         let page = focusedCell
         guard before.leaf(page) != nil else { return .newPane }
         if before.collapsed[page] != nil { return .reuseFolded }
@@ -46,7 +47,7 @@ extension PaneHostController {
         if focusedCell == panes.mainLeafID {
             focusedKind = "main"
         } else {
-            switch cells.leaf(focusedCell).map(placementShown) {
+            switch cells.leaf(focusedCell).map(shown) {
             case .kind(let kind)?: focusedKind = "\(kind)"
             case .launcher?: focusedKind = "launcher"
             case .other?, nil: focusedKind = "other"
@@ -65,13 +66,5 @@ extension PaneHostController {
     /// folded to its strip.
     var focusedCellIsShown: Bool {
         cellFrame(focusedCell) != nil && panes.cellLayout.collapsed[focusedCell] == nil
-    }
-
-    /// A split leaf's screen moved on by itself to `entry`: the tree records
-    /// it (restoration reads the tree), and the leaf keeps its screen.
-    func leaf(_ id: PaneID, follows entry: PaneStackEntry) {
-        guard splitLeaves[id] != nil, splitLeaves[id]?.entry != entry else { return }
-        splitLeaves[id]?.entry = entry
-        panes.show(entry, in: id)
     }
 }

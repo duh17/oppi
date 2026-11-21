@@ -281,21 +281,24 @@ struct GodotRuntimeTests {
     @Test func fullScreenFillsTheWindowAndLeavingRestoresTheSplit() async throws {
         let runtime = GodotRuntimes.make()
         defer { runtime?.stop() }
-        let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
+        let engine = GodotEngineHost(runtime: runtime)
+        let host = PaneTestHost(width: 1133, height: 744, inNavigation: true, godot: engine)
         defer { host.hide() }
         let slot = GodotSlot(serverId: "sha256:full", project: "games~full-\(UUID().uuidString)")
-        let game = GameScreen(slot)
-        // A pane right of the chat holding the game, as a placed Godot link opens one.
+        // A pane right of the chat holding the game, as a placed Godot link
+        // opens one: a `.godot` route, and the pane the app builds for it, which
+        // plays through this window's engine.
         host.act {
-            let entry = PaneStackEntry(serverId: "s", route: .godot(project: "full"))
-            guard let made = host.scenePanes.split(host.scenePanes.mainLeafID, edge: .right, showing: entry) else { return }
+            let entry = PaneStackEntry(serverId: slot.serverId, route: .godot(project: slot.project))
+            guard let made = host.scenePanes.split(host.scenePanes.mainLeafID, edge: .right, showing: .entry(entry)) else { return }
             host.panes.syncSplitLeaves()
-            // The test's game in place of the pane's own, as a leaf's ready content replaces its root.
-            host.panes.splitLeaves[made]?.controller.setViewControllers([game], animated: false)
             host.panes.focus(cell: made)
         }
-        let cell = try #require(host.panes.cell(holding: game))
-        let engine = GodotEngineHost(runtime: runtime)
+        let cell = try #require(host.scenePanes.splitLeaves.first?.id)
+        let game = try #require(
+            host.panes.splitLeaves[cell]?.controller.viewControllers.first as? GodotPaneViewController
+        )
+        #expect(game.gameSlot == slot, "the pane holds this test's game")
         let folder = FileManager.default.temporaryDirectory.appending(path: "godot-full-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -312,18 +315,18 @@ struct GodotRuntimeTests {
         host.act {}
         let surface = engine.surface
         let split = host.scenePanes.cellLayout
-        let paneFrame = game.surfaceSlot.convert(game.surfaceSlot.bounds, to: host.window)
+        let paneFrame = game.view.convert(game.view.bounds, to: host.window)
         #expect(paneFrame.width < host.window.bounds.width / 2 + 1, "The game shares the window")
-        #expect(surface.bounds.size == paneFrame.size)
+        #expect(surface.bounds == game.surfaceSlot.bounds, "the engine draws at its slot's size")
         #expect(game.additionalSafeAreaInsets.top > 0, "Its grip's strip sits under its bar")
 
         host.act { #expect(host.panes.enterFullScreen(cell)) }
         #expect(host.scenePanes.fullScreenCell == cell)
-        #expect(game.surfaceSlot.convert(game.surfaceSlot.bounds, to: host.window) == host.window.bounds, "The game takes the window")
+        #expect(game.view.convert(game.view.bounds, to: host.window) == host.window.bounds, "The game takes the window")
         #expect(game.additionalSafeAreaInsets.top == 0, "No grip strip")
         let gripsHidden = host.panes.grips.values.allSatisfy { $0.isHidden }
         #expect(gripsHidden, "No grip")
-        #expect(surface.bounds == host.window.bounds)
+        #expect(surface.bounds == game.surfaceSlot.bounds)
         if runtime != nil {
             #expect(drawn(surface) == surface.bounds && surface.layer.sublayers?.first?.bounds.size == surface.bounds.size,
                     "The engine draws at the window's size")
@@ -332,8 +335,8 @@ struct GodotRuntimeTests {
         host.act { host.panes.exitFullScreen() }
         #expect(host.scenePanes.fullScreenCell == nil)
         #expect(host.scenePanes.cellLayout == split, "The split comes back as it was")
-        #expect(game.surfaceSlot.convert(game.surfaceSlot.bounds, to: host.window) == paneFrame, "The game is back in its pane")
-        #expect(surface.bounds.size == paneFrame.size)
+        #expect(game.view.convert(game.view.bounds, to: host.window) == paneFrame, "The game is back in its pane")
+        #expect(surface.bounds == game.surfaceSlot.bounds)
         if runtime != nil {
             #expect(drawn(surface) == surface.bounds && surface.layer.sublayers?.first?.bounds.size == surface.bounds.size,
                     "The engine draws at the pane's size again")
@@ -370,26 +373,3 @@ private final class SizedGodotPane: GodotSurfaceOwner {
     func surfaceDidLeave(lastFrame: UIImage?) {}
 }
 
-/// A split pane's screen that holds the game's view over all of itself.
-@MainActor
-private final class GameScreen: UIViewController, GodotSurfaceOwner {
-    let gameSlot: GodotSlot
-    let surfaceSlot = UIView()
-
-    init(_ slot: GodotSlot) {
-        gameSlot = slot
-        super.init(nibName: nil, bundle: nil)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        surfaceSlot.frame = view.bounds
-        surfaceSlot.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        view.addSubview(surfaceSlot)
-    }
-
-    func surfaceDidLeave(lastFrame: UIImage?) {}
-}
