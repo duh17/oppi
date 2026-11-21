@@ -50,6 +50,10 @@ final class SettingsSliderRowCell: UICollectionViewListCell {
     private let valueLabel = UILabel()
     private let header = UIStackView()
     private let slider = SettingsSteppedSlider()
+    /// The slider between its text-size marks; the marks draw in this row's tint.
+    private lazy var sliderRow = slider.withTextSizeMarks(
+        symbolConfiguration: UIImage.SymbolConfiguration(textStyle: .body, scale: .small)
+    )
     private var lastStepped: Float = 0
     private var onChange: ((Float) -> Void)?
 
@@ -68,12 +72,9 @@ final class SettingsSliderRowCell: UICollectionViewListCell {
         header.addArrangedSubview(valueLabel)
         header.spacing = 8
         header.alignment = .firstBaseline
-        let symbols = UIImage.SymbolConfiguration(textStyle: .body, scale: .small)
-        slider.minimumValueImage = UIImage(systemName: "textformat.size.smaller", withConfiguration: symbols)
-        slider.maximumValueImage = UIImage(systemName: "textformat.size.larger", withConfiguration: symbols)
         slider.isContinuous = true
         slider.addAction(UIAction { [weak self] _ in self?.sliderMoved() }, for: .valueChanged)
-        let stack = UIStackView(arrangedSubviews: [header, slider])
+        let stack = UIStackView(arrangedSubviews: [header, sliderRow])
         stack.axis = .vertical
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -128,8 +129,10 @@ final class SettingsSliderRowCell: UICollectionViewListCell {
         slider.step = step
         slider.value = value
         lastStepped = value
-        slider.minimumTrackTintColor = style.accent
-        slider.tintColor = style.value
+        // The filled track takes the slider's tint; `minimumTrackTintColor`
+        // throws in the Mac idiom.
+        slider.tintColor = style.accent
+        sliderRow.tintColor = style.value
         slider.accessibilityIdentifier = identifier
         slider.accessibilityLabel = title
         slider.accessibilityValue = spokenValue

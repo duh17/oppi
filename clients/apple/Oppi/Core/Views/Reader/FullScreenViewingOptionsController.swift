@@ -187,8 +187,6 @@ final class FullScreenViewingOptionsController: UIViewController {
         textSizeSlider.minimumValue = Float(FullScreenReaderPreferences.minimumTextScale)
         textSizeSlider.maximumValue = Float(FullScreenReaderPreferences.maximumTextScale)
         textSizeSlider.step = Float(Self.textScaleStep)
-        textSizeSlider.minimumValueImage = UIImage(systemName: "textformat.size.smaller")
-        textSizeSlider.maximumValueImage = UIImage(systemName: "textformat.size.larger")
         textSizeSlider.accessibilityLabel = String(localized: "Text Size")
         textSizeSlider.accessibilityIdentifier = "fullscreen.viewingOptions.textSize"
         textSizeSlider.addAction(UIAction { [weak self] action in
@@ -254,7 +252,7 @@ final class FullScreenViewingOptionsController: UIViewController {
         textSizeTop.addArrangedSubview(textSizeValue)
         textSizeTop.spacing = 12
         textSizeGroup.addArrangedSubview(textSizeTop)
-        textSizeGroup.addArrangedSubview(textSizeSlider)
+        textSizeGroup.addArrangedSubview(textSizeSlider.withTextSizeMarks())
         textSizeGroup.axis = .vertical
         textSizeGroup.spacing = 10
 

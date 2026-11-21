@@ -143,6 +143,17 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *    and in the files that hide an iOS-only API from the Catalyst compiler,
  *    each with its reason. A new entry needs an API the Catalyst SDK lacks.
  *
+ *  - Control APIs that throw in the Mac idiom are disallowed everywhere: the
+ *    Mac build runs in the Mac idiom ("Optimize for Mac"), where UIKit raises
+ *    `_UICatalystUnsupportedMacIdiomBehavior` for a UISlider's value images,
+ *    thumb and track images and track or thumb tints, a UIButton's title or
+ *    image for any state but `.normal`, `UIPickerView`, and the `.wheels`
+ *    date picker. Each throws the moment it is called, on every platform's
+ *    code path. Draw the same meaning another way (`withTextSizeMarks`: image
+ *    views beside the slider; the slider's `tintColor` for its filled track).
+ *    It reads the member by name, so `thumbTintColor` on a UISwitch (which is
+ *    allowed) fails too; set it some other way or add an `allowed` entry.
+ *
  *  - Navigation has one owner. Writing the main pane's stack
  *    (`workspaceStackRouteElements`, `selectedWorkspaceFilter`) outside
  *    `mainPaneStackOwners` is disallowed: a screen opens through
@@ -490,6 +501,27 @@ const constructs: Construct[] = [
     disallowed: true,
     exemptFiles: platformCheckExempt,
   },
+  // Control APIs that throw in the Mac idiom: see the header.
+  {
+    name: "UISlider image or tint the Mac idiom forbids",
+    pattern:
+      /\b(?:minimumValueImage|maximumValueImage|minimumTrackTintColor|maximumTrackTintColor|thumbTintColor)\s*=(?!=)|\bset(?:Thumb|MinimumTrack|MaximumTrack)Image\s*\(/g,
+    disallowed: true,
+  },
+  {
+    name: "UIButton title or image for a state other than .normal",
+    // `setTitle(_:for:)` or `setImage(_:for:)` whose state is a named
+    // non-normal state or a set of states; one level of nested parentheses
+    // (`UIImage(systemName:)`) is read through.
+    pattern:
+      /\bset(?:Title|Image)\s*\((?:[^()]|\([^()]*\))*?\bfor:\s*(?:\.(?:highlighted|selected|disabled|focused)\b|\[)/g,
+    disallowed: true,
+  },
+  {
+    name: "UIPickerView or .wheels date picker",
+    pattern: /\bUIPickerView\b|\.wheels\b/g,
+    disallowed: true,
+  },
   // Whole-screen and in-list load states outside `LoadState`: see "Load states" in the guide.
   {
     name: "UIContentUnavailableConfiguration factory",
@@ -785,6 +817,14 @@ screen was built with (its route's server), or the window's
 (AppRootEnvironment.windowConnection) for a page that follows the window, not the
 active one. The count only
 goes down.
+
+A UISlider value image, thumb or track image, or track or thumb tint, a
+UIButton title or image set for a state other than .normal, a UIPickerView, or
+the .wheels date picker throws _UICatalystUnsupportedMacIdiomBehavior the moment
+the Mac build calls it. Show the same thing another way: image views beside the
+slider (withTextSizeMarks), the slider's tintColor for its filled track, a
+button configuration's updateHandler for a state's look, a menu or a compact or
+inline date picker for a choice.
 
 targetEnvironment(macCatalyst) or isMacCatalystApp outside platformCheckOwners means
 a screen decides for itself what the Mac build can do. Ask PlatformCapabilities
