@@ -52,6 +52,13 @@ struct ServerSkillSummary: Codable, Sendable, Equatable, Identifiable {
     let description: String
     let provenance: ServerResourceProvenance
     let path: String?
+    /// Every path the server discovered this Skill under, the canonical `path` first: a Skill
+    /// reached through a symlinked skills folder keeps that folder's path.
+    let paths: [String]?
+    /// Preferred path to store when an Agent selects this Skill: the first path Pi discovered
+    /// it under in precedence order (the linked form when one exists, so repointing the link
+    /// updates the Agent; the real location otherwise). Absent from older servers.
+    let selectionPath: String?
     /// Safe package identity supplied by the server. Never derive this from a path.
     let packageName: String?
     let state: ServerSkillState
@@ -66,6 +73,8 @@ struct ServerSkillSummary: Codable, Sendable, Equatable, Identifiable {
         description: String,
         provenance: ServerResourceProvenance,
         path: String?,
+        paths: [String]? = nil,
+        selectionPath: String? = nil,
         packageName: String? = nil,
         state: ServerSkillState,
         loadError: String?,
@@ -77,11 +86,81 @@ struct ServerSkillSummary: Codable, Sendable, Equatable, Identifiable {
         self.description = description
         self.provenance = provenance
         self.path = path
+        self.paths = paths
+        self.selectionPath = selectionPath
         self.packageName = packageName
         self.state = state
         self.loadError = loadError
         self.warnings = warnings
         self.editable = editable
+    }
+
+    /// Preferred path to save for a new selection of this Skill, falling back to `path` for
+    /// older servers that do not send `selectionPath`.
+    var preferredSelectionPath: String? { selectionPath ?? path }
+
+    /// Every path a saved Agent selection may hold for this Skill, canonical `path` first,
+    /// without duplicates. One Skill can be selected through more than one path, so a
+    /// selection is recognised by any of them, never by `path` alone.
+    var selectionPaths: [String] {
+        var seen: Set<String> = []
+        var unique: [String] = []
+        for candidate in [path].compactMap({ $0 }) + (paths ?? []) + [selectionPath].compactMap({ $0 })
+        where seen.insert(candidate).inserted {
+            unique.append(candidate)
+        }
+        return unique
+    }
+
+    /// One saved Agent Skill path resolved against the server's catalog: either a discovered
+    /// Skill (collapsed to one saved path even when several aliases were stored) or an
+    /// unmatched path kept as-is.
+    enum ResolvedSelection: Equatable, Sendable {
+        case skill(ServerSkillSummary, savedPath: String)
+        case unmatched(String)
+
+        /// The saved path to keep for this selection: for a matched Skill, its preferred
+        /// selection path when present among the saved forms, else the first saved form;
+        /// for an unmatched path, the path as-is.
+        var savedPath: String {
+            switch self {
+            case .skill(_, let path): path
+            case .unmatched(let path): path
+            }
+        }
+
+        var displayName: String {
+            switch self {
+            case .skill(let skill, _): skill.name
+            case .unmatched(let path): path
+            }
+        }
+    }
+
+    /// Collapses saved Skill paths to one entry per matched catalog Skill in first-seen order.
+    /// When multiple saved paths match the same Skill, keeps the Skill's preferred selection
+    /// path if present among them, else the first saved path. Unmatched paths are kept as-is.
+    static func resolveSelections<S: Sequence>(
+        _ paths: S,
+        in catalog: [ServerSkillSummary]
+    ) -> [ResolvedSelection] where S.Element == String {
+        var indexBySkillId: [String: Int] = [:]
+        var resolved: [ResolvedSelection] = []
+        for path in paths {
+            guard let skill = catalog.first(where: { $0.selectionPaths.contains(path) }) else {
+                resolved.append(.unmatched(path))
+                continue
+            }
+            if let existingIndex = indexBySkillId[skill.id] {
+                if path == skill.preferredSelectionPath {
+                    resolved[existingIndex] = .skill(skill, savedPath: path)
+                }
+            } else {
+                indexBySkillId[skill.id] = resolved.count
+                resolved.append(.skill(skill, savedPath: path))
+            }
+        }
+        return resolved
     }
 }
 

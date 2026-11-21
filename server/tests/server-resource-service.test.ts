@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -13,6 +14,7 @@ import { basename, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ServerResourceService } from "../src/server-resource-service.js";
+import { canonicalServerResourcePath } from "../src/server-resource-id.js";
 import { readSkillFileSnapshot } from "../src/skill-files.js";
 
 interface Fixture {
@@ -116,6 +118,127 @@ describe("contained Skill file race safety", () => {
 });
 
 describe("ServerResourceService catalogs", () => {
+  it("lists every path a Skill is linked in under, beside its canonical path", async () => {
+    const fixture = makeFixture();
+    const realDir = writeSkill(join(fixture.root, "real-skills"), "linked-skill");
+    mkdirSync(join(fixture.agentDir, "skills"), { recursive: true });
+    const linkedDir = join(fixture.agentDir, "skills", "linked-skill");
+    symlinkSync(realDir, linkedDir);
+
+    const { skills } = await makeService(fixture).listSkills();
+    const skill = skills.find((entry) => entry.name === "linked-skill");
+
+    // The canonical path identifies the Skill; the link's path names the same one, which is
+    // the form an Agent selection made through that library stores.
+    expect(skill?.path).toBe(canonicalServerResourcePath(join(realDir, "SKILL.md")));
+    expect(skill?.paths).toEqual([
+      canonicalServerResourcePath(join(realDir, "SKILL.md")),
+      join(linkedDir, "SKILL.md"),
+    ]);
+    expect(skill?.selectionPath).toBe(join(linkedDir, "SKILL.md"));
+  });
+
+  it("deduplicates a Skill linked in two places with canonical path first and prefers the first discovered link", async () => {
+    const fixture = makeFixture();
+    const realRoot = realpathSync(fixture.root);
+    const homeDir = join(realRoot, "home");
+    const agentDir = join(homeDir, ".pi", "agent");
+    process.env.HOME = homeDir;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+
+    const directDir = writeSkill(join(agentDir, "skills"), "direct-skill");
+    const realDir = writeSkill(join(realRoot, "real-skills"), "shared-skill");
+    const agentLinkDir = join(agentDir, "skills", "shared-skill");
+    const agentsLinkDir = join(homeDir, ".agents", "skills", "shared-skill");
+    mkdirSync(join(homeDir, ".agents", "skills"), { recursive: true });
+    // Pi's package manager deduplicates by realpath and keeps only the higher-precedence
+    // ~/.pi/agent/skills link; the alias walk then scans both user roots, deduplicates the
+    // already-seen ~/.pi/agent/skills link, and appends the ~/.agents/skills link.
+    symlinkSync(realDir, agentLinkDir);
+    symlinkSync(realDir, agentsLinkDir);
+
+    const service = new ServerResourceService({ dataDir: fixture.dataDir, agentDir });
+    const { skills } = await service.listSkills();
+
+    const matching = skills.filter((entry) => entry.name === "shared-skill");
+    expect(matching).toHaveLength(1);
+    const shared = matching[0]!;
+    const canonical = canonicalServerResourcePath(join(realDir, "SKILL.md"));
+    const agentLinkPath = join(agentLinkDir, "SKILL.md");
+    const agentsLinkPath = join(agentsLinkDir, "SKILL.md");
+    expect(shared.path).toBe(canonical);
+    expect(shared.paths).toEqual([canonical, agentLinkPath, agentsLinkPath]);
+    expect(shared.selectionPath).toBe(agentLinkPath);
+
+    const direct = skills.find((entry) => entry.name === "direct-skill");
+    const directPath = join(directDir, "SKILL.md");
+    expect(direct?.path).toBe(directPath);
+    expect(direct?.paths).toEqual([directPath]);
+    expect(direct?.selectionPath).toBe(directPath);
+  });
+
+  it("bounds the user Skill alias walk across diamonds, deep trees, and large non-skill folders", async () => {
+    const fixture = makeFixture();
+    const realRoot = realpathSync(fixture.root);
+    const homeDir = join(realRoot, "home");
+    const agentDir = join(homeDir, ".pi", "agent");
+    process.env.HOME = homeDir;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+
+    const realDir = writeSkill(join(realRoot, "real-skills"), "bounded-skill");
+    mkdirSync(join(agentDir, "skills"), { recursive: true });
+    const agentLinkDir = join(agentDir, "skills", "bounded-skill");
+    symlinkSync(realDir, agentLinkDir);
+
+    const agentsSkillsDir = join(homeDir, ".agents", "skills");
+    mkdirSync(agentsSkillsDir, { recursive: true });
+
+    // A 6-level 3-way symlink diamond (3^6 = 729 paths > 500-dir budget, only 7 real dirs).
+    // Whole-walk visited-realpath tracking visits each real dir once so `z-after-diamond` is
+    // still discovered instead of exhausting the directory budget.
+    const diamondLevels = Array.from({ length: 7 }, (_, i) => join(realRoot, `diamond-${i}`));
+    for (const dir of diamondLevels) mkdirSync(dir, { recursive: true });
+    for (let i = 0; i < diamondLevels.length - 1; i += 1) {
+      for (const branch of ["a", "b", "c"]) {
+        symlinkSync(diamondLevels[i + 1]!, join(diamondLevels[i]!, branch));
+      }
+    }
+    symlinkSync(diamondLevels[0]!, join(agentsSkillsDir, "a-diamond"));
+    const afterDiamondDir = join(agentsSkillsDir, "z-after-diamond");
+    symlinkSync(realDir, afterDiamondDir);
+
+    // A link nested past the depth cap (depth 11 > 8) is skipped.
+    let deepParent = join(agentsSkillsDir, "deep");
+    for (let i = 0; i < 9; i += 1) deepParent = join(deepParent, `d${i}`);
+    mkdirSync(deepParent, { recursive: true });
+    symlinkSync(realDir, join(deepParent, "too-deep"));
+
+    const service = new ServerResourceService({ dataDir: fixture.dataDir, agentDir });
+    const firstPass = (await service.listSkills()).skills.find(
+      (entry) => entry.name === "bounded-skill",
+    );
+    const canonical = canonicalServerResourcePath(join(realDir, "SKILL.md"));
+    expect(firstPass?.paths).toEqual([
+      canonical,
+      join(agentLinkDir, "SKILL.md"),
+      join(afterDiamondDir, "SKILL.md"),
+    ]);
+
+    // Over 500 non-skill sibling directories exhaust the total directory budget before a
+    // trailing link (`zz-past-budget`), capping the synchronous walk.
+    for (let i = 0; i < 510; i += 1) {
+      mkdirSync(join(agentsSkillsDir, `pad-${String(i).padStart(3, "0")}`));
+    }
+    const pastBudgetDir = join(agentsSkillsDir, "zz-past-budget");
+    symlinkSync(realDir, pastBudgetDir);
+
+    const secondPass = (await service.listSkills()).skills.find(
+      (entry) => entry.name === "bounded-skill",
+    );
+    expect(secondPass?.paths).not.toContain(join(pastBudgetDir, "SKILL.md"));
+    expect(secondPass?.paths).toContain(join(agentLinkDir, "SKILL.md"));
+  });
+
   it("projects only user-scope Pi candidates and preserves disabled rows without a synthetic Oppi extension", async () => {
     const fixture = makeFixture();
     writeSkill(join(fixture.agentDir, "skills"), "global-skill", "Global skill");

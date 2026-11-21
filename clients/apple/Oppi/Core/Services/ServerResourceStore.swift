@@ -706,6 +706,8 @@ final class ServerResourceStore {
             description: skill.description,
             provenance: skill.provenance,
             path: skill.path,
+            paths: skill.paths,
+            selectionPath: skill.selectionPath,
             packageName: skill.packageName,
             state: state,
             loadError: skill.loadError,

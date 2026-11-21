@@ -1,4 +1,4 @@
-import { lstatSync, mkdirSync } from "node:fs";
+import { lstatSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { canonicalRealPath, expandHome, isPathWithinRoot } from "./path-utils.js";
@@ -75,7 +75,20 @@ export interface ServerSkillSummary {
   name: string;
   description: string;
   provenance: ResourceProvenance;
+  /** The Skill's canonical path (symlinks resolved): identity and dedupe key. */
   path?: string;
+  /**
+   * Every path Pi discovered this Skill under, canonical `path` first. A Skill reached through
+   * a symlinked skills folder keeps that folder's path, so a saved Agent selection may hold any
+   * of these forms; a client matches a selection against this list, never `path` alone.
+   */
+  paths: string[];
+  /**
+   * Preferred path to save when an Agent selects this Skill: the first path Pi discovered it
+   * under in precedence order (the linked form when reached through a symlinked skills folder,
+   * so repointing the link follows through; the real location otherwise).
+   */
+  selectionPath: string;
   packageName?: string;
   state: "enabled" | "disabled" | "error";
   loadError?: string;
@@ -668,18 +681,42 @@ export class ServerResourceService {
   private async buildSkillCatalog(context: ResolutionContext): Promise<SkillCatalogEntry[]> {
     const resourcesByCanonicalPath = new Map<
       string,
-      { resource: ResolvedResource; canonicalPath: string }
+      { resource: ResolvedResource; canonicalPath: string; discoveredPaths: string[] }
     >();
     for (const resource of context.skills) {
       const path = canonicalPath(resource.path);
       const current = resourcesByCanonicalPath.get(path);
+      if (!current) {
+        resourcesByCanonicalPath.set(path, {
+          resource,
+          canonicalPath: path,
+          discoveredPaths: [resource.path],
+        });
+        continue;
+      }
+      // One Skill, several names: a selection made through a symlinked skills folder stores
+      // that folder's path, so every discovered form is kept for the client to recognise.
+      if (!current.discoveredPaths.includes(resource.path))
+        current.discoveredPaths.push(resource.path);
       // A package-backed candidate is authoritative for duplicate aliases so a
       // symlink added under a top-level Skill directory cannot grant writes.
       if (
-        !current ||
-        (current.resource.metadata.origin !== "package" && resource.metadata.origin === "package")
+        current.resource.metadata.origin !== "package" &&
+        resource.metadata.origin === "package"
       ) {
-        resourcesByCanonicalPath.set(path, { resource, canonicalPath: path });
+        current.resource = resource;
+      }
+    }
+    // `DefaultPackageManager.resolve()` deduplicates by realpath in precedence order, so when
+    // a Skill is linked in more than one user skills folder (`~/.pi/agent/skills` and
+    // `~/.agents/skills`, or two aliases under one folder) only the highest-precedence link
+    // reaches `context.skills`. Scan those user roots for additional links to already-discovered
+    // Skills so every form an Agent may have saved stays recognised, while `discoveredPaths[0]`
+    // remains Pi's winning path (`selectionPath`).
+    for (const aliasPath of collectUserSkillAliasPaths(context.agentDir)) {
+      const current = resourcesByCanonicalPath.get(canonicalPath(aliasPath));
+      if (current && !current.discoveredPaths.includes(aliasPath)) {
+        current.discoveredPaths.push(aliasPath);
       }
     }
     const resources = [...resourcesByCanonicalPath.values()];
@@ -695,7 +732,7 @@ export class ServerResourceService {
     }));
     const diagnostics = loaded.diagnostics.map(copyDiagnostic);
 
-    const entries = resources.map(({ resource, canonicalPath: path }) => {
+    const entries = resources.map(({ resource, canonicalPath: path, discoveredPaths }) => {
       const skill = skills.find((candidate) => resourceContainsPath(resource, candidate.filePath));
       const resourceDiagnostics = diagnostics.filter((diagnostic) =>
         diagnosticMatchesResource(diagnostic, resource),
@@ -722,6 +759,8 @@ export class ServerResourceService {
         description: boundMessage(skill?.description ?? ""),
         provenance,
         path,
+        paths: [path, ...discoveredPaths.filter((discovered) => discovered !== path)],
+        selectionPath: discoveredPaths[0] ?? path,
         ...(packageName ? { packageName } : {}),
         state: loadError ? "error" : resource.enabled ? "enabled" : "disabled",
         ...(loadError ? { loadError } : {}),
@@ -1163,8 +1202,97 @@ function toPosixPath(path: string): string {
   return path.split(sep).join("/");
 }
 
+const MAX_SKILL_ALIAS_WALK_DEPTH = 8;
+const MAX_SKILL_ALIAS_WALK_DIRS = 500;
+
+interface SkillAliasWalkState {
+  dirsVisited: number;
+  visitedDirs: Set<string>;
+}
+
+function collectUserSkillAliasPaths(agentDir: string): string[] {
+  const paths: string[] = [];
+  const state: SkillAliasWalkState = { dirsVisited: 0, visitedDirs: new Set() };
+  const roots: Array<{ dir: string; includeRootMarkdown: boolean }> = [
+    { dir: join(agentDir, "skills"), includeRootMarkdown: true },
+    { dir: join(homedir(), ".agents", "skills"), includeRootMarkdown: false },
+  ];
+  for (const root of roots) {
+    collectSkillAliasPathsInDir(root.dir, root.dir, root.includeRootMarkdown, 0, state, paths);
+  }
+  return paths;
+}
+
+function collectSkillAliasPathsInDir(
+  dir: string,
+  rootDir: string,
+  includeRootMarkdown: boolean,
+  depth: number,
+  state: SkillAliasWalkState,
+  out: string[],
+): void {
+  if (depth > MAX_SKILL_ALIAS_WALK_DEPTH || state.dirsVisited >= MAX_SKILL_ALIAS_WALK_DIRS) {
+    return;
+  }
+  state.dirsVisited += 1;
+  // A Skill leaf stops descending immediately, so multiple symlinks to the same Skill
+  // directory each contribute their own link path without repeating a subtree walk.
+  const skillFile = join(dir, "SKILL.md");
+  try {
+    if (statSync(skillFile).isFile()) {
+      out.push(skillFile);
+      return;
+    }
+  } catch {
+    // No SKILL.md here; descend as a regular folder if not already visited.
+  }
+  const canonicalDir = canonicalPath(dir);
+  if (state.visitedDirs.has(canonicalDir)) return;
+  state.visitedDirs.add(canonicalDir);
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
+      a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+    );
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (state.dirsVisited >= MAX_SKILL_ALIAS_WALK_DIRS) return;
+    if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+    const fullPath = join(dir, entry.name);
+    let isDir = entry.isDirectory();
+    let isFile = entry.isFile();
+    if (entry.isSymbolicLink()) {
+      try {
+        const stats = statSync(fullPath);
+        isDir = stats.isDirectory();
+        isFile = stats.isFile();
+      } catch {
+        continue;
+      }
+    }
+    if (
+      isFile &&
+      entry.name.endsWith(".md") &&
+      (includeRootMarkdown ? dir === rootDir : dir !== rootDir)
+    ) {
+      out.push(fullPath);
+      continue;
+    }
+    if (isDir) {
+      collectSkillAliasPathsInDir(fullPath, rootDir, includeRootMarkdown, depth + 1, state, out);
+    }
+  }
+}
+
 function copySkillSummary(summary: ServerSkillSummary): ServerSkillSummary {
-  return { ...summary, provenance: { ...summary.provenance }, warnings: [...summary.warnings] };
+  return {
+    ...summary,
+    provenance: { ...summary.provenance },
+    paths: [...summary.paths],
+    warnings: [...summary.warnings],
+  };
 }
 
 function builtInToolSummaries(cwd: string): ServerToolSummary[] {

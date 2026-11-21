@@ -99,6 +99,7 @@ A sandbox conversation persists its boundary in `oppi.execution-runtime` and att
 ## Saved Agents and schedules
 
 - `AgentLaunchService` owns idempotency, launch recovery, target constraints, and prompt dispatch. Incompatible targets and unavailable Skills or Extensions fail closed as typed configuration failures; allowed tool names with no matching tool are dropped and surfaced in `session.warnings`. Pre-start failures return a non-retryable 422 with no session; post-start failures keep one `error` session, and its focused stream closes with policy violation instead of reconnecting.
+- A Skill's identity is its canonical path; Pi keeps its discovered form. `listSkills` lists each Skill once with every form in `paths` (canonical first) and Pi's first discovered form in `selectionPath` (what new picks save). Any form is recognised (`assertSelectedAgentSkillsLoaded`).
 - A launch left `launching` after a crash is never redispatched: persistence cannot tell a crash before send from one after Pi accepted the turn.
 - Agent and schedule validators reject unexpected fields and empty updates. There is no `oppi skill` CLI or Skill PUT; catalog editability is presentation, not authorization. Theme routes are read-only.
 - `AgentScheduleRunner` claims due runs with a lease and dispatches through the manual-run hooks. An `at` schedule archives itself in the transaction that completes its slot; restoring never reruns it because the run holds the idempotency key.

@@ -232,7 +232,7 @@ final class AgentNativeEditViewController: ListScreenController<
         case .tools: AnyHashable([AnyHashable(draft.toolSelectionMode), AnyHashable(draft.selectedToolNames)])
         case .chatStyle: AnyHashable([AnyHashable(draft.chatStyle), AnyHashable(AppPreferences.ChatDisplay.style)])
         case .skillMode: AnyHashable(draft.skillSelectionMode)
-        case .skills: AnyHashable(draft.selectedSkillPaths)
+        case .skills: AnyHashable(draft.resolvedSkillPaths.count)
         case .extensionMode: AnyHashable(draft.extensionSelectionMode)
         case .extensions: AnyHashable(draft.selectedExtensionIds)
         case .loadingResources: AnyHashable(0)
@@ -342,7 +342,7 @@ final class AgentNativeEditViewController: ListScreenController<
         case .skills:
             cell.configure(
                 title: "Selected Skills", image: nil,
-                value: Self.selectionCount(draft.selectedSkillPaths.count), identifier: "agent.nativeEdit.skills"
+                value: Self.selectionCount(draft.resolvedSkillPaths.count), identifier: "agent.nativeEdit.skills"
             ) { [weak self] in
                 guard let self else { return }
                 Router.push(AgentResourceSelectionViewController(kind: .skills, draft: draft), from: self)

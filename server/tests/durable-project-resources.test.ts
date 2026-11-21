@@ -66,6 +66,22 @@ describe("durable project resources", () => {
     ]);
   });
 
+  it("a saved Agent Skill selected through a linked skills folder loads", async () => {
+    const { hostCwd, agentDir, outside } = layout();
+    const realDir = writeSkill(join(outside, "real-skills", "linked-skill"), "linked-skill");
+    mkdirSync(join(agentDir, "skills"), { recursive: true });
+    symlinkSync(realDir, join(agentDir, "skills", "linked-skill"));
+
+    // The Agent saved the path it was shown, through the link; the session loads that Skill.
+    const host = await loadDurableProjectResources({
+      hostCwd,
+      agentDir,
+      projectTrusted: true,
+      resources: { skillPaths: [join(agentDir, "skills", "linked-skill", "SKILL.md")] },
+    });
+    expect(host.skills.map((skill) => skill.name)).toEqual(["linked-skill"]);
+  });
+
   it("a sandbox presents saved AGENTS files only inside the workspace, at guest paths, redacted", async () => {
     const { hostCwd, agentDir, outside } = layout();
     symlinkSync(outside, join(hostCwd, "linked"));

@@ -20,6 +20,8 @@ const skill = {
   description: "Review changes",
   provenance: { kind: "piAgent" as const, label: "~/.pi/agent/skills" },
   path: "/agent/skills/review/SKILL.md",
+  paths: ["/agent/skills/review/SKILL.md"],
+  selectionPath: "/agent/skills/review/SKILL.md",
   state: "enabled" as const,
   warnings: [],
   editable: true,

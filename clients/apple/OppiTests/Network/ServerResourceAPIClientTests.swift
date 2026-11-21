@@ -24,6 +24,64 @@ struct ServerResourceAPIClientTests {
         #expect(skills.first?.packageName == "@scope/review-tools")
     }
 
+    @Test func listSkillsDecodesPathsAndSelectionPathAndToleratesOlderPayloads() async throws {
+        let client = makeClient()
+        defer { TestURLProtocol.handler = nil }
+
+        let canonical = "/real/skills/notebook/SKILL.md"
+        let linked = "/home/.pi/agent/skills/notebook/SKILL.md"
+        let olderPath = "/home/.pi/agent/skills/release/SKILL.md"
+
+        TestURLProtocol.handler = { request in
+            #expect(request.httpMethod == "GET")
+            #expect(request.url?.path == "/server/resources/skills")
+            return mockResponse(json: """
+            {
+              "skills": [
+                {
+                  "id": "skill_linked",
+                  "name": "notebook",
+                  "description": "Keep notes.",
+                  "provenance": { "kind": "piAgent", "label": "~/.pi/agent/skills" },
+                  "path": "\(canonical)",
+                  "paths": ["\(canonical)", "\(linked)"],
+                  "selectionPath": "\(linked)",
+                  "state": "enabled",
+                  "warnings": [],
+                  "editable": true
+                },
+                {
+                  "id": "skill_older",
+                  "name": "release",
+                  "description": "Review releases.",
+                  "provenance": { "kind": "piAgent", "label": "~/.pi/agent/skills" },
+                  "path": "\(olderPath)",
+                  "state": "enabled",
+                  "warnings": [],
+                  "editable": true
+                }
+              ]
+            }
+            """)
+        }
+
+        let skills = try await client.listServerSkills()
+
+        let linkedSkill = try #require(skills.first { $0.id == "skill_linked" })
+        #expect(linkedSkill.path == canonical)
+        #expect(linkedSkill.paths == [canonical, linked])
+        #expect(linkedSkill.selectionPath == linked)
+        #expect(linkedSkill.preferredSelectionPath == linked)
+        #expect(linkedSkill.selectionPaths == [canonical, linked])
+
+        let olderSkill = try #require(skills.first { $0.id == "skill_older" })
+        #expect(olderSkill.path == olderPath)
+        #expect(olderSkill.paths == nil)
+        #expect(olderSkill.selectionPath == nil)
+        #expect(olderSkill.preferredSelectionPath == olderPath)
+        #expect(olderSkill.selectionPaths == [olderPath])
+    }
+
     @Test func serverMetricsSettingsTolerateRevisionAndSendBaseRevisionOnlyWhenGiven() async throws {
         let client = makeClient()
         defer { TestURLProtocol.handler = nil }

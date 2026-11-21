@@ -29,6 +29,8 @@ function summary(name: string, overrides: Partial<ServerSkillSummary> = {}): Ser
     description: `${name} does things`,
     provenance: { kind: "piAgent", label: "~/.pi/agent/skills" },
     path: `/Users/alex/.pi/agent/skills/${name}/SKILL.md`,
+    paths: [`/Users/alex/.pi/agent/skills/${name}/SKILL.md`],
+    selectionPath: `/Users/alex/.pi/agent/skills/${name}/SKILL.md`,
     state: "enabled",
     warnings: [],
     editable: true,

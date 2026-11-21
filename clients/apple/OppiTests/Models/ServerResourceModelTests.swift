@@ -339,4 +339,65 @@ struct ServerResourceModelTests {
         #expect(inherited.defaultTools == nil)
         #expect(exact.defaultTools?.isEmpty == true)
     }
+
+    @Test func skillSelectionPathsDedupeAndResolveSelectionsCollapsesAliases() {
+        let provenance = ServerResourceProvenance(kind: .piAgent, label: "~/.pi/agent/skills")
+        let canonical = "/real/skills/notebook/SKILL.md"
+        let preferredLink = "/home/.pi/agent/skills/notebook/SKILL.md"
+        let secondaryLink = "/home/.agents/skills/notebook/SKILL.md"
+        let localPath = "/home/.pi/agent/skills/local/SKILL.md"
+
+        let notebook = ServerSkillSummary(
+            id: "skill_notebook",
+            name: "notebook",
+            description: "Keep notes.",
+            provenance: provenance,
+            path: canonical,
+            paths: [canonical, preferredLink, secondaryLink, canonical],
+            selectionPath: preferredLink,
+            state: .enabled,
+            loadError: nil,
+            warnings: [],
+            editable: true
+        )
+        let local = ServerSkillSummary(
+            id: "skill_local",
+            name: "local",
+            description: "Local skill.",
+            provenance: provenance,
+            path: localPath,
+            paths: [localPath],
+            selectionPath: localPath,
+            state: .enabled,
+            loadError: nil,
+            warnings: [],
+            editable: true
+        )
+        let catalog = [notebook, local]
+
+        #expect(notebook.selectionPaths == [canonical, preferredLink, secondaryLink])
+        #expect(notebook.preferredSelectionPath == preferredLink)
+        #expect(local.preferredSelectionPath == localPath)
+
+        // Duplicate canonical + preferred link collapses to one entry keeping the preferred link
+        // even when canonical appears first; unmatched paths stay as-is.
+        let withPreferred = ServerSkillSummary.resolveSelections(
+            [canonical, "/retired/old/SKILL.md", preferredLink],
+            in: catalog
+        )
+        #expect(withPreferred.map(\.displayName) == ["notebook", "/retired/old/SKILL.md"])
+        #expect(withPreferred.map(\.savedPath) == [preferredLink, "/retired/old/SKILL.md"])
+
+        // When duplicate saved forms do not include the preferred link, keep the first saved form.
+        let withoutPreferred = ServerSkillSummary.resolveSelections(
+            [secondaryLink, canonical],
+            in: catalog
+        )
+        #expect(withoutPreferred.map(\.displayName) == ["notebook"])
+        #expect(withoutPreferred.map(\.savedPath) == [secondaryLink])
+
+        // A single saved form (canonical or linked) is kept as-is.
+        let singleCanonical = ServerSkillSummary.resolveSelections([canonical], in: catalog)
+        #expect(singleCanonical.map(\.savedPath) == [canonical])
+    }
 }

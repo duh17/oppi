@@ -133,6 +133,22 @@ final class AgentNativeEditDraft {
         return connection.serverResourceStore.builtInTools(forServer: serverId)
     }
 
+    /// Saved Skill paths collapsed to one path per matched catalog Skill (keeping the
+    /// Skill's preferred selection path if present, else the first saved form in stored
+    /// order), with unmatched paths kept as-is.
+    var resolvedSkillPaths: [String] {
+        var seen: Set<String> = []
+        var ordered: [String] = []
+        for path in agent.definition.resources?.skillPaths ?? []
+        where selectedSkillPaths.contains(path) && seen.insert(path).inserted {
+            ordered.append(path)
+        }
+        ordered.append(contentsOf: selectedSkillPaths.filter { !seen.contains($0) }.sorted())
+        return ServerSkillSummary.resolveSelections(ordered, in: availableSkills)
+            .map(\.savedPath)
+            .sorted()
+    }
+
     var availableSkills: [ServerSkillSummary] {
         guard let serverId = connection.currentServerId else { return [] }
         return connection.serverResourceStore.skills(forServer: serverId)
@@ -316,7 +332,7 @@ final class AgentNativeEditDraft {
                     : nil,
                 model: model.managementNilIfBlank,
                 thinkingLevel: thinkingLevel,
-                skillPaths: skillSelectionMode == .inherit ? nil : selectedSkillPaths.sorted(),
+                skillPaths: skillSelectionMode == .inherit ? nil : resolvedSkillPaths,
                 extensionIds: extensionSelectionMode == .inherit ? nil : selectedExtensionIds.sorted(),
                 launchConstraints: resolvedLaunchConstraints,
                 previouslyHadLaunchConstraints: agent.definition.launchConstraints != nil,

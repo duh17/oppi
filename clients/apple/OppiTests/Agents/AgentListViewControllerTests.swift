@@ -189,6 +189,79 @@ enum AgentsLoadStateTests {
             #expect(pi.inputs(of: .file) == pi.inputs(of: .file))
         }
 
+        @Test("Agent detail resolves a linked Skill path to its name and collapses duplicate aliases")
+        func agentDetailResolvesLinkedAndDuplicateSkillNames() async throws {
+            let canonical = "/real/skills/notebook/SKILL.md"
+            let linked = "/home/.pi/agent/skills/notebook/SKILL.md"
+            let retired = "/retired/old/SKILL.md"
+            let provenance = ServerResourceProvenance(kind: .piAgent, label: "~/.pi/agent/skills")
+            let skillsCatalog = ServerSkillsCatalog(skills: [
+                ServerSkillSummary(
+                    id: "skill_notebook",
+                    name: "notebook",
+                    description: "Keep notes.",
+                    provenance: provenance,
+                    path: canonical,
+                    paths: [canonical, linked],
+                    selectionPath: linked,
+                    state: .enabled,
+                    loadError: nil,
+                    warnings: [],
+                    editable: true
+                ),
+            ])
+
+            func loadSkillsValue(for skillPaths: [String]) async throws -> String? {
+                AgentDetailSkillsURLProtocol.reset()
+                defer { AgentDetailSkillsURLProtocol.reset() }
+                AgentDetailSkillsURLProtocol.storedAgent = StoredAgentDefinition(
+                    id: "linked-skills-agent",
+                    name: "Linked Skills Agent",
+                    icon: .defaultValue,
+                    description: nil,
+                    status: .active,
+                    version: 1,
+                    definition: AgentDefinition(
+                        name: "Linked Skills Agent",
+                        icon: .defaultValue,
+                        resources: AgentResources(skillPaths: skillPaths)
+                    ),
+                    createdAt: Date(timeIntervalSince1970: 1),
+                    updatedAt: Date(timeIntervalSince1970: 1),
+                    archivedAt: nil
+                )
+                AgentDetailSkillsURLProtocol.skillsCatalog = skillsCatalog
+
+                let root = try await makeTestAppRoot(
+                    readyServerId: "agent-detail-skills-\(UUID().uuidString)",
+                    apiClient: AgentDetailSkillsURLProtocol.makeClient()
+                )
+                let screen = AgentDetailViewController(root: root, agentId: "linked-skills-agent") { _ in }
+                let window = try AgentListViewControllerTests.show(screen)
+                window.frame = CGRect(x: 0, y: 0, width: 390, height: 2000)
+                defer { AgentListViewControllerTests.hide(window) }
+
+                var resolvedValue: String?
+                _ = await waitForMainActorCondition(timeout: .seconds(5)) {
+                    screen.view.layoutIfNeeded()
+                    let match = screen.collectionView.visibleCells
+                        .flatMap { $0.allAccessibilityElements() }
+                        .first { $0.accessibilityLabel == "Skills" }
+                    guard let value = match?.accessibilityValue,
+                          !value.contains(linked)
+                    else { return false }
+                    resolvedValue = value
+                    return true
+                }
+                return resolvedValue
+            }
+
+            // A Skill selected through a linked folder shows its catalog name, not the raw path.
+            #expect(try await loadSkillsValue(for: [linked]) == "notebook")
+            // Duplicate aliases of one Skill collapse (never "notebook, notebook"), while unmatched paths stay.
+            #expect(try await loadSkillsValue(for: [canonical, linked, retired]) == "notebook, \(retired)")
+        }
+
         private func hasAlert(_ screen: UIViewController, _ window: UIWindow) -> Bool {
             screen.presentedViewController != nil || window.rootViewController?.presentedViewController != nil
         }
@@ -264,6 +337,12 @@ private extension UIView {
     func allLabels() -> [UILabel] {
         var found = (self as? UILabel).map { [$0] } ?? []
         for subview in subviews { found += subview.allLabels() }
+        return found
+    }
+
+    func allAccessibilityElements() -> [UIView] {
+        var found = isAccessibilityElement ? [self] : []
+        for subview in subviews { found += subview.allAccessibilityElements() }
         return found
     }
 
@@ -443,4 +522,76 @@ private final class AgentsURLProtocol: URLProtocol, @unchecked Sendable {
         client?.urlProtocol(self, didLoad: body)
         client?.urlProtocolDidFinishLoading(self)
     }
+}
+
+/// Serves an Agent definition and Skill/Extension catalogs for `AgentDetailViewController`
+/// Skill-name tests without contending with `AgentsURLProtocol`.
+private final class AgentDetailSkillsURLProtocol: URLProtocol, @unchecked Sendable {
+    static let host = "agent-detail-skills.test"
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var agentValue: StoredAgentDefinition?
+    nonisolated(unsafe) private static var skillsValue: ServerSkillsCatalog?
+
+    static var storedAgent: StoredAgentDefinition? {
+        get { lock.withLock { agentValue } }
+        set { lock.withLock { agentValue = newValue } }
+    }
+
+    static var skillsCatalog: ServerSkillsCatalog? {
+        get { lock.withLock { skillsValue } }
+        set { lock.withLock { skillsValue = newValue } }
+    }
+
+    static func reset() {
+        lock.withLock {
+            agentValue = nil
+            skillsValue = nil
+        }
+    }
+
+    static func makeClient() -> APIClient {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [AgentDetailSkillsURLProtocol.self]
+        return APIClient(
+            baseURL: URL(string: "https://\(host)") ?? URL(fileURLWithPath: "/"),
+            token: "test-token",
+            configuration: config
+        )
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == host
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        let path = request.url?.path ?? ""
+        let body: Data?
+        if path.hasSuffix("/server/resources/skills"), let catalog = Self.skillsCatalog {
+            body = try? JSONEncoder().encode(catalog)
+        } else if path.hasSuffix("/server/resources/extensions") {
+            body = Data(#"{"extensions":[],"builtInTools":[],"optionalTools":[]}"#.utf8)
+        } else if path.contains("/agents/"), let agent = Self.storedAgent {
+            body = try? JSONEncoder().encode(["agent": agent])
+        } else {
+            body = nil
+        }
+        guard let url = request.url, let body, let response = HTTPURLResponse(
+            url: url,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json"]
+        ) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: body)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }

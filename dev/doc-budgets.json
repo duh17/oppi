@@ -54,8 +54,8 @@
       "reason": "Session list and history read models, touched-file and worktree change views with their git budget, and the app-event allowlist. 477 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server/runtime.md": {
-      "words": 3280,
-      "reason": "Session runtime owners and invariants: runtime dispatch, managed SDK and sandbox Skills, server durable (stores, classic-event facade, sandbox execution, restart and store failure, MCP, extensions), subagents, Oppi Control's cards and replay risks, durable gaps and tree navigation, Agents and schedules, mirror. 2829 words; headroom max(15%, 100 words); raised 20 for durable tree navigation."
+      "words": 3325,
+      "reason": "Session runtime owners and invariants: runtime dispatch, managed SDK and sandbox Skills, server durable (stores, classic-event facade, sandbox execution, restart and store failure, MCP, extensions), subagents, Oppi Control's cards and replay risks, durable gaps and tree navigation, Agents and schedules, mirror. 2829 words; headroom max(15%, 100 words); raised 20 for durable tree navigation; raised 45 more for the Skill path identity the catalog publishes."
     },
     "dev/architecture-server/tool-inspection.md": {
       "words": 480,

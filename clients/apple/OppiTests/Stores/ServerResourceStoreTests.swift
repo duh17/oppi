@@ -373,17 +373,22 @@ struct ServerResourceStoreTests {
 
     @Test func optimisticSkillToggleRetainsPackageMetadataAcrossPendingSuccessAndPresentation() async throws {
         let privatePath = "/private/var/folders/skill-package/SKILL.md"
+        let linkedPath = "/home/.pi/agent/skills/skill-package/SKILL.md"
         let cached = skill(
             id: "skill-package",
             state: .disabled,
             packageName: "@scope/cached-skill",
-            path: privatePath
+            path: privatePath,
+            paths: [privatePath, linkedPath],
+            selectionPath: linkedPath
         )
         let authoritative = skill(
             id: cached.id,
             state: .enabled,
             packageName: "@scope/authoritative-skill",
-            path: privatePath
+            path: privatePath,
+            paths: [privatePath, linkedPath],
+            selectionPath: linkedPath
         )
         let mutationGate = SuspensionGate()
         let store = configuredStore(skills: [cached])
@@ -403,6 +408,8 @@ struct ServerResourceStoreTests {
 
         let pending = try #require(store.skills(forServer: "server-a").first)
         #expect(pending.packageName == "@scope/cached-skill")
+        #expect(pending.paths == [privatePath, linkedPath])
+        #expect(pending.selectionPath == linkedPath)
 
         await mutationGate.release()
         await mutation.value
@@ -410,6 +417,8 @@ struct ServerResourceStoreTests {
         let settled = try #require(store.skills(forServer: "server-a").first)
         #expect(settled == authoritative)
         #expect(settled.packageName == "@scope/authoritative-skill")
+        #expect(settled.paths == [privatePath, linkedPath])
+        #expect(settled.selectionPath == linkedPath)
     }
 
     @Test func optimisticExtensionToggleRetainsPackageMetadataAcrossPendingRollbackAndPresentation() async throws {
@@ -773,7 +782,9 @@ struct ServerResourceStoreTests {
         state: ServerSkillState,
         name: String? = nil,
         packageName: String? = nil,
-        path: String? = nil
+        path: String? = nil,
+        paths: [String]? = nil,
+        selectionPath: String? = nil
     ) -> ServerSkillSummary {
         ServerSkillSummary(
             id: id,
@@ -781,6 +792,8 @@ struct ServerResourceStoreTests {
             description: "Description for \(id)",
             provenance: ServerResourceProvenance(kind: .piAgent, label: "Pi agent"),
             path: path,
+            paths: paths,
+            selectionPath: selectionPath,
             packageName: packageName,
             state: state,
             loadError: nil,

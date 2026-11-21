@@ -191,6 +191,109 @@ struct AgentEditorScreensTests {
         })
     }
 
+    /// A Skill is one Skill however its path was written down: an Agent that selected it
+    /// through a symlinked skills folder holds that folder's path, not the canonical one.
+    /// Deselecting removes any saved alias; re-selecting stores the preferred discovered path
+    /// (the linked form when present, or the canonical path for a canonical-only Skill).
+    @Test("a Skill saved through a linked skills folder is the catalog's Skill, and re-selecting stores its preferred path")
+    func linkedSkillSelectionIsDiscovered() async throws {
+        let connection = makeConnection()
+        let provenance = ServerResourceProvenance(kind: .piAgent, label: "~/.pi/agent/skills")
+        let canonicalPath = "/home/real/notebook/SKILL.md"
+        let linkedPath = "/home/.pi/agent/skills/notebook/SKILL.md"
+        let localPath = "/home/.pi/agent/skills/local/SKILL.md"
+        connection.serverResourceStore.replaceSkills([
+            ServerSkillSummary(
+                id: "notebook", name: "notebook", description: "Keep notes.", provenance: provenance,
+                path: canonicalPath, paths: [canonicalPath, linkedPath], selectionPath: linkedPath,
+                state: .enabled, loadError: nil, warnings: [], editable: true
+            ),
+            ServerSkillSummary(
+                id: "local", name: "local", description: "Direct skill.", provenance: provenance,
+                path: localPath, paths: [localPath], selectionPath: localPath,
+                state: .enabled, loadError: nil, warnings: [], editable: true
+            ),
+        ], serverId: Self.serverId)
+        let draft = AgentNativeEditDraft(
+            agent: makeAgent(skillPaths: [linkedPath]),
+            connection: connection,
+            serverName: "mac-studio"
+        )
+        let page = AgentResourceSelectionViewController(kind: .skills, draft: draft)
+        let screen = try Screen(page)
+        defer { screen.hide() }
+
+        let notebook = try #require(await screen.waitForButton("agent.nativeEdit.skill.\(canonicalPath)", in: page.view))
+        #expect(notebook.accessibilityValue == "Selected")
+        #expect(
+            screen.button("agent.nativeEdit.skill.\(linkedPath)", in: page.view) == nil,
+            "the linked folder's path is the same Skill, not an unavailable selection"
+        )
+
+        notebook.sendActions(for: .touchUpInside)
+        #expect(await screen.waitFor {
+            screen.button("agent.nativeEdit.skill.\(canonicalPath)", in: page.view)?.accessibilityValue == "Not selected"
+        }, "deselecting removes the path the Agent saved")
+        #expect(draft.selectedSkillPaths.isEmpty)
+
+        // Re-selecting stores the preferred linked path (not the canonical realpath), and
+        // selecting a canonical-only Skill stores its canonical path.
+        let notebookAfterDeselect = try #require(screen.button("agent.nativeEdit.skill.\(canonicalPath)", in: page.view))
+        notebookAfterDeselect.sendActions(for: .touchUpInside)
+        let local = try #require(screen.button("agent.nativeEdit.skill.\(localPath)", in: page.view))
+        local.sendActions(for: .touchUpInside)
+        #expect(await screen.waitFor {
+            screen.button("agent.nativeEdit.skill.\(canonicalPath)", in: page.view)?.accessibilityValue == "Selected"
+                && screen.button("agent.nativeEdit.skill.\(localPath)", in: page.view)?.accessibilityValue == "Selected"
+        })
+        #expect(draft.selectedSkillPaths == [linkedPath, localPath])
+        #expect(draft.resolvedSkillPaths == [localPath, linkedPath].sorted())
+    }
+
+    @Test("duplicate Skill aliases collapse in the editor count and on save, keeping unmatched paths as-is")
+    func duplicateSkillAliasesCollapseInCountAndSave() async throws {
+        let connection = makeConnection()
+        let provenance = ServerResourceProvenance(kind: .piAgent, label: "~/.pi/agent/skills")
+        // Canonical sorts before preferredLink to prove collapse prefers `selectionPath` over sort order.
+        let canonicalPath = "/a/real/notebook/SKILL.md"
+        let preferredLink = "/z/pi/agent/skills/notebook/SKILL.md"
+        let otherLink = "/m/agents/skills/notebook/SKILL.md"
+        let retiredPath = "/retired/old/SKILL.md"
+        connection.serverResourceStore.replaceSkills([
+            ServerSkillSummary(
+                id: "notebook", name: "notebook", description: "Keep notes.", provenance: provenance,
+                path: canonicalPath,
+                paths: [canonicalPath, preferredLink, otherLink],
+                selectionPath: preferredLink,
+                state: .enabled, loadError: nil, warnings: [], editable: true
+            ),
+        ], serverId: Self.serverId)
+
+        let agent = makeAgent(skillPaths: [canonicalPath, preferredLink, retiredPath])
+        let editor = AgentNativeEditViewController(
+            agent: agent, apiClient: nil, connection: connection, serverName: "mac-studio"
+        ) { _ in }
+        let screen = try Screen(editor)
+        defer { screen.hide() }
+
+        let row = try #require(await screen.waitForButton("agent.nativeEdit.skills"))
+        #expect(row.accessibilityValue == "2", "duplicate aliases of notebook count once alongside the retired path")
+
+        // Saving through the draft collapses duplicates to the preferred linked path and keeps unmatched paths.
+        EditorSaveURLProtocol.reset()
+        defer { EditorSaveURLProtocol.reset() }
+        EditorSaveURLProtocol.responseAgent = agent
+        let draft = AgentNativeEditDraft(agent: agent, connection: connection, serverName: "mac-studio")
+        let saved = await draft.save(apiClient: EditorSaveURLProtocol.makeClient())
+        #expect(saved != nil)
+        #expect(EditorSaveURLProtocol.savedSkillPaths == [retiredPath, preferredLink].sorted())
+
+        // Without the preferred link among saved aliases, collapsing keeps the first saved form.
+        let fallbackAgent = makeAgent(skillPaths: [otherLink, canonicalPath])
+        let fallbackDraft = AgentNativeEditDraft(agent: fallbackAgent, connection: connection, serverName: "mac-studio")
+        #expect(fallbackDraft.resolvedSkillPaths == [otherLink])
+    }
+
     @Test("the Skills page lists the catalog, refuses a Skill that cannot load, and keeps a saved path the server dropped")
     func skillsPageChoices() async throws {
         let connection = makeConnection()
@@ -417,5 +520,91 @@ private extension UIView {
         var found = (self as? T).map { [$0] } ?? []
         for subview in subviews { found += subview.allSubviews(of: type) }
         return found
+    }
+}
+
+/// Captures `PATCH /agents/...` payloads for `AgentNativeEditDraft.save` tests without
+/// touching the shared `TestURLProtocol`.
+private final class EditorSaveURLProtocol: URLProtocol, @unchecked Sendable {
+    static let host = "agent-editor-save.test"
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var capturedSkillPaths: [String]?
+    nonisolated(unsafe) private static var storedAgent: StoredAgentDefinition?
+
+    static var savedSkillPaths: [String]? {
+        lock.withLock { capturedSkillPaths }
+    }
+
+    static var responseAgent: StoredAgentDefinition? {
+        get { lock.withLock { storedAgent } }
+        set { lock.withLock { storedAgent = newValue } }
+    }
+
+    static func reset() {
+        lock.withLock {
+            capturedSkillPaths = nil
+            storedAgent = nil
+        }
+    }
+
+    static func makeClient() -> APIClient {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [EditorSaveURLProtocol.self]
+        return APIClient(
+            baseURL: URL(string: "https://\(host)") ?? URL(fileURLWithPath: "/"),
+            token: "test-token",
+            configuration: config
+        )
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == host
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        let bodyData = readRequestBody(request)
+        if let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any],
+           let resources = json["resources"] as? [String: Any],
+           let skillPaths = resources["skillPaths"] as? [String]
+        {
+            Self.lock.withLock { Self.capturedSkillPaths = skillPaths }
+        }
+        guard let url = request.url,
+              let agent = Self.responseAgent,
+              let responseBody = try? JSONEncoder().encode(["agent": agent]),
+              let response = HTTPURLResponse(
+                  url: url,
+                  statusCode: 200,
+                  httpVersion: "HTTP/1.1",
+                  headerFields: ["Content-Type": "application/json"]
+              )
+        else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: responseBody)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+
+    private func readRequestBody(_ request: URLRequest) -> Data {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return Data() }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 1_024)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            if count <= 0 { break }
+            data.append(contentsOf: buffer.prefix(count))
+        }
+        return data
     }
 }

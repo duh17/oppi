@@ -26,6 +26,35 @@ final class AgentResourceSelectionViewController: ListScreenController<
         let subtitle: String
         let status: String?
         let canAdd: Bool
+        /// The id stored when selecting this row: for a Skill, the preferred discovered path
+        /// (linked form when present) rather than the canonical `id`.
+        let selectionId: String
+        /// Every id a selection of this row may be stored under. One Skill can be selected
+        /// through more than one path, so `id` alone would miss a selection saved another way.
+        let selectionIds: Set<String>
+
+        init(
+            id: String,
+            title: String,
+            subtitle: String,
+            status: String? = nil,
+            canAdd: Bool,
+            selectionId: String? = nil,
+            selectionIds: Set<String> = []
+        ) {
+            self.id = id
+            self.title = title
+            self.subtitle = subtitle
+            self.status = status
+            self.canAdd = canAdd
+            let preferred = selectionId ?? id
+            self.selectionId = preferred
+            self.selectionIds = selectionIds.union([id, preferred])
+        }
+
+        func isChosen(in selection: Set<String>) -> Bool {
+            !selection.isDisjoint(with: selectionIds)
+        }
     }
 
     private let kind: Kind
@@ -72,15 +101,17 @@ final class AgentResourceSelectionViewController: ListScreenController<
         switch kind {
         case .skills:
             return draft.availableSkills.compactMap { skill in
-                guard let path = skill.path else { return nil }
+                guard let preferredPath = skill.preferredSelectionPath else { return nil }
                 return Row(
-                    id: path,
+                    id: skill.path ?? preferredPath,
                     title: skill.name,
                     subtitle: skill.description,
                     status: skill.state == .error
                         ? (skill.loadError ?? "Cannot load")
                         : skill.state == .disabled ? "Disabled by default \u{00B7} selectable for this Agent" : nil,
-                    canAdd: skill.state != .error
+                    canAdd: skill.state != .error,
+                    selectionId: preferredPath,
+                    selectionIds: Set(skill.selectionPaths)
                 )
             }
         case .extensions:
@@ -100,7 +131,7 @@ final class AgentResourceSelectionViewController: ListScreenController<
 
     /// Saved selections the catalog no longer lists.
     private func unavailableIds(discovered: [Row]) -> [String] {
-        selected.subtracting(discovered.map(\.id)).sorted()
+        selected.subtracting(discovered.flatMap(\.selectionIds)).sorted()
     }
 
     private func emptyMessage() -> String? {
@@ -173,7 +204,9 @@ final class AgentResourceSelectionViewController: ListScreenController<
         switch item {
         case .status: AnyHashable(String(describing: draft.catalogState(kind)))
         case .empty: AnyHashable(emptyMessage() ?? "")
-        case .resource(let id), .unavailable(let id): AnyHashable([selected.contains(id)])
+        case .unavailable(let id): AnyHashable([selected.contains(id)])
+        case .resource(let id):
+            AnyHashable([discovered.first { $0.id == id }?.isChosen(in: selected) ?? false])
         }
     }
 
@@ -199,7 +232,7 @@ final class AgentResourceSelectionViewController: ListScreenController<
         default:
             return
         }
-        let isChosen = selected.contains(row.id)
+        let isChosen = row.isChosen(in: selected)
         cell.configure(
             title: row.title,
             subtitle: row.subtitle,
@@ -211,10 +244,10 @@ final class AgentResourceSelectionViewController: ListScreenController<
         ) { [weak self] in
             guard let self else { return }
             var ids = selected
-            if ids.contains(row.id) {
-                ids.remove(row.id)
+            if row.isChosen(in: ids) {
+                ids.subtract(row.selectionIds)
             } else if row.canAdd {
-                ids.insert(row.id)
+                ids.insert(row.selectionId)
             } else {
                 return
             }

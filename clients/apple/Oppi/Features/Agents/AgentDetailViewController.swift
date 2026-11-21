@@ -630,7 +630,7 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
     private func skillDisplayNames(_ paths: [String]?) -> [String]? {
         guard let paths, let serverId = connection.currentServerId else { return nil }
         let catalog = connection.serverResourceStore.skills(forServer: serverId)
-        return paths.map { path in catalog.first(where: { $0.path == path })?.name ?? path }
+        return ServerSkillSummary.resolveSelections(paths, in: catalog).map(\.displayName)
     }
 
     private func extensionDisplayNames(_ ids: [String]?) -> [String]? {

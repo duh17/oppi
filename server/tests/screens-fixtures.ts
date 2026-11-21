@@ -43,6 +43,8 @@ const skill = (name: string, overrides: Partial<ServerSkillSummary> = {}): Serve
   description: `Use when ${name} work comes up.`,
   provenance: { kind: "piAgent", label: "~/.pi/agent/skills" },
   path: `/Users/alex/.pi/agent/skills/${name}/SKILL.md`,
+  paths: [`/Users/alex/.pi/agent/skills/${name}/SKILL.md`],
+  selectionPath: `/Users/alex/.pi/agent/skills/${name}/SKILL.md`,
   state: "enabled",
   warnings: [],
   editable: true,
