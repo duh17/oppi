@@ -34,6 +34,13 @@ enum PlatformCapabilities {
     /// the server), so its Library is the user's own, not a container.
     static let sharesUserLibrary = isMacCatalyst
 
+    /// iOS suspends an app soon after it leaves the screen, so a backgrounded
+    /// scene borrows a short background task and then closes its sockets
+    /// (`BackgroundConnectionPlan`). A Mac app keeps running while it is
+    /// hidden, minimized, or behind another app, so it keeps its connections;
+    /// a background task there only delays quitting.
+    static let suspendsInBackground = !isMacCatalyst
+
     /// Telemetry names this build's client kind `mac` and reads the machine's
     /// model from `hw.model`; on the Mac `hw.machine` names only the CPU
     /// (`arm64`). Uploads from the Mac then never mix with the iPad's.

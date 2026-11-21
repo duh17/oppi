@@ -93,6 +93,13 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     /// `configurationForConnecting` runs only for new sessions,
     /// `session.configuration` is a copy, and `requestSceneSessionDestruction`
     /// fails without multiple-scene support.
+    ///
+    /// Only application-role scenes are the app's windows. Mac Catalyst also
+    /// connects system scenes into the process (the menu bar, and one per
+    /// transient AppKit window such as an open menu), with no delegate.
+    /// Adopting one built a second app root inside it, whose chat took the
+    /// focused stream from the visible one, and its phase changes ran the
+    /// app's background path while the window was in front.
     private func adoptScenesSavedBySwiftUI() {
         sceneAdoption = NotificationCenter.default.addObserver(
             forName: UIScene.willConnectNotification,
@@ -101,7 +108,8 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         ) { note in
             guard let scene = note.object as? UIWindowScene else { return }
             MainActor.assumeIsolated {
-                guard !(scene.delegate is SceneDelegate) else { return }
+                guard scene.session.role == .windowApplication,
+                      !(scene.delegate is SceneDelegate) else { return }
                 let delegate = SceneDelegate()
                 scene.delegate = delegate
                 delegate.connect(scene, urlContexts: [])

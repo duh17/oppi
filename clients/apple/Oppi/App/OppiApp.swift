@@ -72,6 +72,30 @@ struct ForegroundReconnectGate {
     }
 }
 
+/// What the server and SSH terminal connections do when the app scene enters
+/// the background.
+enum BackgroundConnectionPlan: Equatable {
+    /// The process keeps running (the Mac): nothing closes, nothing waits.
+    case keepOpen
+    /// Agents are working: hold the sockets in a background task until they finish.
+    case keepAliveForAgents
+    /// Live streamed audio drains over the focused stream under the audio mode.
+    case drainLiveAudio
+    /// Idle: close the sockets after a short grace a quick return cancels.
+    case closeAfterGrace
+
+    static func resolve(
+        suspendsInBackground: Bool,
+        hasActiveAgent: Bool,
+        hasLiveAudio: Bool
+    ) -> Self {
+        guard suspendsInBackground else { return .keepOpen }
+        if hasActiveAgent { return .keepAliveForAgents }
+        if hasLiveAudio { return .drainLiveAudio }
+        return .closeAfterGrace
+    }
+}
+
 /// A `[[link]]` that matched more than one resource; the user picks one.
 struct LaunchRefreshTelemetryOutcome: Equatable, Sendable {
     let overall: String
@@ -661,9 +685,16 @@ final class OppiApp {
             }
 
         case .background:
+            let connectionPlan = BackgroundConnectionPlan.resolve(
+                suspendsInBackground: PlatformCapabilities.suspendsInBackground,
+                hasActiveAgent: coordinator.hasActiveAgentTransport,
+                hasLiveAudio: coordinator.hasActiveAudioTransportPlayback
+            )
             // First, so the background task that keeps SSH terminals running
             // for their grace period starts before anything else can take time.
-            SSHTerminalRegistry.shared.appDidEnterBackground()
+            if connectionPlan != .keepOpen {
+                SSHTerminalRegistry.shared.appDidEnterBackground()
+            }
             let draftFallbackInterval = lifecycleSignposter.beginInterval("scene.background.draft_fallback")
             composerDraftStore.saveQuickSessionLifecycleFallback()
             composerDraftStore.saveLifecycleFallback(activeComposerDraftRecord())
@@ -676,15 +707,21 @@ final class OppiApp {
             recordLifecycleStep(phase, "restoration_save_done", flush: true)
             lifecycleSignposter.endInterval("scene.background.restoration_save", restorationInterval)
 
-            // Keep the WS alive while agents are working so we receive status
-            // updates without reconnecting.
-            if coordinator.hasActiveAgentTransport {
+            switch connectionPlan {
+            case .keepOpen:
+                lifecycleSignposter.emitEvent("background.mode.keep_open")
+                recordLifecycleStep(phase, "keep_open", flush: true)
+
+            case .keepAliveForAgents:
+                // Keep the WS alive while agents are working so we receive status
+                // updates without reconnecting.
                 let keepAliveInterval = lifecycleSignposter.beginInterval("scene.background.keep_alive")
                 lifecycleSignposter.emitEvent("background.mode.keep_alive")
                 recordLifecycleStep(phase, "keep_alive_begin", flush: true)
                 backgroundKeepAlive.begin(coordinator: coordinator)
                 lifecycleSignposter.endInterval("scene.background.keep_alive", keepAliveInterval)
-            } else if coordinator.hasActiveAudioTransportPlayback {
+
+            case .drainLiveAudio:
                 // Let live streamed playback continue under the audio background mode.
                 // Local clips can finish without keeping the focused session stream open; only
                 // active audio_stream delivery needs the transport to drain.
@@ -693,7 +730,8 @@ final class OppiApp {
                 recordLifecycleStep(phase, "audio_transport_background", flush: true)
                 backgroundKeepAlive.end()
                 lifecycleSignposter.endInterval("scene.background.audio_transport", audioTransportInterval)
-            } else {
+
+            case .closeAfterGrace:
                 // No active agents or playback — send graceful close so the
                 // server sees 1001 (going away) instead of discovering the
                 // dead connection via ping timeout (1006). This avoids a 30-60s
