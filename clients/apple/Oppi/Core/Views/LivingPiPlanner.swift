@@ -168,18 +168,18 @@ struct LivingPiPlanner {
     private static let grid: [Cell] = (0..<gridSize).flatMap { row in (0..<gridSize).map { Cell(col: $0, row: row) } }
     private static let directions = [Cell(col: 1, row: 0), Cell(col: -1, row: 0), Cell(col: 0, row: 1), Cell(col: 0, row: -1)]
     private static let elfStarts = [Cell(col: 4, row: 0), Cell(col: 4, row: 7)]
-    private static let walkSpeed = 3.6
-    private static let strollSpeed = 2.2
-    private static let pushSeconds = 0.45
-    private static let pullSeconds = 0.6
+    private static let walkSpeed = 5.8
+    private static let strollSpeed = 3.5
+    private static let pushSeconds = 0.28
+    private static let pullSeconds = 0.38
     private static let lean = 0.28
     private static let weights: [[(JobKind, Double)]] = [
         [(.knock, 2), (.nudge, 3), (.carry, 2), (.shift, 1.5), (.swap, 1.5), (.wander, 1.5)],
         [(.heal, 3), (.knock, 1), (.nudge, 1.5), (.carry, 1), (.relocate, 1.5), (.wander, 1.5)],
         [(.heal, 4), (.relocate, 1.5), (.wander, 1.5)],
     ]
-    /// The view draws at 30 fps; the rehearsal checks every frame it will show.
-    static let frameInterval = 1.0 / 30
+    /// The view draws at 20 fps; the rehearsal checks every frame it will show.
+    static let frameInterval = 1.0 / 20
 
     // MARK: State
 
@@ -198,8 +198,8 @@ struct LivingPiPlanner {
 
     var awayCount: Int { blocks.count { !Self.slotCells.contains($0.cell) } }
 
-    /// A rest between jobs: 8–20 s.
-    mutating func rest() -> Double { rng.uniform(8, 20) }
+    /// A rest between jobs: 2–6 s.
+    mutating func rest() -> Double { rng.uniform(2, 6) }
 
     /// Plans one job from the current state and moves the state to its end,
     /// or returns nil when no job fits (the elves rest).
@@ -312,7 +312,7 @@ struct LivingPiPlanner {
         let walkable = Set(Self.grid).subtracting(solid(exceptElf: e))
         let targets = goals.intersection(walkable)
         guard !targets.isEmpty, let path = Self.path(from: elves[e], to: targets, through: walkable) else { throw JobFailed() }
-        let duration = max(0.35, Double(path.count - 1) / speed)
+        let duration = max(0.22, Double(path.count - 1) / speed)
         elfTracks[e].add(t0, t0 + duration, path.dropFirst().map { Pose($0) })
         elves[e] = path[path.count - 1]
         return t0 + duration
@@ -349,14 +349,14 @@ struct LivingPiPlanner {
         func lean(_ p: Cell) -> Pose {
             Pose(Double(p.col) - Double(d.col) * (1 - Self.lean), Double(p.row) - Double(d.row) * (1 - Self.lean), 1.15)
         }
-        t = elfTracks[e].add(t, t + 0.22, [lean(blocks[b].cell)])
+        t = elfTracks[e].add(t, t + 0.14, [lean(blocks[b].cell)])
         let cells = (1...n).map { blocks[b].cell.step(d, $0) }
         let duration = Self.pushSeconds * Double(n)
         blockTracks[b].add(t, t + duration, cells.map { Pose($0) })
         t = elfTracks[e].add(t, t + duration, cells.map(lean))
         blocks[b].cell = cells[cells.count - 1]
         elves[e] = blocks[b].cell.step(d, -1)
-        return elfTracks[e].add(t, t + 0.22, [Pose(elves[e])])
+        return elfTracks[e].add(t, t + 0.14, [Pose(elves[e])])
     }
 
     /// The elf gets ahead of `b`, grips it, and walks backwards `n` cells
@@ -368,14 +368,14 @@ struct LivingPiPlanner {
         func grip(_ p: Cell) -> Pose {
             Pose(Double(p.col) + Double(d.col) * (1 - Self.lean), Double(p.row) + Double(d.row) * (1 - Self.lean), 1.15)
         }
-        t = elfTracks[e].add(t, t + 0.25, [grip(blocks[b].cell)])
+        t = elfTracks[e].add(t, t + 0.16, [grip(blocks[b].cell)])
         let cells = (1...n).map { blocks[b].cell.step(d, $0) }
         let duration = Self.pullSeconds * Double(n)
         blockTracks[b].add(t, t + duration, cells.map { Pose($0) })
         t = elfTracks[e].add(t, t + duration, cells.map(grip))
         blocks[b].cell = cells[cells.count - 1]
         elves[e] = blocks[b].cell.step(d)
-        return elfTracks[e].add(t, t + 0.22, [Pose(elves[e])])
+        return elfTracks[e].add(t, t + 0.14, [Pose(elves[e])])
     }
 
     private enum Move: Equatable {
@@ -456,13 +456,13 @@ struct LivingPiPlanner {
         let behind = blocks[b].cell.step(d, -1)
         var t = try walk(e, to: [behind], from: 0)
         let bump = Pose(Double(behind.col) + Double(d.col) * 0.35, Double(behind.row) + Double(d.row) * 0.35, 1.2)
-        t = elfTracks[e].add(t, t + 0.12, [bump], .linear)
+        t = elfTracks[e].add(t, t + 0.1, [bump], .linear)
         let cells = (1...n).map { blocks[b].cell.step(d, $0) }
-        let slide = 0.25 + 0.2 * Double(n)
+        let slide = 0.16 + 0.13 * Double(n)
         blockTracks[b].add(t, t + slide, cells.map { Pose($0) }, .easeOut)
-        elfTracks[e].add(t, t + 0.3, [Pose(behind)])
+        elfTracks[e].add(t, t + 0.19, [Pose(behind)])
         blocks[b].cell = cells[cells.count - 1]
-        t += slide + rng.uniform(0.4, 0.7)
+        t += slide + rng.uniform(0.25, 0.45)
         return try walk(e, to: Self.neighbours(blocks[b].cell), from: t)
     }
 
@@ -483,29 +483,29 @@ struct LivingPiPlanner {
         var spots = [home.step(side), home.step(side, -1)]
         if elves[0].distance(to: spots[1]) < elves[0].distance(to: spots[0]) { spots.reverse() }
         let t0 = try walk(0, to: [spots[0]], from: 0)
-        let t1 = try walk(1, to: [spots[1]], from: 0.3)
+        let t1 = try walk(1, to: [spots[1]], from: 0.19)
         let signs = spots.map { $0 == home.step(side) ? 1.0 : -1.0 }
         func lean(_ p: Cell, _ sign: Double, _ scale: Double) -> Pose {
             Pose(Double(p.col) + Double(side.col) * sign * (1 - Self.lean), Double(p.row) + Double(side.row) * sign * (1 - Self.lean), scale)
         }
         func lift(_ t: Double, _ p: Cell, up: Bool) -> Double {
-            blockTracks[b].add(t, t + 0.35, [Pose(p, up ? 1.12 : 1)])
-            for e in 0..<2 { elfTracks[e].add(t, t + 0.35, [lean(p, signs[e], up ? 1.15 : 1)]) }
-            return t + 0.35
+            blockTracks[b].add(t, t + 0.22, [Pose(p, up ? 1.12 : 1)])
+            for e in 0..<2 { elfTracks[e].add(t, t + 0.22, [lean(p, signs[e], up ? 1.15 : 1)]) }
+            return t + 0.22
         }
         let out = home.step(d, n)
-        var t = lift(max(t0, t1) + 0.1, home, up: true)
+        var t = lift(max(t0, t1) + 0.06, home, up: true)
         let path = (1...n).map { home.step(d, $0) }
-        let duration = 0.75 * Double(n)
+        let duration = 0.47 * Double(n)
         blockTracks[b].add(t, t + duration, path.map { Pose($0, 1.12) })
         for e in 0..<2 { elfTracks[e].add(t, t + duration, path.map { lean($0, signs[e], 1.15) }) }
         t = lift(t + duration, out, up: false)
         blocks[b].cell = out
         for e in 0..<2 {
             elves[e] = spots[e].step(d, n)
-            elfTracks[e].add(t, t + 0.25, [Pose(elves[e])])
+            elfTracks[e].add(t, t + 0.16, [Pose(elves[e])])
         }
-        return t + 0.25
+        return t + 0.16
     }
 
     /// Two slotted neighbours get shoved one cell crooked, and stay crooked.
@@ -524,7 +524,7 @@ struct LivingPiPlanner {
         })
         let first = pickElf(near: blocks[b1].cell)
         let t = try push(first, b1, d, 1, from: 0)
-        return try push(1 - first, b2, d, 1, from: t - 0.3)
+        return try push(1 - first, b2, d, 1, from: t - 0.19)
     }
 
     // MARK: Jobs that keep or lower the count
@@ -568,7 +568,7 @@ struct LivingPiPlanner {
         var grips: [Cell] = []
         for (e, b) in [(e1, b1), (1 - e1, b2)] {
             ends.append(try walk(e, to: Self.neighbours(blocks[b].cell).subtracting([h1, h2]), from: start))
-            start += 0.3
+            start += 0.19
             grips.append(Cell(col: elves[e].col - blocks[b].cell.col, row: elves[e].row - blocks[b].cell.row))
         }
         var t = ends.max() ?? 0
@@ -578,21 +578,21 @@ struct LivingPiPlanner {
             Pose(p.x + Double(g.col) * (1 - Self.lean), p.y + Double(g.row) * (1 - Self.lean), 1.15)
         }
         for (e, b, g, _, _) in movers {
-            elfTracks[e].add(t, t + 0.3, [hold(Pose(blocks[b].cell), g)])
-            blockTracks[b].add(t + 0.15, t + 0.45, [Pose(blocks[b].cell, 1.12)])
+            elfTracks[e].add(t, t + 0.19, [hold(Pose(blocks[b].cell), g)])
+            blockTracks[b].add(t + 0.09, t + 0.28, [Pose(blocks[b].cell, 1.12)])
         }
-        t += 0.5
+        t += 0.31
         for (e, b, g, sign, dest) in movers {
             let via = Pose(midX + Double(side.col) * 0.32 * sign, midY + Double(side.row) * 0.32 * sign, 1.12)
-            blockTracks[b].add(t, t + 1.3, [via, Pose(dest, 1.12)])
-            elfTracks[e].add(t, t + 1.3, [hold(via, g), hold(Pose(dest), g)])
+            blockTracks[b].add(t, t + 0.81, [via, Pose(dest, 1.12)])
+            elfTracks[e].add(t, t + 0.81, [hold(via, g), hold(Pose(dest), g)])
         }
-        t += 1.3
+        t += 0.81
         for (_, b, _, _, dest) in movers {
-            blockTracks[b].add(t, t + 0.3, [Pose(dest)])
+            blockTracks[b].add(t, t + 0.19, [Pose(dest)])
             blocks[b].cell = dest
         }
-        t += 0.3
+        t += 0.19
         for (e, _, g, _, dest) in movers {
             elves[e] = dest + g
             let taken = solid(exceptElf: e)
@@ -604,9 +604,9 @@ struct LivingPiPlanner {
                 }
                 elves[e] = nearest
             }
-            elfTracks[e].add(t, t + 0.3, [Pose(elves[e])])
+            elfTracks[e].add(t, t + 0.19, [Pose(elves[e])])
         }
-        return t + 0.3
+        return t + 0.19
     }
 
     /// No work: one elf strolls somewhere, and half the time the other walks
@@ -617,7 +617,7 @@ struct LivingPiPlanner {
         let far = Self.grid.filter { !taken.contains($0) && $0.distance(to: elves[e]) >= 3 }
         var t = try walk(e, to: [rng.choice(far)], from: 0, speed: Self.strollSpeed)
         if rng.unit() < 0.5 {
-            t = max(t, try walk(1 - e, to: Self.neighbours(elves[e]), from: 0.6, speed: Self.strollSpeed))
+            t = max(t, try walk(1 - e, to: Self.neighbours(elves[e]), from: 0.38, speed: Self.strollSpeed))
         }
         return t
     }

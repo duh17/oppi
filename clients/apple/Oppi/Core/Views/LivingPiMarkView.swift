@@ -6,8 +6,9 @@ import UIKit
 /// (`LivingPiPlanner` decides the moves and keeps the π a π).
 ///
 /// The app wakes once per job: it plans the job, hands each layer that moves
-/// one keyframe group sampled at 30 fps, and sleeps through the job and the
-/// 8–20 s rest after it. Core Animation plays the motion; there is no
+/// one keyframe group sampled at 20 fps (at 32 pt that reads the same as 30
+/// and the system redraws less), and sleeps through the job and the 2–6 s
+/// rest after it. Core Animation plays the motion; there is no
 /// per-frame work in the app.
 ///
 /// It runs only while it is in a window, shown, its scene is in the
@@ -33,7 +34,7 @@ final class LivingPiMarkView: UIView {
     private static let cellFraction: CGFloat = 85.0 / 97.0
     private static let cornerFraction: CGFloat = 23.0 / 85.0
     private static let elfFraction: CGFloat = 0.4
-    private static let frameRate = CAFrameRateRange(minimum: 15, maximum: 30, preferred: 30)
+    private static let frameRate = CAFrameRateRange(minimum: 10, maximum: 20, preferred: 20)
 
     /// The theme's foreground: the π's white cells, the scenery and the elves.
     var inkColor: UIColor = .label {
@@ -123,11 +124,14 @@ final class LivingPiMarkView: UIView {
     private func color(_ tint: LivingPiPlanner.Tint) -> UIColor { Self.accents[tint] ?? inkColor }
 
     /// A lifted block brightens a little toward white, as if caught by light.
-    private func color(_ tint: LivingPiPlanner.Tint, scale: Double) -> CGColor {
-        let lift = CGFloat(max(0, (scale - 1) / 0.12) * 0.18)
+    /// The tint is resolved once per job, not once per keyframe.
+    private func glow(_ tint: LivingPiPlanner.Tint, _ poses: [LivingPiPlanner.Pose]) -> [CGColor] {
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         color(tint).resolvedColor(with: traitCollection).getRed(&r, green: &g, blue: &b, alpha: &a)
-        return UIColor(red: r + (1 - r) * lift, green: g + (1 - g) * lift, blue: b + (1 - b) * lift, alpha: a).cgColor
+        return poses.map { pose in
+            let lift = CGFloat(max(0, (pose.scale - 1) / 0.12) * 0.18)
+            return UIColor(red: r + (1 - r) * lift, green: g + (1 - g) * lift, blue: b + (1 - b) * lift, alpha: a).cgColor
+        }
     }
 
     private func applyColors() {
@@ -198,7 +202,7 @@ final class LivingPiMarkView: UIView {
         let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.runJob() }
         }
-        timer.tolerance = 1
+        timer.tolerance = 0.5
         RunLoop.main.add(timer, forMode: .common)
         wakeTimer = timer
     }
@@ -277,10 +281,9 @@ final class LivingPiMarkView: UIView {
             let poses = times.map(track.at)
             var animations = motion(poses)
             if poses.contains(where: { $0.scale != 1 }) {
-                let tint = planner.blocks[i].tint
-                let glow = CAKeyframeAnimation(keyPath: "backgroundColor")
-                glow.values = poses.map { color(tint, scale: $0.scale) }
-                animations.append(glow)
+                let brighten = CAKeyframeAnimation(keyPath: "backgroundColor")
+                brighten.values = glow(planner.blocks[i].tint, poses)
+                animations.append(brighten)
             }
             blockLayers[i].zPosition = 1
             animate(blockLayers[i], animations)
