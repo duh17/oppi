@@ -2,49 +2,13 @@ import UIKit
 
 @MainActor
 enum TimelineCellFactory {
-    typealias CellDequeuer = (_ collectionView: UICollectionView, _ indexPath: IndexPath, _ itemID: String) -> UICollectionViewCell
-
-    /// Which registration a row's cell comes from. UIKit reconfigures an
-    /// item's existing cell (a prefetched one too) only through the
-    /// registration that made it, so a row whose kind changes under its ID
-    /// is reloaded, not reconfigured (`ChatTimelineController.cellKindChanged`).
+    /// Which row the items of a snapshot ID draw as. The kind only selects the
+    /// content configuration (`ChatTimelineController.configureCell`): every
+    /// kind shares one cell registration, so a row that changes kind under its
+    /// ID redraws without UIKit dequeuing it through another registration.
     enum Kind: Equatable {
         case assistant, user, thinking, tool, audio, system, compaction, error
         case missingItem, loadMore, working, quietWork, childTail
-    }
-
-    struct Registrations {
-        let assistant: CellDequeuer
-        let user: CellDequeuer
-        let thinking: CellDequeuer
-        let tool: CellDequeuer
-        let audio: CellDequeuer
-        let system: CellDequeuer
-        let compaction: CellDequeuer
-        let error: CellDequeuer
-        let missingItem: CellDequeuer
-        let loadMore: CellDequeuer
-        let working: CellDequeuer
-        let quietWork: CellDequeuer
-        let childTail: CellDequeuer
-
-        func dequeuer(for kind: Kind) -> CellDequeuer {
-            switch kind {
-            case .assistant: assistant
-            case .user: user
-            case .thinking: thinking
-            case .tool: tool
-            case .audio: audio
-            case .system: system
-            case .compaction: compaction
-            case .error: error
-            case .missingItem: missingItem
-            case .loadMore: loadMore
-            case .working: working
-            case .quietWork: quietWork
-            case .childTail: childTail
-            }
-        }
     }
 
     static func kind(

@@ -31,6 +31,11 @@ final class SafeSizingCell: UICollectionViewCell {
     /// the cached height accommodates the full text layout — UITextView
     /// lays out all characters regardless of visibility.
     var isStreamingAssistant = false
+    /// The row kind this cell was last configured as. UIKit reconfigures a
+    /// cell in place when its row changes kind, so this is what tells
+    /// `configureCell` to drop the previous kind's state; a recycled cell
+    /// clears it in `prepareForReuse`.
+    var configuredTimelineKind: TimelineCellFactory.Kind?
     var cachedStreamingHeight: CGFloat?
     /// Width `cachedStreamingHeight` was measured at. A height cached at another
     /// width is wrong (too tall wider, clipped narrower), so it is discarded.
@@ -77,6 +82,7 @@ final class SafeSizingCell: UICollectionViewCell {
         isStreamingAssistant = false
         invalidateStreamingHeightCache()
         cancelTimelinePreparationDemand()
+        configuredTimelineKind = nil
         // The arrival belongs to the landed row, not to whatever reuses the cell.
         finishNavigationArrival()
         accessibilityIdentifier = nil
@@ -362,116 +368,135 @@ extension ChatTimelineController {
         // cascade. Tests that skip makeUIView still go through this path.
         collectionView.selfSizingInvalidation = .enabledIncludingConstraints
 
-        let assistantRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
+        // Every row is a SafeSizingCell keyed by its string ID; the row's kind
+        // only picks the content configuration `configureCell` applies. One
+        // registration serves them all: UIKit reconfigures an item's existing
+        // cell — a prefetched one at a later idle turn too — only through the
+        // registration that made it, and a row's kind can change under its ID
+        // (a note becomes a compaction marker, a card gains terminal output).
+        // A registration per kind made that dequeue throw and crashed the app.
+        let cellRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
+            self?.configureCell(cell, itemID: itemID)
+        }
+
+        dataSource = UICollectionViewDiffableDataSource<Int, String>(
+            collectionView: collectionView
+        ) { collectionView, indexPath, itemID in
+            collectionView.dequeueConfiguredReusableCell(
+                using: cellRegistration,
+                for: indexPath,
+                item: itemID
+            )
+        }
+    }
+
+    /// The row as its kind has it now, read at configure time: a reconfigured
+    /// cell still draws the row it holds, whatever kind made the cell.
+    private func configureCell(_ cell: SafeSizingCell, itemID: String) {
+        let kind = TimelineCellFactory.kind(
+            itemID: itemID,
+            itemByID: currentItemByID,
+            isCompactionMessage: Self.isCompactionMessage
+        )
+        dequeuedCellKindByID[itemID] = kind
+        // A reconfigured cell keeps what its last row set; only a recycled one
+        // goes through `prepareForReuse`. A row that changes kind under its ID
+        // does keep the cell, so drop what the other kind left there.
+        if let configured = cell.configuredTimelineKind, configured != kind {
+            cell.releaseToolHeaderAccessibility()
+            cell.isStreamingAssistant = false
+            cell.invalidateStreamingHeightCache()
+            cell.cancelTimelinePreparationDemand()
+            cell.accessibilityIdentifier = nil
+            cell.accessibilityElementsHidden = false
+        }
+        cell.configuredTimelineKind = kind
+
+        switch kind {
+        case .assistant:
             cell.bindTimelinePreparationDemand(itemID: itemID) { [weak self] in
                 self?.preparationRunway.cancel(itemID: itemID, demand: .visible)
             }
             // Set streaming flag for self-sizing throttle. When streaming,
             // the cell skips expensive auto layout on alternate ticks.
-            let isStreaming = self?.isAssistantStreamingPresentationActive == true
-                && self?.streamingAssistantID == itemID
+            let isStreaming = isAssistantStreamingPresentationActive
+                && streamingAssistantID == itemID
             cell.isStreamingAssistant = isStreaming
             if !isStreaming {
                 cell.invalidateStreamingHeightCache()
             }
-            self?.configureNativeCell(
+            configureNativeCell(
                 cell,
                 itemID: itemID,
                 rowLabel: "assistant"
             ) { item in
-                self?.assistantRowConfiguration(itemID: itemID, item: item)
+                self.assistantRowConfiguration(itemID: itemID, item: item)
             }
-        }
-
-        let userRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
-            self?.configureNativeCell(
+        case .user:
+            configureNativeCell(
                 cell,
                 itemID: itemID,
                 rowLabel: "user"
             ) { item in
-                self?.userRowConfiguration(itemID: itemID, item: item)
+                self.userRowConfiguration(itemID: itemID, item: item)
             }
-        }
-
-        let thinkingRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
-            self?.configureNativeCell(
+        case .thinking:
+            configureNativeCell(
                 cell,
                 itemID: itemID,
                 rowLabel: "thinking"
             ) { item in
-                self?.thinkingRowConfiguration(itemID: itemID, item: item)
+                self.thinkingRowConfiguration(itemID: itemID, item: item)
             }
-        }
-
-        let toolRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
-            self?.configureNativeCell(
+        case .tool:
+            configureNativeCell(
                 cell,
                 itemID: itemID,
                 rowLabel: "tool"
             ) { item in
-                self?.toolRowConfiguration(itemID: itemID, item: item)
+                self.toolRowConfiguration(itemID: itemID, item: item)
             }
-        }
-
-        let audioRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
-            self?.configureNativeCell(
+        case .audio:
+            configureNativeCell(
                 cell,
                 itemID: itemID,
                 rowLabel: "audio"
             ) { item in
-                self?.audioRowConfiguration(item: item)
+                self.audioRowConfiguration(item: item)
             }
-        }
-
-        let systemRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
-            self?.configureNativeCell(
+        case .system:
+            configureNativeCell(
                 cell,
                 itemID: itemID,
                 rowLabel: "system"
             ) { item in
-                self?.systemEventRowConfiguration(itemID: itemID, item: item)
+                self.systemEventRowConfiguration(itemID: itemID, item: item)
             }
-        }
-
-        let compactionRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
-            self?.configureNativeCell(
+        case .compaction:
+            configureNativeCell(
                 cell,
                 itemID: itemID,
                 rowLabel: "compaction"
             ) { item in
-                self?.systemEventRowConfiguration(itemID: itemID, item: item)
+                self.systemEventRowConfiguration(itemID: itemID, item: item)
             }
-        }
-
-        let errorRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
-            self?.configureNativeCell(
+        case .error:
+            configureNativeCell(
                 cell,
                 itemID: itemID,
                 rowLabel: "error"
             ) { item in
-                self?.errorRowConfiguration(item: item)
+                self.errorRowConfiguration(item: item)
             }
-        }
-
-        let missingItemRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, _ in
-            self?.applyNativeFrictionRow(
+        case .missingItem:
+            applyNativeFrictionRow(
                 to: cell,
                 title: "\u{26a0}\u{fe0f} Timeline row unavailable",
                 detail: "Timeline item missing from snapshot.",
                 rowType: "placeholder"
             )
-        }
-
-        let loadMoreRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, _ in
+        case .loadMore:
             let configureStartNs = ChatTimelinePerf.timestampNs()
-            guard let self else {
-                ChatTimelinePerf.recordCellConfigure(
-                    rowType: "load_more",
-                    durationMs: ChatTimelinePerf.elapsedMs(since: configureStartNs)
-                )
-                return
-            }
-
             cell.contentConfiguration = LoadMoreTimelineRowConfiguration(
                 onRequestEarlier: { [weak self] in self?.onShowEarlier?() }
             )
@@ -481,13 +506,31 @@ extension ChatTimelineController {
                 rowType: "load_more",
                 durationMs: ChatTimelinePerf.elapsedMs(since: configureStartNs)
             )
-        }
-
-        let quietWorkRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self, weak collectionView] cell, _, itemID in
+        case .working:
             let configureStartNs = ChatTimelinePerf.timestampNs()
-            guard let self,
-                  let workLine = self.currentWorkLineByID[itemID] else {
-                self?.applyNativeFrictionRow(
+            // The turn's clock, from the prompt that started it: the newest user or
+            // agent message (a steer restarts it).
+            let turnStartedAt = reducer?.items.last { item in
+                switch item {
+                case .userMessage, .agentMessage: true
+                default: false
+                }
+            }?.timestamp
+            cell.contentConfiguration = WorkingIndicatorTimelineRowConfiguration(
+                modelId: currentModel,
+                surface: currentExtensionSurface,
+                turnStartedAt: turnStartedAt
+            )
+            cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
+            cell.contentView.clipsToBounds = true
+            ChatTimelinePerf.recordCellConfigure(
+                rowType: "working_indicator",
+                durationMs: ChatTimelinePerf.elapsedMs(since: configureStartNs)
+            )
+        case .quietWork:
+            let configureStartNs = ChatTimelinePerf.timestampNs()
+            guard let workLine = currentWorkLineByID[itemID] else {
+                applyNativeFrictionRow(
                     to: cell,
                     title: "Work row unavailable",
                     detail: "Synthetic quiet-mode row missing from snapshot.",
@@ -497,21 +540,21 @@ extension ChatTimelineController {
                 return
             }
 
-            let onTap = { [weak self, weak collectionView] in
-                guard let self, let collectionView else { return }
+            let onTap = { [weak self] in
+                guard let self, let collectionView = self.collectionView else { return }
                 self.toggleQuietWorkLine(workLine, in: collectionView)
             }
-            if itemID == self.currentWorkingRowLineID {
+            if itemID == currentWorkingRowLineID {
                 // The running turn: one row for the indicator and its work.
                 cell.contentConfiguration = WorkingIndicatorTimelineRowConfiguration(
-                    modelId: self.currentModel,
-                    surface: self.currentExtensionSurface,
-                    work: WorkingRowWork(workLine: workLine, chromeStyle: self.chromeStyle, onTap: onTap)
+                    modelId: currentModel,
+                    surface: currentExtensionSurface,
+                    work: WorkingRowWork(workLine: workLine, chromeStyle: chromeStyle, onTap: onTap)
                 )
             } else {
                 cell.contentConfiguration = QuietWorkLineTimelineRowConfiguration(
                     workLine: workLine,
-                    chromeStyle: self.chromeStyle,
+                    chromeStyle: chromeStyle,
                     onTap: onTap
                 )
             }
@@ -521,12 +564,10 @@ extension ChatTimelineController {
                 rowType: "quiet_work",
                 durationMs: ChatTimelinePerf.elapsedMs(since: configureStartNs)
             )
-        }
-
-        let childTailRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, itemID in
+        case .childTail:
             let configureStartNs = ChatTimelinePerf.timestampNs()
-            guard let self, let tail = self.currentChildTailByID[itemID] else {
-                self?.applyNativeFrictionRow(
+            guard let tail = currentChildTailByID[itemID] else {
+                applyNativeFrictionRow(
                     to: cell,
                     title: "Subagent row unavailable",
                     detail: "Synthetic child-tail row missing from snapshot.",
@@ -535,9 +576,9 @@ extension ChatTimelineController {
                 )
                 return
             }
-            let sessionId = tail.reference.sessionId
+            let tailSessionId = tail.reference.sessionId
             cell.contentConfiguration = ChildTailTimelineRowConfiguration(tail: tail) { [weak self] in
-                self?.onOpenSession?(sessionId)
+                self?.onOpenSession?(tailSessionId)
             }
             cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
             cell.contentView.clipsToBounds = true
@@ -546,153 +587,14 @@ extension ChatTimelineController {
                 durationMs: ChatTimelinePerf.elapsedMs(since: configureStartNs)
             )
         }
-
-        let workingRegistration = UICollectionView.CellRegistration<SafeSizingCell, String> { [weak self] cell, _, _ in
-            let configureStartNs = ChatTimelinePerf.timestampNs()
-            guard let self else {
-                ChatTimelinePerf.recordCellConfigure(
-                    rowType: "working_indicator",
-                    durationMs: ChatTimelinePerf.elapsedMs(since: configureStartNs)
-                )
-                return
-            }
-
-            let modelId = self.currentModel
-            // The turn's clock, from the prompt that started it: the newest user or
-            // agent message (a steer restarts it).
-            let turnStartedAt = self.reducer?.items.last { item in
-                switch item {
-                case .userMessage, .agentMessage: true
-                default: false
-                }
-            }?.timestamp
-            cell.contentConfiguration = WorkingIndicatorTimelineRowConfiguration(
-                modelId: modelId,
-                surface: self.currentExtensionSurface,
-                turnStartedAt: turnStartedAt
-            )
-            cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
-            cell.contentView.clipsToBounds = true
-            ChatTimelinePerf.recordCellConfigure(
-                rowType: "working_indicator",
-                durationMs: ChatTimelinePerf.elapsedMs(since: configureStartNs)
-            )
-        }
-
-        let registrations = TimelineCellFactory.Registrations(
-            assistant: { collectionView, indexPath, itemID in
-                collectionView.dequeueConfiguredReusableCell(
-                    using: assistantRegistration,
-                    for: indexPath,
-                    item: itemID
-                )
-            },
-            user: { collectionView, indexPath, itemID in
-                collectionView.dequeueConfiguredReusableCell(
-                    using: userRegistration,
-                    for: indexPath,
-                    item: itemID
-                )
-            },
-            thinking: { collectionView, indexPath, itemID in
-                collectionView.dequeueConfiguredReusableCell(
-                    using: thinkingRegistration,
-                    for: indexPath,
-                    item: itemID
-                )
-            },
-            tool: { collectionView, indexPath, itemID in
-                collectionView.dequeueConfiguredReusableCell(
-                    using: toolRegistration,
-                    for: indexPath,
-                    item: itemID
-                )
-            },
-            audio: { collectionView, indexPath, itemID in
-                collectionView.dequeueConfiguredReusableCell(
-                    using: audioRegistration,
-                    for: indexPath,
-                    item: itemID
-                )
-            },
-            system: { collectionView, indexPath, itemID in
-                collectionView.dequeueConfiguredReusableCell(
-                    using: systemRegistration,
-                    for: indexPath,
-                    item: itemID
-                )
-            },
-            compaction: { collectionView, indexPath, itemID in
-                collectionView.dequeueConfiguredReusableCell(
-                    using: compactionRegistration,
-                    for: indexPath,
-                    item: itemID
-                )
-            },
-            error: { collectionView, indexPath, itemID in
-                collectionView.dequeueConfiguredReusableCell(
-                    using: errorRegistration,
-                    for: indexPath,
-                    item: itemID
-                )
-            },
-            missingItem: { collectionView, indexPath, itemID in
-                collectionView.dequeueConfiguredReusableCell(
-                    using: missingItemRegistration,
-                    for: indexPath,
-                    item: itemID
-                )
-            },
-            loadMore: { collectionView, indexPath, itemID in
-                collectionView.dequeueConfiguredReusableCell(
-                    using: loadMoreRegistration,
-                    for: indexPath,
-                    item: itemID
-                )
-            },
-            working: { collectionView, indexPath, itemID in
-                collectionView.dequeueConfiguredReusableCell(
-                    using: workingRegistration,
-                    for: indexPath,
-                    item: itemID
-                )
-            },
-            quietWork: { collectionView, indexPath, itemID in
-                collectionView.dequeueConfiguredReusableCell(
-                    using: quietWorkRegistration,
-                    for: indexPath,
-                    item: itemID
-                )
-            },
-            childTail: { collectionView, indexPath, itemID in
-                collectionView.dequeueConfiguredReusableCell(
-                    using: childTailRegistration,
-                    for: indexPath,
-                    item: itemID
-                )
-            }
-        )
-
-        dataSource = UICollectionViewDiffableDataSource<Int, String>(
-            collectionView: collectionView
-        ) { [weak self] collectionView, indexPath, itemID in
-            let kind = TimelineCellFactory.kind(
-                itemID: itemID,
-                itemByID: self?.currentItemByID ?? [:],
-                isCompactionMessage: Self.isCompactionMessage
-            )
-            self?.dequeuedCellKindByID[itemID] = kind
-            return registrations.dequeuer(for: kind)(collectionView, indexPath, itemID)
-        }
     }
 
     private static func isCompactionMessage(_ message: String) -> Bool {
         compactionPresentation(from: message) != nil
     }
 
-    /// Whether `itemID`'s row now takes another registration than the one its
-    /// cell was dequeued with. Reconfiguring such an item throws once UIKit
-    /// reaches its existing cell, so the snapshot reloads it instead.
+    /// Whether `itemID`'s row is drawn as another kind than the one its cell
+    /// was last configured with.
     func cellKindChanged(_ itemID: String) -> Bool {
         guard let dequeued = dequeuedCellKindByID[itemID] else { return false }
         return dequeued != TimelineCellFactory.kind(
@@ -702,12 +604,11 @@ extension ChatTimelineController {
         )
     }
 
-    /// Every row whose cell kind changed (`cellKindChanged`), whether or not
-    /// an apply counted it as changed. A cell UIKit kept for a row that just
-    /// scrolled off screen comes back without the data source, or through the
-    /// cell provider as a reconfigure when a redraw is pending, which throws
-    /// for a changed kind; reloading the row drops that cell. A full apply
-    /// reloads these rows once, then forgets the ones left without a cell.
+    /// Every row whose kind changed since its cell was configured, whether or
+    /// not an apply counted it as changed. A kept cell for a row that just
+    /// scrolled off screen comes back without the data source, so nothing else
+    /// redraws it: a full apply reconfigures these rows once, then forgets the
+    /// ones that have no cell left.
     func cellKindChangedIDs() -> [String] {
         dequeuedCellKindByID.keys.filter(cellKindChanged)
     }

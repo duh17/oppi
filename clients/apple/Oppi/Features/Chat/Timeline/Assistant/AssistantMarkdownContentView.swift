@@ -271,12 +271,12 @@ final class AssistantMarkdownContentView: UIView {
     /// `width` instead of its bounds. Auto Layout reads a subview's height from
     /// `intrinsicContentSize`, which follows the bounds; a row measured for a
     /// new width (a pane opened or closed beside the chat, a rotation) still
-    /// had the old bounds, so its text and tables measured at the width before,
-    /// and the timeline kept that height for the new width: a gap under the
-    /// reply when it widened, a clipped last line when it narrowed.
+    /// had the old bounds, and a newly created content view (including one
+    /// built when a cell from the shared pool is reused from another row kind)
+    /// has zero bounds and would otherwise measure at the 320 pt fallback on
+    /// first fit and jump once laid out.
     func measure<T>(atWidth width: CGFloat, _ body: () -> T) -> T {
-        // A view never laid out keeps its first-layout path (`intrinsicCapturedWidth`).
-        guard width.isFinite, width > 0, bounds.width > 0, abs(width - bounds.width) > 0.5 else { return body() }
+        guard width.isFinite, width > 0, abs(width - bounds.width) > 0.5 else { return body() }
         measuringWidth = width
         invalidateIntrinsicContentSize()
         defer {
@@ -383,7 +383,7 @@ final class AssistantMarkdownContentView: UIView {
     }
 
     override var intrinsicContentSize: CGSize {
-        let width = measuringWidth ?? (bounds.width > 0 ? bounds.width : 320)
+        let width = measuringWidth ?? (bounds.width > 0 ? bounds.width : usableHostLayoutWidth ?? 320)
         segmentApplier.fitBlocks(toWidth: width)
         let size = stackView.systemLayoutSizeFitting(
             CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),

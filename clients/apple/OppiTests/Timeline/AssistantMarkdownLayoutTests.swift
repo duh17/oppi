@@ -1488,7 +1488,6 @@ struct AssistantMarkdownLayoutTests {
             previousItemByID: [:],
             streamingAssistantID: nil,
             previousStreamingAssistantID: nil,
-            cellKindChanged: controller.cellKindChanged
         )
         collectionView.layoutIfNeeded()
 

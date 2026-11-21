@@ -564,6 +564,10 @@ final class AssistantMarkdownSegmentApplier {
             textView.isSelectable = config.textSelectionEnabled
             textView.attributedText = NSAttributedString(attributed)
             configureSourceLineResolver(textView, sourceLineRange: sourceLineRange(at: index))
+            applyStreamingTailCompressionResistance(
+                to: textView,
+                isStreamingTail: config.isStreaming && index == segmentCount - 1
+            )
             stackView.addArrangedSubview(textView)
             textViews[index] = textView
 
@@ -889,6 +893,7 @@ final class AssistantMarkdownSegmentApplier {
            case .text(let attributed) = segments[lastTextIndex],
            let textView = textViews[lastTextIndex] {
             configureSourceLineResolver(textView, sourceLineRange: sourceLineRange(at: lastTextIndex))
+            applyStreamingTailCompressionResistance(to: textView, isStreamingTail: true)
             updateStreamingTextTail(
                 attributed,
                 in: textView,
@@ -912,6 +917,10 @@ final class AssistantMarkdownSegmentApplier {
             case .text(let attributed):
                 if let textView = textViews[index] {
                     configureSourceLineResolver(textView, sourceLineRange: sourceLineRange(at: index))
+                    applyStreamingTailCompressionResistance(
+                        to: textView,
+                        isStreamingTail: isStreamingTail && index == segments.count - 1
+                    )
                     if !config.isStreaming || isStreamingTail {
                         // Skip isSelectable during streaming when unchanged — UITextView
                         // does internal state work on assignment even if value is identical.
@@ -1333,6 +1342,21 @@ final class AssistantMarkdownSegmentApplier {
         textView.setNeedsLayout()
         stackView.setNeedsLayout()
         stackView.superview?.setNeedsLayout()
+    }
+
+    /// While streaming, `SafeSizingCell` throttles self-sizing passes so the
+    /// cell height stays fixed briefly as tail text grows. Keep the growing
+    /// tail slightly more compressible than frozen prefix segments so Auto
+    /// Layout clips the tail at the bottom instead of compressing earlier
+    /// paragraphs and pulling headings upward.
+    private func applyStreamingTailCompressionResistance(
+        to textView: BaselineSafeTextView,
+        isStreamingTail: Bool
+    ) {
+        let priority = isStreamingTail
+            ? UILayoutPriority(UILayoutPriority.defaultHigh.rawValue - 1)
+            : .defaultHigh
+        textView.setContentCompressionResistancePriority(priority, for: .vertical)
     }
 
     private func sourceLineRange(at index: Int) -> ClosedRange<Int>? {

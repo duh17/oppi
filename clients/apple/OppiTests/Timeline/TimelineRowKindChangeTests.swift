@@ -4,12 +4,11 @@ import UIKit
 @testable import Oppi
 
 /// A row can change kind under its ID: a system note that becomes a
-/// compaction marker, a custom card that gains terminal output. Its cell came
-/// from the old kind's registration, and UIKit refuses to reconfigure a cell
-/// (a prefetched one included) through another registration: it throws
+/// compaction marker, a custom card that gains terminal output. Every timeline
+/// row shares one `SafeSizingCell` registration so UIKit can reconfigure an
+/// existing or kept cell in place as its new kind without throwing
 /// "Attempted to dequeue a cell for a different registration ... when
-/// reconfiguring an item", which crashed the app. The row redraws as its new
-/// kind instead.
+/// reconfiguring an item".
 @Suite("TimelineRowKindChange")
 @MainActor
 struct TimelineRowKindChangeTests {
@@ -87,13 +86,100 @@ struct TimelineRowKindChangeTests {
             isBusy: true,
             streamingID: "reply"
         )
-        // The reload is owed once: the off-screen row has no cell now, and a
-        // later apply must not reload it again.
+        // The reconfigure is owed once: the off-screen row has no cell now,
+        // and a later apply must not reconfigure it again.
         #expect(harness.coordinator.cellKindChangedIDs().isEmpty)
         scroll(by: -14)
 
         #expect(collectionView.indexPathsForVisibleItems.contains(cardIndex))
         #expect(contentConfiguration(of: "card", in: harness) is CollapsedToolTimelineRowConfiguration)
+    }
+
+    /// Proves the reconfiguration invariant directly: reconfiguring an existing
+    /// cell whose row changed kind in `currentItemByID` (without a snapshot
+    /// reload) must redraw it as the new kind instead of throwing "Attempted
+    /// to dequeue a cell for a different registration". This tests the dequeue
+    /// invariant rather than replaying UIKit's idle-time prefetch path
+    /// (`_updatePrefetchItemIfNeeded` → `_reconfigureCell`), which hits the
+    /// same cell-provider dequeue in production.
+    @Test
+    func aKeptCellTakesItsRowsNewKind() {
+        let harness = makeWindowedTimelineHarness(
+            sessionId: "row-kind-change-kept-cell",
+            useAnchoredCollectionView: false
+        )
+        defer { hideTestWindow(harness.window) }
+        let user = ChatItem.userMessage(id: "user-1", text: "Run the producer", timestamp: timestamp)
+
+        harness.applyItems([user, .systemEvent(id: "event-1", message: "Model changed")], isBusy: false)
+        #expect(contentConfiguration(of: "event-1", in: harness) is SystemTimelineRowConfiguration)
+
+        // The card gains terminal output, which moves the row to the tool kind
+        // under the same ID while the existing cell is still held. Under
+        // per-kind registrations, the reconfigure below dequeued through the
+        // tool registration for a cell created by the system registration and
+        // threw.
+        var card = TraceEventPresentation(
+            kind: "custom",
+            title: "Card",
+            subtitle: nil,
+            status: "completed",
+            body: "producer command",
+            fields: nil,
+            accent: "success"
+        )
+        card.output = .init(kind: "terminal", entryId: "1", command: "producer command", truncated: nil)
+        harness.coordinator.currentItemByID["event-1"] = .customEvent(
+            id: "event-1",
+            message: "Model changed",
+            presentation: card
+        )
+
+        guard let dataSource = harness.coordinator.dataSource else {
+            Issue.record("timeline has no data source")
+            return
+        }
+        var snapshot = dataSource.snapshot()
+        snapshot.reconfigureItems(["event-1"])
+        dataSource.apply(snapshot, animatingDifferences: false)
+        harness.collectionView.layoutIfNeeded()
+
+        #expect(contentConfiguration(of: "event-1", in: harness) is CollapsedToolTimelineRowConfiguration)
+    }
+
+    /// Under a shared cell registration, an assistant row reused from another
+    /// kind (or freshly allocated) creates a new `AssistantTimelineRowContentView`
+    /// with zero bounds. Its first `preferredLayoutAttributesFitting` must
+    /// measure at the target column width rather than falling back to 320 pt,
+    /// otherwise the layout caches the wider-wrapped height and shifts the
+    /// viewport when the cell settles after layout.
+    @Test
+    func aFreshAssistantRowMeasuresAtTargetWidthOnFirstFit() {
+        let cell = SafeSizingCell(frame: CGRect(x: 0, y: 0, width: 358, height: 100))
+        cell.contentConfiguration = AssistantTimelineRowConfiguration(
+            text: String(repeating: "Long line 7 with content. ", count: 8),
+            isStreaming: false,
+            canFork: false,
+            onFork: nil
+        )
+
+        let attributes = UICollectionViewLayoutAttributes(forCellWith: IndexPath(item: 0, section: 0))
+        attributes.frame = CGRect(x: 0, y: 0, width: 358, height: 100)
+        let firstHeight = cell.preferredLayoutAttributesFitting(attributes).size.height
+
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 358, height: 800))
+        defer { hideTestWindow(window) }
+        cell.frame = CGRect(x: 0, y: 0, width: 358, height: firstHeight)
+        window.addSubview(cell)
+        window.layoutIfNeeded()
+
+        attributes.frame = CGRect(x: 0, y: 0, width: 358, height: firstHeight)
+        let settledHeight = cell.preferredLayoutAttributesFitting(attributes).size.height
+
+        #expect(
+            abs(firstHeight - settledHeight) <= 1.0,
+            "first fit measured \(firstHeight)pt, settled height is \(settledHeight)pt"
+        )
     }
 
     private func contentConfiguration(of itemID: String, in harness: WindowedTimelineHarness) -> (any UIContentConfiguration)? {

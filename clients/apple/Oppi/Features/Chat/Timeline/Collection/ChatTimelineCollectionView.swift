@@ -573,7 +573,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
     /// suffix window. Viewport fallback ordinals must use this coordinate space.
     private(set) var currentFullTimelineItemIDs: [String] = []
     var currentItemByID: [String: ChatItem] = [:]
-    /// The registration each row's cell was last dequeued with (`cellKindChanged`).
+    /// The kind each row's cell was last configured as (`cellKindChanged`).
     var dequeuedCellKindByID: [String: TimelineCellFactory.Kind] = [:]
     var currentWorkLineByID: [String: QuietTimelineWorkLine] = [:]
     /// The live work line drawn as the working row (`ChatTimelineApplyPlan.workingRowLine`).
@@ -1284,7 +1284,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
 
             (collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout)?.contentDidChange(for: reconfigureIDs)
             var snapshot = dataSource.snapshot()
-            TimelineSnapshotApplier.refresh(reconfigureIDs, in: &snapshot, cellKindChanged: cellKindChanged)
+            snapshot.reconfigureItems(reconfigureIDs)
             let applyToken = ChatTimelinePerf.beginCollectionApply(
                 itemCount: currentIDs.count,
                 changedCount: reconfigureIDs.count,
@@ -1386,7 +1386,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             if !reconfigureIDs.isEmpty, let dataSource {
                 (collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout)?.contentDidChange(for: reconfigureIDs)
                 var snapshot = dataSource.snapshot()
-                TimelineSnapshotApplier.refresh(reconfigureIDs, in: &snapshot, cellKindChanged: cellKindChanged)
+                snapshot.reconfigureItems(reconfigureIDs)
                 let applyToken = ChatTimelinePerf.beginCollectionApply(
                     itemCount: currentIDs.count,
                     changedCount: reconfigureIDs.count,
@@ -1491,9 +1491,8 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         var forceReconfigureIDs = Array(toolArgsChangedIDs)
         // While streaming, the change scan compares only rows expected to
         // change, so a row that changes kind (a card gaining terminal output)
-        // can go uncounted. Its kept off-screen cell would then come back as
-        // the old kind, or throw if a redraw was pending. Reloaded once:
-        // cleared below when the reload leaves the row without a cell.
+        // can go uncounted. Its kept off-screen cell would then come back drawn
+        // as the old kind. Redrawn once: cleared below when the row has no cell.
         let kindChangedIDs = cellKindChangedIDs()
         forceReconfigureIDs += kindChangedIDs
         // A line that starts or stops being the working row keeps its ID; redraw it.
@@ -1570,13 +1569,11 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             themeChanged: globalAppearanceChanged,
             isBusy: configuration.isBusy,
             forceReconfigureIDs: forceReconfigureIDs,
-            cellKindChanged: cellKindChanged,
             willReconfigure: { (collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout)?.contentDidChange(for: $0) }
         )
-        // The reload dropped each row's cell. A row UIKit did not dequeue
-        // again still holds its old kind and has no cell to reload, so forget
-        // it. Only after the apply: a cleared entry before it would turn the
-        // reload into a reconfigure.
+        // A row UIKit did not redraw again has no cell, so the next apply must
+        // not redraw it again. Only after the apply: a cleared entry before it
+        // would leave the row drawn as its old kind.
         for id in kindChangedIDs where cellKindChanged(id) {
             dequeuedCellKindByID[id] = nil
         }
@@ -2318,7 +2315,6 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             dataSource: dataSource,
             currentIDs: currentIDs,
             sessionId: sessionId,
-            cellKindChanged: cellKindChanged,
             willReconfigure: { (collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout)?.contentDidChange(for: $0) }
         ) else {
             return
