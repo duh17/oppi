@@ -217,6 +217,15 @@ export interface OppiDurableHost {
     api: DocumentReader & { readonly conversationId: ConversationId },
     context: Context,
   ): Promise<SurfacePublisher | undefined>;
+  /**
+   * Whether the store of the Session the conversation `api` is for finished its previous close
+   * cleanly (every running process was killed before it closed), rather than crashing or failing a
+   * guest kill. False outside an Oppi server, or when the previous close did not finish cleanly.
+   */
+  storeClosedCleanly(
+    api: DocumentReader & { readonly conversationId: ConversationId },
+    context: Context,
+  ): Promise<boolean>;
   /** Pi's file tools over the host or a sandbox session's Gondolin VM. */
   readonly files: OppiFileToolsHost;
   /**

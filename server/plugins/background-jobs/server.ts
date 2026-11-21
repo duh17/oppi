@@ -269,6 +269,20 @@ async function waitForJob(
 
 const INTERRUPTED_PROCESS_WARNING =
   "The previous host or guest process may still be running. Do not start it again until it is confirmed dead.";
+const STOPPED_BY_RESTART_MESSAGE =
+  "was stopped by the server restart; its process was killed and its output is lost — rerun it if still needed.";
+
+/** Whether this store's previous close killed every job cleanly; false outside an Oppi server. */
+async function wasCleanClose(
+  api: DocumentReader & { readonly conversationId: ConversationId },
+  context: Context,
+): Promise<boolean> {
+  try {
+    return await oppiHost().storeClosedCleanly(api, context);
+  } catch {
+    return false;
+  }
+}
 
 function report(
   job: Job,
@@ -285,7 +299,9 @@ function report(
 } {
   const headline =
     job.status === "interrupted"
-      ? `Background job ${job.id} was interrupted by a host restart before it finished. It was not rerun. ${INTERRUPTED_PROCESS_WARNING}`
+      ? job.resumed === "stopped"
+        ? `Background job ${job.id} ${STOPPED_BY_RESTART_MESSAGE}`
+        : `Background job ${job.id} was interrupted by a host restart before it finished. It was not rerun. ${INTERRUPTED_PROCESS_WARNING}`
       : job.status === "cancelled"
         ? `Background job ${job.id} was cancelled.`
         : job.status === "timed_out"
@@ -337,6 +353,7 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
       /** Characters dropped from the front, so the app's viewer can append to what it holds. */
       let dropped = 0;
       let exitCode: number | null = null;
+      let resumed: Job["resumed"];
       const appendOutput = (text: string): void => {
         output += text;
         if (output.length > 64_000) {
@@ -443,6 +460,8 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
               `${output ? "\n" : ""}${error instanceof Error ? error.message : String(error)}`,
             );
           }
+        } else if (await wasCleanClose(runtime, context)) {
+          resumed = "stopped";
         }
         await runtime.commit(async (tx) => {
           const current = jobById((await tx.doc(DurableJobs, runtime.conversationId)).jobs, job.id);
@@ -451,6 +470,7 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
             exitCode,
             endedAt: runtime.now(),
             ...(dropped > 0 ? { dropped } : {}),
+            ...(resumed === undefined ? {} : { resumed }),
           });
           Object.assign(await tx.doc(JobOutput, runtime.taskId), {
             output,
@@ -522,16 +542,19 @@ const JobRunner = defineTask<{ jobId: string }, { phase: "run" } | { phase: "rep
         // not resurrect it under a new identity.
         const requestId = job.receiptId || `background-job:${job.id}`;
         const result = report(job, await jobOutput(runtime, runtime.taskId, context));
+        const cardNote =
+          job.status === "interrupted"
+            ? job.resumed === "stopped"
+              ? "Stopped by the server restart; its process was killed and its output is lost."
+              : INTERRUPTED_PROCESS_WARNING
+            : undefined;
         await runtime.commit(async (tx) => {
           const cards = await tx.doc(DurableInputCards, runtime.conversationId);
           cards.requests[requestId] ??= {
             title: `Background job ${job.id}`,
             output: result.output,
             status: job.status,
-            body:
-              job.status === "interrupted"
-                ? `${job.command}\n${INTERRUPTED_PROCESS_WARNING}`
-                : job.command,
+            body: cardNote === undefined ? job.command : `${job.command}\n${cardNote}`,
             fields: [
               {
                 label: "Result",
@@ -786,7 +809,10 @@ const bash = defineTool({
     const formatted =
       selected.status === "interrupted"
         ? {
-            text: `Command interrupted by a host restart; it was not rerun. ${INTERRUPTED_PROCESS_WARNING}`,
+            text:
+              selected.resumed === "stopped"
+                ? `Command ${STOPPED_BY_RESTART_MESSAGE}`
+                : `Command interrupted by a host restart; it was not rerun. ${INTERRUPTED_PROCESS_WARNING}`,
             isError: true,
           }
         : formatForegroundResult(output, {
@@ -862,7 +888,11 @@ const readProc: SchemeReader = async (target, api, context) => {
   const saved = job.delivered
     ? undefined
     : await api.snapshot(JobOutput, job.taskId, context).catch(() => undefined);
-  return `${head}\n\n${saved ? saved.output : "The output was delivered to the conversation when the job finished."}`;
+  return `${head}\n\n${
+    saved
+      ? saved.output
+      : "Its result was handed to the conversation as a follow-up: it is in the transcript once the current turn ends. A Stop before that discards it. The output is not kept here."
+  }`;
 };
 
 /** The backgrounded job `target` names, as `read` lists them: a foreground call is not one. */

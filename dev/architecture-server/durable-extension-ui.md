@@ -39,12 +39,12 @@ An entry with no `model` and a `data.card` (`TranscriptCard`, `sanitizeTranscrip
 
 ## Background jobs
 
-- The native extension replaces CodingTools bash (durable later-wins rule) and offers `background_job start/cancel`.
-- Each execution is a conversation-owned task; a memo claims it before the shell starts, so after a restart or shutdown a claimed, unfinished execution reports `interrupted` and never reruns (the report warns the old process may still run; SIGKILL cannot run cleanup).
+- The native extension replaces CodingTools bash and offers `background_job start/cancel`.
+- Each execution is a conversation-owned task; a memo claims it before the shell starts, so a claimed, unfinished execution reports `interrupted` after a restart or shutdown and never reruns. `SessionHost` marks a clean store close (after killing invocations and sandbox work) and clears it on open; without that mark the report warns the process may still run.
 - Reporting persists the result, then submits a follow-up under the stable `background-job:<id>` request id and finishes once admitted (pattern cited in `server.ts`). Stop can discard a queued report; it is never resubmitted under another id. Clients cannot use the reporter namespace for `clientTurnId`.
-- A card in `oppi.input-cards` (generic display metadata, keyed by request id) marks the report as generated input: outside the editable queue and `get_messages`, kept by queue replacement, drawn as a card in history.
-- Output (the last 64,000 characters) is saved at completion in the task-scoped `oppi.background-job-output` document, retired when the runner settles, so output stays only in the transcript. The panel's live tail (`liveTails`) is memory only. Ordinary Stop preserves background jobs.
-- `background-jobs/panel.ts` owns the job panel: `load` reads `DurableJobs`; Stop commits `cancelRequested`. `server.ts` syncs it; its redraw pace and unconditional dismissal are commented at `LIVE_REDRAW_MS` and `loadPanel`. The classic `index.ts` keeps its v1 widget.
+- A card in `oppi.input-cards` (keyed by request id) marks the report as generated input: outside the editable queue and `get_messages`, drawn as a card in history.
+- Output (the last 64,000 characters) goes into the task-scoped `oppi.background-job-output` document, retired with the runner, so it stays only in the transcript; the live tail is memory. Ordinary Stop preserves background jobs.
+- `background-jobs/panel.ts` owns the job panel: `load` reads `DurableJobs`; Stop commits `cancelRequested`. `server.ts` syncs it; its redraw pace and dismissal are commented at the owner. The classic `index.ts` keeps its v1 widget.
 
 ## Input-card output
 

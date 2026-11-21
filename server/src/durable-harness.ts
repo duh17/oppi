@@ -1,4 +1,4 @@
-import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
 import {
   ModelRegistry,
   ModelRuntime,
@@ -15,6 +15,7 @@ import {
   type HarnessSettings,
   type Conversation,
   type ConversationId,
+  type DocumentReader,
   type EntryId,
   type RegistryReader,
   type ReportInfo,
@@ -27,7 +28,7 @@ import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { CodingTools } from "./coding-tools.js";
 import { CODEMODE_TOOL_NAME, createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -132,6 +133,28 @@ const STORAGE_FILE = "session.sqlite";
  * lock: the next refresh saw a changed mtime and the store lost its lock.
  */
 const LOCK_DIR = ".lock";
+/**
+ * Present in a closed store's directory only when `SessionHost.close` finished killing every
+ * running invocation and cleaning up every sandbox env without error. Removed when the store next
+ * opens, so a crash or failed guest kill leaves it absent.
+ */
+const CLEAN_CLOSE_FILE = ".clean-close";
+
+function setCleanClose(directory: string, storeId: string, present: boolean): void {
+  const path = join(directory, CLEAN_CLOSE_FILE);
+  try {
+    if (present) writeFileSync(path, "", { mode: 0o600 });
+    else rmSync(path, { force: true });
+  } catch (error) {
+    log.warn(
+      present ? "durable_store.clean_close_write_failed" : "durable_store.clean_close_clear_failed",
+      {
+        storeId,
+        error: safeErrorMessage(error),
+      },
+    );
+  }
+}
 
 /** The store and conversation each execution env the server made runs; one env, one conversation. */
 const conversationsByEnv = new WeakMap<
@@ -324,6 +347,18 @@ export interface DurableSessionNaming {
   setName(sessionId: string, name: string): Promise<void>;
 }
 
+/** Resolve the open store host for a conversation's Oppi Session, via `DurableSessionDoc`. */
+async function sessionHostOf(
+  api: DocumentReader & { readonly conversationId: ConversationId },
+  context: Context,
+): Promise<SessionHost | undefined> {
+  const bound = boundSessionActivity;
+  if (!bound) return undefined;
+  const sessionId = (await api.snapshot(DurableSessionDoc, api.conversationId, context))?.sessionId;
+  const storeId = sessionId ? bound.records.storeIdOf(sessionId) : undefined;
+  return storeId ? bound.runtime.host(storeId) : undefined;
+}
+
 /**
  * What Oppi's built-ins get from `oppiHost()`: the subagent and control hosts scoped to the
  * conversation that runs a tool call's env, and the file tools over the host or a sandbox VM. One object for
@@ -389,14 +424,10 @@ const durableHost: Omit<OppiDurableHost, "godot" | "mcp" | "skills"> = {
         }
       : undefined;
   },
-  sessionSurfaces: async (api, context) => {
-    const bound = boundSessionActivity;
-    if (!bound) return undefined;
-    const sessionId = (await api.snapshot(DurableSessionDoc, api.conversationId, context))
-      ?.sessionId;
-    const storeId = sessionId ? bound.records.storeIdOf(sessionId) : undefined;
-    return storeId ? bound.runtime.host(storeId)?.surfacesFor(api.conversationId) : undefined;
-  },
+  sessionSurfaces: async (api, context) =>
+    (await sessionHostOf(api, context))?.surfacesFor(api.conversationId),
+  storeClosedCleanly: async (api, context) =>
+    (await sessionHostOf(api, context))?.closedCleanly ?? false,
   files: fileToolsHost,
 };
 /** The one naming port of the process, like the host that exposes it. */
@@ -485,6 +516,8 @@ interface HostServices {
 export class SessionHost {
   private opening?: Promise<{ harness: Harness; models: ModelRuntime }>;
   private closed = false;
+  /** Whether the store's previous close left `.clean-close`, captured and cleared in `openInner`. */
+  private previousCloseClean = false;
   private harnessStorage?: Storage;
   private resumeHeld: boolean;
   /** Waiters for the scheduling gate to open (`whenResumed`). */
@@ -892,6 +925,10 @@ export class SessionHost {
     return !this.closed && (this.opening !== undefined || this.recovering !== undefined);
   }
 
+  get closedCleanly(): boolean {
+    return this.previousCloseClean;
+  }
+
   open(): Promise<{ harness: Harness; models: ModelRuntime }> {
     if (this.recovering) return this.recovering.then(() => this.open());
     if (this.abandoned !== undefined)
@@ -1013,6 +1050,8 @@ export class SessionHost {
       if (this.closed) throw await this.discardSealedOpen(harness);
       await this.watchTaskGraph(harness);
       if (this.closed) throw await this.discardSealedOpen(harness);
+      this.previousCloseClean = existsSync(join(this.directory, CLEAN_CLOSE_FILE));
+      if (this.previousCloseClean) setCleanClose(this.directory, this.storeId, false);
       this.watchFailure(harness);
       return this.opened(harness, shared.models);
     } catch (error) {
@@ -1197,6 +1236,7 @@ export class SessionHost {
     this.stopTaskGraph = undefined;
     this.taskGraph = undefined;
     this.dropServices();
+    this.previousCloseClean = false;
     this.opening = undefined;
     this.harnessStorage = undefined;
     await opening
@@ -1437,6 +1477,7 @@ export class SessionHost {
   }
 
   private async closeInner(): Promise<void> {
+    let clean = false;
     try {
       if (this.opening) {
         const { harness } = await this.opening;
@@ -1448,15 +1489,22 @@ export class SessionHost {
         // Closing interrupts invocations without settling their tasks. Recorded
         // restart work remains durable and is continued by the next Harness.open.
         await harness.close(BACKGROUND_CONTEXT);
-        await Promise.all(
+        const unbinds = await Promise.allSettled(
           [...this.sandboxEnvs.keys()].map((id) => this.unbindSandboxEnv(id, true)),
         );
+        const failed = unbinds.find(
+          (result): result is PromiseRejectedResult => result.status === "rejected",
+        );
+        if (failed) throw failed.reason;
+        clean = this.releaseLock !== undefined;
       } else {
         this.closed = true;
       }
     } finally {
       await Promise.all([...this.mcps.keys()].map((id) => this.closeMcp(id)));
+      if (clean) setCleanClose(this.directory, this.storeId, true);
       await this.unlock();
+      this.previousCloseClean = false;
       this.opening = undefined;
       this.harnessStorage = undefined;
       this.runtime.forgetHost(this);
@@ -2090,9 +2138,13 @@ export class DurableHarness {
   async closeAll(): Promise<void> {
     this.closed = true;
     const hosts = [...this.hosts.values()];
-    await Promise.all(hosts.map((host) => host.close()));
+    const results = await Promise.allSettled(hosts.map((host) => host.close()));
     await this.codemodeSandbox.close();
     await this.pluginHost?.close();
+    const failed = results.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (failed) throw failed.reason;
   }
 }
 

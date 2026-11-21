@@ -28,6 +28,7 @@ import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { DurableBackgroundJobs } from "../plugins/background-jobs/server.js";
 import { DurableJobs } from "../plugins/background-jobs/contract.js";
 import { DurableBackend } from "../src/durable-backend.js";
+import { DurableSessionDoc } from "../src/durable-session-doc.js";
 import { DurableUI } from "../src/durable-ui.js";
 import type { OppiDurableHost, SurfaceDispatch, SurfacePublisher } from "../src/oppi-v1.js";
 import type { ExtensionUISurface } from "../src/types.js";
@@ -112,7 +113,12 @@ vi.mock("oppi/v1", async (importOriginal) => {
   const mocked = {
     ...actual,
     oppiHost: () =>
-      loop.on ? ({ surfaces: publisher } as unknown as OppiDurableHost) : actual.oppiHost(),
+      loop.on
+        ? ({
+            surfaces: publisher,
+            storeClosedCleanly: async () => false,
+          } as unknown as OppiDurableHost)
+        : actual.oppiHost(),
   };
   // The plugin host loads the built-ins through this module and reads its `default` too.
   return { ...mocked, default: mocked };
@@ -221,8 +227,15 @@ async function fixture(responses: FauxResponseStep[], realExec = false, serverOw
         return { ok: true, value: { exitCode: 0, stdout: "FINAL-OUTPUT\n", stderr: "" } };
       },
     );
+  const bindRecords = (runtime: DurableHarness) => {
+    runtime.bindSessionRecords({
+      activity: async () => undefined,
+      storeIdOf: (id) => (id === "jobs-session" ? "jobs-host" : undefined),
+    });
+  };
   let owner = new DurableHarness(dir);
   if (serverOwner) {
+    bindRecords(owner);
     vi.spyOn(ModelRuntime, "create").mockResolvedValue(models);
     vi.spyOn(SettingsManager, "create").mockReturnValue(
       SettingsManager.inMemory({ compaction: { enabled: false } }),
@@ -238,6 +251,7 @@ async function fixture(responses: FauxResponseStep[], realExec = false, serverOw
         } catch (error) {
           if (!(error instanceof Error) || !error.message.includes("is closed")) throw error;
           owner = new DurableHarness(dir);
+          bindRecords(owner);
           host = await owner.openHost("jobs-host", { cwd: dir });
         }
         return (await host.open()).harness;
@@ -248,6 +262,7 @@ async function fixture(responses: FauxResponseStep[], realExec = false, serverOw
       } catch {
         await host?.close().catch(() => undefined);
         owner = new DurableHarness(dir);
+        bindRecords(owner);
         host = undefined;
         reopened = await reopen();
       }
@@ -279,6 +294,11 @@ async function fixture(responses: FauxResponseStep[], realExec = false, serverOw
   const root = await harness.root(context, {
     agent: { model: { provider: "faux", modelId: "faux-1" }, cwd: dir },
   });
+  if (serverOwner) {
+    await root.commit(async (tx) => {
+      (await tx.doc(DurableSessionDoc, root.id)).sessionId = "jobs-session";
+    }, context);
+  }
   loop.harness = harness;
   loop.conversationId = root.id;
   return {
@@ -955,11 +975,23 @@ describe("native Durable background jobs", () => {
       let root = (await harness.conversation(f.root.id, context))!;
       harness.resume();
       const reports = await delivery(harness, root);
-      expect(JSON.stringify(reports)).toContain("interrupted by a host restart");
-      expect(JSON.stringify(reports)).toContain(
-        "previous host or guest process may still be running",
-      );
-      expect(JSON.stringify(reports)).toContain("Do not start it again until it is confirmed dead");
+      // A graceful server close marks the store clean once invocations are joined, so the resumed
+      // job knows its process was killed. A bare Harness has no clean-close mark and keeps the
+      // hedged warning.
+      if (mode === "server graceful shutdown") {
+        expect(JSON.stringify(reports)).toContain(
+          "Background job bash-1 was stopped by the server restart; its process was killed and its output is lost — rerun it if still needed.",
+        );
+        expect(JSON.stringify(reports)).not.toContain("may still be running");
+      } else {
+        expect(JSON.stringify(reports)).toContain("interrupted by a host restart");
+        expect(JSON.stringify(reports)).toContain(
+          "previous host or guest process may still be running",
+        );
+        expect(JSON.stringify(reports)).toContain(
+          "Do not start it again until it is confirmed dead",
+        );
+      }
       expect(f.counts().executions).toBe(1);
       await harness.close(context);
       harnesses.delete(harness);

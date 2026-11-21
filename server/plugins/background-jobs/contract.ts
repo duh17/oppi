@@ -34,6 +34,12 @@ export type Job = {
   delivered: boolean;
   receiptId: string;
   exitCode: number | null;
+  /**
+   * Set when a job that was live across a server restart resumed after a clean close (the closing
+   * server killed every job's process group before exiting). Absent when the previous server died
+   * without closing cleanly, or for a job this process watched.
+   */
+  resumed?: "stopped";
 };
 /**
  * Whether running `job` ends on its own: it has a timeout, or it was started to be awaited (a
