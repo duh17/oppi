@@ -4,15 +4,15 @@ import Foundation
 // reads, and the `.paneEntry` screens that show a restored or linked entry's
 // leaf state (`PaneLeafStateViewController`) until its content can open.
 extension SceneNavigation {
-    /// Shows exactly `elements` above the root, as the restored primary leaf.
-    /// No scoped-lock gate runs: a locked entry arrives as a `.paneEntry`
-    /// that asks only when tapped.
+    /// Shows exactly `elements` (`MainPaneRoute.elements`) as the restored
+    /// primary leaf: a workspace's sessions first is the place. No scoped-lock gate
+    /// runs: a locked entry arrives as a `.paneEntry` that asks only when tapped.
     func restorePrimaryStack(_ elements: [WorkspaceStackRouteElement]) {
-        selectedWorkspaceFilter = elements.first.flatMap { element in
-            if case .workspace(let target) = element { return target }
-            return nil
+        guard case .workspace(let workspace)? = elements.first else {
+            mainPaneRoute = MainPaneRoute(stack: elements)
+            return
         }
-        workspaceStackRouteElements = elements
+        mainPaneRoute = MainPaneRoute(place: .sessions(workspace), stack: Array(elements.dropFirst()))
     }
 
     /// The entry's content can open: its screen takes the entry's place. A
@@ -24,9 +24,9 @@ extension SceneNavigation {
             open(.place(.sessions(target)))
             return
         }
-        guard let index = workspaceStackRouteElements.firstIndex(of: .paneEntry(entry)) else { return }
+        guard let index = mainPaneRoute.stack.firstIndex(of: .paneEntry(entry)) else { return }
         let before = workspaceStackRouteElements
-        workspaceStackRouteElements[index] = element
+        mainPaneRoute.stack[index] = element
         panes.routedEntryResolved(from: before, to: workspaceStackRouteElements)
     }
 
@@ -34,8 +34,8 @@ extension SceneNavigation {
     /// go, and with them a restored chat's panel and position still waiting.
     func closePaneEntry(_ entry: PaneStackEntry) {
         panes.dropRestoredHandoffs()
-        guard let index = workspaceStackRouteElements.firstIndex(of: .paneEntry(entry)) else { return }
-        workspaceStackRouteElements.removeLast(workspaceStackRouteElements.count - index)
+        guard let index = mainPaneRoute.stack.firstIndex(of: .paneEntry(entry)) else { return }
+        mainPaneRoute.stack.removeLast(mainPaneRoute.stack.count - index)
     }
 
     static func paneEntryDiagnosticContext(_ entry: PaneStackEntry) -> WorkspaceStackDiagnosticContext {
@@ -75,7 +75,7 @@ extension SceneNavigation {
                 return nil
             }
         }
-        let elements = workspaceStackRouteElements
+        let elements = mainPaneRoute.stack
         var removing = false
         var remaining: [WorkspaceStackRouteElement] = []
         for element in elements {
@@ -84,7 +84,7 @@ extension SceneNavigation {
         }
         if remaining.count != elements.count {
             mediaOverlayYieldsToUserNavigation()
-            workspaceStackRouteElements = remaining
+            mainPaneRoute.stack = remaining
         }
         return removing
     }

@@ -235,7 +235,7 @@ final class LiveVoiceCallStripController: UIViewController {
         root.opener.open(.session(SessionOpen(
             serverId: key.serverId,
             sessionId: key.sessionId,
-            origin: .inAppHyperlink
+            origin: .link
         )))
     }
 

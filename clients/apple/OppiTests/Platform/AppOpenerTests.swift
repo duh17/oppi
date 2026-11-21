@@ -28,7 +28,7 @@ struct AppOpenerTests {
         #expect(request == .session(SessionOpen(
             serverId: "server-b",
             sessionId: "child",
-            origin: .externalURL
+            origin: .external
         )))
     }
 
@@ -48,7 +48,7 @@ struct AppOpenerTests {
             serverId: "server-b",
             sessionId: "child",
             workspaceId: "workspace-b",
-            origin: .externalURL
+            origin: .external
         )))
     }
 
@@ -116,17 +116,17 @@ struct AppOpenerTests {
 
     @Test func urlsMapToTheirOneRequest() throws {
         func request(_ raw: String) throws -> AppOpenRequest {
-            AppOpenRequest(url: try #require(URL(string: raw)), origin: .externalURL)
+            AppOpenRequest(url: try #require(URL(string: raw)), origin: .external)
         }
 
         #expect(try request("oppi://session/a%20b") == .session(SessionOpen(
             sessionId: "a b",
-            origin: .externalURL
+            origin: .external
         )))
         // A URL must not choose the session's workspace (or its lock scope).
         #expect(try request("oppi://session/child?workspaceId=w1") == .session(SessionOpen(
             sessionId: "child",
-            origin: .externalURL
+            origin: .external
         )))
         #expect(try request("oppi://workspace?path=/tmp/project&name=Project") == .createWorkspace(
             WorkspaceDeepLink.Payload(path: "/tmp/project", name: "Project", serverFingerprint: nil)
@@ -154,11 +154,11 @@ struct AppOpenerTests {
 
     @Test func paneLinksDecodeThroughTheCodec() throws {
         func request(_ raw: String) throws -> AppOpenRequest {
-            AppOpenRequest(url: try #require(URL(string: raw)), origin: .externalURL)
+            AppOpenRequest(url: try #require(URL(string: raw)), origin: .external)
         }
         // A session link may name its server; the open goes there.
         #expect(try request("oppi://session/child?server=sha256:aa") == .session(SessionOpen(
-            serverId: "sha256:aa", sessionId: "child", origin: .externalURL
+            serverId: "sha256:aa", sessionId: "child", origin: .external
         )))
         #expect(try request("oppi://files?workspace=w1&path=src") == .pane(
             PaneLink(server: nil, route: .files(workspace: "w1", path: "src")), sourceServerID: nil
@@ -167,7 +167,7 @@ struct AppOpenerTests {
         // unknown parameter on a pane link.
         for raw in ["oppi://session/a/b", "oppi://session/a?server=x&server=y", "oppi://files?workspace=w1&sort=name"] {
             let url = try #require(URL(string: raw))
-            #expect(AppOpenRequest(url: url, origin: .externalURL) == .invalidLink(url), Comment(rawValue: raw))
+            #expect(AppOpenRequest(url: url, origin: .external) == .invalidLink(url), Comment(rawValue: raw))
         }
     }
 
@@ -176,11 +176,11 @@ struct AppOpenerTests {
     @Test func onlyInviteRoutesStartPairing() throws {
         for raw in ["oppi://connect?v=3&invite=abc", "oppi:///connect?v=3&invite=abc", "oppi://pair?v=3&invite=abc", "OPPI://Connect"] {
             let url = try #require(URL(string: raw))
-            #expect(AppOpenRequest(url: url, origin: .externalURL) == .invite(url), Comment(rawValue: raw))
+            #expect(AppOpenRequest(url: url, origin: .external) == .invite(url), Comment(rawValue: raw))
         }
         for raw in ["oppi://nonsense", "oppi://sesion/abc", "oppi://connected?v=3", "oppi://", "oppi:"] {
             let url = try #require(URL(string: raw))
-            #expect(AppOpenRequest(url: url, origin: .externalURL) == .unsupportedLink(url), Comment(rawValue: raw))
+            #expect(AppOpenRequest(url: url, origin: .external) == .unsupportedLink(url), Comment(rawValue: raw))
             #expect(AppOpenRequest.unsupportedLinkMessage(url) == "Oppi can\u{2019}t open this link")
         }
     }
@@ -189,15 +189,15 @@ struct AppOpenerTests {
     /// on the server the link came from; the rest say why they do not open.
     @Test func agentInternalURLsMapToASessionOrSayWhy() throws {
         func request(_ raw: String, source: String? = "server-a") throws -> AppOpenRequest {
-            AppOpenRequest(url: try #require(URL(string: raw)), origin: .inAppHyperlink, sourceServerID: source)
+            AppOpenRequest(url: try #require(URL(string: raw)), origin: .link, sourceServerID: source)
         }
         for raw in ["history://3f2a", "agent://3f2a", "agent://3f2a/", "AGENT://3f2a", "history://%203f2a%20"] {
             #expect(try request(raw) == .sessionPrefix(SessionOpen(
-                serverId: "server-a", sessionId: "3f2a", origin: .inAppHyperlink
+                serverId: "server-a", sessionId: "3f2a", origin: .link
             )), Comment(rawValue: raw))
         }
         #expect(try request("history://3f2a", source: nil) == .sessionPrefix(SessionOpen(
-            sessionId: "3f2a", origin: .inAppHyperlink
+            sessionId: "3f2a", origin: .link
         )))
         // A bare scheme lists sessions for the agent; a sub-path or query is
         // not a session.
@@ -222,11 +222,11 @@ struct AppOpenerTests {
     @Test func pinsLinkOpensPinnedAndTakesNoParameters() throws {
         for raw in ["oppi://pins", "oppi:///pins", "OPPI://Pins"] {
             let url = try #require(URL(string: raw))
-            #expect(AppOpenRequest(url: url, origin: .externalURL) == .pinned, Comment(rawValue: raw))
+            #expect(AppOpenRequest(url: url, origin: .external) == .pinned, Comment(rawValue: raw))
         }
         for raw in ["oppi://pins?server=sha256:aa", "oppi://pins/extra", "oppi://pins#top", "oppi://user@pins"] {
             let url = try #require(URL(string: raw))
-            #expect(AppOpenRequest(url: url, origin: .externalURL) == .invalidLink(url), Comment(rawValue: raw))
+            #expect(AppOpenRequest(url: url, origin: .external) == .invalidLink(url), Comment(rawValue: raw))
         }
     }
 
@@ -257,7 +257,7 @@ struct AppOpenerTests {
         harness.opener.open(.session(SessionOpen(
             serverId: "server-a",
             sessionId: "child",
-            origin: .externalURL
+            origin: .external
         )))
         await harness.settle()
 
@@ -278,7 +278,7 @@ struct AppOpenerTests {
 
         harness.opener.open(AppOpenRequest(
             url: try #require(URL(string: "oppi://session/child?server=unpaired-server")),
-            origin: .externalURL
+            origin: .external
         ))
         await harness.settle()
         #expect(harness.opener._parkedRequestForTesting != nil)
@@ -302,7 +302,7 @@ struct AppOpenerTests {
         harness.opener.open(.session(SessionOpen(
             serverId: "server-a",
             sessionId: "child",
-            origin: .externalURL
+            origin: .external
         )))
         await harness.settle()
         harness.opener.sceneDidBecomeActive()
@@ -324,13 +324,13 @@ struct AppOpenerTests {
         harness.opener.open(.session(SessionOpen(
             serverId: "server-a",
             sessionId: "first",
-            origin: .externalURL
+            origin: .external
         )))
         await harness.settle()
         harness.opener.open(.session(SessionOpen(
             serverId: "server-a",
             sessionId: "second",
-            origin: .externalURL
+            origin: .external
         )))
         await harness.settle()
         harness.opener.launchDidFinish()
@@ -344,7 +344,7 @@ struct AppOpenerTests {
         let harness = await OpenerHarness(servers: [makeServer("server-a")], launch: false)
         let url = try #require(URL(string: "oppi://workspace?path=/tmp/project&name=Project"))
 
-        harness.opener.open(AppOpenRequest(url: url, origin: .externalURL))
+        harness.opener.open(AppOpenRequest(url: url, origin: .external))
         await harness.settle()
         #expect(harness.navigation.pendingWorkspaceDeepLink == nil)
 
@@ -373,7 +373,7 @@ struct AppOpenerTests {
         harness.opener.open(.session(SessionOpen(
             serverId: "server-a",
             sessionId: "target",
-            origin: .inAppHyperlink
+            origin: .link
         )))
         await harness.settle()
         #expect(harness.navigation.workspaceStackRouteElements.count == 1)
@@ -392,7 +392,7 @@ struct AppOpenerTests {
         harness.addSession("child", workspaceId: "w1", to: "server-a")
         let url = try #require(URL(string: "oppi://session/child"))
 
-        harness.opener.open(AppOpenRequest(url: url, origin: .externalURL))
+        harness.opener.open(AppOpenRequest(url: url, origin: .external))
         await harness.settle()
         #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
 
@@ -416,7 +416,7 @@ struct AppOpenerTests {
 
         harness.opener.open(AppOpenRequest(
             url: try #require(URL(string: "oppi://session/target")),
-            origin: .inAppHyperlink,
+            origin: .link,
             sourceServerID: "server-a"
         ))
         await harness.settle()
@@ -440,7 +440,7 @@ struct AppOpenerTests {
         // chat's server and workspace, exactly like a timeline link.
         harness.opener.open(AppOpenRequest(
             url: try #require(URL(string: "oppi://session/target?workspaceId=chat-workspace")),
-            origin: .inAppHyperlink,
+            origin: .link,
             sourceServerID: "server-a"
         ))
         await harness.settle()
@@ -466,7 +466,7 @@ struct AppOpenerTests {
         harness.opener.open(.session(SessionOpen(
             serverId: "server-a",
             sessionId: "source",
-            origin: .inAppHyperlink
+            origin: .link
         )))
         await harness.settle()
 
@@ -483,7 +483,7 @@ struct AppOpenerTests {
         harness.opener.open(.session(SessionOpen(
             serverId: "server-a",
             sessionId: "target",
-            origin: .inAppHyperlink
+            origin: .link
         )))
         await harness.settle()
 
@@ -498,7 +498,7 @@ struct AppOpenerTests {
         func request(_ raw: String) throws -> AppOpenRequest? {
             MarkdownLinkInteractionSupport.contextFreeRequest(for: try #require(URL(string: raw)))
         }
-        #expect(try request("agent://3f2a") == .sessionPrefix(SessionOpen(sessionId: "3f2a", origin: .inAppHyperlink)))
+        #expect(try request("agent://3f2a") == .sessionPrefix(SessionOpen(sessionId: "3f2a", origin: .link)))
         let proc = try #require(URL(string: "proc://job-7"))
         #expect(try request("proc://job-7") == .unsupportedLink(proc))
         let page = try #require(URL(string: "https://example.com"))
@@ -516,7 +516,7 @@ struct AppOpenerTests {
             return makeTestSession(id: "old", workspaceId: "w1", status: .stopped)
         }
 
-        harness.opener.open(.session(SessionOpen(serverId: "server-a", sessionId: "old", origin: .inAppHyperlink)))
+        harness.opener.open(.session(SessionOpen(serverId: "server-a", sessionId: "old", origin: .link)))
         await harness.settle()
 
         harness.expectSessionRoute(serverId: "server-a", sessionId: "old")
@@ -527,7 +527,7 @@ struct AppOpenerTests {
         let harness = await OpenerHarness(servers: [makeServer("server-a")])
         harness.coordinator._getSessionRecordForTesting = { _, _ in throw APIError.server(status: 404, message: "Not found") }
 
-        harness.opener.open(.session(SessionOpen(serverId: "server-a", sessionId: "gone", origin: .inAppHyperlink)))
+        harness.opener.open(.session(SessionOpen(serverId: "server-a", sessionId: "gone", origin: .link)))
         await harness.settle()
 
         #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
@@ -543,12 +543,12 @@ struct AppOpenerTests {
         // Another server's session with the same prefix is not this link's.
         harness.addSession("3f2a-3333", workspaceId: "w1", to: "server-b")
 
-        harness.opener.open(.sessionPrefix(SessionOpen(serverId: "server-a", sessionId: "3f2a", origin: .inAppHyperlink)))
+        harness.opener.open(.sessionPrefix(SessionOpen(serverId: "server-a", sessionId: "3f2a", origin: .link)))
         await harness.settle()
         harness.expectSessionRoute(serverId: "server-a", sessionId: "3f2a-1111")
 
         harness.addSession("9c1d", workspaceId: "w1", to: "server-a")
-        harness.opener.open(.sessionPrefix(SessionOpen(serverId: "server-a", sessionId: "9c1d", origin: .inAppHyperlink)))
+        harness.opener.open(.sessionPrefix(SessionOpen(serverId: "server-a", sessionId: "9c1d", origin: .link)))
         await harness.settle()
         harness.expectSessionRoute(serverId: "server-a", sessionId: "9c1d")
     }
@@ -558,7 +558,7 @@ struct AppOpenerTests {
         harness.addSession("3f2a-1111", workspaceId: "w1", to: "server-a")
         harness.addSession("3f2a-2222", workspaceId: "w1", to: "server-a")
 
-        harness.opener.open(.sessionPrefix(SessionOpen(serverId: "server-a", sessionId: "3f2a", origin: .inAppHyperlink)))
+        harness.opener.open(.sessionPrefix(SessionOpen(serverId: "server-a", sessionId: "3f2a", origin: .link)))
         await harness.settle()
 
         #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
@@ -569,7 +569,7 @@ struct AppOpenerTests {
         let harness = await OpenerHarness(servers: [makeServer("server-a")])
         let url = try #require(URL(string: "proc://job-7"))
 
-        harness.opener.open(AppOpenRequest(url: url, origin: .inAppHyperlink, sourceServerID: "server-a"))
+        harness.opener.open(AppOpenRequest(url: url, origin: .link, sourceServerID: "server-a"))
         await harness.settle()
 
         #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
@@ -582,7 +582,7 @@ struct AppOpenerTests {
     /// shows the scheme; elsewhere it says it can't.
     @Test func anInternalURLInASessionOpensItsViewerWhereTheServerShowsIt() async throws {
         let url = try #require(URL(string: "proc://bash-3"))
-        let request = AppOpenRequest(url: url, origin: .inAppHyperlink, sourceServerID: "server-a", sourceSessionID: "s1")
+        let request = AppOpenRequest(url: url, origin: .link, sourceServerID: "server-a", sourceSessionID: "s1")
         #expect(request == .pane(
             PaneLink(server: nil, route: .read(session: "s1", url: "proc://bash-3")),
             sourceServerID: "server-a"
@@ -608,7 +608,7 @@ struct AppOpenerTests {
 
         harness.opener.open(.session(SessionOpen(
             sessionId: "target",
-            origin: .inAppHyperlink
+            origin: .link
         )))
         await harness.settle()
 
@@ -625,7 +625,7 @@ struct AppOpenerTests {
         harness.opener.open(.session(SessionOpen(
             serverId: "server-b",
             sessionId: "child",
-            origin: .externalURL
+            origin: .external
         )))
         await harness.settle()
 
@@ -643,7 +643,7 @@ struct AppOpenerTests {
 
         harness.opener.open(AppOpenRequest(
             url: try #require(URL(string: "oppi://session/shared-session")),
-            origin: .externalURL
+            origin: .external
         ))
         await harness.settle()
 
@@ -657,7 +657,7 @@ struct AppOpenerTests {
 
         harness.opener.open(AppOpenRequest(
             url: try #require(URL(string: "oppi://session/child?server=unpaired-server")),
-            origin: .externalURL
+            origin: .external
         ))
         await harness.settle()
 
@@ -670,21 +670,21 @@ struct AppOpenerTests {
     // MARK: - Thread links
 
     @Test func threadURLsMapToAThreadRequestWithTheSessionLinksValidation() throws {
-        func request(_ raw: String, origin: SessionNavigationSource = .externalURL, server: String? = nil) throws -> AppOpenRequest {
+        func request(_ raw: String, origin: NavigationOrigin = .external, server: String? = nil) throws -> AppOpenRequest {
             AppOpenRequest(url: try #require(URL(string: raw)), origin: origin, sourceServerID: server)
         }
 
-        #expect(try request("oppi://thread/root-1") == .thread(SessionOpen(sessionId: "root-1", origin: .externalURL)))
-        #expect(try request("oppi://thread/a%20b") == .thread(SessionOpen(sessionId: "a b", origin: .externalURL)))
+        #expect(try request("oppi://thread/root-1") == .thread(SessionOpen(sessionId: "root-1", origin: .external)))
+        #expect(try request("oppi://thread/a%20b") == .thread(SessionOpen(sessionId: "a b", origin: .external)))
         // A URL must not choose the session's workspace (or its lock scope).
-        #expect(try request("oppi://thread/child?workspaceId=w1") == .thread(SessionOpen(sessionId: "child", origin: .externalURL)))
+        #expect(try request("oppi://thread/child?workspaceId=w1") == .thread(SessionOpen(sessionId: "child", origin: .external)))
         // A link inside Oppi carries its source server.
-        #expect(try request("oppi://thread/child", origin: .inAppHyperlink, server: "server-a") == .thread(SessionOpen(
-            serverId: "server-a", sessionId: "child", origin: .inAppHyperlink
+        #expect(try request("oppi://thread/child", origin: .link, server: "server-a") == .thread(SessionOpen(
+            serverId: "server-a", sessionId: "child", origin: .link
         )))
         for raw in ["oppi://thread", "oppi://thread/", "oppi://thread/a/b"] {
             let url = try #require(URL(string: raw))
-            #expect(AppOpenRequest(url: url, origin: .externalURL) == .invalidLink(url), Comment(rawValue: raw))
+            #expect(AppOpenRequest(url: url, origin: .external) == .invalidLink(url), Comment(rawValue: raw))
         }
     }
 
@@ -694,7 +694,7 @@ struct AppOpenerTests {
         harness.addSession("child", parent: "root", workspaceId: "w1", to: "server-a")
         harness.addSession("grandchild", parent: "child", workspaceId: "w1", to: "server-a")
 
-        harness.opener.open(.thread(SessionOpen(serverId: "server-a", sessionId: "grandchild", origin: .externalURL)))
+        harness.opener.open(.thread(SessionOpen(serverId: "server-a", sessionId: "grandchild", origin: .external)))
         await harness.settle()
 
         #expect(harness.navigation.pendingThreadFocus == .init(serverId: "server-a", rootId: "root"))
@@ -703,7 +703,7 @@ struct AppOpenerTests {
 
         // The root's own link opens its own thread.
         harness.navigation.pendingThreadFocus = nil
-        harness.opener.open(.thread(SessionOpen(serverId: "server-a", sessionId: "root", origin: .externalURL)))
+        harness.opener.open(.thread(SessionOpen(serverId: "server-a", sessionId: "root", origin: .external)))
         await harness.settle()
         #expect(harness.navigation.pendingThreadFocus == .init(serverId: "server-a", rootId: "root"))
     }
@@ -717,7 +717,7 @@ struct AppOpenerTests {
             return session
         }
 
-        harness.opener.open(.thread(SessionOpen(serverId: "server-a", sessionId: "grandchild", origin: .externalURL)))
+        harness.opener.open(.thread(SessionOpen(serverId: "server-a", sessionId: "grandchild", origin: .external)))
         await harness.settle()
 
         #expect(harness.navigation.pendingThreadFocus == .init(serverId: "server-a", rootId: "root"))
@@ -728,7 +728,7 @@ struct AppOpenerTests {
         harness.addSession("root", workspaceId: "w1", to: "server-b")
         harness.addSession("child", parent: "root", workspaceId: "w1", to: "server-b")
 
-        harness.opener.open(.thread(SessionOpen(serverId: "server-b", sessionId: "child", origin: .externalURL)))
+        harness.opener.open(.thread(SessionOpen(serverId: "server-b", sessionId: "child", origin: .external)))
         await harness.settle()
 
         #expect(harness.coordinator.activeServerId == "server-b")
@@ -742,14 +742,14 @@ struct AppOpenerTests {
         harness.coordinator._getSessionRecordForTesting = { _, _ in throw APIError.server(status: 404, message: "Not found") }
 
         // Named server, and a link that names none.
-        harness.opener.open(.thread(SessionOpen(serverId: "server-a", sessionId: "gone", origin: .externalURL)))
+        harness.opener.open(.thread(SessionOpen(serverId: "server-a", sessionId: "gone", origin: .external)))
         await harness.settle()
         #expect(harness.navigation.pendingThreadFocus == nil)
         #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
         #expect(harness.connection("server-a").extensionToast == "Session not found for this thread link")
 
         harness.connection("server-a").extensionToast = nil
-        harness.opener.open(.thread(SessionOpen(sessionId: "gone", origin: .externalURL)))
+        harness.opener.open(.thread(SessionOpen(sessionId: "gone", origin: .external)))
         await harness.settle()
         #expect(harness.navigation.pendingThreadFocus == nil)
         #expect(harness.connection("server-a").extensionToast == "Session not found for this thread link")
@@ -764,8 +764,8 @@ struct AppOpenerTests {
         harness.navigation.open(.chat(.init(serverId: "server-a", sessionId: "current", workspaceId: "w1")))
 
         for link in [
-            SessionOpen(serverId: "server-a", sessionId: "gone", origin: .externalURL),
-            SessionOpen(sessionId: "gone", origin: .externalURL),
+            SessionOpen(serverId: "server-a", sessionId: "gone", origin: .external),
+            SessionOpen(sessionId: "gone", origin: .external),
         ] {
             harness.connection("server-a").extensionToast = nil
             harness.opener.open(.thread(link))
@@ -792,11 +792,11 @@ struct AppOpenerTests {
             return session
         }
 
-        harness.opener.open(.thread(SessionOpen(serverId: "server-a", sessionId: "grandchild", origin: .externalURL)))
+        harness.opener.open(.thread(SessionOpen(serverId: "server-a", sessionId: "grandchild", origin: .external)))
         for _ in 0..<500 where release == nil { await Task.yield() }
         #expect(release != nil, "The first link should be reading its missing ancestor")
 
-        harness.opener.open(.thread(SessionOpen(serverId: "server-a", sessionId: "other-root", origin: .externalURL)))
+        harness.opener.open(.thread(SessionOpen(serverId: "server-a", sessionId: "other-root", origin: .external)))
         await harness.settle()
         #expect(harness.navigation.pendingThreadFocus == .init(serverId: "server-a", rootId: "other-root"))
 
@@ -820,7 +820,7 @@ struct AppOpenerTests {
         }
         harness.scopedLock.lock(.workspace(serverId: "server-b", workspaceId: "w2"))
 
-        harness.opener.open(.thread(SessionOpen(serverId: "server-b", sessionId: "locked", origin: .externalURL)))
+        harness.opener.open(.thread(SessionOpen(serverId: "server-b", sessionId: "locked", origin: .external)))
         await harness.settle()
 
         #expect(harness.coordinator.activeServerId == "server-a")
@@ -848,7 +848,7 @@ struct AppOpenerTests {
         var logged: [String: String] = [:]
         harness.opener._linkOpenedForTesting = { logged = $0 }
 
-        harness.opener.open(.session(SessionOpen(serverId: "server-a", sessionId: "child", origin: .inAppHyperlink)))
+        harness.opener.open(.session(SessionOpen(serverId: "server-a", sessionId: "child", origin: .link)))
         for _ in 0..<500 where release == nil || harness.lastSessionRoute == nil { await Task.yield() }
 
         harness.expectSessionRoute(serverId: "server-a", sessionId: "child")
@@ -878,7 +878,7 @@ struct AppOpenerTests {
         var logged: [String: String] = [:]
         harness.opener._linkOpenedForTesting = { logged = $0 }
 
-        harness.opener.open(.session(SessionOpen(serverId: "server-a", sessionId: "fresh", origin: .externalURL)))
+        harness.opener.open(.session(SessionOpen(serverId: "server-a", sessionId: "fresh", origin: .external)))
         for _ in 0..<500 where release == nil { await Task.yield() }
         for _ in 0..<50 { await Task.yield() }
         #expect(release != nil)
@@ -906,7 +906,7 @@ struct AppOpenerTests {
         }
         harness.scopedLock.lock(.workspace(serverId: "server-a", workspaceId: "w2"))
 
-        harness.opener.open(.session(SessionOpen(serverId: "server-a", sessionId: "locked", origin: .inAppHyperlink)))
+        harness.opener.open(.session(SessionOpen(serverId: "server-a", sessionId: "locked", origin: .link)))
         await harness.settle()
 
         #expect(harness.lastSessionRoute == nil)
@@ -931,7 +931,7 @@ struct AppOpenerTests {
         }
         harness.scopedLock.lock(.workspace(serverId: "server-a", workspaceId: "w2"))
 
-        harness.opener.open(.session(SessionOpen(serverId: "server-a", sessionId: "locked", origin: .inAppHyperlink)))
+        harness.opener.open(.session(SessionOpen(serverId: "server-a", sessionId: "locked", origin: .link)))
         for _ in 0..<500 where release == nil || harness.lastSessionRoute == nil { await Task.yield() }
 
         harness.expectSessionRoute(serverId: "server-a", sessionId: "locked")
@@ -963,7 +963,7 @@ struct AppOpenerTests {
         }
         harness.lockWorkspace("w2", on: "server-b")
 
-        harness.opener.open(.session(SessionOpen(serverId: "server-b", sessionId: "child", origin: .externalURL)))
+        harness.opener.open(.session(SessionOpen(serverId: "server-b", sessionId: "child", origin: .external)))
         for _ in 0..<500 where release == nil || harness.lastSessionRoute == nil { await Task.yield() }
         harness.expectSessionRoute(serverId: "server-b", sessionId: "child")
 
@@ -995,9 +995,9 @@ struct AppOpenerTests {
         }
         harness.lockWorkspace("w2", on: "server-a")
 
-        harness.opener.open(.session(SessionOpen(serverId: "server-a", sessionId: "child", origin: .inAppHyperlink)))
+        harness.opener.open(.session(SessionOpen(serverId: "server-a", sessionId: "child", origin: .link)))
         for _ in 0..<500 where release == nil || harness.lastSessionRoute == nil { await Task.yield() }
-        harness.opener.open(.session(SessionOpen(serverId: "server-a", sessionId: "other", origin: .inAppHyperlink)))
+        harness.opener.open(.session(SessionOpen(serverId: "server-a", sessionId: "other", origin: .link)))
         for _ in 0..<500 where harness.lastSessionRoute?.sessionId != "other" { await Task.yield() }
         harness.expectSessionRoute(serverId: "server-a", sessionId: "other")
 
@@ -1029,13 +1029,13 @@ struct AppOpenerTests {
         harness.lockWorkspace("w2", on: "server-b")
         harness.authenticator.holdsPrompts = true
 
-        harness.opener.open(.session(SessionOpen(serverId: "server-b", sessionId: "child", origin: .inAppHyperlink)))
+        harness.opener.open(.session(SessionOpen(serverId: "server-b", sessionId: "child", origin: .link)))
         for _ in 0..<500 where release == nil || harness.lastSessionRoute == nil { await Task.yield() }
         release?.resume()
         for _ in 0..<500 where !harness.authenticator.isAsking { await Task.yield() }
         #expect(harness.authenticator.isAsking, "The refreshed lock scope asks")
 
-        harness.opener.open(.session(SessionOpen(serverId: "server-b", sessionId: "other", origin: .inAppHyperlink)))
+        harness.opener.open(.session(SessionOpen(serverId: "server-b", sessionId: "other", origin: .link)))
         for _ in 0..<500 where harness.lastSessionRoute?.sessionId != "other" { await Task.yield() }
         harness.expectSessionRoute(serverId: "server-b", sessionId: "other")
 
@@ -1062,13 +1062,13 @@ struct AppOpenerTests {
         }
         harness.lockWorkspace("w2", on: "server-b")
 
-        harness.opener.open(.session(SessionOpen(serverId: "server-b", sessionId: "child", origin: .inAppHyperlink)))
+        harness.opener.open(.session(SessionOpen(serverId: "server-b", sessionId: "child", origin: .link)))
         for _ in 0..<500 where release == nil || harness.lastSessionRoute == nil { await Task.yield() }
         harness.navigation.open(.chat(WorkspaceSessionNavTarget(
             serverId: "server-b",
             sessionId: "manual",
             workspaceId: "w1"
-        )), from: .link())
+        )), from: .link)
 
         release?.resume()
         await harness.settle()
@@ -1090,7 +1090,7 @@ struct AppOpenerTests {
             return session
         }
 
-        harness.opener.open(.thread(SessionOpen(serverId: "server-a", sessionId: "child", origin: .externalURL)))
+        harness.opener.open(.thread(SessionOpen(serverId: "server-a", sessionId: "child", origin: .external)))
         for _ in 0..<500 where release == nil || harness.navigation.pendingThreadFocus == nil { await Task.yield() }
 
         #expect(harness.navigation.pendingThreadFocus == .init(serverId: "server-a", rootId: "root"))
@@ -1108,7 +1108,7 @@ struct AppOpenerTests {
             throw APIError.server(status: 404, message: "Not found")
         }
 
-        harness.opener.open(.thread(SessionOpen(serverId: "server-a", sessionId: "child", origin: .externalURL)))
+        harness.opener.open(.thread(SessionOpen(serverId: "server-a", sessionId: "child", origin: .external)))
         await harness.settle()
 
         #expect(harness.navigation.pendingThreadFocus == .init(serverId: "server-a", rootId: "root"))
@@ -1135,14 +1135,14 @@ struct AppOpenerTests {
         }
         harness.lockWorkspace("w2", on: "server-b")
 
-        harness.opener.open(.thread(SessionOpen(serverId: "server-b", sessionId: "child", origin: .externalURL)))
+        harness.opener.open(.thread(SessionOpen(serverId: "server-b", sessionId: "child", origin: .external)))
         for _ in 0..<500 where release == nil || harness.navigation.pendingThreadFocus == nil { await Task.yield() }
         if navigatedOn {
             harness.navigation.open(.chat(WorkspaceSessionNavTarget(
                 serverId: "server-b",
                 sessionId: "manual",
                 workspaceId: "w1"
-            )), from: .link())
+            )), from: .link)
         }
         release?.resume()
         await harness.settle()
@@ -1159,7 +1159,7 @@ struct AppOpenerTests {
         harness.opener.open(.session(SessionOpen(
             serverId: "server-a",
             sessionId: "child",
-            origin: .externalURL
+            origin: .external
         )))
         await harness.settle()
 
@@ -1189,13 +1189,13 @@ struct AppOpenerTests {
         harness.opener.open(.session(SessionOpen(
             serverId: "server-a",
             sessionId: "first",
-            origin: .externalURL
+            origin: .external
         )))
         await harness.settle()
         harness.opener.open(.session(SessionOpen(
             serverId: "server-a",
             sessionId: "second",
-            origin: .externalURL
+            origin: .external
         )))
         await harness.settle()
 
@@ -1224,7 +1224,7 @@ struct AppOpenerTests {
         harness.opener.open(.session(SessionOpen(
             serverId: "server-a",
             sessionId: "child",
-            origin: .externalURL
+            origin: .external
         )))
         await harness.settle()
         #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
@@ -1255,7 +1255,7 @@ struct AppOpenerTests {
         harness.opener.open(.session(SessionOpen(
             serverId: "server-a",
             sessionId: "child",
-            origin: .externalURL
+            origin: .external
         )))
         harness.opener.open(.webLink(try #require(URL(string: "https://example.com/docs"))))
         await harness.settle()
@@ -1281,7 +1281,7 @@ struct AppOpenerTests {
         harness.opener.open(.session(SessionOpen(
             serverId: "server-b",
             sessionId: "locked",
-            origin: .externalURL
+            origin: .external
         )))
         await harness.settle()
 
@@ -1314,7 +1314,7 @@ struct AppOpenerTests {
         harness.opener.open(.session(SessionOpen(
             serverId: "server-a",
             sessionId: "child",
-            origin: .externalURL
+            origin: .external
         )))
         await harness.settle()
         #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
@@ -1335,7 +1335,7 @@ struct AppOpenerTests {
         harness.navigation.app.showOnboarding = false
         let url = try #require(URL(string: "oppi://workspace?path=/tmp/project&name=Locked"))
 
-        harness.opener.open(AppOpenRequest(url: url, origin: .externalURL))
+        harness.opener.open(AppOpenRequest(url: url, origin: .external))
         await harness.settle()
         #expect(harness.navigation.pendingWorkspaceDeepLink == nil)
 
@@ -1415,7 +1415,7 @@ struct AppOpenerTests {
             serverId: "server-a",
             sessionId: "created",
             workspaceId: "w1",
-            origin: .externalURL,
+            origin: .external,
             startedSessionRequestID: receipt.requestID
         )))
         await harness.settle()
@@ -1484,7 +1484,7 @@ struct AppOpenerTests {
         harness.opener.open(.session(SessionOpen(
             serverId: "server-a",
             sessionId: "child",
-            origin: .externalURL
+            origin: .external
         )))
         await harness.settle()
         #expect(harness.opener._parkedRequestForTesting != nil)
@@ -1523,7 +1523,7 @@ struct AppOpenerTests {
         harness.opener.open(.session(SessionOpen(
             serverId: "server-a",
             sessionId: "child",
-            origin: .externalURL
+            origin: .external
         )))
         await harness.settle()
         #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
@@ -1554,7 +1554,7 @@ struct AppOpenerTests {
         // A URL hint must not move the lock scope off that workspace.
         harness.opener.open(AppOpenRequest(
             url: try #require(URL(string: "oppi://session/child?workspaceId=other")),
-            origin: .externalURL
+            origin: .external
         ))
         await harness.settle()
 
@@ -1585,7 +1585,7 @@ struct AppOpenerTests {
         harness.opener.open(.session(SessionOpen(
             serverId: "server-a",
             sessionId: "child",
-            origin: .externalURL
+            origin: .external
         )))
         await harness.settle()
         #expect(harness.opener._parkedRequestForTesting != nil)
@@ -1608,7 +1608,7 @@ struct AppOpenerTests {
         harness.opener.open(.session(SessionOpen(
             serverId: "server-a",
             sessionId: "child",
-            origin: .externalURL
+            origin: .external
         )))
         await harness.settle()
         #expect(harness.opener._parkedRequestForTesting != nil)
@@ -1640,7 +1640,7 @@ struct AppOpenerTests {
             serverId: "server-a",
             sessionId: "created",
             workspaceId: "w1",
-            origin: .externalURL,
+            origin: .external,
             startedSessionRequestID: receipt.requestID
         )))
         await harness.settle()
@@ -1705,7 +1705,7 @@ struct AppOpenerTests {
         harness.opener.open(.session(SessionOpen(
             serverId: "server-a",
             sessionId: "tapped",
-            origin: .externalURL
+            origin: .external
         )))
         await harness.settle()
         // Newest wins, and the superseded receipt must not replay later.
@@ -1726,7 +1726,7 @@ struct AppOpenerTests {
         harness.opener.open(.session(SessionOpen(
             serverId: "server-a",
             sessionId: "child",
-            origin: .externalURL
+            origin: .external
         )))
         await harness.settle()
 
@@ -1799,7 +1799,7 @@ struct AppOpenerTests {
         harness.opener.open(.session(SessionOpen(
             serverId: "server-a",
             sessionId: "child",
-            origin: .externalURL
+            origin: .external
         )))
         harness.opener.cancelResourceReferenceRequest()
         await harness.settle()
@@ -1854,7 +1854,7 @@ struct AppOpenerTests {
         harness.opener.open(.session(SessionOpen(
             serverId: "server-b",
             sessionId: "locked",
-            origin: .externalURL
+            origin: .external
         )))
         await harness.settle()
 
@@ -1919,7 +1919,7 @@ struct AppOpenerTests {
         harness.opener.open(.session(SessionOpen(
             serverId: "server-a",
             sessionId: "locked",
-            origin: .externalURL
+            origin: .external
         )))
         await harness.settle()
 
@@ -1948,7 +1948,7 @@ struct AppOpenerTests {
         harness.opener.open(.session(SessionOpen(
             serverId: "server-a",
             sessionId: "locked",
-            origin: .externalURL
+            origin: .external
         )))
         await harness.settle()
 
@@ -1971,7 +1971,7 @@ struct AppOpenerTests {
         harness.opener.open(.session(SessionOpen(
             serverId: "server-a",
             sessionId: "locked",
-            origin: .externalURL
+            origin: .external
         )))
         await harness.settle()
 
@@ -2035,7 +2035,7 @@ struct AppOpenerTests {
             serverId: "server-b",
             sessionId: "created",
             workspaceId: "w1",
-            origin: .externalURL,
+            origin: .external,
             startedSessionRequestID: receipt.requestID
         )))
         #expect(harness.connection("server-a").extensionToast
@@ -2074,7 +2074,7 @@ struct AppOpenerTests {
             serverId: "server-a",
             sessionId: "child",
             workspaceId: "other",
-            origin: .externalURL
+            origin: .external
         )))
         await harness.settle()
 
@@ -2108,13 +2108,13 @@ struct AppOpenerTests {
         harness.opener._browserLinkPreferenceForTesting = .inApp
         let link = try #require(URL(string: "oppi://browser?url=https%3A%2F%2Fexample.com%2Fdocs%3Fq%3D1&server=server-b"))
 
-        harness.opener.open(AppOpenRequest(url: link, origin: .externalURL))
+        harness.opener.open(AppOpenRequest(url: link, origin: .external))
         await harness.settle()
 
         #expect(harness.recorder.browserURLs == [try #require(URL(string: "https://example.com/docs?q=1"))])
         #expect(harness.coordinator.activeServerId == "server-a")
         let loopback = try #require(URL(string: "oppi://browser?url=http%3A%2F%2Flocalhost%3A5173%2F"))
-        #expect(AppOpenRequest(url: loopback, origin: .externalURL) == .invalidLink(loopback))
+        #expect(AppOpenRequest(url: loopback, origin: .external) == .invalidLink(loopback))
     }
 
     /// A chat link opens as what it names: a file in the file viewer, a

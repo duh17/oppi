@@ -194,14 +194,14 @@ final class SceneDelegate: NSObject, UIWindowSceneDelegate, @preconcurrency AppI
         default: break
         }
         for context in urlContexts {
-            app.root.opener.open(AppOpenRequest(url: context.url, origin: .externalURL))
+            app.root.opener.open(AppOpenRequest(url: context.url, origin: .external))
         }
     }
 
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
         guard let app else { return }
         for context in URLContexts {
-            app.root.opener.open(AppOpenRequest(url: context.url, origin: .externalURL))
+            app.root.opener.open(AppOpenRequest(url: context.url, origin: .external))
         }
     }
 

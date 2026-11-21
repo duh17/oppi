@@ -169,7 +169,7 @@ struct StartOppiSessionIntent: AppIntent {
                 serverId: target.serverId,
                 sessionId: sessionId,
                 workspaceId: target.workspaceId,
-                origin: .externalURL,
+                origin: .external,
                 startedSessionRequestID: requestID
             )))
 

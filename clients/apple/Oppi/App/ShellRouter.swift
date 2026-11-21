@@ -1,11 +1,12 @@
 import UIKit
 
 // The workspace shell's stacks. `SceneNavigation` is the single source of truth
-// for which screens are open: one stack (`workspaceStackRouteElements`), which
-// the compact shell shows whole above All Sessions and the split shell shows
-// above its place (`SplitDetailColumn`). The shell controllers (`WorkspaceShellController.swift`)
-// read that state in `updateProperties()` and give each stack the routes it
-// shows. `ShellNavigationController` turns routes into hosted screens, and
+// for which screens are open: one place and the stack over it
+// (`MainPaneRoute`), which the split shell shows from the place and the compact
+// stack over All Sessions (`MainPaneRoute.shellRoutes(split:)`).
+// The shell controllers (`WorkspaceShellController.swift`) read that state in
+// `updateProperties()` and give each stack the routes it shows.
+// `ShellNavigationController` turns routes into hosted screens, and
 // when the user leaves one (Back, swipe, a screen's own `finish()` or
 // `dismiss()`) it reports the pop so `SceneNavigation` follows.
 //
@@ -14,7 +15,7 @@ import UIKit
 /// One screen of the workspace shell.
 enum ShellRoute: Hashable {
     /// All Sessions: the compact stack's root, and the split detail column's
-    /// when no other place is.
+    /// when it is the place.
     case inbox
     /// The workspace list in the split shell's primary column.
     case sidebar
@@ -42,6 +43,14 @@ enum ShellRoute: Hashable {
             AnyHashable(["workspaceConfiguration", target.serverId, target.workspace.id])
         default:
             AnyHashable(self)
+        }
+    }
+
+    /// A place's screen: All Sessions, a workspace's sessions, a utility.
+    init(_ place: NavigationPlace) {
+        switch place {
+        case .sessions(let workspace): self = workspace.map { .workspace($0) } ?? .inbox
+        case .utility(let utility): self = .utility(utility)
         }
     }
 
@@ -223,11 +232,12 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
         } else {
             stack = []
         }
-        // A screen whose route moved within the stack is the same screen: the
-        // window's routed stack changing shells (a rotation on the iPad mini)
-        // puts the chat above All Sessions, or above its place in the split
-        // detail, and the chat, its composer, typed text and dictation carry on. The
-        // pages it pushed itself come along when it stays on top.
+        // A screen whose route moved within the stack is the same screen, so
+        // the chat, its composer, typed text and dictation carry on. A rotation
+        // moves it: the compact stack keeps All Sessions under a place and the
+        // split detail column starts at the place. A route removed below it (a
+        // removed session's chat) moves it too. The pages it pushed itself come
+        // along when it stays on top.
         var movable: [AnyHashable: (screen: UIViewController, pages: [UIViewController])] = [:]
         for (offset, entry) in current.enumerated().dropFirst(kept) {
             guard movable[entry.route.screenIdentity] == nil,

@@ -189,7 +189,7 @@ struct ChatCoveredLifetimeTests {
                 sessionId: "session-1",
                 path: "README.md",
                 sourceSessionId: "session-1"
-            ))), from: .link(chat: session))
+            ))), from: .link)
 
         #expect(navigation.isCoveringChat(sessionId: "session-1"))
         #expect(!navigation.isCoveringChat(sessionId: "other-session"))

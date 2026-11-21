@@ -57,7 +57,7 @@ enum AppOpenRequest: Equatable, Sendable {
     /// server; a scene URL carries no server, so session resolution falls
     /// back to the cached stores. `sourceSessionID` is the session an in-app
     /// link was tapped in, for the internal URLs that belong to it.
-    init(url: URL, origin: SessionNavigationSource, sourceServerID: String? = nil, sourceSessionID: String? = nil) {
+    init(url: URL, origin: NavigationOrigin, sourceServerID: String? = nil, sourceSessionID: String? = nil) {
         let scheme = url.scheme?.lowercased()
         if let decoded = PaneLinkCodec.decode(url) {
             switch decoded {
@@ -89,7 +89,7 @@ enum AppOpenRequest: Equatable, Sendable {
 
     /// A pane link as its URL opens: a session or thread as a session link,
     /// anything else as a pane. A pin opens through here too.
-    init(link: PaneLink, origin: SessionNavigationSource, sourceServerID: String?) {
+    init(link: PaneLink, origin: NavigationOrigin, sourceServerID: String?) {
         // A link that names its server opens there; else on the server it
         // came from (an in-app link), else by lookup.
         let serverId = link.server ?? sourceServerID
@@ -128,9 +128,8 @@ struct SessionOpen: Equatable, Sendable {
     var sessionId: String
     /// Hint only; the session's own record wins once it is loaded.
     var workspaceId: String?
-    /// `.externalURL` replaces the visible route; `.inAppHyperlink` keeps the
-    /// back stack.
-    var origin: SessionNavigationSource
+    /// `.external` replaces the visible route; `.link` keeps the back stack.
+    var origin: NavigationOrigin
     /// Siri "Start Session": the durable receipt to consume once its server is
     /// up (the created row and any unsent prompt).
     var startedSessionRequestID: Int?
@@ -139,7 +138,7 @@ struct SessionOpen: Equatable, Sendable {
         serverId: String? = nil,
         sessionId: String,
         workspaceId: String? = nil,
-        origin: SessionNavigationSource,
+        origin: NavigationOrigin,
         startedSessionRequestID: Int? = nil
     ) {
         self.serverId = serverId
@@ -434,7 +433,7 @@ final class AppOpener {
                     serverId: receipt.serverId,
                     sessionId: receipt.sessionId,
                     workspaceId: receipt.workspaceId,
-                    origin: .externalURL,
+                    origin: .external,
                     startedSessionRequestID: receipt.requestID
                 )))
                 return
@@ -726,7 +725,7 @@ final class AppOpener {
         generation: UInt64
     ) async -> LinkServer {
         switch open.origin {
-        case .inAppHyperlink:
+        case .link, .screen:
             // A link inside Oppi knows its source server. A session it has not
             // loaded (older than the recent list) is asked of that server by
             // its exact id, never guessed onto another one.
@@ -742,7 +741,7 @@ final class AppOpener {
             case .notFound: return .notFound
             case .unreachable: return .lookupFailed
             }
-        case .externalURL:
+        case .external:
             if let named = open.serverId {
                 guard serverStore.server(for: named) != nil else {
                     if serverStore.isPaired(named) {
@@ -798,7 +797,7 @@ final class AppOpener {
             serverId = resolved
         case .notFound, .lookupFailed:
             // A tapped link leaves the chat where it is and says why.
-            if open.origin == .inAppHyperlink {
+            if open.origin == .link {
                 toast(String(localized: "Oppi can\u{2019}t find this session"))
                 return .finished
             }
@@ -812,7 +811,7 @@ final class AppOpener {
 
         // A self-link to the chat on screen changes nothing and runs no
         // preparation.
-        if open.origin == .inAppHyperlink,
+        if open.origin == .link,
            coordinator.connection(for: serverId)?.isFocusedSession(open.sessionId) == true {
             return .finished
         }
@@ -862,7 +861,7 @@ final class AppOpener {
         sessionId: String,
         workspaceIdHint: String?,
         connection: ServerConnection,
-        origin: SessionNavigationSource,
+        origin: NavigationOrigin,
         previousServerId: String?,
         generation: UInt64,
         timer: LinkOpenTimer? = nil
@@ -949,7 +948,7 @@ final class AppOpener {
                     workspaceId: workspaceId,
                     routeScope: connection.sessionStore.routeScope(for: sessionId)
                 )),
-                from: NavigationOrigin(origin)
+                from: origin
             )
         }
         logLinkOpened(timer)
@@ -977,7 +976,7 @@ final class AppOpener {
         sessionId: String,
         workspaceIdHint: String?,
         connection: ServerConnection,
-        origin: SessionNavigationSource,
+        origin: NavigationOrigin,
         previousServerId: String?,
         generation: UInt64,
         timer: LinkOpenTimer
@@ -1005,7 +1004,7 @@ final class AppOpener {
                     workspaceId: workspaceId,
                     routeScope: connection.sessionStore.routeScope(for: sessionId)
                 )),
-                from: NavigationOrigin(origin)
+                from: origin
             )
         }
         logLinkOpened(timer)
@@ -1128,7 +1127,7 @@ final class AppOpener {
                 return .finished
             }
             guard windowServerId == serverId else { return .finished }
-            timer.time("pushMs") { navigation.showThread(serverId: serverId, rootId: rootId, from: NavigationOrigin(open.origin)) }
+            timer.time("pushMs") { navigation.showThread(serverId: serverId, rootId: rootId, from: open.origin) }
             logLinkOpened(timer)
             postOpenTask = Task { @MainActor [weak self, weak connection] in
                 guard let self, let connection else { return }
@@ -1188,7 +1187,7 @@ final class AppOpener {
         }
         // The list drops a focus for another server, so leave the screen alone rather than reset it for nothing.
         guard windowServerId == serverId else { return .finished }
-        timer.time("pushMs") { navigation.showThread(serverId: serverId, rootId: rootId, from: NavigationOrigin(open.origin)) }
+        timer.time("pushMs") { navigation.showThread(serverId: serverId, rootId: rootId, from: open.origin) }
         logLinkOpened(timer)
         return .finished
     }
@@ -1209,8 +1208,8 @@ final class AppOpener {
     }
 
     /// The list, with the notice a thread link to an unknown session shows.
-    private func showThreadNotFound(_ origin: SessionNavigationSource) {
-        navigation.open(.place(.allSessions), from: NavigationOrigin(origin))
+    private func showThreadNotFound(_ origin: NavigationOrigin) {
+        navigation.open(.place(.allSessions), from: origin)
         toast("Session not found for this thread link")
     }
 

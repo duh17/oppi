@@ -546,7 +546,7 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
             serverId: nonEmptyValue(userInfo["serverId"]),
             sessionId: sessionId,
             workspaceId: nonEmptyValue(userInfo["workspaceId"]),
-            origin: .externalURL
+            origin: .external
         ))
     }
 

@@ -453,7 +453,7 @@ struct ConnectionCoordinatorTests {
                 serverId: staleServer.id,
                 sessionId: "stale-session",
                 workspaceId: "stale-workspace"
-            )), from: .link())
+            )), from: .link)
         }
         await gate.waitUntilStarted()
 

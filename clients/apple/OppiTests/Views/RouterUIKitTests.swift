@@ -86,31 +86,33 @@ struct RouterUIKitTests {
         })
         let shellStack = try #require(stack)
 
-        navigation.open(.place(.utility(.agents)))
+        let entry = PaneStackEntry(serverId: "server-unpaired", route: .session("linked"))
         navigation.open(.place(.utility(.extensions)))
+        navigation.open(.page(.paneEntry(entry)))
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
             shellStack.transitionCoordinator == nil && shellStack.viewControllers.count == 3
         })
 
         // A page a screen pushes itself sits above its route, outside SceneNavigation.
-        let extensions = try #require(shellStack.topViewController as? ServerExtensionsViewController)
-        Router.push(UIViewController(), from: extensions)
+        let top = try #require(shellStack.topViewController)
+        Router.push(UIViewController(), from: top)
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
             shellStack.transitionCoordinator == nil && shellStack.viewControllers.count == 4
         })
         shellStack.popViewController(animated: false)
-        #expect(navigation.workspaceStackRouteElements == [.utility(.agents), .utility(.extensions)])
+        #expect(navigation.workspaceStackRouteElements == [.utility(.extensions), .paneEntry(entry)])
 
         // Back from a route pops it from SceneNavigation too.
         shellStack.popViewController(animated: false)
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
-            navigation.workspaceStackRouteElements == [.utility(.agents)]
+            navigation.workspaceStackRouteElements == [.utility(.extensions)]
         })
 
         // Replacing the stack in SceneNavigation replaces the UIKit stack.
         navigation.open(.place(.allSessions))
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
             shellStack.transitionCoordinator == nil && shellStack.viewControllers.count == 1
+                && !(shellStack.viewControllers.first is ServerExtensionsViewController)
         })
         #expect(navigation.workspaceStackRouteElements.isEmpty)
     }
@@ -129,7 +131,7 @@ struct RouterUIKitTests {
 
         root.navigation.open(.place(.utility(.extensions)))
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
-            shellStack.transitionCoordinator == nil && shellStack.viewControllers.count == 2
+            shellStack.transitionCoordinator == nil && shellStack.topViewController is ServerExtensionsViewController
         })
         let skills = try #require(shellStack.topViewController as? ServerExtensionsViewController)
 

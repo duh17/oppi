@@ -448,7 +448,7 @@ extension BrowserPaneViewController: WKNavigationDelegate, WKUIDelegate {
         // Another scheme (mail, an app, an Oppi link) opens only from a tap,
         // through the opener every other link takes.
         if action.navigationType == .linkActivated {
-            root?.opener.open(AppOpenRequest(url: target, origin: .inAppHyperlink))
+            root?.opener.open(AppOpenRequest(url: target, origin: .link))
         }
         return (.cancel, preferences)
     }

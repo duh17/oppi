@@ -25,29 +25,6 @@ enum SessionListSearchNavigationPersistence {
         case reset
     }
 
-    /// Compact inbox is covered by its stack; the split's list by a screen
-    /// pushed over it in the detail column.
-    static func isInboxCovered(
-        isSplitPresentation: Bool,
-        stackDepth: Int,
-        splitListCovered: Bool = false
-    ) -> Bool {
-        if isSplitPresentation {
-            return splitListCovered
-        }
-        return stackDepth > 0
-    }
-
-    static func isWorkspaceListCovered(
-        stackDepth: Int,
-        splitListCovered: Bool = false
-    ) -> Bool {
-        if splitListCovered {
-            return true
-        }
-        return stackDepth > 1
-    }
-
     static func reduce(
         _ state: State,
         event: Event,

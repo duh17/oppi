@@ -154,13 +154,13 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *    It reads the member by name, so `thumbTintColor` on a UISwitch (which is
  *    allowed) fails too; set it some other way or add an `allowed` entry.
  *
- *  - Navigation has one owner. Writing the main pane's stack
- *    (`workspaceStackRouteElements`, `selectedWorkspaceFilter`) outside
- *    `mainPaneStackOwners` is disallowed: a screen opens through
- *    `SceneNavigation.open(_:from:)`, which decides where it goes. The write
- *    forms are assignment (`=`, `+=`, a subscript), the mutating calls, and
- *    `&` passing, on the property itself (after `.` or at a line start), so a
- *    local of the same name is not one. A direct UIKit `pushViewController(`,
+ *  - Navigation has one owner. Writing the main pane's state
+ *    (`mainPaneRoute`, its `place` or `stack`) outside `mainPaneStackOwners`
+ *    is disallowed: a screen opens through `SceneNavigation.open(_:from:)`,
+ *    which decides where it goes. The write forms are assignment (`=`, `+=`,
+ *    a subscript), the mutating calls, and `&` passing, on the property
+ *    itself (after `.` or at a line start), so a local of the same name is
+ *    not one. A direct UIKit `pushViewController(`,
  *    `setViewControllers(` or split-column `setViewController(_:for:)` outside
  *    `navigationOwners` is a ratchet of the same kind as the others: push
  *    through `Router`. It reads calls by name, so a wrapper with its own name
@@ -421,7 +421,7 @@ const constructs: Construct[] = [
   {
     name: "main pane stack write",
     pattern:
-      /(?:(?:^[ \t]*|\.\s*)(?:workspaceStackRouteElements|selectedWorkspaceFilter)\s*(?:\[[^\]]*\]\s*)?(?:\+?=(?!=)|\.\s*(?:append|insert|remove\w*|replaceSubrange|popLast|swapAt)\s*\()|&\s*(?:[\w?!]+\s*\.\s*)*(?:workspaceStackRouteElements|selectedWorkspaceFilter)\b)/gm,
+      /(?:(?:^[ \t]*|\.\s*)mainPaneRoute(?:\s*\.\s*(?:stack|place))?\s*(?:\[[^\]]*\]\s*)?(?:\+?=(?!=)|\.\s*(?:append|insert|remove\w*|replaceSubrange|popLast|swapAt|pop)\s*\()|&\s*(?:[\w?!]+\s*\.\s*)*mainPaneRoute\b)/gm,
     disallowed: true,
     exemptFiles: mainPaneStackOwners,
   },
@@ -831,8 +831,8 @@ a screen decides for itself what the Mac build can do. Ask PlatformCapabilities
 (add the capability there). Only a file that must hide an API the Catalyst SDK
 lacks may test the platform, with an entry and its reason.
 
-A write to workspaceStackRouteElements or selectedWorkspaceFilter outside
-SceneNavigation decides for itself where a screen goes. Call
+A write to mainPaneRoute (its place or stack) outside SceneNavigation decides
+for itself where a screen goes. Call
 navigation.open(destination, from: origin); the placement table in
 SceneNavigation+Open.swift is the one rule. A direct pushViewController(,
 setViewControllers( or split setViewController(_:for:) outside the navigation

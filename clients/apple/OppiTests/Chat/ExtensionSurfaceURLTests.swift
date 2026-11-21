@@ -124,7 +124,7 @@ struct ExtensionSurfaceURLTests {
                 case (.session(let expectedID, let workspaceID), .open(.session(let open))?):
                     #expect(open.sessionId == expectedID, "\(name)")
                     #expect(open.workspaceId == workspaceID, "\(name)")
-                    #expect(open.origin == .inAppHyperlink, "\(name)")
+                    #expect(open.origin == .link, "\(name)")
                 case (.ignore, .ignore?):
                     break
                 case (.webLink, .open(.webLink)?):

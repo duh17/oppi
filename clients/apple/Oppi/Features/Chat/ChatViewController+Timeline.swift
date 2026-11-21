@@ -247,8 +247,7 @@ extension ChatViewController {
             object: sessionId,
             userInfo: [Notification.Name.workspaceLinkedFileSourceServerIDKey: serverId]
         )
-        let chat = WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId, routeScope: focusedRouteScope)
-        appNavigation.open(.page(.linkedFile(target)), from: .link(chat: chat))
+        appNavigation.open(.page(.linkedFile(target)), from: .link)
     }
 
     // MARK: - Timeline

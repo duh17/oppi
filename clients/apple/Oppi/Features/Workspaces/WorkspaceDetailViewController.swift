@@ -504,8 +504,7 @@ final class WorkspaceDetailViewController: UIViewController {
         let current = Observed(
             searchText: search.searchText,
             isSearchPresented: search.isSearchPresented,
-            stackCount: navigation.workspaceStackRouteElements.count,
-            splitListCovered: navigation.sessionListCover.splitListCovered,
+            listCovered: isSearchListCoveredByDestination,
             pollingKey: currentPollingKey
         )
         if contentIsLive, pollingKey != current.pollingKey {
@@ -524,8 +523,8 @@ final class WorkspaceDetailViewController: UIViewController {
         if previous.isSearchPresented != current.isSearchPresented {
             applySearchNavigation(.searchPresentationChanged(current.isSearchPresented))
         }
-        if previous.stackCount != current.stackCount || previous.splitListCovered != current.splitListCovered {
-            applySearchNavigation(.coverageChanged(isCovered: isSearchListCoveredByDestination))
+        if previous.listCovered != current.listCovered {
+            applySearchNavigation(.coverageChanged(isCovered: current.listCovered))
         }
     }
 
@@ -554,15 +553,11 @@ final class WorkspaceDetailViewController: UIViewController {
     private func recordCoverageBeforeGoingQuiet() {
         guard phase == .content, isSearchListCoveredByDestination else { return }
         applySearchNavigation(.coverageChanged(isCovered: true))
-        observed?.stackCount = navigation.workspaceStackRouteElements.count
-        observed?.splitListCovered = navigation.sessionListCover.splitListCovered
+        observed?.listCovered = true
     }
 
     private var isSearchListCoveredByDestination: Bool {
-        SessionListSearchNavigationPersistence.isWorkspaceListCovered(
-            stackDepth: navigation.sessionListCover.stackDepth,
-            splitListCovered: navigation.sessionListCover.splitListCovered
-        )
+        navigation.sessionListCovered(workspaceId: workspaceId)
     }
 
     func applySearchNavigation(_ event: SessionListSearchNavigationPersistence.Event) {
@@ -714,8 +709,7 @@ extension WorkspaceDetailViewController {
     struct Observed: Equatable {
         var searchText: String
         var isSearchPresented: Bool
-        var stackCount: Int
-        var splitListCovered: Bool
+        var listCovered: Bool
         var pollingKey: String
     }
 

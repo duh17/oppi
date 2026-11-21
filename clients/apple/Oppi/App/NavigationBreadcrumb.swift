@@ -260,13 +260,13 @@ final class LinkOpenTimer {
     static let message = "Link opened"
 
     private let kind: String
-    private let origin: SessionNavigationSource
+    private let origin: NavigationOrigin
     private let clock = ContinuousClock()
     private let start: ContinuousClock.Instant
     private var durations: [String: Int] = [:]
     var path: Path = .blocking
 
-    init(kind: String, origin: SessionNavigationSource) {
+    init(kind: String, origin: NavigationOrigin) {
         self.kind = kind
         self.origin = origin
         start = clock.now
@@ -289,7 +289,7 @@ final class LinkOpenTimer {
     func metadata() -> [String: String] {
         var metadata: [String: String] = [
             "kind": kind,
-            "origin": origin == .inAppHyperlink ? "in_app" : "external",
+            "origin": origin == .external ? "external" : "in_app",
             "path": path.rawValue,
             "totalMs": String(Self.milliseconds(start.duration(to: clock.now))),
         ]

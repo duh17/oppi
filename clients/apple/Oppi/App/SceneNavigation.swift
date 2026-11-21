@@ -85,13 +85,6 @@ enum SplitColumnVisibility: Sendable, Equatable {
     case detailOnly
 }
 
-enum SessionNavigationSource: Sendable, Equatable {
-    /// Incoming app URL, Live Activity, or notification: replace the visible route.
-    case externalURL
-    /// User tapped a session hyperlink inside the app: preserve the current back stack.
-    case inAppHyperlink
-}
-
 enum ServerResourceDetailKind: Hashable, Sendable {
     case `extension`
 }
@@ -119,44 +112,52 @@ struct ModelProvidersNavTarget: Hashable, Sendable {
     let serverId: String
 }
 
-/// What the split shell's detail column shows of the window's one stack
-/// (`SceneNavigation.workspaceStackRouteElements`): the place at its root and
-/// everything above the place pushed over it, as the compact stack pushes it
-/// over All Sessions, so Back returns to the same screen in both shells. The
-/// place is the stack's last sidebar place (a workspace's sessions or a
-/// utility), else All Sessions. Each pushed screen keeps the stack index it
-/// came from, so a pop in the column cuts the stack at the same screen.
-struct SplitDetailColumn: Equatable {
-    var root: ShellRoute
-    /// The stack index of the root's screen; nil when the root is a list.
-    var rootIndex: Int?
-    var pushed: [(route: ShellRoute, index: Int)]
+/// The main pane's state: the place, which the sidebar and the drawer
+/// highlight, and the screens opened over it, bottom to top. The split shell
+/// shows the place at its detail column's root; the compact stack keeps All
+/// Sessions under the place, so Back from a place goes to All Sessions
+/// (`shellRoutes(split:)`). Either way a rotation converts nothing.
+struct MainPaneRoute: Equatable {
+    var place: NavigationPlace = .allSessions
+    /// What opened on the place: content and its pages. On the compact
+    /// stack the host switcher's Usage and Server Metrics are pages here too
+    /// (`MainPanePlacement.replacingServerPages`).
+    var stack: [WorkspaceStackRouteElement] = []
 
-    var routes: [ShellRoute] { [root] + pushed.map(\.route) }
-
-    static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.root == rhs.root && lhs.rootIndex == rhs.rootIndex
-            && lhs.pushed.map(\.route) == rhs.pushed.map(\.route) && lhs.pushed.map(\.index) == rhs.pushed.map(\.index)
+    /// The place's own screen (none for All Sessions), then the stack. What
+    /// restoration saves as the primary leaf.
+    var elements: [WorkspaceStackRouteElement] {
+        (place.screen.map { [$0] } ?? []) + stack
     }
 
-    init(stack: [WorkspaceStackRouteElement]) {
-        let place = stack.lastIndex { element in
-            switch element {
-            case .workspace, .utility: true
-            default: false
-            }
+    /// The screen on top.
+    var top: WorkspaceStackRouteElement? { stack.last ?? place.screen }
+
+    /// What the shell shows, root first.
+    func shellRoutes(split: Bool) -> [ShellRoute] {
+        let above = stack.map(ShellRoute.init)
+        guard !split, place != .allSessions else { return [ShellRoute(place)] + above }
+        return [.inbox, ShellRoute(place)] + above
+    }
+
+    /// Back to `depth` screens above the root of `shellRoutes(split:)`. On
+    /// the compact stack, popping the place's own screen opens All Sessions.
+    mutating func pop(toDepth depth: Int, split: Bool) {
+        let placeLayer = split || place == .allSessions ? 0 : 1
+        guard depth < placeLayer + stack.count else { return }
+        if depth < placeLayer {
+            self = Self()
+        } else {
+            stack.removeLast(stack.count - (depth - placeLayer))
         }
-        root = place.map { ShellRoute(stack[$0]) } ?? .inbox
-        rootIndex = place.flatMap { if case .utility = stack[$0] { $0 } else { nil } }
-        pushed = stack.indices.dropFirst(place.map { $0 + 1 } ?? 0).map { (ShellRoute(stack[$0]), $0) }
     }
 
-    /// Whether the sidebar shows beside this column, from the screen on top:
-    /// hidden under a chat, a file or a page of one, shown beside a list, a
-    /// configuration, a utility or a server page.
+    /// Whether the sidebar shows beside the split shell's column, from the
+    /// screen on top: hidden under a chat, a file or a page of one, shown
+    /// beside a list, a configuration, a utility or a server page.
     var visibility: SplitColumnVisibility {
-        switch routes.last ?? root {
-        case .session, .fileBrowser, .linkedFile, .chatReader, .paneEntry: .detailOnly
+        switch stack.last {
+        case .session?, .fileBrowser?, .linkedFile?, .chatReader?, .paneEntry?: .detailOnly
         default: .all
         }
     }
@@ -164,9 +165,9 @@ struct SplitDetailColumn: Equatable {
     /// A page of the server rather than of the window's work (the host
     /// switcher's destinations and an Extension's detail).
     var showsServerPage: Bool {
-        switch routes.last ?? root {
-        case .serverDetails, .modelProviders, .serverResourceDetail,
-             .utility(.manageServers), .utility(.serverMetrics): true
+        switch top {
+        case .serverDetails?, .modelProviders?, .serverResourceDetail?,
+             .utility(.manageServers)?, .utility(.serverMetrics)?: true
         default: false
         }
     }
@@ -182,8 +183,8 @@ enum NavigationPlace: Hashable {
     static let allSessions = Self.sessions(nil)
 }
 
-/// A screen of the window's stack. The compact shell shows each above All
-/// Sessions; the split shell shows them above their place (`SplitDetailColumn`).
+/// A screen of the main pane: a place's own screen (`NavigationPlace.screen`)
+/// or one opened over it (`MainPaneRoute.stack`).
 enum WorkspaceStackRouteElement: Hashable {
     case workspace(WorkspaceNavTarget)
     case session(WorkspaceSessionNavTarget)
@@ -282,13 +283,8 @@ final class SceneNavigation {
     /// Both show the one stack below; a change of shell converts nothing.
     var workspaceNavigationPresentation: WorkspaceNavigationPresentation = .stack
 
-    /// The workspace whose sessions the window lists: the split sidebar's
-    /// selection, and the compact stack's workspace layer. Nil means All
-    /// Sessions for the active server.
-    var selectedWorkspaceFilter: WorkspaceNavTarget?
-
     /// The split shell's columns: what the detail column shows decides
-    /// (`SplitDetailColumn.visibility`), unless the person showed or hid the
+    /// (`MainPaneRoute.visibility`), unless the person showed or hid the
     /// sidebar themselves (its toggle, Toggle Sidebar, the system's sidebar
     /// gesture). Theirs holds until they go somewhere else: any change of the
     /// stack, or of shell, drops it. Beside split panes a server page is the
@@ -297,9 +293,8 @@ final class SceneNavigation {
         get {
             guard isSplit else { return .automatic }
             if let sidebarChoice { return sidebarChoice }
-            let column = splitDetailColumn
-            if column.showsServerPage, !panes.splitLeaves.isEmpty { return .detailOnly }
-            return column.visibility
+            if mainPaneRoute.showsServerPage, !panes.splitLeaves.isEmpty { return .detailOnly }
+            return mainPaneRoute.visibility
         }
         set { sidebarChoice = newValue }
     }
@@ -332,49 +327,38 @@ final class SceneNavigation {
     /// restores neither the chat route nor the server that navigation left.
     private var mediaOverlayEndedByUserNavigation = false
 
-    /// The window's screens above All Sessions, bottom to top: the primary
-    /// leaf's stack. The compact shell shows exactly these; the split shell
-    /// shows the workspace layer as its sidebar selection and the rest in its
-    /// detail column (`splitDetailColumn`).
-    var workspaceStackRouteElements: [WorkspaceStackRouteElement] = [] {
+    /// The main pane: its place and what opened over it. Only
+    /// `open(_:from:)` and the owners of a route's own changes (a pop, a
+    /// file browser's drill, restoration) write it.
+    var mainPaneRoute = MainPaneRoute() {
         didSet {
             if isRestoringMediaOverlay { return }
             // A file browser's column drill rewrites its route in place; it
             // compares equal and is no navigation.
-            if oldValue != workspaceStackRouteElements { sidebarChoice = nil }
-            if restoreMediaOverlayRouteIfNeeded(
-                snapshotCount: mediaOverlaySnapshot?.workspaceStackRouteElements.count ?? 0,
+            if oldValue != mainPaneRoute { sidebarChoice = nil }
+            restoreMediaOverlayRouteIfNeeded(
+                snapshotCount: mediaOverlaySnapshot?.route.elements.count ?? 0,
                 currentCount: workspaceStackRouteElements.count
-            ) {
-                return
-            }
-            if workspaceNavigationPresentation == .stack, workspaceStackRouteElements.isEmpty {
-                selectedWorkspaceFilter = nil
-            }
+            )
         }
     }
 
-    /// The place the window shows, which the sidebar highlights: the split column's
-    /// root, or the compact stack's sessions.
-    var currentPlace: NavigationPlace {
-        guard isSplit else { return .sessions(selectedWorkspaceFilter) }
-        switch splitDetailColumn.root {
-        case .utility(let utility): return .utility(utility)
-        case .workspace(let workspace): return .sessions(workspace)
-        default: return .allSessions
+    /// The place's screen and the stack over it, bottom to top
+    /// (`MainPaneRoute.elements`).
+    var workspaceStackRouteElements: [WorkspaceStackRouteElement] { mainPaneRoute.elements }
+
+    /// The place the main pane shows, which the sidebar and the drawer highlight.
+    var currentPlace: NavigationPlace { mainPaneRoute.place }
+
+    /// Whether a screen covers a session list in the main pane, for its
+    /// search: All Sessions (`workspaceId` nil) or a workspace's. The place's
+    /// list is covered by anything opened on it; All Sessions also by any
+    /// place on the compact stack, which keeps it underneath.
+    func sessionListCovered(workspaceId: String?) -> Bool {
+        if case .sessions(let shown) = mainPaneRoute.place, shown?.workspace.id == workspaceId {
+            return !mainPaneRoute.stack.isEmpty
         }
-    }
-
-    /// The split shell's detail column, read from the stack.
-    var splitDetailColumn: SplitDetailColumn {
-        SplitDetailColumn(stack: workspaceStackRouteElements)
-    }
-
-    /// What covers a session list, for its search: the screens over it on
-    /// the compact stack (none in the split shell, where the list sits at the
-    /// detail column's root), and whether a screen is pushed over the split's list.
-    var sessionListCover: (stackDepth: Int, splitListCovered: Bool) {
-        isSplit ? (0, !splitDetailColumn.pushed.isEmpty) : (workspaceStackRouteElements.count, false)
+        return workspaceId == nil && !isSplit
     }
 
     var workspaceStackDiagnosticContext: WorkspaceStackDiagnosticContext {
@@ -382,18 +366,19 @@ final class SceneNavigation {
     }
 
     var visibleSplitDiagnosticContext: WorkspaceStackDiagnosticContext {
-        let column = splitDetailColumn
-        if let index = column.pushed.last?.index ?? column.rootIndex {
-            return Self.diagnosticContext(for: workspaceStackRouteElements[index])
-        }
-        guard case .workspace(let workspace) = column.root else {
+        if let top = mainPaneRoute.stack.last { return Self.diagnosticContext(for: top) }
+        switch mainPaneRoute.place {
+        case .utility(let utility):
+            return Self.diagnosticContext(for: .utility(utility))
+        case .sessions(let workspace?):
+            return WorkspaceStackDiagnosticContext(
+                screen: "workspace_split_inbox_filtered",
+                sessionId: nil,
+                workspaceId: workspace.workspace.id
+            )
+        case .sessions(nil):
             return WorkspaceStackDiagnosticContext(screen: "workspace_split_inbox_all", sessionId: nil, workspaceId: nil)
         }
-        return WorkspaceStackDiagnosticContext(
-            screen: "workspace_split_inbox_filtered",
-            sessionId: nil,
-            workspaceId: workspace.workspace.id
-        )
     }
 
     /// The window changed shells. The stack stays as it is; the split
@@ -408,10 +393,6 @@ final class SceneNavigation {
         let fromSessionId = visibleDiagnosticSessionId()
         workspaceNavigationPresentation = presentation
         sidebarChoice = nil
-        // The compact stack lists the workspace only as a pushed layer.
-        if presentation == .stack, selectedWorkspaceFilter != nil, workspaceStackRouteElements.isEmpty {
-            selectedWorkspaceFilter = nil
-        }
         ClientLog.info(
             "Navigation",
             "Presentation changed",
@@ -483,15 +464,15 @@ final class SceneNavigation {
         visibleDiagnosticContext.workspaceId
     }
 
-    /// Stack depth counts the pushed stack routes. Split depth counts the
-    /// detail root plus each push, so a detail push is a route change even
+    /// Stack depth counts the pushed stack routes. Split depth counts a
+    /// utility root plus each push, so a detail push is a route change even
     /// when the screen token stays the same.
     var navigationRouteDepth: Int {
         switch workspaceNavigationPresentation {
         case .stack:
             workspaceStackRouteElements.count
         case .split:
-            splitDetailColumn.pushed.count + (splitDetailColumn.rootIndex == nil ? 0 : 1)
+            if case .utility = mainPaneRoute.place { mainPaneRoute.stack.count + 1 } else { mainPaneRoute.stack.count }
         }
     }
 
@@ -514,8 +495,7 @@ final class SceneNavigation {
             mediaOverlayEndedByUserNavigation = false
             mediaOverlaySnapshot = MediaOverlaySnapshot(
                 presentation: workspaceNavigationPresentation,
-                selectedWorkspaceFilter: selectedWorkspaceFilter,
-                workspaceStackRouteElements: workspaceStackRouteElements,
+                route: mainPaneRoute,
                 activeServerId: activeServerId
             )
         }
@@ -563,7 +543,7 @@ final class SceneNavigation {
     /// If the deleted workspace is the current selection, leave it through the
     /// all-sessions inbox. Manage-list deletes of an unselected workspace stay put.
     func leaveDeletedWorkspace(serverId: String, workspaceId: String) {
-        guard let selected = selectedWorkspaceFilter,
+        guard let selected = currentPlace.workspace,
               selected.serverId == serverId, selected.workspace.id == workspaceId else {
             return
         }
@@ -571,12 +551,9 @@ final class SceneNavigation {
     }
 
     /// The session whose chat is the visible screen: the stack's top.
-    var visibleChatSession: WorkspaceSessionNavTarget? {
-        guard case .session(let current)? = workspaceStackRouteElements.last else { return nil }
-        return current
-    }
+    var visibleChatSession: WorkspaceSessionNavTarget? { mainPaneRoute.shownChat }
 
-    static func isSameSession(
+    nonisolated static func isSameSession(
         _ lhs: WorkspaceSessionNavTarget,
         _ rhs: WorkspaceSessionNavTarget
     ) -> Bool {
@@ -613,17 +590,8 @@ final class SceneNavigation {
         return nil
     }
 
-    /// The stack's screens the shell shows: all of them on the compact
-    /// stack, the detail column's in the split shell.
-    private var shownElements: [WorkspaceStackRouteElement] {
-        guard isSplit else { return workspaceStackRouteElements }
-        let column = splitDetailColumn
-        let indices = (column.rootIndex.map { [$0] } ?? []) + column.pushed.map(\.index)
-        return indices.map { workspaceStackRouteElements[$0] }
-    }
-
     func containsChatReader(_ target: ChatReaderNavTarget) -> Bool {
-        shownElements.contains { element in
+        mainPaneRoute.stack.contains { element in
             if case .chatReader(let stacked) = element { return stacked == target }
             return false
         }
@@ -633,7 +601,7 @@ final class SceneNavigation {
     /// linked file. ChatViewController uses this to skip teardown on a covering disappear.
     func isCoveringChat(sessionId: String) -> Bool {
         var skippedCover = false
-        for element in shownElements.map(Self.coveringElement(from:)).reversed() {
+        for element in mainPaneRoute.stack.map(Self.coveringElement(from:)).reversed() {
             switch element {
             case .coveringPage(let sourceSessionId):
                 if let sourceSessionId, sourceSessionId != sessionId {
@@ -654,7 +622,7 @@ final class SceneNavigation {
     /// route is the source of truth; UIKit's moving flags miss a shell route
     /// swap and see a lock-cover swap as a removal.
     func routeContainsSession(_ sessionId: String) -> Bool {
-        shownElements.contains { element in
+        mainPaneRoute.stack.contains { element in
             if case .session(let target) = element { return target.sessionId == sessionId }
             return false
         }
@@ -669,28 +637,22 @@ final class SceneNavigation {
         directoryPath: String,
         selectedFile: FileBrowserSelection?
     ) {
-        guard let index = workspaceStackRouteElements.lastIndex(where: { element in
+        guard let index = mainPaneRoute.stack.lastIndex(where: { element in
             if case .fileBrowser(let target) = element {
                 return target.serverId == serverId && target.scope == scope && target.path == routePath
             }
             return false
-        }), case .fileBrowser(var target) = workspaceStackRouteElements[index] else { return }
+        }), case .fileBrowser(var target) = mainPaneRoute.stack[index] else { return }
         target.columnDirectoryPath = directoryPath
         target.columnSelectedFile = selectedFile
-        workspaceStackRouteElements[index] = .fileBrowser(target)
+        mainPaneRoute.stack[index] = .fileBrowser(target)
     }
 
     var visibleHostSwitcherDestination: HostSwitcherDestination {
-        if let destination = Self.hostSwitcherDestination(from: workspaceStackRouteElements.last) {
-            return destination
-        }
-        if isSplit, case .utility(let utility) = splitDetailColumn.root {
-            return Self.hostSwitcherDestination(from: .utility(utility)) ?? .inbox
-        }
-        return .inbox
+        mainPaneRoute.hostSwitcherDestination
     }
 
-    static func hostSwitcherDestination(
+    nonisolated static func hostSwitcherDestination(
         from element: WorkspaceStackRouteElement?
     ) -> HostSwitcherDestination? {
         switch element {
@@ -752,14 +714,15 @@ final class SceneNavigation {
     /// (a link opened it deeper): the first of the browser's pages on top of
     /// the stack shows `target`, and the folder pages above it close.
     func showFileBrowserAncestor(_ target: FileBrowserNavTarget) {
-        var first = workspaceStackRouteElements.endIndex
-        while first > workspaceStackRouteElements.startIndex,
-              case .fileBrowser(let page) = workspaceStackRouteElements[first - 1],
+        let stack = mainPaneRoute.stack
+        var first = stack.endIndex
+        while first > stack.startIndex,
+              case .fileBrowser(let page) = stack[first - 1],
               page.serverId == target.serverId, page.scope == target.scope {
             first -= 1
         }
-        guard first < workspaceStackRouteElements.endIndex else { return }
-        workspaceStackRouteElements.replaceSubrange(first..., with: [.fileBrowser(target)])
+        guard first < stack.endIndex else { return }
+        mainPaneRoute.stack.replaceSubrange(first..., with: [.fileBrowser(target)])
     }
 
     /// The person's own Back while the media overlay is active proves it is
@@ -775,26 +738,17 @@ final class SceneNavigation {
         mediaOverlayEndedByUserNavigation = true
     }
 
-    /// The person popped the shown stack back to `depth` screens above its
-    /// root: the compact stack's, or the split detail column's.
+    /// The person popped the main pane back to `depth` screens above its place.
     func popShownStack(toDepth depth: Int) {
-        let cut: Int
-        if isSplit {
-            let pushed = splitDetailColumn.pushed
-            guard pushed.count > depth else { return }
-            cut = pushed[depth].index
-        } else {
-            guard workspaceStackRouteElements.count > depth else { return }
-            cut = depth
-        }
+        var route = mainPaneRoute
+        route.pop(toDepth: depth, split: isSplit)
+        guard route != mainPaneRoute else { return }
         mediaOverlayYieldsToUserNavigation()
-        workspaceStackRouteElements.removeLast(workspaceStackRouteElements.count - cut)
+        mainPaneRoute = route
     }
 
     /// The all-sessions list with nothing pushed over it (compact stack or split detail).
-    var showsAllSessionsRoot: Bool {
-        selectedWorkspaceFilter == nil && workspaceStackRouteElements.isEmpty
-    }
+    var showsAllSessionsRoot: Bool { mainPaneRoute == MainPaneRoute() }
 
     private static func diagnosticContext(
         for element: WorkspaceStackRouteElement
@@ -930,15 +884,13 @@ final class SceneNavigation {
     private func restoreMediaOverlaySnapshot(_ snapshot: MediaOverlaySnapshot) {
         isRestoringMediaOverlay = true
         workspaceNavigationPresentation = snapshot.presentation
-        selectedWorkspaceFilter = snapshot.selectedWorkspaceFilter
-        workspaceStackRouteElements = snapshot.workspaceStackRouteElements
+        mainPaneRoute = snapshot.route
         isRestoringMediaOverlay = false
     }
 
     private struct MediaOverlaySnapshot {
         let presentation: WorkspaceNavigationPresentation
-        let selectedWorkspaceFilter: WorkspaceNavTarget?
-        let workspaceStackRouteElements: [WorkspaceStackRouteElement]
+        let route: MainPaneRoute
         let activeServerId: String?
     }
 }

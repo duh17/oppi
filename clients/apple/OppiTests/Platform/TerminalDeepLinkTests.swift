@@ -22,7 +22,7 @@ struct TerminalDeepLinkTests {
 
     @Test func requestsFromAppOpenRequestKeepTheSourceServer() {
         let url = testUnwrap(URL(string: "oppi://terminal/rex?session=\(Self.session)&block=\(Self.block)"))
-        guard case .terminal(let open) = AppOpenRequest(url: url, origin: .inAppHyperlink, sourceServerID: "srv") else {
+        guard case .terminal(let open) = AppOpenRequest(url: url, origin: .link, sourceServerID: "srv") else {
             Issue.record("not a terminal request")
             return
         }

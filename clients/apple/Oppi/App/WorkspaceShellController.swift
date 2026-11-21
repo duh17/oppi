@@ -358,7 +358,7 @@ final class WorkspaceSplitController: UISplitViewController, UISplitViewControll
         // empty; a new root laid out inside the columns' animation would
         // grow out of a corner with them.
         applyColumnVisibility(navigation.panes.fullScreenCell != nil ? .detailOnly : navigation.splitColumnVisibility)
-        area?.stack.setRoutes(navigation.splitDetailColumn.routes)
+        area?.stack.setRoutes(navigation.mainPaneRoute.shellRoutes(split: true))
     }
 
     private func applyColumnVisibility(_ visibility: SplitColumnVisibility) {
@@ -522,7 +522,7 @@ final class WorkspaceDrawerController: UIViewController, UIGestureRecognizerDele
         // The corner cutouts the rounded foreground reveals show the theme,
         // never the bare window.
         view.backgroundColor = root.themeStore.backgroundColor
-        stack?.setRoutes([.inbox] + navigation.workspaceStackRouteElements.map(ShellRoute.init))
+        stack?.setRoutes(navigation.mainPaneRoute.shellRoutes(split: false))
     }
 
     override func accessibilityPerformEscape() -> Bool {

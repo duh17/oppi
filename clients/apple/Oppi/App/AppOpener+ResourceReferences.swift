@@ -27,7 +27,6 @@ enum FileLinkOpenPolicy {
 
     struct ResolvedLink: Equatable {
         let serverId: String
-        let workspace: Workspace
         let kind: Kind
         let path: String
 
@@ -49,14 +48,12 @@ enum FileLinkOpenPolicy {
             if let relativePath = payload.filePath.workspaceRelativePath(hostMount: workspace.hostMount) {
                 return ResolvedLink(
                     serverId: serverId,
-                    workspace: workspace,
                     kind: .workspaceFile,
                     path: relativePath
                 )
             }
             return ResolvedLink(
                 serverId: serverId,
-                workspace: workspace,
                 kind: .hostFile,
                 path: payload.filePath
             )
@@ -150,10 +147,7 @@ extension AppOpener {
                 object: target.sourceSessionId,
                 userInfo: [Notification.Name.workspaceLinkedFileSourceServerIDKey: target.serverId]
             )
-            let sourceChat = target.sourceSessionId.map {
-                WorkspaceSessionNavTarget(serverId: target.serverId, sessionId: $0, workspaceId: target.workspaceId)
-            }
-            navigation.open(.page(.linkedFile(target)), from: .link(chat: sourceChat))
+            navigation.open(.page(.linkedFile(target)), from: .link)
         }
         return .finished
     }
@@ -471,14 +465,14 @@ extension AppOpener {
                 sessionId: session.sessionID,
                 workspaceIdHint: nil,
                 connection: connection,
-                origin: .inAppHyperlink,
+                origin: .link,
                 previousServerId: previousServerId,
                 generation: generation
             )
 
         case .workspaceFile(let file):
             guard let connection = coordinator.connection(for: file.serverID),
-                  let workspace = connection.workspaceStore.workspaces.first(where: { $0.id == file.workspaceID }) else {
+                  connection.workspaceStore.workspaces.contains(where: { $0.id == file.workspaceID }) else {
                 guard isCurrent(generation) else { return .finished }
                 toast("Could not open file \(file.path)")
                 return .finished
@@ -498,10 +492,7 @@ extension AppOpener {
                 let target = Self.linkedFileTarget(file, reference: reference)
                 guard !openLinkedFileBeside(target, reference: reference) else { return }
                 postWorkspaceLinkedFileWillOpen(reference: reference)
-                navigation.open(
-                    .page(.linkedFile(target)),
-                    from: .link(chat: reference.sourceChat, workspace: WorkspaceNavTarget(serverId: file.serverID, workspace: workspace))
-                )
+                navigation.open(.page(.linkedFile(target)), from: .link)
             }
             return .finished
 
@@ -525,9 +516,7 @@ extension AppOpener {
                 let target = Self.linkedFileTarget(file, reference: reference)
                 guard !openLinkedFileBeside(target, reference: reference) else { return }
                 postWorkspaceLinkedFileWillOpen(reference: reference)
-                // Host files stay on the current stack. Do not select another
-                // workspace or pretend the file lives in this checkout.
-                navigation.open(.page(.linkedFile(target)), from: .link(chat: reference.sourceChat))
+                navigation.open(.page(.linkedFile(target)), from: .link)
             }
             return .finished
         }
@@ -611,7 +600,7 @@ extension AppOpener {
         case .sessionFile(let reference):
             return Self.sessionFileTarget(for: reference).map { PaneOpenContent(file: $0) }
         case .fileLink(let payload):
-            return resolveFileLink(payload).map { PaneOpenContent(file: $0.target) }
+            return resolveFileLink(payload).map { PaneOpenContent(file: $0) }
         case .pane(let link, let sourceServerID):
             guard Self.opensInPane(request), let serverId = link.server ?? sourceServerID ?? windowServerId else { return nil }
             return PaneOpenContent(entry: PaneStackEntry(serverId: serverId, route: link.route))
@@ -656,32 +645,23 @@ extension AppOpener {
         _ payload: FileLinkPayload,
         generation: UInt64
     ) async -> AppOpenOutcome {
-        guard let resolution = resolveFileLink(payload) else {
+        guard let target = resolveFileLink(payload) else {
             toast("Could not open this file link")
             return .finished
         }
         guard await scopedLock.authorize(
-            WorkspaceLinkedFileViewController.lockTarget(for: resolution.target)
+            WorkspaceLinkedFileViewController.lockTarget(for: target)
         ), isCurrent(generation) else { return .finished }
-        let switched = await openServer(resolution.target.serverId, generation: generation)
+        let switched = await openServer(target.serverId, generation: generation)
         guard isCurrent(generation) else { return .finished }
         guard switched else {
-            toastUnreachableIfFirstAttempt(resolution.target.serverId)
+            toastUnreachableIfFirstAttempt(target.serverId)
             return .unreachable
         }
 
-        let workspace: WorkspaceNavTarget?
-        if case .workspaceFile = resolution.target.kind {
-            workspace = WorkspaceNavTarget(
-                serverId: resolution.target.serverId,
-                workspace: resolution.workspace
-            )
-        } else {
-            workspace = nil
-        }
         await dismissCoveringDocumentOverlayThenNavigateIfCurrent(generation: generation) { [weak self] in
-            guard let self, !openBesideFocusedPane(PaneOpenContent(file: resolution.target), kind: .file) else { return }
-            navigation.open(.page(.linkedFile(resolution.target)), from: .screen(workspace: workspace))
+            guard let self, !openBesideFocusedPane(PaneOpenContent(file: target), kind: .file) else { return }
+            navigation.open(.page(.linkedFile(target)))
         }
         return .finished
     }
@@ -741,7 +721,7 @@ extension AppOpener {
 
     func resolveFileLink(
         _ payload: FileLinkPayload
-    ) -> (target: WorkspaceLinkedFileNavTarget, workspace: Workspace)? {
+    ) -> WorkspaceLinkedFileNavTarget? {
         let workspacesByServer = Dictionary(
             uniqueKeysWithValues: coordinator.connections.map { serverId, connection in
                 (serverId, connection.workspaceStore.workspaces)
@@ -760,21 +740,6 @@ extension AppOpener {
         case .hostFile:
             kind = .hostFile(path: resolution.path, fileName: resolution.fileName)
         }
-        return (
-            target: WorkspaceLinkedFileNavTarget(
-                serverId: resolution.serverId,
-                workspaceId: payload.workspaceID,
-                kind: kind
-            ),
-            workspace: resolution.workspace
-        )
-    }
-}
-
-private extension ResourceReference {
-    /// The chat whose text holds the reference, when it names one.
-    var sourceChat: WorkspaceSessionNavTarget? {
-        guard let sourceSessionID, let sourceServerID else { return nil }
-        return WorkspaceSessionNavTarget(serverId: sourceServerID, sessionId: sourceSessionID)
+        return WorkspaceLinkedFileNavTarget(serverId: resolution.serverId, workspaceId: payload.workspaceID, kind: kind)
     }
 }

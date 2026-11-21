@@ -554,7 +554,7 @@ final class OnboardingViewController: UIViewController, RouterModalContainer {
     }
 
     private func openSetupGuide() {
-        root.opener.open(AppOpenRequest(url: AppSupportLinks.setupURL, origin: .inAppHyperlink))
+        root.opener.open(AppOpenRequest(url: AppSupportLinks.setupURL, origin: .link))
     }
 
     private func leave() {

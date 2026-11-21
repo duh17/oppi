@@ -451,7 +451,7 @@ final class SessionInboxViewController: UIViewController {
         let current = Observed(
             searchText: navigation.inboxSessionSearch.searchText,
             isSearchPresented: navigation.inboxSessionSearch.isSearchPresented,
-            coverage: currentCoverageKey,
+            covered: isSearchListCoveredByDestination,
             activeServerId: root.windowServerId,
             stackCount: navigation.workspaceStackRouteElements.count
         )
@@ -468,8 +468,8 @@ final class SessionInboxViewController: UIViewController {
         if previous.isSearchPresented != current.isSearchPresented {
             applySearchNavigation(.searchPresentationChanged(current.isSearchPresented))
         }
-        if previous.coverage != current.coverage {
-            applySearchNavigation(.coverageChanged(isCovered: isSearchListCoveredByDestination))
+        if previous.covered != current.covered {
+            applySearchNavigation(.coverageChanged(isCovered: current.covered))
         }
         if previous.activeServerId != current.activeServerId {
             resetLocalHostState()
@@ -523,10 +523,6 @@ final class SessionInboxViewController: UIViewController {
         }
     }
 
-    private var currentCoverageKey: String {
-        "\(navigation.workspaceStackRouteElements.count):\(navigation.workspaceNavigationPresentation):\(navigation.sessionListCover.splitListCovered)"
-    }
-
     /// A covered screen stops reacting, and no update pass is guaranteed
     /// between the push and here (a non-animated push, a route restore). Take
     /// the covered state now so Back always sees covered then uncovered and
@@ -534,16 +530,12 @@ final class SessionInboxViewController: UIViewController {
     private func recordCoverageBeforeGoingQuiet() {
         guard isSearchListCoveredByDestination else { return }
         applySearchNavigation(.coverageChanged(isCovered: true))
-        observed?.coverage = currentCoverageKey
+        observed?.covered = true
         observed?.stackCount = navigation.workspaceStackRouteElements.count
     }
 
     private var isSearchListCoveredByDestination: Bool {
-        SessionListSearchNavigationPersistence.isInboxCovered(
-            isSplitPresentation: navigation.workspaceNavigationPresentation == .split,
-            stackDepth: navigation.sessionListCover.stackDepth,
-            splitListCovered: navigation.sessionListCover.splitListCovered
-        )
+        navigation.sessionListCovered(workspaceId: nil)
     }
 
     private func applySearchNavigation(_ event: SessionListSearchNavigationPersistence.Event) {
@@ -1148,7 +1140,7 @@ private extension SessionInboxViewController {
     struct Observed: Equatable {
         var searchText: String
         var isSearchPresented: Bool
-        var coverage: String
+        var covered: Bool
         var activeServerId: String?
         var stackCount: Int
     }

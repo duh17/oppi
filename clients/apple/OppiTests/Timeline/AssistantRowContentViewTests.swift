@@ -1579,7 +1579,7 @@ struct AssistantTimelineRowContentViewTests {
 
         #expect(markdownView.classifyLink(url) == .session(SessionOpen(
             sessionId: "RV97TbYj",
-            origin: .inAppHyperlink
+            origin: .link
         )))
     }
 
@@ -1614,7 +1614,7 @@ struct AssistantTimelineRowContentViewTests {
         #expect(recorder.requests == [.session(SessionOpen(
             serverId: "server-source",
             sessionId: "RV97TbYj",
-            origin: .inAppHyperlink
+            origin: .link
         ))])
     }
 
@@ -1854,7 +1854,7 @@ struct NativeTableMarkdownLinkRoutingTests {
             expected: .session(SessionOpen(
                 serverId: "server-1",
                 sessionId: "RV97TbYj",
-                origin: .inAppHyperlink
+                origin: .link
             ))
         )
     }

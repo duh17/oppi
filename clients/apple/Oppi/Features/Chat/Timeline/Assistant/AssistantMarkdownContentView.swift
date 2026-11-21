@@ -436,7 +436,7 @@ enum MarkdownLinkInteractionSupport {
             // other app to open it, so Oppi answers it here.
             return AppOpenRequest(
                 url: normalizedURL,
-                origin: .inAppHyperlink,
+                origin: .link,
                 sourceServerID: serverID,
                 sourceSessionID: sessionID
             )

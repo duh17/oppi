@@ -170,7 +170,7 @@ extension WorkspaceDetailViewController {
             connection.sessionStore.cacheSessionForNavigation(session)
             navigation.open(
                 .chat(WorkspaceSessionNavTarget(serverId: serverId, sessionId: session.id, routeScope: scope)),
-                from: .link()
+                from: .link
             )
             return
         }
@@ -263,11 +263,7 @@ extension WorkspaceDetailViewController {
             "presentation": navigation.workspaceNavigationPresentation == .stack ? "stack" : "split",
             "workspaceStackDepth": String(navigation.workspaceStackRouteElements.count),
         ])
-        let workspace = connection.map { currentWorkspace($0) } ?? routeWorkspace
-        navigation.open(
-            .page(.fileBrowser(target)),
-            from: .screen(workspace: WorkspaceNavTarget(serverId: serverId, workspace: workspace))
-        )
+        navigation.open(.page(.fileBrowser(target)))
     }
 
     /// The Git panel (the chat's, `GitPanelViewController`) as a sheet: the

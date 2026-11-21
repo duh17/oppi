@@ -387,7 +387,7 @@ struct PinnedScreenTests {
         #expect(await shell.settles { shell.cell("pin_Review000006") != nil })
 
         try shell.tap("pin_Review000006")
-        #expect(opened == [.session(SessionOpen(serverId: shell.serverId, sessionId: "sess-review", origin: .inAppHyperlink))])
+        #expect(opened == [.session(SessionOpen(serverId: shell.serverId, sessionId: "sess-review", origin: .link))])
         _ = await shell.scope.settle()
     }
 
@@ -491,8 +491,9 @@ struct PinnedScreenTests {
         _ = await shell.scope.settle()
     }
 
-    /// On iPhone the drawer's Pinned row pushes the screen, and a pinned
-    /// folder opens in the main stack as the File Browser at that folder.
+    /// On iPhone the drawer's Pinned row makes Pinned the main pane's place,
+    /// on All Sessions, and the drawer highlights it; a pinned folder opens in
+    /// the main stack as the File Browser at that folder.
     @Test func onIPhoneTheDrawerOpensPinnedAndAFolderOpensInTheStack() async throws {
         let shell = try await Self.makeShell(size: CGSize(width: 402, height: 874), regular: false)
         defer { shell.end() }
@@ -500,6 +501,9 @@ struct PinnedScreenTests {
         #expect(await shell.settles { shell.element("workspace.pinned.open", in: sidebar) != nil }, "the drawer offers Pinned")
         try #require(shell.element("workspace.pinned.open", in: sidebar)).sendActions(for: .touchUpInside)
         #expect(await shell.settles { shell.cell("pin_Notebook0001") != nil })
+        #expect(await shell.settles {
+            shell.element("workspace.pinned.open", in: sidebar)?.accessibilityTraits.contains(.selected) == true
+        }, "the drawer highlights Pinned")
 
         try shell.tap("pin_Notebook0001")
         let target = FileBrowserNavTarget(serverId: shell.serverId, scope: .hostHome, path: "notebook/")

@@ -112,52 +112,6 @@ struct SessionListSearchNavigationPersistenceTests {
         #expect(state.heldQuery == nil)
     }
 
-    @Test func compactInboxIsCoveredByAPushedSession() {
-        #expect(
-            SessionListSearchNavigationPersistence.isInboxCovered(
-                isSplitPresentation: false,
-                stackDepth: 1
-            )
-        )
-        #expect(
-            !SessionListSearchNavigationPersistence.isInboxCovered(
-                isSplitPresentation: false,
-                stackDepth: 0
-            )
-        )
-        #expect(
-            !SessionListSearchNavigationPersistence.isInboxCovered(
-                isSplitPresentation: true,
-                stackDepth: 1
-            )
-        )
-        #expect(
-            SessionListSearchNavigationPersistence.isInboxCovered(
-                isSplitPresentation: true,
-                stackDepth: 0,
-                splitListCovered: true
-            )
-        )
-        #expect(
-            !SessionListSearchNavigationPersistence.isInboxCovered(
-                isSplitPresentation: true,
-                stackDepth: 0,
-                splitListCovered: false
-            )
-        )
-    }
-
-    @Test func workspaceListIsCoveredByADeeperSession() {
-        #expect(SessionListSearchNavigationPersistence.isWorkspaceListCovered(stackDepth: 2))
-        #expect(!SessionListSearchNavigationPersistence.isWorkspaceListCovered(stackDepth: 1))
-        #expect(
-            SessionListSearchNavigationPersistence.isWorkspaceListCovered(
-                stackDepth: 1,
-                splitListCovered: true
-            )
-        )
-    }
-
     private func searching(_ query: String) -> SessionListSearchNavigationPersistence.State {
         var state = SessionListSearchNavigationPersistence.State()
         state = reduce(state, .searchPresentationChanged(true), covered: false)

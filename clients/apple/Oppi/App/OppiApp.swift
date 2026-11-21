@@ -348,7 +348,7 @@ final class OppiApp {
         recordNavigationChanges("launch_phase") { navigation.app.launchPhase }
         recordNavigationChanges("onboarding") { navigation.app.showOnboarding }
         recordNavigationChanges("quick_session") { navigation.showQuickSession }
-        recordNavigationChanges("workspace_filter") { navigation.selectedWorkspaceFilter }
+        recordNavigationChanges("place") { navigation.currentPlace }
         recordNavigationChanges("workspace_stack_depth") { navigation.workspaceStackRouteElements.count }
         recordNavigationChanges("stack_destination") { navigation.workspaceStackDiagnosticContext }
         recordNavigationChanges("split_destination") { navigation.visibleSplitDiagnosticContext }

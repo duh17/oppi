@@ -9,7 +9,7 @@ extension AppOpenRequest {
     /// it cannot open.
     static func agentInternalURL(
         _ url: URL,
-        origin: SessionNavigationSource,
+        origin: NavigationOrigin,
         sourceServerID: String?,
         sourceSessionID: String?
     ) -> AppOpenRequest? {

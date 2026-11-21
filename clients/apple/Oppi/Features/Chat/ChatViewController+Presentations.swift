@@ -408,9 +408,7 @@ extension ChatViewController {
 
     /// A linked file over the chat, as narrow width opens it.
     private func openLinkedFileOverChat(_ target: WorkspaceLinkedFileNavTarget) {
-        guard let serverId = connection.currentServerId else { return }
-        let chat = WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId, routeScope: focusedRouteScope)
-        appNavigation.open(.page(.linkedFile(target)), from: .link(chat: chat))
+        appNavigation.open(.page(.linkedFile(target)), from: .link)
     }
 
     /// A file or commit pill's destination as the column's root, built by

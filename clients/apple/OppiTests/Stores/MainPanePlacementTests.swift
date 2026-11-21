@@ -9,8 +9,8 @@ import Testing
 @Suite("Opening in the main pane")
 @MainActor
 struct MainPanePlacementTests {
-    /// The rule reads only the window's shell, so the iPhone and the iPad in
-    /// portrait are one layout here: both show the stack shell. A side pane is
+    /// The rule reads only the main pane's route and the window's shell, so
+    /// the iPhone and the iPad in portrait are one layout here: both show the stack shell. A side pane is
     /// a layout of its own because a main-pane open must leave it alone.
     enum Layout: CaseIterable {
         /// The iPhone, and the iPad in portrait.
@@ -76,16 +76,27 @@ struct MainPanePlacementTests {
             open: .place(.sessions(workspace)),
             stack: outcome(.root(inWorkspace), shows: .workspace(workspace), back: .inbox, place: inWorkspace),
             split: outcome(.root(inWorkspace), shows: .workspace(workspace), back: nil, place: inWorkspace)),
-        // The stack shell's drawer highlights the list under a utility, not the utility.
+        // A place replaces the main pane's stack in both shells, opened from the sidebar, the drawer, a
+        // link or a key; the stack shell keeps All Sessions under it.
         Row(journey: "a chat → Pinned", start: [(.chat(chat), .screen())],
             open: .place(.utility(.pinned)),
-            stack: outcome(.push(selecting: nil), shows: .utility(.pinned), back: .session(chat)),
+            stack: outcome(.root(.utility(.pinned)), shows: .utility(.pinned), back: .inbox, place: .utility(.pinned)),
             split: outcome(.root(.utility(.pinned)), shows: .utility(.pinned), back: nil, place: .utility(.pinned))),
+        Row(journey: "a workspace's chat → oppi://pins",
+            start: [(.place(.sessions(workspace)), .screen()), (.chat(chat), .screen(workspace: workspace))],
+            open: .place(.utility(.pinned)), from: .external,
+            stack: outcome(.root(.utility(.pinned)), shows: .utility(.pinned), back: .inbox, place: .utility(.pinned)),
+            split: outcome(.root(.utility(.pinned)), shows: .utility(.pinned), back: nil, place: .utility(.pinned))),
+        Row(journey: "a chat → Pinned → a pinned chat",
+            start: [(.chat(chat), .screen()), (.place(.utility(.pinned)), .screen())],
+            open: .chat(other),
+            stack: outcome(.push, shows: .session(other), back: .utility(.pinned), place: .utility(.pinned)),
+            split: outcome(.push, shows: .session(other), back: .utility(.pinned), place: .utility(.pinned))),
 
         // Chats from a list or a button.
         Row(journey: "All Sessions → chat",
             open: .chat(chat),
-            stack: outcome(.push(selecting: nil), shows: .session(chat), back: .inbox),
+            stack: outcome(.push, shows: .session(chat), back: .inbox),
             split: outcome(.onPlace(.allSessions), shows: .session(chat), back: .inbox)),
         Row(journey: "a workspace's list → chat", start: [(.place(.sessions(workspace)), .screen())],
             open: .chat(chat), from: .screen(workspace: workspace),
@@ -93,36 +104,45 @@ struct MainPanePlacementTests {
             split: outcome(.onPlace(inWorkspace), shows: .session(chat), back: .workspace(workspace), place: inWorkspace)),
         Row(journey: "Agents → chat", start: [(.place(.utility(.agents)), .screen())],
             open: .chat(chat),
-            stack: outcome(.push(selecting: nil), shows: .session(chat), back: .utility(.agents)),
-            split: outcome(.push(selecting: nil), shows: .session(chat), back: .utility(.agents), place: .utility(.agents))),
+            stack: outcome(.push, shows: .session(chat), back: .utility(.agents), place: .utility(.agents)),
+            split: outcome(.push, shows: .session(chat), back: .utility(.agents), place: .utility(.agents))),
         Row(journey: "a chat's button → another chat", start: [(.chat(chat), .screen())],
             open: .chat(other),
-            stack: outcome(.push(selecting: nil), shows: .session(other), back: .session(chat)),
+            stack: outcome(.push, shows: .session(other), back: .session(chat)),
             split: outcome(.onPlace(.allSessions), shows: .session(other), back: .inbox)),
         Row(journey: "Quick Session at All Sessions → a chat in a workspace",
             open: .chat(chat), from: .screen(workspace: workspace),
-            stack: outcome(.push(selecting: nil), shows: .session(chat), back: .inbox),
+            stack: outcome(.push, shows: .session(chat), back: .inbox),
             split: outcome(.onPlace(.allSessions), shows: .session(chat), back: .inbox)),
         Row(journey: "Quick Session at one workspace's list → a chat in another",
             start: [(.place(.sessions(otherWorkspace)), .screen())],
             open: .chat(chat), from: .screen(workspace: workspace),
             stack: outcome(.onPlace(inWorkspace), shows: .session(chat), back: .workspace(workspace), place: inWorkspace),
             split: outcome(.onPlace(inWorkspace), shows: .session(chat), back: .workspace(workspace), place: inWorkspace)),
-        // A file a link resolved into a workspace sits over All Sessions; the stack shell then puts
-        // the new chat on that workspace's list, the split shell on All Sessions, its column's place.
-        Row(journey: "Quick Session over a file → a chat in the file's workspace",
-            start: [(.page(.linkedFile(file)), .screen(workspace: workspace))],
+        // Over All Sessions or a utility the stack shell pushes Quick Session's chat; the split
+        // shell puts it on All Sessions, its column's place, or over the utility.
+        Row(journey: "Quick Session over a chat at All Sessions → a chat in a workspace",
+            start: [(.chat(other), .screen())],
             open: .chat(chat), from: .screen(workspace: workspace),
-            stack: outcome(.onPlace(inWorkspace), shows: .session(chat), back: .workspace(workspace), place: inWorkspace),
+            stack: outcome(.push, shows: .session(chat), back: .session(other)),
+            split: outcome(.onPlace(.allSessions), shows: .session(chat), back: .inbox)),
+        Row(journey: "Quick Session from Agents → a chat in a workspace", start: [(.place(.utility(.agents)), .screen())],
+            open: .chat(chat), from: .screen(workspace: workspace),
+            stack: outcome(.push, shows: .session(chat), back: .utility(.agents), place: .utility(.agents)),
+            split: outcome(.push, shows: .session(chat), back: .utility(.agents), place: .utility(.agents))),
+        Row(journey: "Quick Session over a file → a chat in the file's workspace",
+            start: [(.page(.linkedFile(file)), .screen())],
+            open: .chat(chat), from: .screen(workspace: workspace),
+            stack: outcome(.push, shows: .session(chat), back: .linkedFile(file)),
             split: outcome(.onPlace(.allSessions), shows: .session(chat), back: .inbox)),
 
         // Chats from a link.
         Row(journey: "a chat → a session link", start: [(.chat(chat), .screen())],
-            open: .chat(other), from: .link(),
-            stack: outcome(.push(selecting: nil), shows: .session(other), back: .session(chat)),
-            split: outcome(.push(selecting: nil), shows: .session(other), back: .session(chat))),
+            open: .chat(other), from: .link,
+            stack: outcome(.push, shows: .session(other), back: .session(chat)),
+            split: outcome(.push, shows: .session(other), back: .session(chat))),
         Row(journey: "a chat → a link to itself", start: [(.chat(chat), .screen())],
-            open: .chat(chat), from: .link(),
+            open: .chat(chat), from: .link,
             stack: outcome(.stay, shows: .session(chat), back: .inbox),
             split: outcome(.stay, shows: .session(chat), back: .inbox)),
 
@@ -140,41 +160,36 @@ struct MainPanePlacementTests {
         // Pages.
         Row(journey: "a chat → a reader", start: [(.chat(chat), .screen())],
             open: .page(.chatReader(reader)),
-            stack: outcome(.push(selecting: nil), shows: .chatReader(reader), back: .session(chat)),
-            split: outcome(.push(selecting: nil), shows: .chatReader(reader), back: .session(chat))),
+            stack: outcome(.push, shows: .chatReader(reader), back: .session(chat)),
+            split: outcome(.push, shows: .chatReader(reader), back: .session(chat))),
         Row(journey: "a workspace's list → Files", start: [(.place(.sessions(workspace)), .screen())],
             open: .page(.fileBrowser(folder)), from: .screen(workspace: workspace),
-            stack: outcome(.push(selecting: workspace), shows: .fileBrowser(folder), back: .workspace(workspace), place: inWorkspace),
-            split: outcome(.push(selecting: workspace), shows: .fileBrowser(folder), back: .workspace(workspace), place: inWorkspace)),
+            stack: outcome(.push, shows: .fileBrowser(folder), back: .workspace(workspace), place: inWorkspace),
+            split: outcome(.push, shows: .fileBrowser(folder), back: .workspace(workspace), place: inWorkspace)),
         Row(journey: "Pinned → a file", start: [(.place(.utility(.pinned)), .screen())],
             open: .page(.linkedFile(file)),
-            stack: outcome(.push(selecting: nil), shows: .linkedFile(file), back: .utility(.pinned)),
-            split: outcome(.push(selecting: nil), shows: .linkedFile(file), back: .utility(.pinned), place: .utility(.pinned))),
+            stack: outcome(.push, shows: .linkedFile(file), back: .utility(.pinned), place: .utility(.pinned)),
+            split: outcome(.push, shows: .linkedFile(file), back: .utility(.pinned), place: .utility(.pinned))),
         Row(journey: "a chat → a file link in it", start: [(.chat(chat), .screen())],
-            open: .page(.linkedFile(file)), from: .link(chat: chat, workspace: workspace),
-            stack: outcome(.push(selecting: nil), shows: .linkedFile(file), back: .session(chat)),
-            split: outcome(.push(selecting: nil), shows: .linkedFile(file), back: .session(chat))),
-        Row(journey: "a reader over a chat → a file link from that chat",
-            start: [(.chat(chat), .screen()), (.page(.chatReader(reader)), .screen())],
-            open: .page(.linkedFile(file)), from: .link(chat: chat, workspace: workspace),
-            stack: outcome(.push(selecting: workspace), shows: .linkedFile(file), back: .chatReader(reader), place: inWorkspace),
-            split: outcome(.push(selecting: workspace), shows: .linkedFile(file), back: .chatReader(reader))),
+            open: .page(.linkedFile(file)), from: .link,
+            stack: outcome(.push, shows: .linkedFile(file), back: .session(chat)),
+            split: outcome(.push, shows: .linkedFile(file), back: .session(chat))),
         Row(journey: "a folder → the same folder", start: [(.page(.fileBrowser(folder)), .screen())],
             open: .page(.fileBrowser(folder)),
             stack: outcome(.stay, shows: .fileBrowser(folder), back: .inbox),
             split: outcome(.stay, shows: .fileBrowser(folder), back: .inbox)),
         Row(journey: "a workspace's list → Workspace Settings", start: [(.place(.sessions(workspace)), .screen())],
             open: .page(.workspaceConfiguration(workspace)),
-            stack: outcome(.push(selecting: workspace), shows: .workspaceConfiguration(workspace), back: .workspace(workspace), place: inWorkspace),
+            stack: outcome(.onPlace(inWorkspace), shows: .workspaceConfiguration(workspace), back: .workspace(workspace), place: inWorkspace),
             split: outcome(.onPlace(inWorkspace), shows: .workspaceConfiguration(workspace), back: .workspace(workspace), place: inWorkspace)),
         Row(journey: "Settings → Server Settings", start: [(.place(.utility(.appSettings)), .screen())],
             open: .page(.serverDetails(serverDetails)),
-            stack: outcome(.push(selecting: nil), shows: .serverDetails(serverDetails), back: .utility(.appSettings)),
-            split: outcome(.push(selecting: nil), shows: .serverDetails(serverDetails), back: .utility(.appSettings), place: .utility(.appSettings))),
+            stack: outcome(.push, shows: .serverDetails(serverDetails), back: .utility(.appSettings), place: .utility(.appSettings)),
+            split: outcome(.push, shows: .serverDetails(serverDetails), back: .utility(.appSettings), place: .utility(.appSettings))),
         Row(journey: "a chat → a link to a server not paired", start: [(.chat(chat), .screen())],
             open: .page(.paneEntry(entry)), from: .external,
-            stack: outcome(.push(selecting: nil), shows: .paneEntry(entry), back: .session(chat)),
-            split: outcome(.push(selecting: nil), shows: .paneEntry(entry), back: .session(chat))),
+            stack: outcome(.push, shows: .paneEntry(entry), back: .session(chat)),
+            split: outcome(.push, shows: .paneEntry(entry), back: .session(chat))),
 
         // The host switcher's jobs.
         Row(journey: "All Sessions → Server Settings in the host switcher",
@@ -206,7 +221,8 @@ struct MainPanePlacementTests {
                 #expect(sidePanes.isEmpty == (layout != .splitShellBesideASidePane))
 
                 let journey = "\(row.journey) in \(layout)"
-                #expect(navigation.placement(of: row.open, from: row.from) == expected.placement, "\(journey)")
+                let placement = navigation.mainPaneRoute.placement(of: row.open, from: row.from, split: layout.presentation == .split)
+                #expect(placement == expected.placement, "\(journey)")
                 navigation.open(row.open, from: row.from)
                 let shown = Self.shown(navigation)
                 #expect(shown.last == expected.shows, "\(journey): \(shown)")
@@ -293,11 +309,8 @@ struct MainPanePlacementTests {
         return navigation
     }
 
-    /// What the main pane shows, root first: the compact stack above All
-    /// Sessions, or the split's detail column.
+    /// What the main pane shows, root first, in either shell.
     private static func shown(_ navigation: SceneNavigation) -> [ShellRoute] {
-        navigation.workspaceNavigationPresentation == .split
-            ? navigation.splitDetailColumn.routes
-            : [.inbox] + navigation.workspaceStackRouteElements.map(ShellRoute.init)
+        navigation.mainPaneRoute.shellRoutes(split: navigation.workspaceNavigationPresentation == .split)
     }
 }

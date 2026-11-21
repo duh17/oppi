@@ -66,12 +66,14 @@ final class NavigationJourneyUITests: XCTestCase, PreviewUITestCase {
     }
 
     /// The compact shell (iPhone, and the iPad mini in portrait): the drawer
-    /// starts with All Sessions, selected at the stack's root; after a place
-    /// opened from the drawer, its row brings All Sessions back as the root.
+    /// starts with All Sessions, selected at the stack's root; a place opened
+    /// from the drawer sits on All Sessions, which Back returns to, and on the
+    /// iPad, whose drawer button is on every screen, the drawer highlights it.
     func testDrawerAllSessionsRowIsHome() {
         launchShell(orientation: .portrait)
         let drawerButton = app.buttons["workspace.sidebar.open"]
         let allSessions = app.buttons["workspace.allSessions.open"]
+        let agents = app.buttons["workspace.agents.open"]
         XCTAssertTrue(drawerButton.waitUntilExists(timeout: 5), "The compact shell has no drawer button")
         drawerButton.tap()
         XCTAssertTrue(waitFor(isShowing(allSessions)), "The drawer has no All Sessions row")
@@ -79,15 +81,21 @@ final class NavigationJourneyUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(allSessions.isSelected, "All Sessions must be selected at the stack's root")
         attachScreenshot("drawer-compact")
 
-        app.buttons["workspace.agents.open"].tap()
+        agents.tap()
         let agentsBar = app.navigationBars["Agents"]
         XCTAssertTrue(agentsBar.waitUntilExists(timeout: 5), "Agents did not open from the drawer")
         // The sidebar button belongs to the main pane: on iPad on every screen
         // of it, on iPhone at its root alone.
         if UIDevice.current.userInterfaceIdiom == .pad {
-            XCTAssertTrue(drawerButton.waitUntilExists(timeout: 5), "Agents pushed on the iPad keeps the sidebar button")
+            XCTAssertTrue(drawerButton.waitUntilExists(timeout: 5), "Agents on the iPad keeps the sidebar button")
+            drawerButton.tap()
+            XCTAssertTrue(waitFor(isShowing(allSessions)), "The drawer opened over Agents")
+            XCTAssertTrue(waitFor(agents.isSelected && !allSessions.isSelected), "The drawer highlights Agents")
+            attachScreenshot("drawer-compact-agents")
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.5)).tap()
+            XCTAssertTrue(waitFor(!isShowing(allSessions)), "A tap beside the drawer closed it")
         } else {
-            XCTAssertTrue(drawerButton.waitUntilGone(timeout: 5), "Agents pushed on a phone has Back alone")
+            XCTAssertTrue(drawerButton.waitUntilGone(timeout: 5), "Agents on a phone has Back alone")
         }
         hold()
         attachScreenshot("drawer-compact-pushed")
@@ -96,10 +104,71 @@ final class NavigationJourneyUITests: XCTestCase, PreviewUITestCase {
 
         drawerButton.tap()
         XCTAssertTrue(waitFor(isShowing(allSessions)), "The drawer did not open again")
+        XCTAssertTrue(allSessions.isSelected, "Back from Agents made All Sessions the place again")
         allSessions.tap()
         XCTAssertTrue(waitFor(!isShowing(allSessions)), "Picking All Sessions must close the drawer")
         XCTAssertTrue(drawerButton.isHittable, "All Sessions must be the stack's root")
         XCTAssertTrue(app.searchFields["Search sessions"].exists, "All Sessions did not show")
+        assertRunning()
+    }
+
+    /// The compact shell (iPhone, and the iPad mini in portrait): Pinned
+    /// opened from the drawer replaces the chat that showed, on All Sessions,
+    /// and Back from a pinned chat returns to Pinned, then Back to All
+    /// Sessions. The iPad opens the drawer over the chat, and its drawer then
+    /// highlights Pinned; the iPhone's drawer button is on All Sessions alone,
+    /// so it goes Back first.
+    func testPinnedFromTheDrawerReplacesTheChatAndBackGoesToPinnedThenAllSessions() {
+        XCUIDevice.shared.orientation = .portrait
+        launchPreview(screen: "pane-restore", environment: ["PANE_RESTORE_PINS": "1"], colorScheme: "dark", ready: nil)
+        let isPad = UIDevice.current.userInterfaceIdiom == .pad
+        let drawerButton = app.buttons["workspace.sidebar.open"].firstMatch
+        let pinnedRow = app.buttons["workspace.pinned.open"]
+        let allSessions = app.buttons["workspace.allSessions.open"]
+        let search = app.searchFields["Search sessions"]
+        let row = app.descendants(matching: .any)[Self.fixtureSession].firstMatch
+        XCTAssertTrue(row.waitUntilExists(timeout: 10), "All Sessions lists the fixture chat")
+        hold()
+        row.tap()
+        let timeline = app.collectionViews["chat.timeline"]
+        XCTAssertTrue(timeline.waitUntilExists(timeout: 10), "The chat opened from All Sessions")
+        hold()
+        if !isPad { goBackFromChat() }
+        XCTAssertTrue(drawerButton.waitUntilExists(timeout: 5), "The drawer button shows")
+
+        drawerButton.tap()
+        XCTAssertTrue(waitFor(isShowing(pinnedRow)), "The drawer offers Pinned")
+        XCTAssertTrue(allSessions.isSelected, "The drawer highlights All Sessions first")
+        hold()
+        pinnedRow.tap()
+        let pin = app.collectionViews["pinned.list"].descendants(matching: .any)[Self.fixtureSession].firstMatch
+        XCTAssertTrue(pin.waitUntilExists(timeout: 10), "Pinned lists the fixture chat")
+        XCTAssertTrue(waitFor(!isShowing(pinnedRow)), "Picking Pinned closed the drawer")
+        XCTAssertFalse(timeline.exists, "Pinned replaced the chat instead of covering it")
+        hold()
+        attachScreenshot("pinned-compact")
+
+        if isPad {
+            drawerButton.tap()
+            XCTAssertTrue(waitFor(isShowing(pinnedRow)), "The drawer opened over Pinned")
+            XCTAssertTrue(waitFor(pinnedRow.isSelected && !allSessions.isSelected), "The drawer highlights Pinned")
+            hold()
+            attachScreenshot("pinned-drawer-compact")
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.5)).tap()
+            XCTAssertTrue(waitFor(!isShowing(pinnedRow)), "A tap beside the drawer closed it")
+        }
+
+        pin.tap()
+        XCTAssertTrue(timeline.waitUntilExists(timeout: 10), "The pinned chat opened")
+        hold()
+        attachScreenshot("pinned-chat-compact")
+        goBackFromChat()
+        XCTAssertTrue(pin.waitUntilExists(timeout: 5) && waitFor(pin.isHittable), "Back from the pinned chat returned to Pinned")
+        hold()
+        app.navigationBars.buttons["BackButton"].firstMatch.tap()
+        XCTAssertTrue(search.waitUntilExists(timeout: 5) && waitFor(search.isHittable), "Back from Pinned returned to All Sessions")
+        XCTAssertFalse(timeline.exists, "The chat Pinned replaced is gone")
+        hold()
         assertRunning()
     }
 

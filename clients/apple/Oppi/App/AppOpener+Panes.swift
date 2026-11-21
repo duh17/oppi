@@ -78,7 +78,7 @@ extension AppOpener {
                 sessionId: sessionId,
                 workspaceIdHint: nil,
                 connection: connection,
-                origin: .externalURL,
+                origin: .external,
                 previousServerId: previousServerId,
                 generation: generation
             )
