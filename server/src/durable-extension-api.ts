@@ -47,10 +47,15 @@ export type { NotifyInput, NotifyOutcome } from "../plugins/notify/contract.js";
  * `oppi.input-cards` documents and shown by the server's generic projection.
  */
 export {
+  answerUI,
   DurableInputCards,
   DurableUI,
   requestUI,
+  UIAnswer,
+  withdrawUI,
   type UINotification,
+  type UIOutcome,
+  type UIPark,
   type UIRequest,
   type UIResponse,
   type UIState,

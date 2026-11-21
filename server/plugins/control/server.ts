@@ -18,17 +18,20 @@ import {
   section,
   type Extension,
   type TaskId,
+  type ToolPark,
   type ToolRegistration,
   type ToolExecutionApi,
 } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import {
   defineExtension,
+  answerUI,
   defineFacet,
-  DurableUI,
   Extensions,
   oppiHost,
   requestUI,
+  UIAnswer,
+  withdrawUI,
   type ControlJson,
   type ControlWrite,
   type DurableControlHost,
@@ -377,30 +380,26 @@ const CARD_BODY_LIMIT = 6000;
 
 /**
  * "Apply All in This Script" of one codemode script, on the script's own task: its later writes go out without
- * a card, and the next script asks again. Retired with the script.
+ * a card, and the next script asks again. `open` lists every card the script's calls put up (card id → call
+ * task), so an "Apply All" answers the cards already waiting too. Retired with the script.
  */
-const ScriptApproval = defineDoc<{ all: boolean }>({
+const ScriptApproval = defineDoc<{ all: boolean; open?: { [card: string]: TaskId } }>({
   kind: "oppi.control-approval",
   version: 1,
   scope: "task",
   initial: () => ({ all: false }),
-  // Written at most once; the document retires with its task.
-  checkpointWhen: () => false,
+  // Written once per card; the document retires with its task.
+  checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 });
 
-/**
- * Cards of one script, or of one conversation's direct calls, are asked one at a time, so a
- * "Apply All" answer covers the writes waiting behind it. Process memory: a restart re-asks in
- * whatever order the calls resume.
- *
- * A plugin reload evaluates this module again and starts an empty map, while calls already
- * running keep the old one. That is safe: each answer is kept with its own card
- * (`oppi-confirm:<task>:<slot>`, through `requestUI`) and "Apply All" with its script
- * (`ScriptApproval`), never here, so no write goes out unanswered or is asked twice. A script
- * whose writes span a reload can show its next card beside the open one, and an "Apply All" on
- * the first does not close that second card; the owner answers it too.
- */
-const asking = new Map<string, Promise<unknown>>();
+/** Thrown from `onWrite` to stop the command before a write whose card is not answered yet. */
+class AwaitingOwner extends Error {
+  readonly code = "awaiting_owner";
+
+  constructor() {
+    super("The owner has not answered this write's confirm card yet.");
+  }
+}
 
 class Declined extends Error {
   readonly code = "declined";
@@ -411,17 +410,18 @@ class Declined extends Error {
 }
 
 /**
- * A rerun of the call built another write than the one the owner was asked about at this card:
- * the CLI resolves names (a workspace, an agent, a session prefix) into the request, and they
- * can resolve elsewhere after a restart. A saved answer belongs to its request only.
+ * A later run of the call (woken by the owner's answer, or rerun after a restart) built another
+ * write than the one the owner was asked about at this card: the CLI resolves names (a workspace,
+ * an agent, a session prefix) into the request, and they can resolve elsewhere in between. A saved
+ * answer belongs to its request only.
  */
 class CardChanged extends Error {
   readonly code = "card_changed";
 
   constructor() {
     super(
-      "This write is not the one the owner was asked about before the restart, so it was not " +
-        "sent. Call the tool again.",
+      "This write is not the one the owner was asked about, so it was not sent. Call the tool " +
+        "again.",
     );
   }
 }
@@ -455,9 +455,11 @@ async function scriptOf(api: ToolExecutionApi, context: Context): Promise<TaskId
 }
 
 /**
- * Ask the owner about one write of this call. The card is this call's (its task and the write's
- * place in the command), and `requestUI` keeps the answer with the call, so a rerun after a
- * crash, which runs the same arguments, gets the same answer instead of a second card.
+ * Ask the owner about one write of this call: undefined once it may go out, or the park the call
+ * returns until the owner answers. The card is this call's (its task and the write's place in the
+ * command). A parked call runs its command again from the start once woken, and pi-durable keeps
+ * each answer with the call, so a write answered earlier goes out again without a second card;
+ * the keyed commands' replay keys and content-addressed icon uploads make that resend harmless.
  */
 async function confirm(
   api: ToolExecutionApi,
@@ -465,60 +467,60 @@ async function confirm(
   script: TaskId | undefined,
   slot: number,
   write: ControlWrite,
-): Promise<void> {
+): Promise<ToolPark | undefined> {
   // Before "Apply All" too: no write goes out with a body its owner could not see.
   const card = cardFor(write);
-  const ask = async (): Promise<void> => {
-    // What the owner is asked, kept with the call before anything is asked, first write wins.
-    // Under "Apply All" too: a rerun's write must be the one this card stood for.
-    const shown = JSON.stringify([write.method, write.path, write.body ?? null]);
-    if ((await api.memo<string>(`oppi-card:${slot}`, shown, context)) !== shown)
-      throw new CardChanged();
-    if (script !== undefined && (await api.snapshot(ScriptApproval, script, context))?.all === true)
-      return;
-    const id = `oppi-confirm:${api.taskId}:${slot}`;
-    let answer;
-    try {
-      answer = await requestUI(
-        api,
-        {
-          id,
-          method: "select",
-          title: card.title,
-          message: card.message,
-          options:
-            script === undefined ? [card.confirm, CANCEL] : [card.confirm, APPLY_ALL, CANCEL],
-          extensionScopeId: "oppi:control",
-          extensionDisplayName: "Oppi Control",
-        },
-        context,
+  // What the owner is asked, kept with the call before anything is asked, first write wins.
+  // Under "Apply All" too: a rerun's write must be the one this card stood for.
+  const shown = JSON.stringify([write.method, write.path, write.body ?? null]);
+  if ((await api.memo<string>(`oppi-card:${slot}`, shown, context)) !== shown)
+    throw new CardChanged();
+  const id = `oppi-confirm:${api.taskId}:${slot}`;
+  // A card that has an answer (its own, or an "Apply All" delivered to it) goes by that answer,
+  // never by `all`: a Cancel on this card stands even if another card's "Apply All" came after it.
+  // Otherwise the card is listed before it goes up, in the commit that reads `all`, so an "Apply
+  // All" committed after it answers this card too, even before the card shows.
+  if (
+    script !== undefined &&
+    (await api.readSignal(UIAnswer, id, context)) === undefined &&
+    (await api.commit(async (tx) => {
+      const approval = await tx.doc(ScriptApproval, script);
+      if (!approval.all) (approval.open ??= {})[id] = api.taskId;
+      return approval.all;
+    }, context))
+  )
+    return undefined;
+  const asked = await requestUI(
+    api,
+    {
+      id,
+      method: "select",
+      title: card.title,
+      message: card.message,
+      options: script === undefined ? [card.confirm, CANCEL] : [card.confirm, APPLY_ALL, CANCEL],
+      extensionScopeId: "oppi:control",
+      extensionDisplayName: "Oppi Control",
+    },
+    context,
+  );
+  if (asked.park) return asked.park;
+  const answer = asked.response;
+  if (answer.cancelled || (answer.value !== card.confirm && answer.value !== APPLY_ALL))
+    throw new Declined();
+  if (answer.value === APPLY_ALL && script !== undefined)
+    await api.commit(async (tx) => {
+      const approval = await tx.doc(ScriptApproval, script);
+      if (approval.all) return;
+      approval.all = true;
+      // The script's other cards waiting now go out as approved.
+      const waiting = Object.entries(approval.open ?? {}).filter(([card]) => card !== id);
+      await answerUI(
+        tx,
+        api.conversationId,
+        waiting.map(([card, taskId]) => ({ taskId, response: { id: card, value: APPLY_ALL } })),
       );
-    } catch (error) {
-      // The call was stopped with its card still open: take the card down.
-      if (context.abortSignal?.aborted)
-        await api
-          .commit(async (tx) => {
-            delete (await tx.doc(DurableUI, api.conversationId)).requests[id];
-          }, context)
-          .catch(() => undefined);
-      throw error;
-    }
-    if (answer.cancelled || (answer.value !== card.confirm && answer.value !== APPLY_ALL))
-      throw new Declined();
-    if (answer.value === APPLY_ALL && script !== undefined)
-      await api.commit(async (tx) => {
-        (await tx.doc(ScriptApproval, script)).all = true;
-      }, context);
-  };
-  const queue = script !== undefined ? `script:${script}` : `conversation:${api.conversationId}`;
-  const next = (asking.get(queue) ?? Promise.resolve()).then(ask, ask);
-  const settled = next.catch(() => undefined);
-  asking.set(queue, settled);
-  try {
-    await next;
-  } finally {
-    if (asking.get(queue) === settled) asking.delete(queue);
-  }
+    }, context);
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -546,14 +548,24 @@ function controlTool(
       const argv = argvOf(entry, args as { [key: string]: unknown });
       const script = entry.write ? await scriptOf(api, context) : undefined;
       let slot = 0;
+      const waiting: { park?: ToolPark } = {};
       const { envelope } = await bound.run(argv, {
         conversationId: api.conversationId,
         key: String(api.taskId),
         signal: context.abortSignal ?? new AbortController().signal,
         ...(entry.write
-          ? { onWrite: (write: ControlWrite) => confirm(api, context, script, slot++, write) }
+          ? {
+              onWrite: async (write: ControlWrite) => {
+                // A command that went on after an unanswered write never sends a later one.
+                if (waiting.park) throw new AwaitingOwner();
+                waiting.park = await confirm(api, context, script, slot++, write);
+                if (waiting.park) throw new AwaitingOwner();
+              },
+            }
           : {}),
       });
+      // The command stopped before a write the owner has not answered: park until they do.
+      if (waiting.park) return waiting.park;
       let value: JsonValue;
       if (entry.envelope) value = envelope;
       else if (envelope.ok === true) {
@@ -571,6 +583,7 @@ function controlTool(
         structuredOutput: value,
       };
     },
+    cancel: withdrawUI,
   });
 }
 

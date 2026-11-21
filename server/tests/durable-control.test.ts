@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,10 +13,12 @@ import {
 } from "@earendil-works/pi-ai/providers/faux";
 import {
   createRegistry,
+  defineDoc,
   Harness,
   type Conversation,
   type ConversationId,
   type Extension,
+  type TaskId,
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
@@ -26,13 +28,16 @@ import { createCliConfigStorage } from "../src/cli/connection-config.js";
 import { DurableControlCli } from "../src/durable-control-cli.js";
 import { DurableHarness } from "../src/durable-harness.js";
 import { createAgentRoutes } from "../src/routes/agents.js";
+import { createIconAssetRoutes } from "../src/routes/icon-assets.js";
+import { IconAssetStore } from "../src/storage/icon-asset-store.js";
+import { pngFixture } from "./harness/image-fixtures.js";
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createScheduleRoutes } from "../src/routes/schedules.js";
 import type { RouteContext } from "../src/routes/types.js";
 import { cardOf } from "../plugins/control/card.js";
 import { controlSection, createDurableControl } from "../plugins/control/server.js";
 import type { DurableControlHost } from "../src/durable-extension-api.js";
-import { DurableUI, type UIRequest } from "../src/durable-ui.js";
+import { answerUI, DurableUI, type UIRequest } from "../src/durable-ui.js";
 import { listenOnLocalApiFixture } from "./harness/local-api-socket.js";
 import { toolArguments, toolNamed } from "./helpers/tool-arguments.js";
 
@@ -63,7 +68,8 @@ type Seen = { method: string; url: string };
  * schedule store behind the manual-run route (a run is recorded, never dispatched).
  */
 async function ownerApi(dataDir: string) {
-  const agents = new AgentDefinitionStore(dataDir);
+  const icons = new IconAssetStore(dataDir);
+  const agents = new AgentDefinitionStore(dataDir, undefined, (id) => icons.kind(id));
   const schedules = new AgentScheduleStore(dataDir);
   const seen: Seen[] = [];
   /** Bodies of `POST /sessions/:id/command`, which is only recorded: the turn dedupe is the server's. */
@@ -75,9 +81,12 @@ async function ownerApi(dataDir: string) {
       getAgentDefinitionStore: () => agents,
       getAgentScheduleStore: () => schedules,
       getWorkspace: (id: string) => (id === "ws" ? { id, name: "ws" } : undefined),
+      getIconAssetStore: () => icons,
+      putIconAsset: (bytes: Buffer) => icons.put(bytes),
     },
   } as unknown as RouteContext;
   const dispatchAgents = createAgentRoutes(routeContext, createRouteHelpers());
+  const dispatchIcons = createIconAssetRoutes(routeContext, createRouteHelpers());
   const dispatchSchedules = createScheduleRoutes(routeContext, createRouteHelpers());
   const server = createHttpServer((req, res) => {
     void (async () => {
@@ -119,7 +128,10 @@ async function ownerApi(dataDir: string) {
         return;
       }
       const routed = { method: req.method ?? "GET", path: url.pathname, url, req, res } as never;
-      const handled = (await dispatchSchedules(routed)) || (await dispatchAgents(routed));
+      const handled =
+        (await dispatchSchedules(routed)) ||
+        (await dispatchIcons(routed)) ||
+        (await dispatchAgents(routed));
       if (!handled) {
         res.writeHead(404, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "not found" }));
@@ -214,7 +226,10 @@ async function createConversation(harness: Harness, extensions: readonly Extensi
   );
 }
 
-/** Answers confirm cards as they appear, in order; `undefined` cancels the card. */
+/**
+ * Answers confirm cards as they appear, in order, as the app's answer does (`answerUI`);
+ * `undefined` cancels the card.
+ */
 function owner(conversation: Conversation, answers: Array<string | undefined>) {
   const cards: UIRequest[] = [];
   let stopped = false;
@@ -224,17 +239,23 @@ function owner(conversation: Conversation, answers: Array<string | undefined>) {
       const next = await conversation
         .commit(async (tx) => {
           const ui = await tx.doc(DurableUI, conversation.id);
-          const pending = Object.values(ui.requests).find((entry) => !entry.response);
+          const pending = Object.values(ui.requests)[0];
           if (!pending || queue.length === 0) return undefined;
-          const first = queue.shift();
-          const value =
-            first === YES ? (pending.request as { options?: string[] }).options?.[0] : first;
-          pending.response = {
-            id: pending.request.id,
-            ...(value === undefined ? { cancelled: true } : { value }),
-          };
           // A copy: the transaction view is gone once the commit settles.
-          return JSON.parse(JSON.stringify(pending.request)) as UIRequest;
+          const request = JSON.parse(JSON.stringify(pending.request)) as UIRequest;
+          const first = queue.shift();
+          const value = first === YES ? request.options?.[0] : first;
+          const [result] = await answerUI(tx, conversation.id, [
+            {
+              taskId: pending.taskId,
+              response: {
+                id: request.id,
+                ...(value === undefined ? { cancelled: true } : { value }),
+              },
+            },
+          ]);
+          expect(result).toBe("delivered");
+          return request;
         }, context)
         // The Harness was closed under the loop (a crash in a test, or the end of one).
         .catch(() => "closed" as const);
@@ -675,12 +696,17 @@ describe("oppi.control tools", () => {
       [script(`return await tools.oppi({ argv: ["extensions", "reload"] });`)],
       [YES],
     );
-    f.run.mockImplementation(async (argv, options) => {
-      await options.onWrite!({
-        method: "PUT",
-        path: "/server/quiet-hours",
-        body: { enabled: true, delayMs: 5000 },
-      });
+    f.run.mockImplementation(async (_argv, options) => {
+      try {
+        await options.onWrite!({
+          method: "PUT",
+          path: "/server/quiet-hours",
+          body: { enabled: true, delayMs: 5000 },
+        });
+      } catch (error) {
+        // As the host does: a refused or unanswered write is the envelope's error.
+        return { envelope: { ok: false, error: { message: String(error) } }, wrote: false };
+      }
       return { envelope: { ok: true, data: {} }, wrote: true };
     });
     await send(f.conversation);
@@ -846,20 +872,29 @@ describe("oppi.control tools", () => {
     expect(f.agents.listAgentSummaries()).toEqual([]);
   });
 
-  it("asks overlapping writes one card at a time, so Yes to all covers the ones behind it", async () => {
-    const f = await start(
-      [
-        script(`
+  it("lets Yes to all on one card of overlapping writes approve the script's cards already waiting", async () => {
+    const f = await start([
+      script(`
           const created = await Promise.all(["X", "Y", "Z"].map((name) => tools.agents_create({ name })));
           const fetched = await Promise.all(created.map((agent) => tools.agents_get({ id: agent.id })));
           return fetched.map((agent) => agent.id === created.find((c) => c.id === agent.id)?.id);
         `),
-      ],
-      [YES_ALL],
+    ]);
+    const settled = (await f.conversation.submit({ type: "input", content: "go" }, context)).wait(
+      context,
     );
-    await send(f.conversation);
+    // All three cards are up before the owner answers one of them.
+    await vi.waitFor(async () =>
+      expect(
+        Object.keys((await f.harness.snapshot(DurableUI, f.conversation.id, context))!.requests),
+      ).toHaveLength(3),
+    );
+    const answer = owner(f.conversation, [YES_ALL]);
+    expect((await settled).status).toBe("done");
+    await answer.stop();
     await f.responder.stop();
-    expect(f.responder.cards).toHaveLength(1);
+    expect(answer.cards).toHaveLength(1);
+    expect((await f.harness.snapshot(DurableUI, f.conversation.id, context))!.requests).toEqual({});
     expect(
       f.agents
         .listAgentSummaries()
@@ -873,6 +908,57 @@ describe("oppi.control tools", () => {
       .map(([, options]) => options.key);
     expect(new Set(keys).size).toBe(3);
   });
+
+  it("keeps a card's own Cancel when another card's Yes to all lands with it", async () => {
+    const f = await start([
+      script(`
+        return await Promise.all(["Kept", "Refused"].map(async (name) => {
+          try { await tools.agents_create({ name }); return "sent"; } catch (e) { return e.message; }
+        }));
+      `),
+    ]);
+    const settled = (await f.conversation.submit({ type: "input", content: "go" }, context)).wait(
+      context,
+    );
+    const open = async () =>
+      Object.entries((await f.harness.snapshot(DurableUI, f.conversation.id, context))!.requests);
+    await vi.waitFor(async () => expect(await open()).toHaveLength(2));
+    const cards = await open();
+    const named = (name: string) => cards.find(([, entry]) => entry.request.title?.includes(name))!;
+    const [keptId, kept] = named("Kept");
+    const [refusedId, refused] = named("Refused");
+    const scriptTask = (
+      (await f.harness.getTask(refused.taskId, context))!.input as {
+        parent: TaskId;
+      }
+    ).parent;
+    // The Cancel lands, then, before its card's run wakes, the script's Yes to all is recorded:
+    // one commit holds both, so the woken run finds both.
+    await f.conversation.commit(async (tx) => {
+      const approval = await tx.doc(ScriptApprovalDoc, scriptTask);
+      await answerUI(tx, f.conversation.id, [
+        { taskId: refused.taskId, response: { id: refusedId, value: "Cancel" } },
+        { taskId: kept.taskId, response: { id: keptId, value: YES_ALL } },
+      ]);
+      approval.all = true;
+    }, context);
+    expect((await settled).status).toBe("done");
+    await f.responder.stop();
+
+    expect(f.agents.listAgentSummaries().map((agent) => agent.name)).toEqual(["Kept"]);
+    const out = returned((await toolResults(f.conversation))[0]) as string[];
+    expect(out[0]).toBe("sent");
+    expect(out[1]).toContain("[declined]");
+  });
+});
+
+/** Oppi Control's "Apply All" record of a script, by its document kind. */
+const ScriptApprovalDoc = defineDoc<{ all: boolean }>({
+  kind: "oppi.control-approval",
+  version: 1,
+  scope: "task",
+  initial: () => ({ all: false }),
+  checkpointWhen: () => false,
 });
 
 describe("confirm card text", () => {
@@ -1436,7 +1522,9 @@ describe("confirm card text", () => {
  * A server crash in the middle of a script. The host's `run` hangs at one call, before or after
  * the CLI ran; the Harness is closed there, and a new one over the same storage resumes. pi-durable's
  * codemode replays the script: finished calls are handed their results again, never run again.
+ * A write's first run parks on its card, so the run that sends it is the next one (`SENDS`).
  */
+const SENDS = 1;
 describe("control script crash safety", () => {
   async function crashAndResume(
     f: Fixture,
@@ -1482,15 +1570,15 @@ describe("control script crash safety", () => {
     const conversation = await crashAndResume(
       f,
       `return (await tools.agents_create({ name: "Once", instructions: "x" })).id;`,
-      { call: 0, gap: "after" },
+      { call: SENDS, gap: "after" },
     );
     expect(f.agents.listAgentSummaries().map((agent) => agent.name)).toEqual(["Once"]);
     const [result] = await toolResults(conversation);
     expect(result?.isError).toBe(false);
     expect(returned(result)).toBe(f.agents.listAgentSummaries()[0]!.id);
     // The call ran again with the same key, and the store answered with the Agent it had. The
-    // owner's answer was kept with the call: one card.
-    expect(f.run).toHaveBeenCalledTimes(2);
+    // owner's answer was kept with the call: one card, and three runs (parked, sent, rerun).
+    expect(f.run).toHaveBeenCalledTimes(3);
     expect(new Set(f.run.mock.calls.map(([, options]) => options.key)).size).toBe(1);
     expect(conversation.cards).toHaveLength(1);
   });
@@ -1505,7 +1593,7 @@ describe("control script crash safety", () => {
     const conversation = await crashAndResume(
       f,
       `return await tools.schedules_run({ id: "${scheduleId}" });`,
-      { call: 0, gap: "after" },
+      { call: SENDS, gap: "after" },
     );
     const runs = f.schedules.listRuns(scheduleId);
     expect(runs).toHaveLength(1);
@@ -1521,7 +1609,7 @@ describe("control script crash safety", () => {
     const conversation = await crashAndResume(
       f,
       `return await tools.oppi({ argv: ["agent", "create", "--name", "Once", "--idempotency-key", "t" + Math.random()] });`,
-      { call: 0, gap: "after" },
+      { call: SENDS, gap: "after" },
     );
     expect(f.agents.listAgentSummaries().map((agent) => agent.name)).toEqual(["Once"]);
     const [result] = await toolResults(conversation);
@@ -1537,7 +1625,7 @@ describe("control script crash safety", () => {
     await crashAndResume(
       f,
       `return await tools.oppi({ argv: ["session", "send", "${session}", "--text", "hello", "--turn-id", "t" + Math.random()] });`,
-      { call: 0, gap: "after" },
+      { call: SENDS, gap: "after" },
     );
     expect(f.commands).toHaveLength(2);
     const turns = new Set(f.commands.map((command) => command.clientTurnId));
@@ -1554,7 +1642,7 @@ describe("control script crash safety", () => {
         name: "Daily scout", prompt: "Look around", workspace: "ws", agent: "scout",
         cron: "0 9 * * *", tz: "America/Los_Angeles",
       });`,
-      { call: 0, gap: "after" },
+      { call: SENDS, gap: "after" },
     );
     const created = f.schedules.listSchedules();
     expect(created).toHaveLength(1);
@@ -1574,10 +1662,13 @@ describe("control script crash safety", () => {
     let reached!: () => void;
     const hung = new Promise<void>((resolve) => (reached = resolve));
     let calls = 0;
-    // First run: the owner answers the card, then the process dies before the write is sent.
-    // Rerun: the same call now builds another request, as a name that resolves elsewhere would.
+    // The first run parks on the card. Woken by the owner's answer, the run dies before the write
+    // is sent. Rerun: the same call now builds another request, as a name that resolves elsewhere
+    // would.
     f.run.mockImplementation(async (argv, options) => {
-      if (calls++ === 0)
+      const call = calls++;
+      if (call === 0) return f.real.run(argv, options);
+      if (call === SENDS)
         return f.real.run(argv, {
           ...options,
           onWrite: async (write) => {
@@ -1629,8 +1720,8 @@ describe("control script crash safety", () => {
     const f = await fixture();
     const doomed = ["tmp-1", "tmp-2", "tmp-3"].map((name) => f.agents.createAgent({ name }).id);
     const kept = f.agents.createAgent({ name: "keep" }).id;
-    // Call 0 is the list and call 1 the first archive; the crash lands as the second archive
-    // (call 2) starts, after the first one finished.
+    // Call 0 is the list, calls 1 and 2 the first archive (parked, then sent); the crash lands as
+    // the second archive (call 3) starts, after the first one finished.
     const conversation = await crashAndResume(
       f,
       `
@@ -1639,7 +1730,7 @@ describe("control script crash safety", () => {
         for (const id of ids) await tools.agents_archive({ id });
         return ids;
       `,
-      { call: 2, gap: "before" },
+      { call: 3, gap: "before" },
     );
     expect(f.agents.listAgentSummaries().map((agent) => agent.id)).toEqual([kept]);
     // A fresh list would only have shown two; the script still archived all three.
@@ -1647,9 +1738,82 @@ describe("control script crash safety", () => {
     expect(result?.isError).toBe(false);
     expect((returned(result) as string[]).sort()).toEqual([...doomed].sort());
     expect(conversation.cards).toHaveLength(3);
-    // The list and the first archive were not run again.
-    expect(f.run).toHaveBeenCalledTimes(5);
+    // The list and the first archive were not run again: the list once, each archive parked and
+    // sent, and the second archive's cut-off run.
+    expect(f.run).toHaveBeenCalledTimes(8);
     expect(f.seen.filter((request) => request.method === "DELETE")).toHaveLength(3);
+  });
+
+  it.each([
+    ["a direct call", direct("agents_create", { name: "Later" })],
+    ["a script", script(`return (await tools.agents_create({ name: "Later" })).id;`)],
+  ])(
+    "keeps %s's card through restarts and sends its write once when answered after them",
+    async (_kind, step) => {
+      const f = await fixture();
+      f.faux.setResponses([step, fauxAssistantMessage("done")]);
+      const extensions = [createDurableControl(() => f.host), f.codemode];
+      let harness = await openHarness(f, extensions);
+      const conversation = await createConversation(harness, extensions, f.dir);
+      await conversation.submit({ type: "input", content: "go" }, context);
+      await vi.waitFor(async () =>
+        expect(
+          Object.keys((await harness.snapshot(DurableUI, conversation.id, context))!.requests),
+        ).toHaveLength(1),
+      );
+      for (let restart = 0; restart < 2; restart += 1) {
+        await harness.close(context);
+        harnesses.splice(harnesses.indexOf(harness), 1);
+        harness = await openHarness(f, extensions);
+        harness.resume();
+      }
+      expect(f.agents.listAgentSummaries()).toEqual([]);
+      const reopened = (await harness.conversation(conversation.id, context))!;
+      const responder = owner(reopened, [YES]);
+      await vi.waitFor(() => expect(responder.cards).toHaveLength(1));
+      await reopened.waitForIdle(context);
+      await responder.stop();
+
+      expect(f.agents.listAgentSummaries().map((agent) => agent.name)).toEqual(["Later"]);
+      expect(f.seen.filter((request) => request.method === "POST")).toHaveLength(1);
+      const [result] = await toolResults(reopened);
+      expect(result?.isError).toBe(false);
+      // The run that parked and the run the answer woke; the restarts ran no tool code.
+      expect(f.run).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("asks each write of a two-write command once, in order, and creates one Agent", async () => {
+    const base = await fixture();
+    const image = join(base.dir, "fox.png");
+    writeFileSync(image, pngFixture({ width: 8, height: 8 }));
+    const f = await begin(
+      base,
+      [direct("agents_create", { name: "Fox", iconImage: image })],
+      [YES, YES],
+    );
+    await send(f.conversation);
+    await f.responder.stop();
+
+    // The icon upload, then the create: each card once, though the command ran three times
+    // (parked at the upload, parked at the create, then sent).
+    const cards = f.responder.cards;
+    expect(cards.map((card) => card.id)).toEqual([
+      expect.stringMatching(/^oppi-confirm:\d+:0$/),
+      expect.stringMatching(/^oppi-confirm:\d+:1$/),
+    ]);
+    expect(cards[0]!.message).toContain("/icon-assets");
+    expect(cards[1]!.message).toContain("/agents");
+    expect(f.run).toHaveBeenCalledTimes(3);
+    // The create was never sent before its own card was answered, and went out once.
+    const posts = f.seen.filter((request) => request.method === "POST").map((r) => r.url);
+    expect(posts.filter((url) => url === "/agents")).toHaveLength(1);
+    expect(posts.at(-1)).toBe("/agents");
+    const agents = f.agents.listAgentSummaries();
+    expect(agents.map((agent) => agent.name)).toEqual(["Fox"]);
+    expect(f.agents.getAgent(agents[0]!.id)?.definition.icon).toMatchObject({ kind: "image" });
+    const [result] = await toolResults(f.conversation);
+    expect(result?.isError).toBe(false);
   });
 });
 

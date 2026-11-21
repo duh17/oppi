@@ -102,7 +102,13 @@ export function deriveView(live: Readonly<LiveState> | null | undefined): View {
   if (!run) return { activity: "thinking" };
   const id = String((run as { taskId?: unknown }).taskId);
   const tools = Array.isArray(live?.tools) ? live.tools : [];
-  const running = tools.filter((slot) => slot.status === "running").at(-1);
+  // A parked call (an ask waiting on you) still reads as its activity.
+  const running = tools
+    .filter(
+      (slot) =>
+        slot.status === "running" || slot.status === "sleeping" || slot.status === "waiting",
+    )
+    .at(-1);
   if (running) return { run: id, activity: classifyTool(running.name) };
   if (tools.length) return { run: id, activity: "thinking" };
   const content = (live?.generation?.message as { content?: unknown } | undefined)?.content;

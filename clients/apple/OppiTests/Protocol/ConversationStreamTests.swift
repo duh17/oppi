@@ -55,6 +55,23 @@ struct ConversationStreamTests {
         #expect(driver.liveTail.isRunning && tool.running && tool.output == "tick 1\ntick 2\n")
     }
 
+    /// A call parked on an answer (`sleeping`) or on its tasks (`waiting`) has started; only a
+    /// `pending` call of a sequential round has not.
+    @Test func liveTailCountsParkedCallsAsStarted() {
+        func slot(_ id: String, _ status: String) -> JSONValue {
+            .object(["callId": .string(id), "name": .string("ask"), "status": .string(status)])
+        }
+        var projector = ConversationLiveProjector()
+        let tail = projector.tail(from: .object([
+            "run": .object(["taskId": .number(1)]),
+            "tools": .array([
+                slot("a", "sleeping"), slot("b", "waiting"), slot("c", "running"), slot("d", "pending"),
+            ]),
+        ]))
+        #expect(tail.tools.map(\.id) == ["a", "b", "c", "d"])
+        #expect(tail.tools.map(\.running) == [true, true, true, false])
+    }
+
     @Test func fixtureFramesApplyInOrder() throws {
         let messages = try fixtureMessages()
         var replica = ConversationReplica()

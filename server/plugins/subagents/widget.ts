@@ -253,7 +253,7 @@ function clip(line: string): string {
 
 /** The words of the first open dialog: its title, message, or first question. */
 function question(ui: Readonly<UIState> | null): string | undefined {
-  const open = Object.values(ui?.requests ?? {}).find((entry) => !entry.response)?.request;
+  const open = Object.values(ui?.requests ?? {})[0]?.request;
   if (!open) return undefined;
   const text = open.title ?? open.message ?? open.questions?.[0]?.question;
   return clip(firstLine(text) ?? "Waiting for your answer");

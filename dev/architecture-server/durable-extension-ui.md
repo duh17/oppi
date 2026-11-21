@@ -4,12 +4,13 @@ Part of [Oppi server architecture](../architecture-server.md). The convention fo
 
 ## Requests
 
-- Native implementations are plugins (`server/plugins/<name>/server.ts`). Inside a replay-safe tool, call `requestUI(api, request, context)` from `oppi/v1` (`server/src/oppi-v1.ts`, re-exporting `durable-extension-api.ts` and `durable-ui.ts`) with a stable id such as `durable-ui:${api.taskId}`; a replayed tool must reuse it. Methods: `ask`, `select`, `confirm`, `input`, `editor`. A relative `timeout` becomes an absolute `timeoutAt` on first publication.
-- Each request is one `oppi.extension-ui` document entry (`taskId`, `request`, optional `response`). Writers are trusted in-process code; use `requestUI`, never direct `tx.doc` writes. The field allowlist guards against accidents, not hostile writers.
+- Native implementations are plugins (`server/plugins/<name>/server.ts`). Inside a replay-safe tool, call `requestUI(api, request, context)` from `oppi/v1` (`server/src/oppi-v1.ts`, re-exporting `durable-extension-api.ts` and `durable-ui.ts`) with a stable id such as `durable-ui:${api.taskId}`; a rerun must reuse it. Methods: `ask`, `select`, `confirm`, `input`, `editor`. A relative `timeout` becomes an absolute `timeoutAt` on first publication.
+- The tool returns `requestUI`'s `{ park }`, a sleep on the `oppi.ui-answer` signal until `timeoutAt` that holds no process; the woken run gets `{ response }`. Tools set `cancel: withdrawUI`.
+- Each open request is one `oppi.extension-ui` document entry (`taskId`, `request`). Writers are trusted in-process code; use `requestUI`, never direct `tx.doc` writes. The field allowlist guards against accidents, not hostile writers.
 - `DurableUIProjection` watches the document (`watchDoc`; custom documents are not in `viewState`) and emits the same backend events as `SdkUiBridge`; the extension UI state owner sanitizes and bounds them. No relay code tests extension, tool, status, or widget identities.
-- `respondToExtensionUIRequest` commits the first answer before returning success and rejects unknown, answered, terminal-owner, and abort-marked requests. The tool moves the answer into a task memo, so a crash on either side of the memo replays the same answer without a second dialog.
-- `ask` answers use the existing wire format; the native ask allows one call per model turn (a replay of the same task is allowed).
-- Startup restores pending UI before resuming the Harness. Abort and Stop cancel the task scope first and remove requests; they never send an ignored answer, which could start another model request. A timeout commits a cancelled response at the original deadline.
+- `respondToExtensionUIRequest` goes through `answerUI`: one commit delivers the signal and removes the request, so the first answer wins; ended and abort-marked calls refuse.
+- `ask` answers use the existing wire format; the native ask allows one call per model turn (a rerun of the same task is allowed).
+- Startup restores pending UI before resuming the Harness. Abort and Stop mark the calls aborted first, then remove requests through `cancelAllUI`: only a call Stop left alive receives its `cancelled` answer.
 
 ## Persistent state
 

@@ -1,6 +1,6 @@
 import { arr, bool, obj, opt, str } from "@earendil-works/pi-schema";
 import { defineDoc, defineTool, section } from "@earendil-works/pi-durable";
-import { defineExtension, defineFacet, Extensions, requestUI } from "oppi/v1";
+import { defineExtension, defineFacet, Extensions, requestUI, withdrawUI } from "oppi/v1";
 import { buildAskToolResult } from "./extensions/ask-shared.js";
 
 const AskTurn = defineDoc<{ assistant?: number; task?: number }>({
@@ -53,17 +53,21 @@ const ask = defineTool({
   }),
   executionMode: "sequential",
   replay: "safe",
+  // Parks until the app answers (see `requestUI`); runs again with the answer.
   async execute(args, api, context) {
-    const own = await api.getTask(api.taskId, context);
-    const assistant = (own?.input as { assistant: number }).assistant;
-    await api.commit(async (tx) => {
-      const turn = await tx.doc(AskTurn, api.conversationId);
-      if (turn.assistant === assistant && turn.task !== api.taskId)
-        throw new Error("Only one ask call per turn. Bundle all questions into a single call.");
-      turn.assistant = assistant;
-      turn.task = api.taskId;
-    }, context);
-    const response = await requestUI(
+    // The woken run already holds this turn's ask.
+    if (api.wake === undefined) {
+      const own = await api.getTask(api.taskId, context);
+      const assistant = (own?.input as { assistant: number }).assistant;
+      await api.commit(async (tx) => {
+        const turn = await tx.doc(AskTurn, api.conversationId);
+        if (turn.assistant === assistant && turn.task !== api.taskId)
+          throw new Error("Only one ask call per turn. Bundle all questions into a single call.");
+        turn.assistant = assistant;
+        turn.task = api.taskId;
+      }, context);
+    }
+    const asked = await requestUI(
       api,
       {
         id: `durable-ui:${api.taskId}`,
@@ -75,6 +79,8 @@ const ask = defineTool({
       },
       context,
     );
+    if (asked.park) return asked.park;
+    const response = asked.response;
     const answers: Record<string, string | string[]> = {};
     if (!response.cancelled && response.value) {
       let parsed: unknown;
@@ -101,6 +107,7 @@ const ask = defineTool({
     const { content, details } = buildAskToolResult(args.questions, answers);
     return { output: content, details };
   },
+  cancel: withdrawUI,
 });
 export const DurableAsk = defineExtension({
   name: "ask",

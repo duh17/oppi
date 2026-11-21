@@ -18,7 +18,7 @@ struct TimelineLiveTail: Equatable, Sendable {
         /// Tool name and presentation, for a call whose row is not in view (a subagent's tail).
         var name: String = ""
         var view: ConversationToolCallView?
-        /// Started; a pending call of a sequential round has not.
+        /// Started, parked included; a pending call of a sequential round has not.
         var running: Bool
         var output: String
         /// The output is a bounded window; `totalBytes` counts what was dropped too.
@@ -82,7 +82,8 @@ struct ConversationLiveProjector {
                 id: id,
                 name: slot["name"]?.stringValue ?? "",
                 view: view(id, raw: rawViews[id]),
-                running: slot["status"]?.stringValue == "running",
+                // A call parked on an answer or its tasks (`sleeping`, `waiting`) has started too.
+                running: ["running", "sleeping", "waiting"].contains(slot["status"]?.stringValue ?? ""),
                 output: output,
                 truncated: truncated,
                 totalBytes: truncated ? output.utf8.count + dropped : nil,

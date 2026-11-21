@@ -45,7 +45,7 @@ import {
 } from "./durable-extension-api.js";
 import type { DurableControlCli } from "./durable-control-cli.js";
 import { fileToolsHost } from "./durable-file-tools-host.js";
-import { DurableUI } from "./durable-ui.js";
+import { cancelAllUI } from "./durable-ui.js";
 import { writeFileAtomic } from "./storage/atomic-file.js";
 import type { PluginRuntime } from "./oppi-v1.js";
 import {
@@ -631,9 +631,7 @@ export class SessionHost {
       );
     }
     const conversation = await harness.conversation(id, BACKGROUND_CONTEXT);
-    await conversation?.commit(async (tx) => {
-      (await tx.doc(DurableUI, id)).requests = {};
-    }, BACKGROUND_CONTEXT);
+    await conversation?.commit((tx) => cancelAllUI(tx, id), BACKGROUND_CONTEXT);
     // Confirm the guest kill boundary independently, without cleanup() killing
     // conversation-owned background executions that ordinary Stop excludes.
     const env = this.sandboxEnvs.get(id);
@@ -1418,9 +1416,7 @@ export class SessionHost {
     }
     for (const id of ids) {
       const conversation = await harness.conversation(id, BACKGROUND_CONTEXT);
-      await conversation?.commit(async (tx) => {
-        (await tx.doc(DurableUI, id)).requests = {};
-      }, BACKGROUND_CONTEXT);
+      await conversation?.commit((tx) => cancelAllUI(tx, id), BACKGROUND_CONTEXT);
     }
   }
 
@@ -2149,9 +2145,11 @@ function harnessSettings(
     },
     // pi-durable ends a task cut off by 5 crashes in a row without committing a new state: a
     // tool call gets an error result, an extension task faults. Oppi's long in-process waits
-    // commit nothing while they wait (a reporter delivering to a child, a follower, an ask
-    // card), so a reporter would lose its child's answer and an ask would fail its call after
-    // five restarts of an ordinary wait. Never end them, as 1.3.0 never parked them.
+    // commit nothing while they wait (a reporter delivering to a child, subagent `wait`, a
+    // background-job follower, a codemode script awaiting a parked confirm card), so a reporter
+    // would lose its child's answer after five restarts of an ordinary wait. Asks and confirm
+    // cards themselves park (`requestUI`) and never count. Never end them, as 1.3.0 never
+    // parked them.
     restartLimit: Number.POSITIVE_INFINITY,
     get stream() {
       const provider = settings.getProviderRetrySettings();

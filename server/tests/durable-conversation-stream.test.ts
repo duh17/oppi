@@ -789,11 +789,6 @@ describe("durable conversation stream", { timeout: 30_000 }, () => {
         taskId: 7 as never,
         request: { id: "open", method: "confirm", title: "Proceed?" },
       };
-      ui.requests.answered = {
-        taskId: 8 as never,
-        request: { id: "answered", method: "confirm", title: "Done?" },
-        response: { id: "answered", confirmed: true },
-      };
       ui.notifications.status = {
         id: "status",
         method: "setStatus",

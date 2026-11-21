@@ -1,12 +1,17 @@
 import type { TranscriptCard } from "./transcript-card.js";
 import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
+import { bool, obj, opt, str } from "@earendil-works/pi-schema";
 import {
   defineDoc,
+  defineSignal,
   type ConversationId,
   type Harness,
+  type SignalResult,
   type ToolExecutionApi,
+  type SignalKey,
   type TaskId,
+  type Tx,
 } from "@earendil-works/pi-durable";
 
 // Structural Pi/Oppi UI payloads. No classic factory or server runtime is loaded.
@@ -56,7 +61,8 @@ export type UINotification = {
   extensionDisplayName?: string;
 };
 export type UIState = {
-  requests: Record<string, { taskId: TaskId; request: UIRequest; response?: UIResponse }>;
+  /** Open requests only: an answer takes its request down in the commit that delivers it. */
+  requests: Record<string, { taskId: TaskId; request: UIRequest }>;
   // Keys identify replacement slots, not extension identities. Keep explicit
   // empty notifications to clear previous client state (including after restart).
   notifications: Record<string, UINotification>;
@@ -165,8 +171,8 @@ export const DurableUI = defineDoc<UIState>({
 
 /**
  * Conversation stream visibility: clients replicate the open requests and the
- * notification slots, allowlisted like the event projection. Answered requests
- * and task ids stay on the server.
+ * notification slots, allowlisted like the event projection. Task ids stay on
+ * the server.
  */
 export const DurableUIClientDoc = {
   doc: DurableUI,
@@ -179,8 +185,7 @@ export const DurableUIClientDoc = {
     const notifications: Record<string, UINotification> = Object.create(null);
     for (const id in value.requests) {
       if (!Object.hasOwn(value.requests, id)) continue;
-      const entry = value.requests[id];
-      const request = entry?.response ? undefined : sanitizeUIRequest(id, entry?.request);
+      const request = sanitizeUIRequest(id, value.requests[id]?.request);
       if (request) requests[id] = request;
     }
     for (const slot in value.notifications) {
@@ -203,69 +208,139 @@ export async function recordOwnerStop(harness: Harness, id: ConversationId): Pro
   }, BACKGROUND_CONTEXT);
 }
 
-/** Publish once per tool task; the answer survives a crash before the memo write. */
+/**
+ * The answer to one request, delivered to the asking call's task under the request id. pi-durable
+ * keeps it in the task until the task ends, so a rerun after a crash reads the same answer.
+ */
+export const UIAnswer = defineSignal({
+  name: "oppi.ui-answer",
+  version: 1,
+  schema: obj({ id: str(), value: opt(str()), confirmed: opt(bool()), cancelled: opt(bool()) }),
+});
+
+/**
+ * The park `requestUI` returns: a tool returns it from `execute()` as is, a `beforeTool` hook
+ * returns its `sleep` (`{ sleep: park.sleep }`).
+ */
+export type UIPark = {
+  readonly sleep: {
+    readonly checkpoint: { ui: string };
+    readonly signals: readonly SignalKey<unknown>[];
+    readonly until?: number;
+  };
+};
+
+/** What `requestUI` gives its caller: the answer, or the park to wait in until one comes. */
+export type UIOutcome =
+  { response: UIResponse; park?: undefined } | { park: UIPark; response?: undefined };
+
+/**
+ * Ask through the app from a replay-safe tool. The first run publishes the request and returns a
+ * park: the tool returns it from `execute()`, and the call holds no process until the answer (or
+ * the request's `timeoutAt`) wakes it; a restart meanwhile runs no tool code. The woken run calls
+ * `requestUI` again with the same request and gets the answer; a deadline that came first answers
+ * `cancelled`. Give the tool `cancel: withdrawUI`, so a stopped call takes its request down.
+ * A `beforeTool` hook passes its runtime as `api` and returns `{ sleep: park.sleep }`; every wake
+ * runs it again, so it reaches the answer the same way.
+ */
 export async function requestUI(
   api: ToolExecutionApi,
   request: UIRequest,
   context: Context,
-): Promise<UIResponse> {
-  const memoKey = `ui-answer:${request.id}`;
-  const saved = await api.memo<UIResponse>(memoKey, context);
-  const remove = async (): Promise<void> => {
-    await api.commit(async (tx) => {
-      delete (await tx.doc(DurableUI, api.conversationId)).requests[request.id];
-    }, context);
-  };
-  if (saved) {
-    // Replay can land here after a crash between memo persistence and deletion.
-    await remove();
-    return saved;
-  }
+): Promise<UIOutcome> {
   const payload = sanitizeUIRequest(request.id, request);
   if (!payload) throw new Error("Unsupported durable UI request method");
-  await api.commit(async (tx) => {
+  const state = await api.readSignal(UIAnswer, request.id, context);
+  if (state !== undefined) {
+    // An answer took the request down when it was delivered; an expired deadline did not, nor did
+    // an answer that arrived before the request went up (Oppi Control's Apply All).
+    if ((await api.snapshot(DurableUI, api.conversationId, context))?.requests[request.id])
+      await api.commit(async (tx) => {
+        delete (await tx.doc(DurableUI, api.conversationId)).requests[request.id];
+      }, context);
+    return { response: "value" in state ? state.value : { id: request.id, cancelled: true } };
+  }
+  const timeoutAt = await api.commit(async (tx) => {
     const ui = await tx.doc(DurableUI, api.conversationId);
     const existing = ui.requests[request.id];
     if (existing && existing.taskId !== api.taskId)
       throw new Error("Durable UI request belongs to another task");
-    // Replay keeps the committed request, answer, and original absolute deadline.
-    if (existing) return;
+    // A rerun that never parked keeps the committed request and its original absolute deadline.
+    if (existing) return existing.request.timeoutAt;
     if (payload.timeout && payload.timeoutAt === undefined)
-      payload.timeoutAt = Date.now() + payload.timeout;
+      payload.timeoutAt = api.now() + payload.timeout;
     ui.requests[request.id] = { taskId: api.taskId, request: payload };
+    return payload.timeoutAt;
   }, context);
-  const watch = await api.watchDoc(DurableUI, api.conversationId, context);
-  if (!watch) throw new Error("Durable UI document disappeared");
-  let removeAbortListener = (): void => {};
-  try {
-    const response = await new Promise<UIResponse>((resolve, reject) => {
-      const signal = context.abortSignal;
-      const abort = (): void => reject(signal?.reason ?? new Error("UI wait aborted"));
-      const take = (ui: UIState | null): void => {
-        const entry = ui?.requests[request.id];
-        if (entry?.response) {
-          signal?.removeEventListener("abort", abort);
-          resolve(entry.response);
-        } else if (!entry) {
-          signal?.removeEventListener("abort", abort);
-          resolve({ id: request.id, cancelled: true });
-        }
-      };
-      signal?.addEventListener("abort", abort, { once: true });
-      removeAbortListener = () => signal?.removeEventListener("abort", abort);
-      watch.start(async (call) => {
-        if (call.kind === "value") take(call.retired ? null : call.value);
-      });
-      take(watch.value);
-      if (signal?.aborted) abort();
-    });
-    const winner = await api.memo(memoKey, response, context);
-    await remove();
-    return winner;
-  } finally {
-    removeAbortListener();
-    await watch.stop();
-  }
+  return {
+    park: {
+      sleep: {
+        checkpoint: { ui: request.id },
+        signals: [UIAnswer.key(request.id)],
+        ...(timeoutAt === undefined ? {} : { until: timeoutAt }),
+      },
+    },
+  };
+}
+
+/** A tool's `cancel` for a call parked by `requestUI`: takes the call's open request down. */
+export async function withdrawUI(
+  _args: unknown,
+  api: ToolExecutionApi,
+  context: Context,
+): Promise<void> {
+  const id = (api.checkpoint as { ui?: unknown } | undefined)?.ui;
+  if (typeof id !== "string") return;
+  await api.commit(async (tx) => {
+    delete (await tx.doc(DurableUI, api.conversationId)).requests[id];
+  }, context);
+}
+
+/**
+ * Deliver each answer to its call's task and take its request down, in the caller's commit. A
+ * request whose call already has an answer, ended, or was stopped (`duplicate`, `closed`,
+ * `not_found`) is taken down too: nothing can answer it any more, as when a gate's call was
+ * aborted (a gate has no `cancel`). Only an `invalid` answer leaves the request up. Every delivery
+ * starts before any lands: a delivery stages its task, and a `Tx` refuses reads after a write.
+ */
+export async function answerUI(
+  tx: Tx,
+  conversationId: ConversationId,
+  answers: ReadonlyArray<{ taskId: TaskId; response: UIResponse }>,
+): Promise<SignalResult[]> {
+  const ui = await tx.doc(DurableUI, conversationId);
+  const results = await Promise.all(
+    answers.map(({ taskId, response }) =>
+      tx.signal(taskId, UIAnswer, response.id, {
+        id: response.id,
+        ...(response.value === undefined ? {} : { value: response.value }),
+        ...(response.confirmed === undefined ? {} : { confirmed: response.confirmed }),
+        ...(response.cancelled === undefined ? {} : { cancelled: response.cancelled }),
+      }),
+    ),
+  );
+  answers.forEach(({ response }, index) => {
+    if (results[index] !== "invalid") delete ui.requests[response.id];
+  });
+  return results;
+}
+
+/**
+ * Stop's sweep: every open request of the conversation answered `cancelled` and taken down, in the
+ * caller's commit. Stop aborts the calls first, so their deliveries are `closed`; a call Stop did
+ * not abort wakes with `cancelled` instead of sleeping on a card nobody can see.
+ */
+export async function cancelAllUI(tx: Tx, conversationId: ConversationId): Promise<void> {
+  const ui = await tx.doc(DurableUI, conversationId);
+  await answerUI(
+    tx,
+    conversationId,
+    Object.entries(ui.requests).map(([id, { taskId }]) => ({
+      taskId,
+      response: { id, cancelled: true },
+    })),
+  );
+  ui.requests = {};
 }
 
 /** Display metadata for extension-generated inputs, keyed by stable submission

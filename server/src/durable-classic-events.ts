@@ -229,6 +229,14 @@ function slotsOf(live: LiveState): Map<string, Slot> {
   return slots;
 }
 
+/**
+ * A call that started and has not ended: running, or parked (`sleeping`, `waiting`) until a signal
+ * or its tasks wake it. A parked call is still the same call, so a wake is not a second start.
+ */
+function started(slot: Slot | undefined): boolean {
+  return slot?.status === "running" || slot?.status === "sleeping" || slot?.status === "waiting";
+}
+
 function parentOf(slot: Slot): { parentToolCallId?: string } {
   return isNested(slot) ? { parentToolCallId: slot.parentCallId } : {};
 }
@@ -317,7 +325,7 @@ export class DurableClassicEvents {
     if (message && recovering) this.shown = message;
     else if (message) events.push(...this.streamed(message));
     for (const slot of slotsOf(live).values()) {
-      if (slot.status !== "running") continue;
+      if (!started(slot)) continue;
       events.push(this.toolStart(slot, this.current.entries), ...this.toolUpdate(slot));
     }
     const retry = live.generation?.retry;
@@ -615,7 +623,7 @@ export class DurableClassicEvents {
     }
     // What began: calls that started running, and an answer not shown before.
     for (const [key, slot] of after) {
-      if (slot.status !== "running" || before.get(key)?.status === "running") continue;
+      if (!started(slot) || started(before.get(key))) continue;
       out.push(this.toolStart(slot, next.entries), ...this.toolUpdate(slot));
     }
     const streaming = now.generation?.message as AssistantMessage | undefined;

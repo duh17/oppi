@@ -479,6 +479,61 @@ The store and its scopes map to Oppi like this:
 
 A plugin that shows Oppi UI imports it from `oppi/v1`: `requestUI` for dialogs, `surface()` for panels ([A panel plugin](extension-native-ui.md#a-panel-plugin)), and the `DurableUI` and `DurableInputCards` documents for status, widgets, and transcript cards. A hook or task that only needs the Oppi Session id of its own conversation (for a link, say) reads `(await api.snapshot(DurableSessionDoc, api.conversationId, context))?.sessionId`, with `DurableSessionDoc` from `oppi/v1`. One that also reads or sets the Session's name calls `await oppiHost().sessionName(api, context)` for its `sessionId`, `get()` and `set(name)`, as `auto-name` does from a generation hook. It names the Session of the conversation `api` is for and takes no Session id, so an extension cannot name another Session by mistake; extension code is trusted like the rest of the server process, and the host cannot tell a hand-built `api` from pi-durable's.
 
+`requestUI(api, request, context)` asks a question from a tool with `replay: "safe"`. It does not wait. The first time, it shows the dialog and returns `{ park }`, and the tool returns that park from `execute()`. The call then waits without running any code, also across server restarts. Once the person answers, or the request's `timeout` (milliseconds) passes, the tool runs again with the same arguments, and the same `requestUI` call returns `{ response }`. A timeout answers `cancelled: true`. Give the dialog an id that stays the same across those runs, such as `` `my-plugin:${api.taskId}` ``, and set `cancel: withdrawUI`, so a stopped call takes its dialog down:
+
+```ts
+import { defineTool, requestUI, withdrawUI } from "oppi/v1";
+import { obj } from "oppi/v1/schema";
+
+const deploy = defineTool({
+  name: "deploy",
+  description: "Deploy after the user confirms.",
+  parameters: obj({}),
+  replay: "safe",
+  async execute(_args, api, context) {
+    const asked = await requestUI(
+      api,
+      { id: `deploy:${api.taskId}`, method: "confirm", title: "Deploy now?", timeout: 600_000 },
+      context,
+    );
+    if (asked.park) return asked.park;
+    if (!asked.response.confirmed) return { output: [{ type: "text", text: "Not deployed." }] };
+    return { output: [{ type: "text", text: "Deployed." }] };
+  },
+  cancel: withdrawUI,
+});
+```
+
+Code before `requestUI` runs again on every run, so keep it free of side effects or memoize it with `api.memo`. A run after the wake must also pass an explicit `key` to `api.executeTool` and `api.createTask`.
+
+A `beforeTool` hook can ask before a call runs, as a permission gate does. Pass the hook's `api` (the tool task's runtime: it has the `commit` that `HookApi` does not declare) and return the park's `sleep`. Every wake runs the hook again, and the same `requestUI` call then returns the answer. Oppi also runs the hook again at each server start and extension reload, and it returns the park again for the same open dialog:
+
+```ts
+import { defineExtension, hook, requestUI, ToolTask, type ToolExecutionApi } from "oppi/v1";
+
+export const DeployGate = defineExtension({
+  name: "deploy-gate",
+  hooks: [
+    hook(ToolTask, {
+      async beforeTool(call, api, context) {
+        if (call.name !== "deploy") return undefined;
+        const asked = await requestUI(
+          api as unknown as ToolExecutionApi,
+          { id: `deploy-gate:${api.taskId}`, method: "confirm", title: "Deploy now?" },
+          context,
+        );
+        if (asked.park) return { sleep: asked.park.sleep };
+        return asked.response.confirmed ? undefined : { block: "Not approved" };
+      },
+    }),
+  ],
+});
+```
+
+A gate has no `cancel`. When its call is stopped, Stop takes its dialog down. A call that ends another way leaves the dialog up until someone answers it, and then the answer is refused and the dialog closes. To close it sooner, add an `afterTool` hook that removes the dialog's request; `afterTool` runs on every result, also an aborted call's.
+
+A plugin written for the older `requestUI`, which waited and returned the answer, still loads, but it reads `{ park }` as an answer with no value: it gets no answer and the dialog stays open. Plugins are not type-checked when they load, so nothing reports this.
+
 `await oppiHost().sessionActivity(api, context)` reads, the same way, what that Session has done. It only reads; nothing in it changes the Session. It resolves to `{ sessionId, changedFiles, children }`: `changedFiles` are the files its `edit` and `write` calls named, as plain paths inside its working folder (at most 100; a path outside the folder is left out), and `children` are its subagent Sessions, oldest first, each `{ id, name? }`. It resolves to `undefined` for a conversation without a Session.
 
 A hook or task has no `api.env` for `oppiHost().surfaces(env)`. `await oppiHost().sessionSurfaces(api, context)` returns the same surface loop for the Session the conversation is for, or `undefined` while it has no live Session; `example-shelf` publishes through it after each round of tool calls.

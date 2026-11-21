@@ -36,8 +36,10 @@ import {
   type LiveState,
   type EntryId,
   type Storage as DurableStorage,
+  type ToolExecutionApi,
   type ToolRegistration,
   defineTool,
+  hook,
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { getCurrentSystemPrompt } from "@earendil-works/pi-ai/utils/transcript";
@@ -86,9 +88,12 @@ import { DurableJobs } from "../plugins/background-jobs/contract.js";
 import { GondolinExecutionEnv } from "../src/durable-gondolin-env.js";
 import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
 import {
+  answerUI,
+  cancelAllUI,
   DurableUI,
   DurableInputCards,
   requestUI,
+  withdrawUI,
   type UIResponse,
   type UINotification,
 } from "../src/durable-ui.js";
@@ -533,6 +538,8 @@ describe("server durable managed runtime", () => {
     expect(
       observed.messages.filter((m) => m.type === "extension_ui_settled" && m.id === shown.id),
     ).toHaveLength(1);
+    // The call parked and woke; it is still one tool row, started once.
+    expect(observed.messages.filter((m) => m.type === "tool_start")).toHaveLength(1);
     bridge.dispose();
     await classicAnswer;
   });
@@ -660,104 +667,344 @@ describe("server durable managed runtime", () => {
       }),
     ]);
   });
-  it.each(["before", "after"] as const)(
-    "survives a crash %s the answer memo and removes the answered row on replay",
-    async (gap) => {
-      const native = DurableAsk.tools![0]!;
-      let saving!: () => void;
-      const savingMemo = new Promise<void>((resolve) => {
-        saving = resolve;
-      });
-      const wrapped: ToolRegistration = {
-        ...native,
-        async execute(args, api, ctx) {
-          const memo = new Proxy(api.memo, {
-            async apply(target, receiver, values) {
-              if (String(values[0]).startsWith("ui-answer:") && values.length === 3) {
-                if (gap === "after") await Reflect.apply(target, receiver, values);
-                saving();
-                return new Promise((_resolve, reject) => {
-                  ctx.abortSignal!.addEventListener(
-                    "abort",
-                    () => reject(ctx.abortSignal!.reason),
-                    {
-                      once: true,
-                    },
-                  );
-                });
-              }
-              return Reflect.apply(target, receiver, values);
-            },
+  it("survives a crash after the answer woke the call, before its result, and answers once", async () => {
+    const native = DurableAsk.tools![0]!;
+    let saving!: () => void;
+    const savingMemo = new Promise<void>((resolve) => {
+      saving = resolve;
+    });
+    let crashed = false;
+    const wrapped: ToolRegistration = {
+      ...native,
+      async execute(args, api, ctx) {
+        // The first woken run dies before its result is stored.
+        if (api.wake !== undefined && !crashed) {
+          crashed = true;
+          saving();
+          return new Promise((_resolve, reject) => {
+            ctx.abortSignal!.addEventListener("abort", () => reject(ctx.abortSignal!.reason), {
+              once: true,
+            });
           });
-          return native.execute(args as never, { ...api, memo }, ctx);
-        },
-      };
-      const f = await fixture([askStep(), fauxAssistantMessage("MEMO_GAP_RECOVERED")]);
-      let harness = await openHarness(f.dir, f.models, wrapped);
-      const conversation = await harness.createConversation(
-        {
-          ownership: { kind: "ownerless" },
-          agent: { model: { provider: "faux", modelId: "faux-1" }, tools: [wrapped], cwd: f.dir },
-        },
+        }
+        return native.execute(args as never, api, ctx);
+      },
+    };
+    const f = await fixture([askStep(), fauxAssistantMessage("WOKEN_CRASH_RECOVERED")]);
+    let harness = await openHarness(f.dir, f.models, wrapped);
+    const conversation = await harness.createConversation(
+      {
+        ownership: { kind: "ownerless" },
+        agent: { model: { provider: "faux", modelId: "faux-1" }, tools: [wrapped], cwd: f.dir },
+      },
+      context,
+    );
+    f.session.serverDurable = { storeId: f.session.id, conversationId: conversation.id };
+    const runtime = new DurableHarness(f.dir);
+    const owner = await attachHost(runtime, harness, f.models, f.session.id);
+    await owner.releaseResume();
+    let shown!: UIResponse;
+    let show!: () => void;
+    const displayed = new Promise<void>((resolve) => {
+      show = resolve;
+    });
+    const first = await DurableBackend.create({
+      harness,
+      host: owner,
+      models: f.models,
+      session: f.session,
+      dataDir: f.dir,
+      persistBinding: () => {},
+      onRunState: () => {},
+      onEvent: (event) => {
+        if (event.type === "extension_ui_request" && event.method === "ask") {
+          shown = { id: event.id, value: JSON.stringify(askResponse) };
+          show();
+        }
+      },
+    });
+    first.startEvents();
+    await first.prompt("Ask and crash once the answer wakes the call");
+    await displayed;
+    expect(await first.respondToExtensionUIRequest(shown)).toBe(true);
+    await savingMemo;
+    await first.detachForRestart();
+    await harness.close(context);
+    harnesses.splice(harnesses.indexOf(harness), 1);
+    harness = await openHarness(f.dir, f.models);
+    const resumed = await backend(harness, f.models, f.session, f.dir);
+    harness.resume();
+    await (await harness.conversation(conversation.id, context))!.waitForIdle(context);
+    const results = (await resumed.messages()).filter((m) => m.role === "toolResult") as Array<{
+      details?: unknown;
+      isError?: boolean;
+    }>;
+    expect(results).toEqual([
+      expect.objectContaining({
+        isError: false,
+        details: { questions, answers: askResponse, allIgnored: false },
+      }),
+    ]);
+    expect(f.faux.state.callCount).toBe(2);
+    const restored = (await harness.conversation(conversation.id, context))!;
+    expect(
+      await restored.commit(
+        async (tx) => Object.keys((await tx.doc(DurableUI, conversation.id)).requests),
         context,
-      );
-      f.session.serverDurable = { storeId: f.session.id, conversationId: conversation.id };
-      const runtime = new DurableHarness(f.dir);
-      const owner = await attachHost(runtime, harness, f.models, f.session.id);
-      await owner.releaseResume();
-      let shown!: UIResponse;
-      let show!: () => void;
-      const displayed = new Promise<void>((resolve) => {
-        show = resolve;
-      });
-      const first = await DurableBackend.create({
-        harness,
-        host: owner,
-        models: f.models,
-        session: f.session,
-        dataDir: f.dir,
-        persistBinding: () => {},
-        onRunState: () => {},
-        onEvent: (event) => {
-          if (event.type === "extension_ui_request" && event.method === "ask") {
-            shown = { id: event.id, value: JSON.stringify(askResponse) };
-            show();
-          }
+      ),
+    ).toEqual([]);
+    await resumed.dispose();
+  });
+
+  /** The conversation's first tool slot once it reads `status`. */
+  async function slotReaches(harness: Harness, id: ConversationId, status: string) {
+    await vi.waitFor(
+      async () =>
+        expect((await harness.snapshot(LiveDoc, id, context))?.tools?.[0]?.status).toBe(status),
+      { timeout: 5_000 },
+    );
+    return (await harness.snapshot(LiveDoc, id, context))!.tools![0]!;
+  }
+
+  it("parks a pending ask with no process, across more restarts than pi-durable's limit, until answered", async () => {
+    const f = await fixture([askStep(), fauxAssistantMessage("ANSWERED_AFTER_RESTARTS")]);
+    let harness = await openHarness(f.dir, f.models);
+    const conversation = await harness.createConversation(
+      {
+        ownership: { kind: "ownerless" },
+        agent: {
+          model: { provider: "faux", modelId: "faux-1" },
+          tools: [...DurableAsk.tools!],
+          cwd: f.dir,
         },
-      });
-      first.startEvents();
-      await first.prompt("Ask and cross the answer/memo crash window");
-      await displayed;
-      expect(await first.respondToExtensionUIRequest(shown)).toBe(true);
-      await savingMemo;
-      await first.detachForRestart();
+      },
+      context,
+    );
+    const submission = await conversation.submit({ type: "input", content: "Ask me" }, context);
+    const parked = await slotReaches(harness, conversation.id, "sleeping");
+    // Parked: nothing runs and nothing needs waking; the run stays open on the call.
+    expect(harness.wake()).toEqual({ active: false });
+    // The test harness keeps pi-durable's default restart limit (5): a call that held its
+    // process would end `restart_limit` after five of these.
+    for (let restart = 0; restart < 7; restart += 1) {
       await harness.close(context);
       harnesses.splice(harnesses.indexOf(harness), 1);
       harness = await openHarness(f.dir, f.models);
-      const resumed = await backend(harness, f.models, f.session, f.dir);
       harness.resume();
-      await (await harness.conversation(conversation.id, context))!.waitForIdle(context);
-      const results = (await resumed.messages()).filter((m) => m.role === "toolResult") as Array<{
-        details?: unknown;
-        isError?: boolean;
-      }>;
-      expect(results).toEqual([
-        expect.objectContaining({
-          isError: false,
-          details: { questions, answers: askResponse, allIgnored: false },
+      expect((await slotReaches(harness, conversation.id, "sleeping")).taskId).toBe(parked.taskId);
+    }
+    const reopened = (await harness.conversation(conversation.id, context))!;
+    const id = `durable-ui:${parked.taskId}`;
+    expect(
+      Object.keys((await harness.snapshot(DurableUI, conversation.id, context))!.requests),
+    ).toEqual([id]);
+    const response = { id, value: JSON.stringify(askResponse) };
+    expect(
+      await reopened.commit(
+        (tx) => answerUI(tx, conversation.id, [{ taskId: parked.taskId!, response }]),
+        context,
+      ),
+    ).toEqual(["delivered"]);
+    // A second answer to the same request is refused.
+    expect(
+      await reopened.commit(
+        (tx) => answerUI(tx, conversation.id, [{ taskId: parked.taskId!, response }]),
+        context,
+      ),
+    ).toEqual(["duplicate"]);
+    expect((await (await harness.submission(submission.id, context))!.wait(context)).status).toBe(
+      "done",
+    );
+    const page = await reopened.entries({}, 20, undefined, context);
+    const result = page.items
+      .flatMap((entry) => entry.model ?? [])
+      .find((message) => message.role === "toolResult");
+    expect(result).toMatchObject({
+      isError: false,
+      details: { questions, answers: askResponse, allIgnored: false },
+    });
+    expect(f.faux.state.callCount).toBe(2);
+    expect((await harness.snapshot(DurableUI, conversation.id, context))!.requests).toEqual({});
+  });
+
+  it("takes a parked ask's card down when its run is aborted", async () => {
+    const f = await fixture([askStep(), fauxAssistantMessage("MUST_NOT_RUN")]);
+    const harness = await openHarness(f.dir, f.models);
+    const conversation = await harness.createConversation(
+      {
+        ownership: { kind: "ownerless" },
+        agent: {
+          model: { provider: "faux", modelId: "faux-1" },
+          tools: [...DurableAsk.tools!],
+          cwd: f.dir,
+        },
+      },
+      context,
+    );
+    await conversation.submit({ type: "input", content: "Ask me" }, context);
+    const parked = await slotReaches(harness, conversation.id, "sleeping");
+    expect(
+      Object.keys((await harness.snapshot(DurableUI, conversation.id, context))!.requests),
+    ).toHaveLength(1);
+    await conversation.abort(context);
+    await conversation.waitForIdle(context);
+    // The tool's `cancel` (withdrawUI) took the card down; a late answer finds the call ended.
+    expect((await harness.snapshot(DurableUI, conversation.id, context))!.requests).toEqual({});
+    expect(
+      await conversation.commit(
+        (tx) =>
+          answerUI(tx, conversation.id, [
+            {
+              taskId: parked.taskId!,
+              response: { id: `durable-ui:${parked.taskId}`, value: "{}" },
+            },
+          ]),
+        context,
+      ),
+    ).toEqual(["closed"]);
+    expect(f.faux.state.callCount).toBe(1);
+  });
+
+  it("wakes a parked call with cancelled when Stop's sweep takes down a card it did not abort", async () => {
+    const f = await fixture([askStep(), fauxAssistantMessage("AFTER_SWEEP")]);
+    const harness = await openHarness(f.dir, f.models);
+    const conversation = await harness.createConversation(
+      {
+        ownership: { kind: "ownerless" },
+        agent: {
+          model: { provider: "faux", modelId: "faux-1" },
+          tools: [...DurableAsk.tools!],
+          cwd: f.dir,
+        },
+      },
+      context,
+    );
+    const submission = await conversation.submit({ type: "input", content: "Ask me" }, context);
+    await slotReaches(harness, conversation.id, "sleeping");
+    await conversation.commit((tx) => cancelAllUI(tx, conversation.id), context);
+    expect((await submission.wait(context)).status).toBe("done");
+    const page = await conversation.entries({}, 20, undefined, context);
+    const result = page.items
+      .flatMap((entry) => entry.model ?? [])
+      .find((message) => message.role === "toolResult");
+    expect(result).toMatchObject({ isError: false, details: { allIgnored: true } });
+    expect((await harness.snapshot(DurableUI, conversation.id, context))!.requests).toEqual({});
+  });
+
+  describe("a beforeTool gate that asks through requestUI", () => {
+    let ran = 0;
+    const deploy = defineTool({
+      name: "deploy",
+      description: "Deploy",
+      parameters: obj({}),
+      replay: "safe",
+      async execute() {
+        ran += 1;
+        return { output: [{ type: "text", text: "deployed" }] };
+      },
+    });
+    // The documented hook form: return the park's sleep; the woken gate gets the answer.
+    const Gate = defineExtension({
+      name: "deploy-gate",
+      tools: [deploy],
+      hooks: [
+        hook(ToolTask, {
+          async beforeTool(call, api, ctx) {
+            if (call.name !== "deploy") return undefined;
+            const asked = await requestUI(
+              api as unknown as ToolExecutionApi,
+              { id: `gate:${api.taskId}`, method: "confirm", title: "Deploy?" },
+              ctx,
+            );
+            if (asked.park) return { sleep: asked.park.sleep };
+            return asked.response.confirmed ? undefined : { block: "Not approved" };
+          },
         }),
+      ],
+    });
+    const open = async (dir: string, models: ModelRuntime) => {
+      const registry = createRegistry();
+      registry.install(Gate);
+      const harness = await Harness.open(
+        await openNodeSqliteStorage(join(dir, "gate.sqlite")),
+        { models, registry, settings: { compaction: { enabled: false } } },
+        context,
+      );
+      harnesses.push(harness);
+      return harness;
+    };
+    const start = async () => {
+      ran = 0;
+      const f = await fixture([
+        fauxAssistantMessage([fauxToolCall("deploy", {})], { stopReason: "toolUse" }),
+        fauxAssistantMessage("DONE"),
       ]);
-      expect(f.faux.state.callCount).toBe(2);
-      const restored = (await harness.conversation(conversation.id, context))!;
+      const harness = await open(f.dir, f.models);
+      const conversation = await harness.createConversation(
+        {
+          ownership: { kind: "ownerless" },
+          agent: {
+            model: { provider: "faux", modelId: "faux-1" },
+            extensions: [Gate],
+            tools: [deploy],
+            cwd: f.dir,
+          },
+        },
+        context,
+      );
+      const submission = await conversation.submit({ type: "input", content: "go" }, context);
+      const parked = await slotReaches(harness, conversation.id, "sleeping");
+      return { f, harness, conversation, submission, parked, id: `gate:${parked.taskId}` };
+    };
+    const cards = async (harness: Harness, id: ConversationId) =>
+      Object.keys((await harness.snapshot(DurableUI, id, context))!.requests);
+
+    it("keeps one card across a restart, which runs the gate again, and runs the call once allowed", async () => {
+      const s = await start();
+      expect(await cards(s.harness, s.conversation.id)).toEqual([s.id]);
+      await s.harness.close(context);
+      harnesses.splice(harnesses.indexOf(s.harness), 1);
+      const harness = await open(s.f.dir, s.f.models);
+      harness.resume();
+      await slotReaches(harness, s.conversation.id, "sleeping");
+      expect(await cards(harness, s.conversation.id)).toEqual([s.id]);
+      expect(ran).toBe(0);
+      const reopened = (await harness.conversation(s.conversation.id, context))!;
       expect(
-        await restored.commit(
-          async (tx) => Object.keys((await tx.doc(DurableUI, conversation.id)).requests),
+        await reopened.commit(
+          (tx) =>
+            answerUI(tx, s.conversation.id, [
+              { taskId: s.parked.taskId!, response: { id: s.id, confirmed: true } },
+            ]),
           context,
         ),
-      ).toEqual([]);
-      await resumed.dispose();
-    },
-  );
+      ).toEqual(["delivered"]);
+      expect(
+        (await (await harness.submission(s.submission.id, context))!.wait(context)).status,
+      ).toBe("done");
+      expect(ran).toBe(1);
+      expect(await cards(harness, s.conversation.id)).toEqual([]);
+    });
+
+    it("takes an aborted gate's card down at the next answer, which the call refuses", async () => {
+      const s = await start();
+      await s.conversation.abort(context);
+      await s.conversation.waitForIdle(context);
+      // A gate has no `cancel`: its card outlives the abort until something answers it.
+      expect(await cards(s.harness, s.conversation.id)).toEqual([s.id]);
+      expect(
+        await s.conversation.commit(
+          (tx) =>
+            answerUI(tx, s.conversation.id, [
+              { taskId: s.parked.taskId!, response: { id: s.id, confirmed: true } },
+            ]),
+          context,
+        ),
+      ).toEqual(["closed"]);
+      expect(await cards(s.harness, s.conversation.id)).toEqual([]);
+      expect(ran).toBe(0);
+    });
+  });
 
   it("committed hostile UI JSON reaches handlePiEvent only as allowlisted UI requests", async () => {
     const f = await fixture([]);
@@ -838,12 +1085,9 @@ describe("server durable managed runtime", () => {
         parameters: obj({}),
         replay: "safe",
         async execute(_args, api, ctx) {
-          const response = await requestUI(
-            api,
-            { id: `probe:${api.taskId}`, method, ...fields },
-            ctx,
-          );
-          return { output: [{ type: "text", text: JSON.stringify(response) }] };
+          const asked = await requestUI(api, { id: `probe:${api.taskId}`, method, ...fields }, ctx);
+          if (asked.park) return asked.park;
+          return { output: [{ type: "text", text: JSON.stringify(asked.response) }] };
         },
       });
       const f = await fixture([
@@ -999,13 +1243,17 @@ describe("server durable managed runtime", () => {
       parameters: obj({}),
       replay: "safe",
       async execute(_args, api, ctx) {
-        const response = await requestUI(
+        const asked = await requestUI(
           api,
-          { id: `timeout:${api.taskId}`, method: "confirm", title: "Expires", timeout: 25 },
+          { id: `timeout:${api.taskId}`, method: "confirm", title: "Expires", timeout: 300 },
           ctx,
         );
-        return { output: [{ type: "text", text: response.cancelled ? "TIMED_OUT" : "ANSWERED" }] };
+        if (asked.park) return asked.park;
+        return {
+          output: [{ type: "text", text: asked.response.cancelled ? "TIMED_OUT" : "ANSWERED" }],
+        };
       },
+      cancel: withdrawUI,
     });
     const f = await fixture([
       fauxAssistantMessage([fauxToolCall(probe.name, {})], { stopReason: "toolUse" }),
@@ -1029,8 +1277,19 @@ describe("server durable managed runtime", () => {
     const end = observed.next((m) => m.type === "agent_end");
     await f.manager.sendPrompt(f.session.id, "Expire a UI request");
     const shown = (await request) as Extract<ServerMessage, { type: "extension_ui_request" }>;
-    expect(shown).toMatchObject({ timeout: 25, timeoutAt: expect.any(Number) });
+    expect(shown).toMatchObject({ timeout: 300, timeoutAt: expect.any(Number) });
+    // Parked until the deadline wakes it: the call holds no process meanwhile.
+    await vi.waitFor(async () =>
+      expect((await harness.snapshot(LiveDoc, conversation.id, context))?.tools?.[0]?.status).toBe(
+        "sleeping",
+      ),
+    );
     await end;
+    expect(
+      f.manager
+        .getPendingUIRequestMessages(f.session.id)
+        .filter((m) => m.type === "extension_ui_request"),
+    ).toEqual([]);
     expect(
       await f.manager.respondToUIRequest(f.session.id, {
         type: "extension_ui_response",

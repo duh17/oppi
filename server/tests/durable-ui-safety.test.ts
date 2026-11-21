@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import type { Context } from "@earendil-works/chord/context";
 import type {
   Conversation,
   Harness,
@@ -8,7 +7,7 @@ import type {
   ToolExecutionApi,
 } from "@earendil-works/pi-durable";
 import { DurableUIProjection } from "../src/durable-ui-projection.js";
-import { requestUI, type UIRequest, type UIState } from "../src/durable-ui.js";
+import { requestUI, type UIRequest, type UIResponse, type UIState } from "../src/durable-ui.js";
 import { deriveView, DurableWorkingWords, pickPhrase } from "../plugins/working-words/server.js";
 import type { SessionBackendEvent } from "../src/pi-events.js";
 
@@ -40,25 +39,22 @@ async function project(initial: UIState) {
   return { events, change: (state: UIState) => change(state), stop: () => projection.stop() };
 }
 
-function tool(ui: UIState, saved?: { id: string; value: string }) {
+/** A tool call's api over `ui`, with `answer` as its committed answer signal. */
+function tool(ui: UIState, answer?: { value: UIResponse } | { expired: true }) {
   const published: UIState[] = [];
   const api = {
     taskId,
     conversationId,
-    memo: vi.fn(async (_key: string, value: unknown, writeContext?: Context) =>
-      writeContext ? value : saved,
-    ),
+    now: () => 1_000,
+    readSignal: vi.fn(async () => answer),
+    snapshot: vi.fn(async () => structuredClone(ui)),
     commit: vi.fn(async (fn: (tx: unknown) => unknown) => {
-      await fn({ doc: async () => ui });
+      const result = await fn({ doc: async () => ui });
       published.push(structuredClone(ui));
+      return result;
     }),
-    watchDoc: vi.fn(async () => ({ value: ui, start: () => {}, stop: async () => {} })),
   };
   return { api: api as unknown as ToolExecutionApi, published };
-}
-
-function abortContext(controller: AbortController): Context {
-  return Object.create(context, { abortSignal: { value: controller.signal } }) as Context;
 }
 
 describe("durable UI document safety", () => {
@@ -112,11 +108,10 @@ describe("durable UI document safety", () => {
     },
   );
 
-  it("stores only allowlisted tool fields", async () => {
+  it("stores only allowlisted tool fields and parks on the request's answer", async () => {
     const ui = empty();
     const t = tool(ui);
-    const controller = new AbortController();
-    const waiting = requestUI(
+    const outcome = await requestUI(
       t.api,
       {
         id: "dialog",
@@ -125,21 +120,21 @@ describe("durable UI document safety", () => {
         type: "message_end",
         details: { fullOutputPath: "/private/file" },
       } as UIRequest,
-      abortContext(controller),
+      context,
     );
-    const outcome = waiting.then(
-      () => undefined,
-      (error: unknown) => error,
+    expect(t.published).toHaveLength(1);
+    expect(t.published[0]!.requests.dialog).toEqual(
+      entry({ id: "dialog", method: "confirm", title: "Authoritative" }),
     );
-    try {
-      await vi.waitFor(() => expect(t.published).toHaveLength(1));
-      expect(t.published[0]!.requests.dialog).toEqual(
-        entry({ id: "dialog", method: "confirm", title: "Authoritative" }),
-      );
-    } finally {
-      controller.abort(new Error("cancel wait"));
-      expect(await outcome).toEqual(new Error("cancel wait"));
-    }
+    // No deadline: the park waits for the answer only.
+    expect(outcome).toEqual({
+      park: {
+        sleep: {
+          checkpoint: { ui: "dialog" },
+          signals: [{ signal: "oppi.ui-answer", key: "dialog" }],
+        },
+      },
+    });
   });
 
   it("rejects unknown tool UI methods without committing a document", async () => {
@@ -150,35 +145,53 @@ describe("durable UI document safety", () => {
     expect(t.api.commit).not.toHaveBeenCalled();
   });
 
-  it("preserves the first absolute deadline on replay of the same tool payload", async () => {
-    const ui = empty();
-    const timeoutAt = Date.now() + 5000;
-    ui.requests.dialog = entry({ id: "dialog", method: "confirm", timeout: 5000, timeoutAt });
-    const t = tool(ui);
-    const controller = new AbortController();
-    const outcome = requestUI(
-      t.api,
+  it("sets the deadline once, on the Harness clock, and a rerun parks until that first one", async () => {
+    const first = tool(empty());
+    const parked = await requestUI(
+      first.api,
       { id: "dialog", method: "confirm", timeout: 5000 },
-      abortContext(controller),
-    ).then(
-      () => undefined,
-      (error: unknown) => error,
+      context,
     );
-    await vi.waitFor(() => expect(t.published).toHaveLength(1));
-    controller.abort(new Error("cancel wait"));
-    expect(await outcome).toEqual(new Error("cancel wait"));
-    expect(t.published[0]!.requests.dialog!.request.timeoutAt).toBe(timeoutAt);
+    expect(first.published[0]!.requests.dialog!.request.timeoutAt).toBe(6_000);
+    expect(parked.park?.sleep?.until).toBe(6_000);
+
+    // A rerun that never parked (a crash in between) keeps the stored deadline.
+    const ui = empty();
+    ui.requests.dialog = entry({
+      id: "dialog",
+      method: "confirm",
+      timeout: 5000,
+      timeoutAt: 4_000,
+    });
+    const rerun = tool(ui);
+    const again = await requestUI(
+      rerun.api,
+      { id: "dialog", method: "confirm", timeout: 5000 },
+      context,
+    );
+    expect(again.park?.sleep?.until).toBe(4_000);
+    expect(rerun.published[0]!.requests.dialog!.request.timeoutAt).toBe(4_000);
   });
 
-  it("deletes an answered row on memo-hit replay without publishing or waiting", async () => {
+  it("returns the delivered answer and takes down a request still up", async () => {
     const ui = empty();
+    ui.requests.dialog = entry({ id: "dialog", method: "input" });
     const response = { id: "dialog", value: "answer" };
-    ui.requests.dialog = { ...entry({ id: "dialog", method: "input" }), response };
-    const t = tool(ui, response);
-    expect(await requestUI(t.api, { id: "dialog", method: "input" }, context)).toEqual(response);
+    const t = tool(ui, { value: response });
+    expect(await requestUI(t.api, { id: "dialog", method: "input" }, context)).toEqual({
+      response,
+    });
     expect(ui.requests).toEqual({});
-    expect(t.api.watchDoc).not.toHaveBeenCalled();
-    expect(t.published).toHaveLength(1);
+  });
+
+  it("answers cancelled when the deadline came first", async () => {
+    const ui = empty();
+    ui.requests.dialog = entry({ id: "dialog", method: "input", timeout: 10, timeoutAt: 1 });
+    const t = tool(ui, { expired: true });
+    expect(await requestUI(t.api, { id: "dialog", method: "input" }, context)).toEqual({
+      response: { id: "dialog", cancelled: true },
+    });
+    expect(ui.requests).toEqual({});
   });
 });
 
@@ -284,6 +297,10 @@ describe("durable working words activity", () => {
       run: "7",
       activity: "asking",
     });
+    // An ask parked on the answer still reads as asking.
+    expect(
+      deriveView(live({ run, tools: [{ callId: "a", name: "ask", status: "sleeping" }] })),
+    ).toEqual({ run: "7", activity: "asking" });
     expect(
       deriveView(
         live({
