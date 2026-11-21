@@ -162,7 +162,7 @@ extension ChatViewController {
             switch model.panel {
             case .reader(let target)?:
                 model.panel = nil
-                appNavigation.openChatReader(target)
+                appNavigation.open(.page(.chatReader(target)))
             case .timeline(let target)?:
                 model.panel = nil
                 ChatTimelineDestinationPresenter(connection: connection)
@@ -409,10 +409,8 @@ extension ChatViewController {
     /// A linked file over the chat, as narrow width opens it.
     private func openLinkedFileOverChat(_ target: WorkspaceLinkedFileNavTarget) {
         guard let serverId = connection.currentServerId else { return }
-        appNavigation.openReferencedWorkspaceLinkedFile(
-            target,
-            sourceSession: WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId, routeScope: focusedRouteScope)
-        )
+        let chat = WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId, routeScope: focusedRouteScope)
+        appNavigation.open(.page(.linkedFile(target)), from: .link(chat: chat))
     }
 
     /// A file or commit pill's destination as the column's root, built by

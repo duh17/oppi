@@ -54,9 +54,7 @@ final class ScheduleCalendarActions {
     func openSession(of item: ScheduleCalendarAgenda.Item) {
         guard let sessionId = item.sessionId,
               let serverId = connection.workspaceStore.activeServerId else { return }
-        root.navigation.openWorkspaceSession(
-            WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId, workspaceId: item.workspaceId)
-        )
+        root.navigation.open(.chat(WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId, workspaceId: item.workspaceId)))
     }
 
     /// All Sessions with the run's thread open. A run's session is its thread's root: a

@@ -136,14 +136,11 @@ final class QuickSessionPresentation {
         navigation.pendingQuickSessionAttachments = pending.autoSendAttachments
         navigation.app.pendingLiveVoiceSessionId = pending.startsLiveVoice ? pending.sessionId : nil
 
-        // Quick Session is just "new session from here". Preserve the current
-        // compact stack, or select the session detail column on iPad.
-        navigation.openWorkspaceSession(
-            WorkspaceSessionNavTarget(
-                serverId: pending.target.serverId,
-                sessionId: pending.sessionId
-            ),
-            workspace: pending.target
+        // Quick Session is "new session from here": the chat opens as a row of
+        // its workspace's list does (`SceneNavigation.placement(of:from:)`).
+        navigation.open(
+            .chat(WorkspaceSessionNavTarget(serverId: pending.target.serverId, sessionId: pending.sessionId)),
+            from: .screen(workspace: pending.target)
         )
     }
 }

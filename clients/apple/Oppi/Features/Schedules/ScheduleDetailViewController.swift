@@ -678,9 +678,7 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
     private func openRunSession(_ run: AgentScheduleRunSummary) {
         guard let sessionId = run.sessionId,
               let serverId = connection.workspaceStore.activeServerId else { return }
-        root.navigation.openWorkspaceSession(
-            WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId, workspaceId: run.action.workspaceId)
-        )
+        root.navigation.open(.chat(WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId, workspaceId: run.action.workspaceId)))
     }
 
     private func humanWorkspaceName(_ workspaceId: String) -> String {

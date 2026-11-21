@@ -89,9 +89,7 @@ struct ReviewCommentsTextFallbackTests {
                 return frames.makeStream()
             }
             let navigation = SceneNavigation()
-            navigation.openWorkspaceSession(
-                WorkspaceSessionNavTarget(serverId: connection.currentServerId ?? "server-1", sessionId: sessionId)
-            )
+            navigation.open(.chat(WorkspaceSessionNavTarget(serverId: connection.currentServerId ?? "server-1", sessionId: sessionId)))
             chat = ChatViewController(sessionId: sessionId, connection: connection, navigation: navigation)
             chat.sessionManager._loadHistoryForTesting = { _, _ in nil }
             chat.sessionManager._focusedStreamLivenessForTesting = { .connected }

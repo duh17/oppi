@@ -123,7 +123,7 @@ struct HostSwitcherModel {
 
     func open(_ item: HostSwitcherDestination) {
         guard item.shouldNavigate(from: destination) else { return }
-        navigation.openHostSwitcherDestination(item, serverId: current.id)
+        navigation.open(.serverJob(item, serverId: current.id))
     }
 
     /// Makes `server` the window's server. `ServerSwitchMenu` asks for the lock

@@ -56,12 +56,10 @@ struct WorkspaceNavigationServerScopeTests {
         }
         requestLog.reset()
 
-        navigation.openWorkspace(
-            WorkspaceNavTarget(
+        navigation.open(.place(.sessions(WorkspaceNavTarget(
                 serverId: serverB.id,
                 workspace: makeTestWorkspace(id: "ws-b", name: "Target Workspace", gitStatusEnabled: true)
-            )
-        )
+            ))))
         host.pump()
 
         let observedWorkspaceLoad = await waitForTestCondition(timeoutMs: 1_000) {

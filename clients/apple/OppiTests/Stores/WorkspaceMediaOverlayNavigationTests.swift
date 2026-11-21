@@ -50,13 +50,11 @@ struct WorkspaceMediaOverlayNavigationTests {
 
     @Test func overlayCatchUpAppliesMeasuredPresentationAfterUnfreeze() {
         let navigation = readyNavigation()
-        navigation.openWorkspaceSession(
-            WorkspaceSessionNavTarget(
+        navigation.open(.chat(WorkspaceSessionNavTarget(
                 serverId: "server-b",
                 sessionId: "chat-1",
                 workspaceId: "ws-b"
-            )
-        )
+            )))
         navigation.beginMediaOverlay(activeServerId: "server-b")
         #expect(navigation.workspaceNavigationPresentation == .stack)
 
@@ -115,11 +113,11 @@ struct WorkspaceMediaOverlayNavigationTests {
             sessionId: "chat-1",
             workspaceId: "ws-b"
         )
-        navigation.openWorkspaceSession(session)
+        navigation.open(.chat(session))
         #expect(navigation.workspaceStackRouteElements.count == 1)
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
-        navigation.clearWorkspaceSelections()
+        navigation.open(.place(.allSessions), from: .external)
 
         #expect(navigation.isMediaOverlayActive)
         #expect(navigation.workspaceStackRouteElements.count == 1)
@@ -143,13 +141,13 @@ struct WorkspaceMediaOverlayNavigationTests {
             sessionId: "chat-1",
             workspaceId: "ws-b"
         )
-        navigation.openWorkspaceSession(session, workspace: workspace)
+        navigation.open(.chat(session), from: .screen(workspace: workspace))
         #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.selectedWorkspaceFilter == nil)
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
         navigation.selectedWorkspaceFilter = workspace
-        navigation.clearWorkspaceSelections()
+        navigation.open(.place(.allSessions), from: .external)
 
         #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.selectedWorkspaceFilter == nil)
@@ -172,7 +170,7 @@ struct WorkspaceMediaOverlayNavigationTests {
             workspaceId: "ws-b"
         )
         navigation.setWorkspaceNavigationPresentation(.split)
-        navigation.openWorkspaceSession(session, workspace: workspace)
+        navigation.open(.chat(session), from: .screen(workspace: workspace))
 
         #expect(navigation.selectedWorkspaceFilter == nil)
         #expect(navigation.splitDetailColumn.routes == [.inbox, .session(session)])
@@ -198,13 +196,13 @@ struct WorkspaceMediaOverlayNavigationTests {
             sessionId: "chat-1",
             workspaceId: "ws-b"
         )
-        navigation.openWorkspace(workspace)
-        navigation.openWorkspaceSession(session, workspace: workspace)
+        navigation.open(.place(.sessions(workspace)))
+        navigation.open(.chat(session), from: .screen(workspace: workspace))
         #expect(navigation.workspaceStackRouteElements.count == 2)
         #expect(navigation.selectedWorkspaceFilter == workspace)
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
-        navigation.clearWorkspaceSelections()
+        navigation.open(.place(.allSessions), from: .external)
 
         #expect(navigation.workspaceStackRouteElements.count == 2)
         #expect(navigation.selectedWorkspaceFilter == workspace)
@@ -217,13 +215,11 @@ struct WorkspaceMediaOverlayNavigationTests {
 
     @Test func fullscreenOverlayIgnoresStackSplitFlips() {
         let navigation = readyNavigation()
-        navigation.openWorkspaceSession(
-            WorkspaceSessionNavTarget(
+        navigation.open(.chat(WorkspaceSessionNavTarget(
                 serverId: "server-b",
                 sessionId: "chat-1",
                 workspaceId: "ws-b"
-            )
-        )
+            )))
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
         navigation.setWorkspaceNavigationPresentation(.split)
@@ -238,22 +234,20 @@ struct WorkspaceMediaOverlayNavigationTests {
 
     @Test func nestedOverlayEndsWaitForMatchingBegins() {
         let navigation = readyNavigation()
-        navigation.openWorkspaceSession(
-            WorkspaceSessionNavTarget(
+        navigation.open(.chat(WorkspaceSessionNavTarget(
                 serverId: "server-b",
                 sessionId: "chat-1"
-            )
-        )
+            )))
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
         navigation.beginMediaOverlay(activeServerId: "server-b")
-        navigation.clearWorkspaceSelections()
+        navigation.open(.place(.allSessions), from: .external)
         #expect(navigation.workspaceStackRouteElements.count == 1)
 
         #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
         #expect(navigation.isMediaOverlayActive)
 
-        navigation.clearWorkspaceSelections()
+        navigation.open(.place(.allSessions), from: .external)
         #expect(navigation.workspaceStackRouteElements.count == 1)
         #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
         #expect(!navigation.isMediaOverlayActive)
@@ -261,12 +255,10 @@ struct WorkspaceMediaOverlayNavigationTests {
 
     @Test func overlayDoesNotTrapLaterUserPops() {
         let navigation = readyNavigation()
-        navigation.openWorkspaceSession(
-            WorkspaceSessionNavTarget(
+        navigation.open(.chat(WorkspaceSessionNavTarget(
                 serverId: "server-b",
                 sessionId: "chat-1"
-            )
-        )
+            )))
         navigation.beginMediaOverlay(activeServerId: "server-b")
         #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
 
@@ -286,8 +278,8 @@ struct WorkspaceMediaOverlayNavigationTests {
             sessionId: "chat-1",
             workspaceId: "ws-b"
         )
-        navigation.openWorkspace(workspace)
-        navigation.openWorkspaceSession(session, workspace: workspace)
+        navigation.open(.place(.sessions(workspace)))
+        navigation.open(.chat(session), from: .screen(workspace: workspace))
         #expect(navigation.workspaceStackRouteElements.count == 2)
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
@@ -312,7 +304,7 @@ struct WorkspaceMediaOverlayNavigationTests {
             workspaceId: "ws-b"
         )
         navigation.setWorkspaceNavigationPresentation(.split)
-        navigation.openWorkspaceSession(session)
+        navigation.open(.chat(session))
         #expect(navigation.splitDetailColumn.routes == [.inbox, .session(session)])
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
@@ -337,12 +329,12 @@ struct WorkspaceMediaOverlayNavigationTests {
             workspaceId: "ws-b"
         )
         navigation.setWorkspaceNavigationPresentation(.split)
-        navigation.openWorkspace(workspace)
-        navigation.openWorkspaceSession(session, workspace: workspace)
+        navigation.open(.place(.sessions(workspace)))
+        navigation.open(.chat(session), from: .screen(workspace: workspace))
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
         // Opening a workspace from the sidebar is the person's navigation.
-        navigation.openWorkspace(workspace)
+        navigation.open(.place(.sessions(workspace)))
 
         #expect(!navigation.isMediaOverlayActive)
         #expect(navigation.splitDetailColumn.routes == [.workspace(workspace)])
@@ -362,12 +354,12 @@ struct WorkspaceMediaOverlayNavigationTests {
             workspaceId: "ws-b"
         )
         navigation.setWorkspaceNavigationPresentation(.split)
-        navigation.openWorkspace(workspace)
-        navigation.openWorkspaceSession(session, workspace: workspace)
+        navigation.open(.place(.sessions(workspace)))
+        navigation.open(.chat(session), from: .screen(workspace: workspace))
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
         // All Sessions from the drawer or the server switcher.
-        navigation.showAllWorkspaceSessions()
+        navigation.open(.place(.allSessions))
 
         #expect(!navigation.isMediaOverlayActive)
         #expect(navigation.splitDetailColumn.routes == [.inbox])
@@ -392,12 +384,12 @@ struct WorkspaceMediaOverlayNavigationTests {
             workspaceId: "ws-b"
         )
         navigation.setWorkspaceNavigationPresentation(.split)
-        navigation.openWorkspace(workspace)
-        navigation.openWorkspaceSession(first, workspace: workspace)
+        navigation.open(.place(.sessions(workspace)))
+        navigation.open(.chat(first), from: .screen(workspace: workspace))
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
         // Opening another session from the list replaces the chat over it.
-        navigation.openWorkspaceSession(second, workspace: workspace)
+        navigation.open(.chat(second), from: .screen(workspace: workspace))
 
         #expect(!navigation.isMediaOverlayActive)
         #expect(navigation.splitDetailColumn.routes == [.workspace(workspace), .session(second)])
@@ -418,12 +410,12 @@ struct WorkspaceMediaOverlayNavigationTests {
             workspaceId: "ws-a"
         )
         navigation.setWorkspaceNavigationPresentation(.split)
-        navigation.openWorkspaceSession(chat)
+        navigation.open(.chat(chat))
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
         // The sidebar opens a chat on another server, and the shell switches
         // to that server, before AVKit's end arrives.
-        navigation.openWorkspaceSession(otherServerChat)
+        navigation.open(.chat(otherServerChat))
         #expect(!navigation.isMediaOverlayActive)
 
         // The late end must not put server-b back under server-a's chat.

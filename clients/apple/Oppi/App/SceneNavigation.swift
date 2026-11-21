@@ -224,7 +224,6 @@ final class SceneNavigation {
     /// opens with no screen of its own (a link, a keyboard command) opens in
     /// its focused leaf (`Router.focusedScreen(in:)`), never another window's.
     @ObservationIgnored weak var window: UIWindow?
-    var selectedTab: AppTab = .workspaces
 
     init(app: AppState = AppState()) {
         self.app = app
@@ -363,15 +362,6 @@ final class SceneNavigation {
         case .utility(let utility): return .utility(utility)
         case .workspace(let workspace): return .sessions(workspace)
         default: return .allSessions
-        }
-    }
-
-    /// Makes `place` the main pane's root: a sidebar row's action.
-    func openPlace(_ place: NavigationPlace) {
-        switch place {
-        case .sessions(nil): showAllWorkspaceSessions()
-        case .sessions(let workspace?): openWorkspace(workspace)
-        case .utility(let utility): openWorkspaceUtility(utility)
         }
     }
 
@@ -570,28 +560,6 @@ final class SceneNavigation {
 
     private var isSplit: Bool { workspaceNavigationPresentation == .split }
 
-    /// The stack that shows `workspace`'s sessions with nothing over them.
-    private static func workspaceLayer(_ workspace: WorkspaceNavTarget?) -> [WorkspaceStackRouteElement] {
-        workspace.map { [.workspace($0)] } ?? []
-    }
-
-    func openWorkspace(_ target: WorkspaceNavTarget) {
-        guard scopedLockAllows(.workspace(serverId: target.serverId, workspaceId: target.workspace.id), retry: {
-            self.openWorkspace(target)
-        }) else { return }
-        mediaOverlayYieldsToUserNavigation()
-        selectedTab = .workspaces
-        selectedWorkspaceFilter = target
-        workspaceStackRouteElements = [.workspace(target)]
-    }
-
-    func showAllWorkspaceSessions() {
-        mediaOverlayYieldsToUserNavigation()
-        selectedTab = .workspaces
-        selectedWorkspaceFilter = nil
-        workspaceStackRouteElements = []
-    }
-
     /// If the deleted workspace is the current selection, leave it through the
     /// all-sessions inbox. Manage-list deletes of an unselected workspace stay put.
     func leaveDeletedWorkspace(serverId: String, workspaceId: String) {
@@ -599,105 +567,16 @@ final class SceneNavigation {
               selected.serverId == serverId, selected.workspace.id == workspaceId else {
             return
         }
-        showAllWorkspaceSessions()
-    }
-
-    func openWorkspaceSession(_ target: WorkspaceSessionNavTarget, workspace: WorkspaceNavTarget? = nil) {
-        let resolvedTarget = target.withWorkspaceIdIfMissing(workspace?.workspace.id)
-        guard scopedLockAllows(Self.lockTarget(resolvedTarget), retry: {
-            self.openWorkspaceSession(target, workspace: workspace)
-        }) else { return }
-        mediaOverlayYieldsToUserNavigation()
-        selectedTab = .workspaces
-        if isSplit {
-            // The chat is pushed over the column's place: over a utility on
-            // top of what it shows; over a list in place of what covers it,
-            // a workspace's list following the session's workspace.
-            switch currentPlace {
-            case .utility:
-                workspaceStackRouteElements.append(.session(resolvedTarget))
-            case .sessions(nil):
-                workspaceStackRouteElements = [.session(resolvedTarget)]
-            case .sessions(let listed?):
-                selectedWorkspaceFilter = workspace ?? listed
-                workspaceStackRouteElements = Self.workspaceLayer(selectedWorkspaceFilter) + [.session(resolvedTarget)]
-            }
-            return
-        }
-        let wasShowingWorkspaceInbox = workspace.map {
-            selectedWorkspaceFilter == $0 && workspaceStackRouteElements.count == 1
-        } ?? false
-        // The all-sessions inbox is the visible back-stop. Opening a session
-        // from there keeps chat on top of all sessions instead of inventing
-        // the session's unvisited workspace inbox. The workspace hint still
-        // rides on the session target for server scoping.
-        let isAtAllSessionsRoot = selectedWorkspaceFilter == nil && workspaceStackRouteElements.isEmpty
-        if let workspace, !isAtAllSessionsRoot {
-            selectedWorkspaceFilter = workspace
-        }
-        if let workspace, !isAtAllSessionsRoot, !wasShowingWorkspaceInbox {
-            workspaceStackRouteElements = [.workspace(workspace), .session(resolvedTarget)]
-        } else {
-            workspaceStackRouteElements.append(.session(resolvedTarget))
-        }
-    }
-
-    /// Applies source-aware session navigation without conflating external deep
-    /// links with user-tapped hyperlinks inside the current app hierarchy.
-    func openSession(_ target: WorkspaceSessionNavTarget, source: SessionNavigationSource) {
-        switch source {
-        case .externalURL:
-            setWorkspaceSessionPath(
-                serverId: target.serverId,
-                sessionId: target.sessionId,
-                workspaceId: target.workspaceId
-            )
-        case .inAppHyperlink:
-            openReferencedSession(target)
-        }
+        open(.place(.allSessions))
     }
 
     /// The session whose chat is the visible screen: the stack's top.
-    private var visibleChatSession: WorkspaceSessionNavTarget? {
+    var visibleChatSession: WorkspaceSessionNavTarget? {
         guard case .session(let current)? = workspaceStackRouteElements.last else { return nil }
         return current
     }
 
-    /// Open a session from an in-app link (a chat's link, a Pinned session
-    /// card): it is pushed over the screen it was opened from, in both shells,
-    /// so Back returns there. An exact self-link is a no-op.
-    func openReferencedSession(_ target: WorkspaceSessionNavTarget) {
-        guard scopedLockAllows(Self.lockTarget(target), retry: {
-            self.openReferencedSession(target)
-        }) else { return }
-        selectedTab = .workspaces
-        if let current = visibleChatSession, Self.isSameSession(current, target) {
-            return
-        }
-        workspaceStackRouteElements.append(.session(target))
-    }
-
-    /// Push a wiki-linked file from the currently visible chat without changing
-    /// the chat's all-sessions/workspace filter. This keeps Back on the file
-    /// destination pointed at the source chat instead of a newly selected
-    /// workspace inbox.
-    func openReferencedWorkspaceLinkedFile(
-        _ target: WorkspaceLinkedFileNavTarget,
-        workspace: WorkspaceNavTarget? = nil,
-        sourceSession: WorkspaceSessionNavTarget?
-    ) {
-        guard scopedLockAllows(WorkspaceLinkedFileViewController.lockTarget(for: target), retry: {
-            self.openReferencedWorkspaceLinkedFile(target, workspace: workspace, sourceSession: sourceSession)
-        }) else { return }
-        selectedTab = .workspaces
-        guard let sourceSession, let current = visibleChatSession, Self.isSameSession(current, sourceSession) else {
-            openWorkspaceLinkedFile(target, workspace: workspace)
-            return
-        }
-        workspaceStackRouteElements.append(.linkedFile(target))
-    }
-
-    private static func isSameSession(
+    static func isSameSession(
         _ lhs: WorkspaceSessionNavTarget,
         _ rhs: WorkspaceSessionNavTarget
     ) -> Bool {
@@ -781,11 +660,6 @@ final class SceneNavigation {
         }
     }
 
-    func openChatReader(_ target: ChatReaderNavTarget) {
-        selectedTab = .workspaces
-        workspaceStackRouteElements.append(.chatReader(target))
-    }
-
     /// Keeps a column drill on the file-browser route so a shell change
     /// rebuilds that folder and file. Identity stays the original path.
     func recordFileBrowserColumn(
@@ -806,54 +680,6 @@ final class SceneNavigation {
         workspaceStackRouteElements[index] = .fileBrowser(target)
     }
 
-    func openWorkspaceFileBrowser(_ target: FileBrowserNavTarget, workspace: WorkspaceNavTarget? = nil) {
-        if case .workspace(let workspaceId, _) = target.scope {
-            guard scopedLockAllows(.workspace(serverId: target.serverId, workspaceId: workspaceId), retry: {
-                self.openWorkspaceFileBrowser(target, workspace: workspace)
-            }) else { return }
-        }
-        selectedTab = .workspaces
-        if let workspace {
-            selectedWorkspaceFilter = workspace
-        }
-        workspaceStackRouteElements.append(.fileBrowser(target))
-    }
-
-    func openWorkspaceLinkedFile(_ target: WorkspaceLinkedFileNavTarget, workspace: WorkspaceNavTarget? = nil) {
-        guard scopedLockAllows(WorkspaceLinkedFileViewController.lockTarget(for: target), retry: {
-            self.openWorkspaceLinkedFile(target, workspace: workspace)
-        }) else { return }
-        selectedTab = .workspaces
-        if let workspace {
-            selectedWorkspaceFilter = workspace
-        }
-        workspaceStackRouteElements.append(.linkedFile(target))
-    }
-
-    func openWorkspaceUtility(_ target: WorkspaceUtilityNavTarget) {
-        selectedTab = .workspaces
-        if isSplit {
-            selectedWorkspaceFilter = nil
-            workspaceStackRouteElements = [.utility(target)]
-        } else {
-            workspaceStackRouteElements.append(.utility(target))
-        }
-    }
-
-    /// Pushes a server-scoped page over what the window shows.
-    private func pushServerPage(_ element: WorkspaceStackRouteElement) {
-        selectedTab = .workspaces
-        workspaceStackRouteElements.append(element)
-    }
-
-    func openServerDetails(_ target: ServerDetailsNavTarget) {
-        pushServerPage(.serverDetails(target))
-    }
-
-    func openModelProviders(_ target: ModelProvidersNavTarget) {
-        pushServerPage(.modelProviders(target))
-    }
-
     var visibleHostSwitcherDestination: HostSwitcherDestination {
         if let destination = Self.hostSwitcherDestination(from: workspaceStackRouteElements.last) {
             return destination
@@ -864,30 +690,7 @@ final class SceneNavigation {
         return .inbox
     }
 
-    func openHostSwitcherDestination(_ destination: HostSwitcherDestination, serverId: String) {
-        guard destination.shouldNavigate(from: visibleHostSwitcherDestination) else { return }
-
-        selectedTab = .workspaces
-        let page: WorkspaceStackRouteElement? = switch destination {
-        case .inbox: nil
-        case .usage: .utility(.manageServers)
-        case .serverMetrics: .utility(.serverMetrics)
-        case .serverSettings: .serverDetails(ServerDetailsNavTarget(serverId: serverId))
-        case .modelProviders: .modelProviders(ModelProvidersNavTarget(serverId: serverId))
-        }
-        if isSplit {
-            // Each job replaces the detail column beside the sidebar.
-            selectedWorkspaceFilter = nil
-            workspaceStackRouteElements = page.map { [$0] } ?? []
-            return
-        }
-        while Self.hostSwitcherDestination(from: workspaceStackRouteElements.last) != nil {
-            workspaceStackRouteElements.removeLast()
-        }
-        if let page { workspaceStackRouteElements.append(page) }
-    }
-
-    private static func hostSwitcherDestination(
+    static func hostSwitcherDestination(
         from element: WorkspaceStackRouteElement?
     ) -> HostSwitcherDestination? {
         switch element {
@@ -897,61 +700,6 @@ final class SceneNavigation {
         case .modelProviders: .modelProviders
         default: nil
         }
-    }
-
-    func openServerResourceDetail(_ target: ServerResourceDetailNavTarget) {
-        pushServerPage(.serverResourceDetail(target))
-    }
-
-    func openWorkspaceConfiguration(_ target: WorkspaceNavTarget) {
-        guard scopedLockAllows(.workspace(serverId: target.serverId, workspaceId: target.workspace.id), retry: {
-            self.openWorkspaceConfiguration(target)
-        }) else { return }
-        selectedTab = .workspaces
-        selectedWorkspaceFilter = target
-        if isSplit {
-            workspaceStackRouteElements = [.workspace(target), .workspaceConfiguration(target)]
-        } else {
-            workspaceStackRouteElements.append(.workspaceConfiguration(target))
-        }
-    }
-
-    func clearWorkspaceSelections() {
-        selectedWorkspaceFilter = nil
-        workspaceStackRouteElements = []
-    }
-
-    /// Replaces the workspace stack with a session destination in one state
-    /// write, so the shell never shows the empty stack in between.
-    func setWorkspaceSessionPath(serverId: String, sessionId: String, workspaceId: String? = nil) {
-        let target = WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId, workspaceId: workspaceId)
-        guard scopedLockAllows(Self.lockTarget(target), retry: {
-            self.setWorkspaceSessionPath(serverId: serverId, sessionId: sessionId, workspaceId: workspaceId)
-        }) else { return }
-        if isSplit {
-            workspaceStackRouteElements = Self.workspaceLayer(selectedWorkspaceFilter) + [.session(target)]
-        } else {
-            workspaceStackRouteElements = [.session(target)]
-        }
-    }
-
-    // MARK: - Scoped locks
-
-    /// Every open of a server-, workspace-, or session-scoped destination
-    /// passes here. A locked target asks for device authentication and opens
-    /// after success (`retry`); cancel leaves navigation where it was. The
-    /// destination views gate again, which covers an unlock that expires
-    /// under an open screen.
-    private func scopedLockAllows(_ target: ScopedLockTarget, retry: @escaping @MainActor () -> Void) -> Bool {
-        ScopedLockService.shared.gate(target, onUnlock: retry)
-    }
-
-    private static func lockTarget(_ target: WorkspaceSessionNavTarget) -> ScopedLockTarget {
-        ScopedLockService.shared.sessionTarget(
-            serverId: target.serverId,
-            sessionId: target.sessionId,
-            workspaceId: target.workspaceId
-        )
     }
 
     /// Pending workspace creation deep-link payload.
@@ -969,8 +717,8 @@ final class SceneNavigation {
     var pendingThreadFocus: ThreadFocus?
 
     /// Shows All Sessions (the matching list in a split layout) with the thread of `rootId` open.
-    func showThread(serverId: String, rootId: String) {
-        showAllWorkspaceSessions()
+    func showThread(serverId: String, rootId: String, from origin: NavigationOrigin = .screen()) {
+        open(.place(.allSessions), from: origin)
         pendingThreadFocus = ThreadFocus(serverId: serverId, rootId: rootId)
     }
 
@@ -999,11 +747,6 @@ final class SceneNavigation {
     /// Attachments to auto-send when the quick session message opens.
     /// Extracted from `pendingQuickSessionNav` when Quick Session dismisses.
     var pendingQuickSessionAttachments: [PendingAttachment]?
-
-    /// A file browser drilled into a folder: the folder pushes onto the stack.
-    func pushWorkspaceFileBrowser(_ target: FileBrowserNavTarget) {
-        workspaceStackRouteElements.append(.fileBrowser(target))
-    }
 
     /// A file browser's breadcrumb went above the folder its pages start at
     /// (a link opened it deeper): the first of the browser's pages on top of
@@ -1247,8 +990,4 @@ struct QuickSessionNav {
         self.autoSendAttachments = autoSendAttachments
         self.startsLiveVoice = startsLiveVoice
     }
-}
-
-enum AppTab: Hashable {
-    case workspaces
 }

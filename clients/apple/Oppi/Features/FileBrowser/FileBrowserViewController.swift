@@ -895,7 +895,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     private func pushDirectory(path: String) {
         let target = navTarget(path: path)
         guard !isShellRouted, navigationController != nil else {
-            navigation.pushWorkspaceFileBrowser(target)
+            navigation.open(.page(.fileBrowser(target)))
             return
         }
         let page = FileBrowserViewController(root: root, target: target)
@@ -1033,7 +1033,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
                 navigationContext: context
             )
             guard isInSplitPane, let host = PaneHostController.containing(self), let cell = host.cell(holding: self) else {
-                navigation.openWorkspaceLinkedFile(target)
+                navigation.open(.page(.linkedFile(target)))
                 return
             }
             if host.openBeside(PaneOpenContent(file: target), kind: .file, from: cell) { return }

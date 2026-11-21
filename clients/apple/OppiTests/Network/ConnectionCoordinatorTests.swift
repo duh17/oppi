@@ -430,11 +430,11 @@ struct ConnectionCoordinatorTests {
         await coordinator.switchToTestServer(newerServer)
 
         let navigation = SceneNavigation()
-        navigation.openWorkspaceSession(.init(
+        navigation.open(.chat(.init(
             serverId: newerServer.id,
             sessionId: "newer-session",
             workspaceId: "newer-workspace"
-        ))
+        )))
         let gate = CoordinatorPreparationGate()
         coordinator._initialLANEndpointForTesting = { serverID in
             guard serverID == staleServer.id else { return nil }
@@ -449,11 +449,11 @@ struct ConnectionCoordinatorTests {
                 shouldActivate: { !superseded }
             )
             guard switched, !superseded else { return }
-            navigation.openReferencedSession(.init(
+            navigation.open(.chat(.init(
                 serverId: staleServer.id,
                 sessionId: "stale-session",
                 workspaceId: "stale-workspace"
-            ))
+            )), from: .link())
         }
         await gate.waitUntilStarted()
 

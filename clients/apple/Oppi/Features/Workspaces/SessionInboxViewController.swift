@@ -740,7 +740,7 @@ final class SessionInboxViewController: UIViewController {
         case .serverVersion(let serverId):
             cell.backgroundConfiguration = .clear()
             cell.contentConfiguration = ServerVersionPromptConfiguration(themeID: root.themeStore.activeThemeID) { [weak self] in
-                self?.navigation.openHostSwitcherDestination(.serverSettings, serverId: serverId)
+                self?.navigation.open(.serverJob(.serverSettings, serverId: serverId))
             }
         case .providerSetup(let serverId, let serverName):
             cell.backgroundConfiguration = .clear()
@@ -749,7 +749,7 @@ final class SessionInboxViewController: UIViewController {
                 message: String(localized: "Connect a model provider before starting a session on \(serverName)."),
                 openAccessibilityIdentifier: "workspace.providerSetup.open"
             ) { [weak self] in
-                self?.navigation.openModelProviders(ModelProvidersNavTarget(serverId: serverId))
+                self?.navigation.open(.page(.modelProviders(ModelProvidersNavTarget(serverId: serverId))))
             }
         case .pushDiscovery(let serverId, let status):
             cell.backgroundConfiguration = .clear()
@@ -864,13 +864,9 @@ final class SessionInboxViewController: UIViewController {
         item.connection.sessionStore.cacheSessionForNavigation(normalized)
 
         let workspaceTarget = item.workspace.map { WorkspaceNavTarget(serverId: item.serverId, workspace: $0) }
-        navigation.openWorkspaceSession(
-            WorkspaceSessionNavTarget(
-                serverId: item.serverId,
-                sessionId: item.session.id,
-                routeScope: routeScope
-            ),
-            workspace: workspaceTarget
+        navigation.open(
+            .chat(WorkspaceSessionNavTarget(serverId: item.serverId, sessionId: item.session.id, routeScope: routeScope)),
+            from: .screen(workspace: workspaceTarget)
         )
     }
 
@@ -922,7 +918,7 @@ final class SessionInboxViewController: UIViewController {
 
     private func switchVisibleServer() {
         errorAlerts.dismiss()
-        navigation.showAllWorkspaceSessions()
+        navigation.open(.place(.allSessions))
     }
 
     func startQuickSession(dictate: Bool) {
@@ -943,7 +939,7 @@ final class SessionInboxViewController: UIViewController {
 
     private func openFiles() {
         guard isFrontOfNavigationStack, let serverId = root.windowServerId else { return }
-        navigation.openWorkspaceFileBrowser(FileBrowserNavTarget.hostHome(serverId: serverId))
+        navigation.open(.page(.fileBrowser(FileBrowserNavTarget.hostHome(serverId: serverId))))
     }
 
     // MARK: E2E launch hints
@@ -964,7 +960,7 @@ final class SessionInboxViewController: UIViewController {
         else { return }
 
         hasAutoOpenedE2EWorkspace = true
-        navigation.openWorkspace(WorkspaceNavTarget(serverId: serverId, workspace: workspace))
+        navigation.open(.place(.sessions(WorkspaceNavTarget(serverId: serverId, workspace: workspace))))
     }
 
     private func autoOpenE2ESessionIfRequested() {

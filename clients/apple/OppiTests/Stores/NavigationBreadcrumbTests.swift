@@ -168,7 +168,7 @@ struct NavigationBreadcrumbTests {
         navigation.app.launchPhase = .ready
         navigation.app.showOnboarding = false
         navigation.setWorkspaceNavigationPresentation(.split)
-        navigation.openChatReader(ChatReaderNavTarget(id: UUID()))
+        navigation.open(.page(.chatReader(ChatReaderNavTarget(id: UUID()))))
 
         let before = navigation.navigationRouteSnapshot
         #expect(before.screen == "chat_reader")
@@ -176,7 +176,7 @@ struct NavigationBreadcrumbTests {
         #expect(before.stackDepth == 1)
         #expect(navigation.visibleSplitDiagnosticContext.screen == "chat_reader")
 
-        navigation.openChatReader(ChatReaderNavTarget(id: UUID()))
+        navigation.open(.page(.chatReader(ChatReaderNavTarget(id: UUID()))))
         let after = navigation.navigationRouteSnapshot
 
         #expect(after.screen == before.screen)

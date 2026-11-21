@@ -748,7 +748,7 @@ struct ToolTimelineRowFullScreenActivationTests {
             ChatReaderPayload(content: .plainText(content: "cover", filePath: "cover.txt")),
             retaining: host.navigation.containsChatReader
         )
-        host.navigation.openChatReader(second)
+        host.navigation.open(.page(.chatReader(second)))
         // The covering reader must reach the screen, so the first one really disappears.
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) { Self.shellShows(screens: 3, in: host) })
 
@@ -983,11 +983,9 @@ struct ToolTimelineRowFullScreenActivationTests {
     private func makeHostedChatReader(payload: ChatReaderPayload) throws -> HostedChatReader {
         let store = ChatReaderPayloadStore()
         let navigation = SceneNavigation()
-        navigation.openWorkspaceSession(
-            WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")
-        )
+        navigation.open(.chat(WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "session-1")))
         let target = store.store(payload)
-        navigation.openChatReader(target)
+        navigation.open(.page(.chatReader(target)))
 
         let controller = UINavigationController(rootViewController: UIViewController())
         controller.pushViewController(
@@ -1054,7 +1052,7 @@ struct ToolTimelineRowFullScreenActivationTests {
         configuration.openFullScreen = { payload in
             let target = host.store.store(payload, retaining: host.navigation.containsChatReader)
             openedTarget = target
-            host.navigation.openChatReader(target)
+            host.navigation.open(.page(.chatReader(target)))
         }
         let view = ToolTimelineRowContentView(configuration: configuration)
         host.controller.view.addSubview(view)

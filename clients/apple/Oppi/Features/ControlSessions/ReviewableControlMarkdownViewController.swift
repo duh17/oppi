@@ -526,7 +526,7 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
         Router.finish(reader)
         Task { @MainActor in
             await Task.yield()
-            navigation.openWorkspaceSession(target)
+            navigation.open(.chat(target))
         }
     }
 
@@ -538,7 +538,7 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
     private func completeGuidedSessionHandoff() {
         guidedSheet = nil
         guard let target = guidedSessionHandoff.completeAfterDismissal() else { return }
-        root?.navigation.openWorkspaceSession(target)
+        root?.navigation.open(.chat(target))
     }
 
     private static func languageHint(for path: String) -> String? {

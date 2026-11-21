@@ -86,8 +86,8 @@ struct RouterUIKitTests {
         })
         let shellStack = try #require(stack)
 
-        navigation.openWorkspaceUtility(.agents)
-        navigation.openWorkspaceUtility(.extensions)
+        navigation.open(.place(.utility(.agents)))
+        navigation.open(.place(.utility(.extensions)))
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
             shellStack.transitionCoordinator == nil && shellStack.viewControllers.count == 3
         })
@@ -108,7 +108,7 @@ struct RouterUIKitTests {
         })
 
         // Replacing the stack in SceneNavigation replaces the UIKit stack.
-        navigation.showAllWorkspaceSessions()
+        navigation.open(.place(.allSessions))
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
             shellStack.transitionCoordinator == nil && shellStack.viewControllers.count == 1
         })
@@ -127,7 +127,7 @@ struct RouterUIKitTests {
         })
         let shellStack = try #require(stack)
 
-        root.navigation.openWorkspaceUtility(.extensions)
+        root.navigation.open(.place(.utility(.extensions)))
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
             shellStack.transitionCoordinator == nil && shellStack.viewControllers.count == 2
         })

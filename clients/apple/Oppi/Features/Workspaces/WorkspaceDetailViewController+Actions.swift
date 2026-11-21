@@ -168,8 +168,9 @@ extension WorkspaceDetailViewController {
         applySearchNavigation(.willOpenDestination)
         if let scope = session.routeScope, scope != .workspace(workspaceId) {
             connection.sessionStore.cacheSessionForNavigation(session)
-            navigation.openReferencedSession(
-                WorkspaceSessionNavTarget(serverId: serverId, sessionId: session.id, routeScope: scope)
+            navigation.open(
+                .chat(WorkspaceSessionNavTarget(serverId: serverId, sessionId: session.id, routeScope: scope)),
+                from: .link()
             )
             return
         }
@@ -196,9 +197,9 @@ extension WorkspaceDetailViewController {
     /// the current connection is gone.
     private func routeToSession(_ sessionId: String) {
         let workspace = connection.map { currentWorkspace($0) } ?? routeWorkspace
-        navigation.openWorkspaceSession(
-            WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId, workspaceId: workspace.id),
-            workspace: WorkspaceNavTarget(serverId: serverId, workspace: workspace)
+        navigation.open(
+            .chat(WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId, workspaceId: workspace.id)),
+            from: .screen(workspace: WorkspaceNavTarget(serverId: serverId, workspace: workspace))
         )
     }
 
@@ -262,13 +263,11 @@ extension WorkspaceDetailViewController {
             "presentation": navigation.workspaceNavigationPresentation == .stack ? "stack" : "split",
             "workspaceStackDepth": String(navigation.workspaceStackRouteElements.count),
         ])
-        switch navigation.workspaceNavigationPresentation {
-        case .stack:
-            navigation.openWorkspaceFileBrowser(target)
-        case .split:
-            let workspace = connection.map { currentWorkspace($0) } ?? routeWorkspace
-            navigation.openWorkspaceFileBrowser(target, workspace: WorkspaceNavTarget(serverId: serverId, workspace: workspace))
-        }
+        let workspace = connection.map { currentWorkspace($0) } ?? routeWorkspace
+        navigation.open(
+            .page(.fileBrowser(target)),
+            from: .screen(workspace: WorkspaceNavTarget(serverId: serverId, workspace: workspace))
+        )
     }
 
     /// The Git panel (the chat's, `GitPanelViewController`) as a sheet: the
@@ -319,7 +318,7 @@ extension WorkspaceDetailViewController {
 
     func openWorkspaceConfiguration() {
         let workspace = connection.map { currentWorkspace($0) } ?? routeWorkspace
-        navigation.openWorkspaceConfiguration(WorkspaceNavTarget(serverId: serverId, workspace: workspace))
+        navigation.open(.page(.workspaceConfiguration(WorkspaceNavTarget(serverId: serverId, workspace: workspace))))
     }
 
     /// "Open Terminal here" from the workspace bar: the workspace's root folder

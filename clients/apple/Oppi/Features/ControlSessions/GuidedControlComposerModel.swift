@@ -406,7 +406,7 @@ final class GuidedControlComposerModel {
             if let onSessionPrepared {
                 onSessionPrepared(completion.sessionTarget)
             } else {
-                navigation.openWorkspaceSession(completion.sessionTarget)
+                navigation.open(.chat(completion.sessionTarget))
             }
         } catch {
             self.error = configuration.targetId == nil

@@ -185,7 +185,7 @@ struct PinnedScreenTests {
     @Test func theScreenShowsSessionCardsThenTiles() async throws {
         let shell = try await Self.makeShell(size: CGSize(width: 1133, height: 900), regular: true)
         defer { shell.end() }
-        shell.root.navigation.openWorkspaceUtility(.pinned)
+        shell.root.navigation.open(.place(.utility(.pinned)))
         #expect(await shell.settles { shell.items(in: .places).count == 8 })
 
         let screen = try #require(shell.pinned)
@@ -233,7 +233,7 @@ struct PinnedScreenTests {
             opened.append(request)
             return true
         }
-        shell.root.navigation.openWorkspaceUtility(.pinned)
+        shell.root.navigation.open(.place(.utility(.pinned)))
         #expect(await shell.settles { shell.cell("pin_Notebook0001") is UICollectionViewListCell })
         let row = try #require(shell.cell("pin_Notebook0001") as? UICollectionViewListCell)
         #expect((row.contentConfiguration as? UIListContentConfiguration)?.text == "notebook")
@@ -277,7 +277,7 @@ struct PinnedScreenTests {
         let requests = OSAllocatedUnfairLock(initialState: [String]())
         let shell = try await Self.makeShell(size: CGSize(width: 744, height: 1133), regular: true, requests: requests)
         defer { shell.end() }
-        shell.root.navigation.openWorkspaceUtility(.pinned)
+        shell.root.navigation.open(.place(.utility(.pinned)))
         let size = SessionFormatting.byteCount(Self.report.count)
         #expect(await shell.settles {
             shell.cell("pin_Report000011")?.accessibilityLabel == "report.pdf, PDF \u{00B7} 2 pages \u{00B7} \(size)"
@@ -320,7 +320,7 @@ struct PinnedScreenTests {
         try frame.write(to: poster)
         defer { try? FileManager.default.removeItem(at: poster) }
 
-        shell.root.navigation.openWorkspaceUtility(.pinned)
+        shell.root.navigation.open(.place(.utility(.pinned)))
         #expect(await shell.settles {
             shell.cell("pin_SwordLab0007")?.accessibilityLabel == "Sword Lab, Godot 4.7 \u{00B7} Build 72"
         })
@@ -336,7 +336,7 @@ struct PinnedScreenTests {
         let requests = OSAllocatedUnfairLock(initialState: [String]())
         let shell = try await Self.makeShell(size: CGSize(width: 1133, height: 900), regular: true, requests: requests)
         defer { shell.end() }
-        shell.root.navigation.openWorkspaceUtility(.pinned)
+        shell.root.navigation.open(.place(.utility(.pinned)))
         #expect(await shell.settles { shell.items(in: .places).count == 8 })
         let screen = try #require(shell.pinned)
         let list = try #require(shell.list(in: screen))
@@ -383,7 +383,7 @@ struct PinnedScreenTests {
             opened.append(request)
             return true
         }
-        shell.root.navigation.openWorkspaceUtility(.pinned)
+        shell.root.navigation.open(.place(.utility(.pinned)))
         #expect(await shell.settles { shell.cell("pin_Review000006") != nil })
 
         try shell.tap("pin_Review000006")
@@ -399,7 +399,7 @@ struct PinnedScreenTests {
         let size = CGSize(width: 1133, height: 744)
         let shell = try await Self.makeShell(size: size, regular: true)
         defer { shell.end() }
-        shell.root.navigation.openWorkspaceUtility(.pinned)
+        shell.root.navigation.open(.place(.utility(.pinned)))
         #expect(await shell.settles {
             shell.cell("pin_Review000006") != nil && shell.split?.displayMode == .oneBesideSecondary
         }, "Pinned shows beside the sidebar")
@@ -434,7 +434,7 @@ struct PinnedScreenTests {
             opened.append(request)
             return true
         }
-        shell.root.navigation.openWorkspaceUtility(.pinned)
+        shell.root.navigation.open(.place(.utility(.pinned)))
         #expect(await shell.settles { shell.cell("pin_OldChat00005") != nil })
 
         try shell.tap("pin_OldChat00005")
@@ -461,7 +461,7 @@ struct PinnedScreenTests {
             opened.append(request)
             return true
         }
-        shell.root.navigation.openWorkspaceUtility(.pinned)
+        shell.root.navigation.open(.place(.utility(.pinned)))
         #expect(await shell.settles { shell.cell("pin_GodotDocs010") != nil })
 
         for id in ["pin_SwordLab0007", "pin_GodotDocs010"] { try shell.tap(id) }
@@ -479,7 +479,7 @@ struct PinnedScreenTests {
         let shell = try await Self.makeShell(size: CGSize(width: 1133, height: 744), regular: true)
         defer { shell.end() }
         let panes = shell.root.navigation.panes
-        shell.root.navigation.openWorkspaceUtility(.pinned)
+        shell.root.navigation.open(.place(.utility(.pinned)))
         #expect(await shell.settles { shell.cell("pin_Notebook0001") != nil })
 
         try shell.tap("pin_Notebook0001")

@@ -387,11 +387,11 @@ extension PaneHostController {
         let navigation = root.navigation
         switch content.element ?? PaneEntries.element(for: content.entry, coordinator: root.coordinator) {
         case .linkedFile(let target)?:
-            navigation.openWorkspaceLinkedFile(target)
+            navigation.open(.page(.linkedFile(target)))
         case .fileBrowser(let target)?:
-            navigation.openWorkspaceFileBrowser(target)
+            navigation.open(.page(.fileBrowser(target)))
         default:
-            navigation.pushPaneEntry(content.entry)
+            navigation.open(.page(.paneEntry(content.entry)))
         }
     }
 }

@@ -72,7 +72,7 @@ final class FileBrowserPinsSection: PinsSection {
             if scope == .hostHome {
                 openFolderHere(folder)
             } else {
-                navigation.pushWorkspaceFileBrowser(FileBrowserNavTarget(serverId: serverId, scope: .hostHome, path: folder))
+                navigation.open(.page(.fileBrowser(FileBrowserNavTarget(serverId: serverId, scope: .hostHome, path: folder))))
             }
         case .files(let workspaceId, let path):
             let folder = path.map { $0 + "/" } ?? ""
@@ -80,13 +80,14 @@ final class FileBrowserPinsSection: PinsSection {
             if scope == pinScope {
                 openFolderHere(folder)
             } else {
-                // The browser's own lock cover asks for the workspace's unlock.
-                navigation.pushWorkspaceFileBrowser(FileBrowserNavTarget(serverId: serverId, scope: pinScope, path: folder))
+                // `open` asks for the workspace's unlock first; the browser's own
+                // lock cover covers an unlock that expires while it shows.
+                navigation.open(.page(.fileBrowser(FileBrowserNavTarget(serverId: serverId, scope: pinScope, path: folder))))
             }
         case .file(.host, let path, _):
-            navigation.openWorkspaceLinkedFile(.hostFile(serverId: serverId, workspaceId: "", path: path))
+            navigation.open(.page(.linkedFile(.hostFile(serverId: serverId, workspaceId: "", path: path))))
         case .file(.workspace(let workspaceId, nil), let path, _):
-            navigation.openWorkspaceLinkedFile(.workspaceFile(serverId: serverId, workspaceId: workspaceId, path: path))
+            navigation.open(.page(.linkedFile(.workspaceFile(serverId: serverId, workspaceId: workspaceId, path: path))))
         default:
             // The File Browser lists only folder and file pins (`shows`).
             return

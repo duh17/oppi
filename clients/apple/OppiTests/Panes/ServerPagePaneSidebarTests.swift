@@ -27,7 +27,7 @@ struct ServerPagePaneSidebarTests {
             (.usage, UsageRouteViewController.self),
             (.serverMetrics, ServerMetricsViewController.self),
         ] {
-            navigation.openHostSwitcherDestination(destination, serverId: "server-a")
+            navigation.open(.serverJob(destination, serverId: "server-a"))
             #expect(await shell.settles {
                 shell.stack.viewControllers.count == 1 && type(of: shell.stack.viewControllers[0]) == page
             }, "\(destination) replaced the routed pane's page")
@@ -44,7 +44,7 @@ struct ServerPagePaneSidebarTests {
         navigation.splitColumnVisibility = .detailOnly
         #expect(await shell.settles { shell.split.displayMode == .secondaryOnly })
 
-        navigation.openHostSwitcherDestination(.serverMetrics, serverId: "server-a")
+        navigation.open(.serverJob(.serverMetrics, serverId: "server-a"))
         #expect(await shell.settles {
             shell.stack.topViewController is ServerMetricsViewController
                 && shell.split.displayMode == .oneBesideSecondary

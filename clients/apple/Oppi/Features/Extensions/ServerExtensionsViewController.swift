@@ -296,11 +296,8 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
     private func open(_ resourceId: String) {
         guard let serverId = root.windowServerId else { return }
         // Opens through `SceneNavigation` so the route stays tracked.
-        root.navigation.openServerResourceDetail(ServerResourceDetailNavTarget(
-            serverId: serverId,
-            kind: .extension,
-            resourceId: resourceId
-        ))
+        let detail = ServerResourceDetailNavTarget(serverId: serverId, kind: .extension, resourceId: resourceId)
+        root.navigation.open(.page(.serverResourceDetail(detail)))
     }
 
     /// The server row's menu (`ServerCatalogServerMenu`); after a switch the

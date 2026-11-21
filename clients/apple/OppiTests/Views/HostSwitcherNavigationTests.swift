@@ -146,19 +146,3 @@ struct SessionInboxHostChangeTests {
         )
     }
 }
-
-@Suite("Host-job compact switch")
-@MainActor
-struct HostJobCompactSwitchTests {
-    @Test func showAllWorkspaceSessionsWouldPopAHostJob() {
-        let navigation = SceneNavigation()
-        navigation.app.launchPhase = .ready
-        navigation.app.showOnboarding = false
-        navigation.openHostSwitcherDestination(.usage, serverId: "server-a")
-        #expect(navigation.visibleHostSwitcherDestination == .usage)
-
-        navigation.showAllWorkspaceSessions()
-        #expect(navigation.visibleHostSwitcherDestination == .inbox)
-        #expect(navigation.workspaceStackRouteElements.isEmpty)
-    }
-}

@@ -682,7 +682,8 @@ final class AppOpener {
             toast(AppOpenRequest.unsupportedLinkMessage(url))
             outcome = .finished
         case .pinned:
-            navigation.openWorkspaceUtility(.pinned)
+            // The request keeps no origin: an oppi://pins link opens as from outside.
+            navigation.open(.place(.utility(.pinned)), from: .external)
             outcome = .finished
         case .invite:
             // accept() runs invites on their own generation; nothing reaches
@@ -759,7 +760,7 @@ final class AppOpener {
                     } else if link == "session" {
                         // A link naming a server this device has not paired
                         // opens as the pane's missing state.
-                        navigation.pushPaneEntry(PaneStackEntry(serverId: named, route: .session(open.sessionId)))
+                        navigation.open(.page(.paneEntry(PaneStackEntry(serverId: named, route: .session(open.sessionId)))), from: .external)
                     } else {
                         toast("Server not found for this \(link) link")
                     }
@@ -941,15 +942,14 @@ final class AppOpener {
             return .finished
         }
         timer.time("pushMs") {
-            navigation.selectedTab = .workspaces
-            navigation.openSession(
-                WorkspaceSessionNavTarget(
+            navigation.open(
+                .chat(WorkspaceSessionNavTarget(
                     serverId: serverId,
                     sessionId: sessionId,
                     workspaceId: workspaceId,
                     routeScope: connection.sessionStore.routeScope(for: sessionId)
-                ),
-                source: origin
+                )),
+                from: NavigationOrigin(origin)
             )
         }
         logLinkOpened(timer)
@@ -998,15 +998,14 @@ final class AppOpener {
             connection.beginExternalSessionOpen(sessionId: sessionId, workspaceIdHint: workspaceIdHint)
         }
         timer.time("pushMs") {
-            navigation.selectedTab = .workspaces
-            navigation.openSession(
-                WorkspaceSessionNavTarget(
+            navigation.open(
+                .chat(WorkspaceSessionNavTarget(
                     serverId: serverId,
                     sessionId: sessionId,
                     workspaceId: workspaceId,
                     routeScope: connection.sessionStore.routeScope(for: sessionId)
-                ),
-                source: origin
+                )),
+                from: NavigationOrigin(origin)
             )
         }
         logLinkOpened(timer)
@@ -1080,7 +1079,7 @@ final class AppOpener {
         case .server(let resolved):
             serverId = resolved
         case .notFound:
-            showThreadNotFound()
+            showThreadNotFound(open.origin)
             return .finished
         case .lookupFailed:
             // A server could not be asked, so the session may exist: keep the request for the next foreground.
@@ -1129,7 +1128,7 @@ final class AppOpener {
                 return .finished
             }
             guard windowServerId == serverId else { return .finished }
-            timer.time("pushMs") { navigation.showThread(serverId: serverId, rootId: rootId) }
+            timer.time("pushMs") { navigation.showThread(serverId: serverId, rootId: rootId, from: NavigationOrigin(open.origin)) }
             logLinkOpened(timer)
             postOpenTask = Task { @MainActor [weak self, weak connection] in
                 guard let self, let connection else { return }
@@ -1160,7 +1159,7 @@ final class AppOpener {
         guard isCurrent(generation) else { return .finished }
         guard connection.sessionStore.session(id: open.sessionId) != nil else {
             if load == .notFound {
-                showThreadNotFound()
+                showThreadNotFound(open.origin)
                 return .finished
             }
             toastUnreachableIfFirstAttempt(serverId)
@@ -1184,12 +1183,12 @@ final class AppOpener {
         }
         guard isCurrent(generation) else { return .finished }
         guard let rootId = SessionThreadGrouping.rootId(of: open.sessionId, in: connection.sessionStore.sessions) else {
-            showThreadNotFound()
+            showThreadNotFound(open.origin)
             return .finished
         }
         // The list drops a focus for another server, so leave the screen alone rather than reset it for nothing.
         guard windowServerId == serverId else { return .finished }
-        timer.time("pushMs") { navigation.showThread(serverId: serverId, rootId: rootId) }
+        timer.time("pushMs") { navigation.showThread(serverId: serverId, rootId: rootId, from: NavigationOrigin(open.origin)) }
         logLinkOpened(timer)
         return .finished
     }
@@ -1210,8 +1209,8 @@ final class AppOpener {
     }
 
     /// The list, with the notice a thread link to an unknown session shows.
-    private func showThreadNotFound() {
-        navigation.showAllWorkspaceSessions()
+    private func showThreadNotFound(_ origin: SessionNavigationSource) {
+        navigation.open(.place(.allSessions), from: NavigationOrigin(origin))
         toast("Session not found for this thread link")
     }
 
@@ -1309,8 +1308,7 @@ final class AppOpener {
     }
 
     private func showWorkspaceRoot() {
-        navigation.selectedTab = .workspaces
-        navigation.clearWorkspaceSelections()
+        navigation.open(.place(.allSessions), from: .external)
     }
 
     // MARK: - Workspace creation
@@ -1334,7 +1332,7 @@ final class AppOpener {
 
         // The server is resolved once, here. The shell only presents the form.
         navigation.pendingWorkspaceDeepLink = payload.resolved(on: server.id)
-        navigation.showAllWorkspaceSessions()
+        navigation.open(.place(.allSessions))
         return .finished
     }
 

@@ -1001,7 +1001,7 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
         onClose()
         Task { @MainActor in
             await Task.yield()
-            navigation.openWorkspaceSession(target)
+            navigation.open(.chat(target))
         }
     }
 }

@@ -133,7 +133,7 @@ enum ServerCatalogServerMenu {
                     guard let shown else { return [] }
                     let usage = HostSwitcherDestination.usage
                     let action = UIAction(title: usage.menuTitle, image: UIImage(systemName: usage.systemImage)) { _ in
-                        navigation.openHostSwitcherDestination(usage, serverId: shown)
+                        navigation.open(.serverJob(usage, serverId: shown))
                     }
                     action.accessibilityIdentifier = usage.accessibilityIdentifier
                     return [UIMenu(options: .displayInline, children: [action])]

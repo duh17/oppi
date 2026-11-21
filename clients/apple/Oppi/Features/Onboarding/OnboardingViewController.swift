@@ -571,7 +571,6 @@ final class OnboardingViewController: UIViewController, RouterModalContainer {
         switch mode {
         case .initial:
             root.navigation.shouldGuideWorkspaceCreation = true
-            root.navigation.selectedTab = .workspaces
             root.navigation.app.showOnboarding = false
         case .addServer:
             finishAddServer()

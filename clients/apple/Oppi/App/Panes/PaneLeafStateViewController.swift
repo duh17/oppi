@@ -211,7 +211,7 @@ final class PaneLeafStateViewController: UIViewController {
     }
 
     private func choose() {
-        root.navigation.showAllWorkspaceSessions()
+        root.navigation.open(.place(.allSessions))
     }
 
     private func closePane() {

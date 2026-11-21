@@ -37,7 +37,7 @@ enum WorkspaceSidebarDisclosurePolicy {
 }
 
 /// A sidebar row above the workspaces: a place, built in or a server plugin's
-/// entry. Picking it makes `place` the main pane's root (`SceneNavigation.openPlace`).
+/// entry. Picking it makes `place` the main pane's root (`SceneNavigation.open(_:from:)`).
 struct WorkspaceSidebarPlace: Equatable {
     let place: NavigationPlace
     let title: String

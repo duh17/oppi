@@ -615,7 +615,7 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
         let server = current
         switch item {
         case .modelProviders:
-            root.navigation.openModelProviders(ModelProvidersNavTarget(serverId: server.id))
+            root.navigation.open(.page(.modelProviders(ModelProvidersNavTarget(serverId: server.id))))
         case .workspaces:
             push(WorkspaceListViewController(server: server, root: root))
         case .features:

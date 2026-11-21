@@ -150,16 +150,10 @@ extension AppOpener {
                 object: target.sourceSessionId,
                 userInfo: [Notification.Name.workspaceLinkedFileSourceServerIDKey: target.serverId]
             )
-            navigation.openReferencedWorkspaceLinkedFile(
-                target,
-                sourceSession: target.sourceSessionId.map {
-                    WorkspaceSessionNavTarget(
-                        serverId: target.serverId,
-                        sessionId: $0,
-                        workspaceId: target.workspaceId
-                    )
-                }
-            )
+            let sourceChat = target.sourceSessionId.map {
+                WorkspaceSessionNavTarget(serverId: target.serverId, sessionId: $0, workspaceId: target.workspaceId)
+            }
+            navigation.open(.page(.linkedFile(target)), from: .link(chat: sourceChat))
         }
         return .finished
     }
@@ -504,17 +498,9 @@ extension AppOpener {
                 let target = Self.linkedFileTarget(file, reference: reference)
                 guard !openLinkedFileBeside(target, reference: reference) else { return }
                 postWorkspaceLinkedFileWillOpen(reference: reference)
-                navigation.openReferencedWorkspaceLinkedFile(
-                    target,
-                    workspace: WorkspaceNavTarget(serverId: file.serverID, workspace: workspace),
-                    sourceSession: reference.sourceSessionID.flatMap { sourceSessionID in
-                        reference.sourceServerID.map { sourceServerID in
-                            WorkspaceSessionNavTarget(
-                                serverId: sourceServerID,
-                                sessionId: sourceSessionID
-                            )
-                        }
-                    }
+                navigation.open(
+                    .page(.linkedFile(target)),
+                    from: .link(chat: reference.sourceChat, workspace: WorkspaceNavTarget(serverId: file.serverID, workspace: workspace))
                 )
             }
             return .finished
@@ -541,17 +527,7 @@ extension AppOpener {
                 postWorkspaceLinkedFileWillOpen(reference: reference)
                 // Host files stay on the current stack. Do not select another
                 // workspace or pretend the file lives in this checkout.
-                navigation.openReferencedWorkspaceLinkedFile(
-                    target,
-                    sourceSession: reference.sourceSessionID.flatMap { sourceSessionID in
-                        reference.sourceServerID.map { sourceServerID in
-                            WorkspaceSessionNavTarget(
-                                serverId: sourceServerID,
-                                sessionId: sourceSessionID
-                            )
-                        }
-                    }
-                )
+                navigation.open(.page(.linkedFile(target)), from: .link(chat: reference.sourceChat))
             }
             return .finished
         }
@@ -705,7 +681,7 @@ extension AppOpener {
         }
         await dismissCoveringDocumentOverlayThenNavigateIfCurrent(generation: generation) { [weak self] in
             guard let self, !openBesideFocusedPane(PaneOpenContent(file: resolution.target), kind: .file) else { return }
-            navigation.openWorkspaceLinkedFile(resolution.target, workspace: workspace)
+            navigation.open(.page(.linkedFile(resolution.target)), from: .screen(workspace: workspace))
         }
         return .finished
     }
@@ -758,7 +734,7 @@ extension AppOpener {
         }
         await dismissCoveringDocumentOverlayThenNavigateIfCurrent(generation: generation) { [weak self] in
             guard let self, !openBesideFocusedPane(content, kind: .folder) else { return }
-            navigation.openWorkspaceFileBrowser(target)
+            navigation.open(.page(.fileBrowser(target)))
         }
         return .finished
     }
@@ -792,5 +768,13 @@ extension AppOpener {
             ),
             workspace: resolution.workspace
         )
+    }
+}
+
+private extension ResourceReference {
+    /// The chat whose text holds the reference, when it names one.
+    var sourceChat: WorkspaceSessionNavTarget? {
+        guard let sourceSessionID, let sourceServerID else { return nil }
+        return WorkspaceSessionNavTarget(serverId: sourceServerID, sessionId: sourceSessionID)
     }
 }

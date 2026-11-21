@@ -692,7 +692,7 @@ final class WorkspaceCreateViewController: ListScreenController<
         Router.finish(self)
         Task { @MainActor in
             await Task.yield()
-            navigation.openWorkspaceSession(target)
+            navigation.open(.chat(target))
         }
     }
 

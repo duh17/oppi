@@ -180,7 +180,7 @@ extension ChatViewController {
         if opensPanelsBeside {
             showPanel(.reader(target))
         } else {
-            appNavigation.openChatReader(target)
+            appNavigation.open(.page(.chatReader(target)))
         }
     }
 
@@ -247,14 +247,8 @@ extension ChatViewController {
             object: sessionId,
             userInfo: [Notification.Name.workspaceLinkedFileSourceServerIDKey: serverId]
         )
-        appNavigation.openReferencedWorkspaceLinkedFile(
-            target,
-            sourceSession: WorkspaceSessionNavTarget(
-                serverId: serverId,
-                sessionId: sessionId,
-                routeScope: focusedRouteScope
-            )
-        )
+        let chat = WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId, routeScope: focusedRouteScope)
+        appNavigation.open(.page(.linkedFile(target)), from: .link(chat: chat))
     }
 
     // MARK: - Timeline

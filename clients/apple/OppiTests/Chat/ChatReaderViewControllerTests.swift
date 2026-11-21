@@ -31,7 +31,7 @@ struct ChatReaderViewControllerTests {
         let store = ChatReaderPayloadStore()
         let appNavigation = SceneNavigation()
         let target = payload.map { store.store($0) } ?? ChatReaderNavTarget(id: UUID())
-        appNavigation.openChatReader(target)
+        appNavigation.open(.page(.chatReader(target)))
         let reader = ChatReaderViewController(
             target: target,
             store: store,

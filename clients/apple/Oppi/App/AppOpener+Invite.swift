@@ -135,7 +135,7 @@ extension AppOpener {
             // The reset clears focus under any on-screen chat; landing on the
             // inbox dismisses it, so its claim release is a no-op and the
             // re-synced list shows.
-            navigation.showAllWorkspaceSessions()
+            navigation.open(.place(.allSessions))
             if let api = selectedConnection.apiClient {
                 MetricKitService.shared.setUploadClient(api)
                 await selectedConnection.refreshWorkspaceCatalog(force: true)

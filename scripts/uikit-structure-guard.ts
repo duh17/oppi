@@ -143,6 +143,18 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *    and in the files that hide an iOS-only API from the Catalyst compiler,
  *    each with its reason. A new entry needs an API the Catalyst SDK lacks.
  *
+ *  - Navigation has one owner. Writing the main pane's stack
+ *    (`workspaceStackRouteElements`, `selectedWorkspaceFilter`) outside
+ *    `mainPaneStackOwners` is disallowed: a screen opens through
+ *    `SceneNavigation.open(_:from:)`, which decides where it goes. The write
+ *    forms are assignment (`=`, `+=`, a subscript), the mutating calls, and
+ *    `&` passing, on the property itself (after `.` or at a line start), so a
+ *    local of the same name is not one. A direct UIKit `pushViewController(`,
+ *    `setViewControllers(` or split-column `setViewController(_:for:)` outside
+ *    `navigationOwners` is a ratchet of the same kind as the others: push
+ *    through `Router`. It reads calls by name, so a wrapper with its own name
+ *    is not seen.
+ *
  * Policy: dev/architecture-client.md, "UIKit and SwiftUI ownership".
  * Comments and string literals are stripped before matching.
  *
@@ -247,6 +259,31 @@ const navigationBarOwners = [
   "clients/apple/Oppi/App/Router.swift",
   // Hides the bar of its own private navigation controller, which never sits in a shared stack.
   "clients/apple/Oppi/Core/Views/FullScreenCodeViewController.swift",
+];
+
+/**
+ * The files that own a stack or a split view's columns:
+ * `SceneNavigation.open(_:from:)` decides where a screen goes and these show it.
+ * Elsewhere a direct UIKit push, stack write or column write is a ratchet: open
+ * through `SceneNavigation` or push through `Router`.
+ */
+const navigationOwners = [
+  // `Router.push`, `Router.present` and the modal containers.
+  "clients/apple/Oppi/App/Router.swift",
+  // Shows the main pane's routes (`ShellNavigationController.setRoutes`).
+  "clients/apple/Oppi/App/ShellRouter.swift",
+  // Moves the one stack and pane host between the split view's columns and the drawer.
+  "clients/apple/Oppi/App/WorkspaceShellController.swift",
+  // Each side pane's own stack.
+  "clients/apple/Oppi/App/Panes/PaneHostController+Tree.swift",
+  "clients/apple/Oppi/App/Panes/PaneSplitScreens.swift",
+];
+
+/** The files that may write the main pane's stack: `open(_:from:)` and the stack's own upkeep. */
+const mainPaneStackOwners = [
+  "clients/apple/Oppi/App/SceneNavigation.swift",
+  "clients/apple/Oppi/App/SceneNavigation+Open.swift",
+  "clients/apple/Oppi/App/SceneNavigation+Panes.swift",
 ];
 
 /**
@@ -368,6 +405,27 @@ const constructs: Construct[] = [
     pattern: /\bisNavigationBarHidden\s*=(?!=)/g,
     disallowed: true,
     exemptFiles: navigationBarOwners,
+  },
+  // The main pane's stack written outside `SceneNavigation`: see `mainPaneStackOwners`.
+  {
+    name: "main pane stack write",
+    pattern:
+      /(?:(?:^[ \t]*|\.\s*)(?:workspaceStackRouteElements|selectedWorkspaceFilter)\s*(?:\[[^\]]*\]\s*)?(?:\+?=(?!=)|\.\s*(?:append|insert|remove\w*|replaceSubrange|popLast|swapAt)\s*\()|&\s*(?:[\w?!]+\s*\.\s*)*(?:workspaceStackRouteElements|selectedWorkspaceFilter)\b)/gm,
+    disallowed: true,
+    exemptFiles: mainPaneStackOwners,
+  },
+  // Navigation outside its owners: see `navigationOwners`.
+  {
+    name: "pushViewController( or setViewControllers(",
+    pattern: /\b(?:pushViewController|setViewControllers)\s*\(/g,
+    disallowed: false,
+    exemptFiles: navigationOwners,
+  },
+  {
+    name: "split column setViewController(",
+    pattern: /\bsetViewController\s*\([^()]*,\s*for\s*:/g,
+    disallowed: false,
+    exemptFiles: navigationOwners,
   },
   {
     name: "SwiftUI import (SwiftUI, Charts, or TipKit)",
@@ -732,6 +790,14 @@ targetEnvironment(macCatalyst) or isMacCatalystApp outside platformCheckOwners m
 a screen decides for itself what the Mac build can do. Ask PlatformCapabilities
 (add the capability there). Only a file that must hide an API the Catalyst SDK
 lacks may test the platform, with an entry and its reason.
+
+A write to workspaceStackRouteElements or selectedWorkspaceFilter outside
+SceneNavigation decides for itself where a screen goes. Call
+navigation.open(destination, from: origin); the placement table in
+SceneNavigation+Open.swift is the one rule. A direct pushViewController(,
+setViewControllers( or split setViewController(_:for:) outside the navigation
+owners (Router.swift, the shell, the pane host) skips the router: use
+Router.push. The count only goes down.
 
 A page on ListScreenController that writes isLoadCancellation or an override
 func viewIsAppearing takes over the trigger or the outcome of the load the kit

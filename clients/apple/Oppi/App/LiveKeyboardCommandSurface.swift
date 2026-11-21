@@ -207,7 +207,7 @@ final class LiveKeyboardCommandSurface {
         guard isInteractive, topPresented == nil else { return nil }
         guard navigation.workspaceStackRouteElements.last != .utility(.appSettings) else { return nil }
         return { [navigation, weak self] in
-            navigation.openWorkspaceUtility(.appSettings)
+            navigation.open(.place(.utility(.appSettings)))
             // The compact drawer covers the screen the command opened.
             self?.descendant(of: self?.rootController, as: WorkspaceDrawerController.self)?.closeSidebar()
         }
@@ -218,7 +218,7 @@ final class LiveKeyboardCommandSurface {
         guard isInteractive, topPresented == nil, root.windowConnection?.pinsAvailable == true,
               navigation.workspaceStackRouteElements.last != .utility(.pinned) else { return nil }
         return { [navigation, weak self] in
-            navigation.openWorkspaceUtility(.pinned)
+            navigation.open(.place(.utility(.pinned)))
             // The compact drawer covers the screen the command opened.
             self?.descendant(of: self?.rootController, as: WorkspaceDrawerController.self)?.closeSidebar()
         }

@@ -16,7 +16,7 @@ struct ChatSlashCommandRecoveryTests {
         try #require(await rig.waitForCommands(["skill:lint"]))
 
         let reader = ChatReaderNavTarget(id: UUID())
-        rig.appNavigation.openChatReader(reader)
+        rig.appNavigation.open(.page(.chatReader(reader)))
         rig.stack.pushViewController(UIViewController(), animated: false)
         rig.stack.view.layoutIfNeeded()
         #expect(rig.chat.viewIfLoaded?.window == nil, "The chat must leave the window for this proof")
@@ -107,9 +107,7 @@ private final class SlashChatRig {
             connection?.wsClient?._setStatusForTesting(.connected)
             return frames.makeStream()
         }
-        appNavigation.openWorkspaceSession(
-            WorkspaceSessionNavTarget(serverId: connection.currentServerId ?? "server-1", sessionId: sessionId)
-        )
+        appNavigation.open(.chat(WorkspaceSessionNavTarget(serverId: connection.currentServerId ?? "server-1", sessionId: sessionId)))
         chat = ChatViewController(sessionId: sessionId, connection: connection, navigation: appNavigation)
         chat.sessionManager._loadHistoryForTesting = { _, _ in nil }
         // The scripted stream has no URL-bound socket; report it live.

@@ -605,11 +605,11 @@ final class WorkspaceSidebarViewController: UIViewController {
     private func activate(_ item: Item) {
         switch item {
         case .place(let place):
-            navigation.openPlace(place)
+            navigation.open(.place(place))
             onSelect?()
         case .workspace(let id):
             guard let row = model.workspaces[id] else { return }
-            navigation.openPlace(.sessions(row.target))
+            navigation.open(.place(.sessions(row.target)))
             onSelect?()
         case .disclosure:
             animatesNextSnapshot = true

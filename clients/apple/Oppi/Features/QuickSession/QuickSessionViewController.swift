@@ -276,7 +276,7 @@ final class QuickSessionViewController: UIViewController {
         errorPanel.onOpenAgents = { [weak self] in
             guard let self else { return }
             self.close()
-            self.root.navigation.openWorkspaceUtility(.agents)
+            self.root.navigation.open(.place(.utility(.agents)))
         }
         contentStack.addArrangedSubview(errorPanel)
 

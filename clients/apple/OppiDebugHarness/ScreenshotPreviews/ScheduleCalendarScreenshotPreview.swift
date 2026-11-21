@@ -61,7 +61,7 @@ final class ScheduleCalendarPreviewController: PreviewRootController {
         super.viewDidAppear(animated)
         ScreenshotPreviewOrientation.applyRequested()
         if opensSchedules {
-            shellRoot.navigation.openWorkspaceUtility(.schedules)
+            shellRoot.navigation.open(.place(.utility(.schedules)))
         }
     }
 

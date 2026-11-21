@@ -483,8 +483,8 @@ struct ReviewableControlMarkdownTests {
         let navigation = SceneNavigation()
         navigation.app.launchPhase = .ready
         navigation.app.showOnboarding = false
-        navigation.openWorkspaceUtility(.extensions)
-        navigation.openServerResourceDetail(.init(serverId: "server-1", kind: .extension, resourceId: "extension-1"))
+        navigation.open(.place(.utility(.extensions)))
+        navigation.open(.page(.serverResourceDetail(.init(serverId: "server-1", kind: .extension, resourceId: "extension-1"))))
         let readerDepth = navigation.workspaceStackRouteElements.count
 
         let target = try ControlRevisionCommentNavigation.makeAtomicLaunchSessionTarget(
@@ -500,7 +500,7 @@ struct ReviewableControlMarkdownTests {
 
         let completedTarget = handoff.completeAfterDismissal()
         let dismissedTarget = try #require(completedTarget)
-        navigation.openWorkspaceSession(dismissedTarget)
+        navigation.open(.chat(dismissedTarget))
 
         #expect(navigation.workspaceStackRouteElements.count == readerDepth + 1)
         #expect(navigation.workspaceStackDiagnosticContext.screen == "chat")

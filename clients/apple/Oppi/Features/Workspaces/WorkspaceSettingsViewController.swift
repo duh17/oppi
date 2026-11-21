@@ -643,7 +643,7 @@ final class WorkspaceSettingsViewController: ListScreenController<
         let navigation = root.navigation
         Task { @MainActor in
             await Task.yield()
-            navigation.openWorkspaceSession(target)
+            navigation.open(.chat(target))
         }
     }
 

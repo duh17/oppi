@@ -116,6 +116,9 @@
     "clients/apple/Oppi/Features/Servers/ServerSettingsModel.swift": {
       "active connection read": 1
     },
+    "clients/apple/Oppi/Features/Servers/ServerSettingsRouteViewController.swift": {
+      "pushViewController( or setViewControllers(": 1
+    },
     "clients/apple/Oppi/Features/Servers/ServerSettingsViewController.swift": {
       "active connection read": 7,
       "toggleRow(": 1
@@ -162,9 +165,6 @@
     "clients/apple/Oppi/Features/Skills/ServerResourceDetailScreenController.swift": {
       "active connection read": 1
     },
-    "clients/apple/Oppi/Features/Skills/ServerSkillFileViewController.swift": {
-      "active connection read": 1
-    },
     "clients/apple/Oppi/Features/Workspaces/SessionInboxViewController.swift": {
       "active connection read": 3
     },
@@ -196,6 +196,18 @@
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceToggleRows.swift": {
       "toggleRow(": 1
+    },
+    "clients/apple/OppiDebugHarness/ChatRoutesHarness.swift": {
+      "pushViewController( or setViewControllers(": 1
+    },
+    "clients/apple/OppiDebugHarness/PaneHarness.swift": {
+      "pushViewController( or setViewControllers(": 1
+    },
+    "clients/apple/OppiDebugHarness/ScreenshotPreviews/ReaderTaskEditPreview.swift": {
+      "pushViewController( or setViewControllers(": 1
+    },
+    "clients/apple/OppiDebugHarness/ScreenshotPreviews/SettingsSweepScreenshotPreview.swift": {
+      "pushViewController( or setViewControllers(": 1
     },
     "clients/apple/Shared/Theme/ModelColorHelpers.swift": {
       "providerLogoAssetName(": 1,

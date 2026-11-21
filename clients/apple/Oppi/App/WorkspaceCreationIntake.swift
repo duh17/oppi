@@ -153,7 +153,7 @@ final class WorkspaceCreationIntake {
             return true
         }
 
-        navigation.showAllWorkspaceSessions()
+        navigation.open(.place(.allSessions))
         createSheetContext = WorkspaceCreateSheetContext(
             server: server,
             presentation: .standard,
@@ -183,7 +183,7 @@ final class WorkspaceCreationIntake {
 
         guidedCreateConsumed = true
         navigation.shouldGuideWorkspaceCreation = false
-        navigation.showAllWorkspaceSessions()
+        navigation.open(.place(.allSessions))
         createSheetContext = WorkspaceCreateSheetContext(
             server: server,
             presentation: .guidedFirstWorkspace,
@@ -196,7 +196,7 @@ final class WorkspaceCreationIntake {
     private func createSheetDidDismiss() {
         guard let target = pendingCreatedWorkspaceTarget else { return }
         pendingCreatedWorkspaceTarget = nil
-        navigation.openWorkspace(target)
+        navigation.open(.place(.sessions(target)))
     }
 }
 

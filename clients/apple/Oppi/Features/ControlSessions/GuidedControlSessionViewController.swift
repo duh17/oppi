@@ -45,7 +45,7 @@ final class GuidedControlSessionViewController: UIViewController {
             Task { @MainActor in
                 // Open the session once the sheet's dismissal has started.
                 await Task.yield()
-                navigation.openWorkspaceSession(target)
+                navigation.open(.chat(target))
             }
         }
         title = Self.title(configuration)

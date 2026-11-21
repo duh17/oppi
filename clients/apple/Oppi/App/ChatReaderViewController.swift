@@ -239,7 +239,7 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
                 // Joins `SceneNavigation`'s own route list, exactly as this
                 // reader's own push did, so the nested reader survives a
                 // backgrounding or a stack/split swap the same way.
-                navigation.openChatReader(target)
+                navigation.open(.page(.chatReader(target)))
             }
         }
         let back: @MainActor @Sendable () -> Void = { [weak self] in self?.leave() }
@@ -482,7 +482,7 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
         ) else {
             return false
         }
-        navigation.openWorkspaceLinkedFile(file)
+        navigation.open(.page(.linkedFile(file)))
         return true
     }
 

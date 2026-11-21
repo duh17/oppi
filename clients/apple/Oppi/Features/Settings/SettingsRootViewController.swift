@@ -360,7 +360,7 @@ final class SettingsRootViewController: ListScreenController<SettingsRootViewCon
                 guard navigation.chooseServer(server.id, coordinator: coordinator) else { return }
                 Task { await coordinator.prepareSelectedServerShell(for: server) }
             }
-            navigation.openServerDetails(ServerDetailsNavTarget(serverId: server.id))
+            navigation.open(.page(.serverDetails(ServerDetailsNavTarget(serverId: server.id))))
         }
         if ScopedLockService.shared.gate(.server(server.id), onUnlock: perform) {
             perform()

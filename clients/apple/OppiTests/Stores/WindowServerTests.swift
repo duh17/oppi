@@ -20,7 +20,7 @@ struct WindowServerTests {
         root.navigation.recordChosenServer(firstId)
         second.navigation.recordChosenServer(firstId)
         let chat = WorkspaceSessionNavTarget(serverId: firstId, sessionId: "s-first", workspaceId: "w-first")
-        root.navigation.openWorkspaceSession(chat)
+        root.navigation.open(.chat(chat))
 
         let screenA = ServerExtensionsViewController(root: root)
         let screenB = ServerExtensionsViewController(root: second)

@@ -15,21 +15,13 @@ extension SceneNavigation {
         workspaceStackRouteElements = elements
     }
 
-    /// Pushes a linked entry's leaf state above the current screens; a second
-    /// tap on the same link while it shows pushes nothing.
-    func pushPaneEntry(_ entry: PaneStackEntry) {
-        mediaOverlayYieldsToUserNavigation()
-        guard workspaceStackRouteElements.last != .paneEntry(entry) else { return }
-        workspaceStackRouteElements.append(.paneEntry(entry))
-    }
-
     /// The entry's content can open: its screen takes the entry's place. A
     /// workspace's session list is a place, not a pushed screen, so it opens
     /// as the workspace does.
     func resolvePaneEntry(_ entry: PaneStackEntry, with element: WorkspaceStackRouteElement) {
         if case .workspace(let target) = element {
             closePaneEntry(entry)
-            openWorkspace(target)
+            open(.place(.sessions(target)))
             return
         }
         guard let index = workspaceStackRouteElements.firstIndex(of: .paneEntry(entry)) else { return }

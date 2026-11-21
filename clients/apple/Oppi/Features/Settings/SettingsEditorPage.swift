@@ -185,7 +185,7 @@ final class SettingsEditorViewController: ListScreenController<SettingsEditorVie
             identifier: "settings.editor.keyBar.customize"
         ) { [weak self] in
             guard let self else { return }
-            navigationController?.pushViewController(SettingsEditorKeyBarViewController(preferences: preferences), animated: true)
+            Router.push(SettingsEditorKeyBarViewController(preferences: preferences), from: self)
         }
     }
 

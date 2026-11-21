@@ -225,7 +225,7 @@ final class UsageViewController: UIViewController {
                 themeID: themeID
             ) { [weak self] in
                 guard let self else { return }
-                root.navigation.openModelProviders(ModelProvidersNavTarget(serverId: server.id))
+                root.navigation.open(.page(.modelProviders(ModelProvidersNavTarget(serverId: server.id))))
             }
         }
 

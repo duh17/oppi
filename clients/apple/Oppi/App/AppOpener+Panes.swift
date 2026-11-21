@@ -47,7 +47,7 @@ extension AppOpener {
         // server does not switch under the lock.
         guard serverStore.server(for: serverId) != nil,
               !ScopedLockService.shared.isLocked(PaneEntries.lockTarget(entry)) else {
-            navigation.pushPaneEntry(entry)
+            navigation.open(.page(.paneEntry(entry)))
             return .finished
         }
         let previousServerId = windowServerId
@@ -55,11 +55,11 @@ extension AppOpener {
         guard isCurrent(generation) else { return .finished }
         guard switched else {
             // The leaf shows the server offline and opens once it connects.
-            navigation.pushPaneEntry(entry)
+            navigation.open(.page(.paneEntry(entry)))
             return .finished
         }
         if case .sessions(nil) = link.route {
-            navigation.showAllWorkspaceSessions()
+            navigation.open(.place(.allSessions))
             return .finished
         }
         let connection = coordinator.connection(for: serverId)
@@ -92,7 +92,7 @@ extension AppOpener {
             // A workspace's Git or a commit (`PaneGitScreens`): beside the
             // focused pane on a wide window, else pushed.
             if !openBesideFocusedPane(PaneOpenContent(entry: entry), kind: .git) {
-                navigation.pushPaneEntry(entry)
+                navigation.open(.page(.paneEntry(entry)))
             }
             return .finished
         default:
@@ -101,18 +101,18 @@ extension AppOpener {
         switch PaneEntries.element(for: entry, coordinator: coordinator) {
         case .workspace(let target)?:
             if !openBesideFocusedPane(PaneOpenContent(entry: entry), kind: .sessions) {
-                navigation.openWorkspace(target)
+                navigation.open(.place(.sessions(target)))
             }
         case .fileBrowser(let target)?:
             if !openBesideFocusedPane(PaneOpenContent(entry: entry), kind: .folder) {
-                navigation.openWorkspaceFileBrowser(target)
+                navigation.open(.page(.fileBrowser(target)))
             }
         case .linkedFile(let target)?:
             if !openBesideFocusedPane(PaneOpenContent(entry: entry), kind: .file) {
-                navigation.openWorkspaceLinkedFile(target)
+                navigation.open(.page(.linkedFile(target)))
             }
         default:
-            navigation.pushPaneEntry(entry)
+            navigation.open(.page(.paneEntry(entry)))
         }
         return .finished
     }

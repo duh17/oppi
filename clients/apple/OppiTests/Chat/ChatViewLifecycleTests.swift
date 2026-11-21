@@ -201,12 +201,10 @@ struct ChatViewLifecycleTests {
         connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
 
         let appNavigation = SceneNavigation()
-        appNavigation.openWorkspaceSession(
-            WorkspaceSessionNavTarget(
+        appNavigation.open(.chat(WorkspaceSessionNavTarget(
                 serverId: connection.currentServerId ?? "server-1",
                 sessionId: sessionId
-            )
-        )
+            )))
         let (host, stack) = makeStackedHost(
             connection: connection,
             sessionId: sessionId,
@@ -219,7 +217,7 @@ struct ChatViewLifecycleTests {
         #expect(appeared)
 
         let reader = ChatReaderNavTarget(id: UUID())
-        appNavigation.openChatReader(reader)
+        appNavigation.open(.page(.chatReader(reader)))
         #expect(appNavigation.isCoveringChat(sessionId: sessionId))
 
         stack.pushViewController(UIViewController(), animated: false)
@@ -248,12 +246,10 @@ struct ChatViewLifecycleTests {
         connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
 
         let appNavigation = SceneNavigation()
-        appNavigation.openWorkspaceSession(
-            WorkspaceSessionNavTarget(
+        appNavigation.open(.chat(WorkspaceSessionNavTarget(
                 serverId: connection.currentServerId ?? "server-1",
                 sessionId: sessionId
-            )
-        )
+            )))
         let (host, stack) = makeStackedHost(
             connection: connection,
             sessionId: sessionId,
@@ -338,13 +334,11 @@ struct ChatViewLifecycleTests {
         }
 
         let appNavigation = SceneNavigation()
-        appNavigation.openWorkspaceSession(
-            WorkspaceSessionNavTarget(
+        appNavigation.open(.chat(WorkspaceSessionNavTarget(
                 serverId: connection.currentServerId ?? "server-1",
                 sessionId: sessionId,
                 workspaceId: workspaceId
-            )
-        )
+            )))
         var host: HostHarness? = makeHost(
             connection: connection,
             sessionId: sessionId,
@@ -358,7 +352,7 @@ struct ChatViewLifecycleTests {
         }
         #expect(appeared, "Covered destroy proof needs a live focused stream")
 
-        appNavigation.openChatReader(ChatReaderNavTarget(id: UUID()))
+        appNavigation.open(.page(.chatReader(ChatReaderNavTarget(id: UUID()))))
         #expect(appNavigation.isCoveringChat(sessionId: sessionId))
 
         host?.hide()
@@ -395,12 +389,10 @@ struct ChatViewLifecycleTests {
         }
 
         let appNavigation = SceneNavigation()
-        appNavigation.openWorkspaceSession(
-            WorkspaceSessionNavTarget(
+        appNavigation.open(.chat(WorkspaceSessionNavTarget(
                 serverId: connection.currentServerId ?? "server-1",
                 sessionId: sessionId
-            )
-        )
+            )))
         var host: HostHarness? = makeHost(
             connection: connection,
             sessionId: sessionId,
@@ -414,7 +406,7 @@ struct ChatViewLifecycleTests {
         }
         #expect(appeared, "Stopped re-entry should focus the session without opening a WebSocket")
 
-        appNavigation.openChatReader(ChatReaderNavTarget(id: UUID()))
+        appNavigation.open(.page(.chatReader(ChatReaderNavTarget(id: UUID()))))
         #expect(appNavigation.isCoveringChat(sessionId: sessionId))
 
         host?.hide()
@@ -700,12 +692,10 @@ struct ChatViewLifecycleTests {
         let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
         let appNavigation = SceneNavigation()
-        appNavigation.openWorkspaceSession(
-            WorkspaceSessionNavTarget(
+        appNavigation.open(.chat(WorkspaceSessionNavTarget(
                 serverId: connection.currentServerId ?? "server-1",
                 sessionId: sessionId
-            )
-        )
+            )))
         let media = try await fillChatMedia()
         defer { media.restore() }
 
@@ -742,12 +732,10 @@ struct ChatViewLifecycleTests {
         let (connection, _) = await makeTestConnection(sessionId: sessionId)
         connection.sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
         let appNavigation = SceneNavigation()
-        appNavigation.openWorkspaceSession(
-            WorkspaceSessionNavTarget(
+        appNavigation.open(.chat(WorkspaceSessionNavTarget(
                 serverId: connection.currentServerId ?? "server-1",
                 sessionId: sessionId
-            )
-        )
+            )))
         let media = try await fillChatMedia()
         defer { media.restore() }
 
@@ -757,7 +745,7 @@ struct ChatViewLifecycleTests {
             appNavigation: appNavigation
         )
 
-        appNavigation.openChatReader(ChatReaderNavTarget(id: UUID()))
+        appNavigation.open(.page(.chatReader(ChatReaderNavTarget(id: UUID()))))
         stack.pushViewController(UIViewController(), animated: false)
         stack.view.layoutIfNeeded()
         #expect(host.controller?.viewIfLoaded?.window == nil, "A covered chat must leave the window for this proof")

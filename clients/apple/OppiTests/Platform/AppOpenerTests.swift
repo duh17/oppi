@@ -364,11 +364,11 @@ struct AppOpenerTests {
         let harness = await OpenerHarness(servers: [makeServer("server-a")], launch: false)
         harness.addSession("source", workspaceId: "w1", to: "server-a")
         harness.addSession("target", workspaceId: "w1", to: "server-a")
-        harness.navigation.openWorkspaceSession(.init(
+        harness.navigation.open(.chat(.init(
             serverId: "server-a",
             sessionId: "source",
             workspaceId: "w1"
-        ))
+        )))
 
         harness.opener.open(.session(SessionOpen(
             serverId: "server-a",
@@ -408,11 +408,11 @@ struct AppOpenerTests {
         harness.addSession("source", workspaceId: "w1", to: "server-a")
         harness.addSession("target", workspaceId: "w1", to: "server-a")
         harness.setAskDialog(sessionId: "target", on: "server-a")
-        harness.navigation.openWorkspaceSession(.init(
+        harness.navigation.open(.chat(.init(
             serverId: "server-a",
             sessionId: "source",
             workspaceId: "w1"
-        ))
+        )))
 
         harness.opener.open(AppOpenRequest(
             url: try #require(URL(string: "oppi://session/target")),
@@ -430,11 +430,11 @@ struct AppOpenerTests {
         let harness = await OpenerHarness(servers: [makeServer("server-a")])
         harness.addSession("source", workspaceId: "chat-workspace", to: "server-a")
         harness.addSession("target", workspaceId: "chat-workspace", to: "server-a")
-        harness.navigation.openWorkspaceSession(.init(
+        harness.navigation.open(.chat(.init(
             serverId: "server-a",
             sessionId: "source",
             workspaceId: "chat-workspace"
-        ))
+        )))
 
         // A widget's `oppi://session/<id>` link from the chat carries the
         // chat's server and workspace, exactly like a timeline link.
@@ -454,11 +454,11 @@ struct AppOpenerTests {
     @Test func selfLinkToTheVisibleChatDoesNothing() async throws {
         let harness = await OpenerHarness(servers: [makeServer("server-a")])
         harness.addSession("source", workspaceId: "w1", to: "server-a")
-        harness.navigation.openWorkspaceSession(.init(
+        harness.navigation.open(.chat(.init(
             serverId: "server-a",
             sessionId: "source",
             workspaceId: "w1"
-        ))
+        )))
         let connection = harness.connection("server-a")
         connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
         connection.focusSession("source")
@@ -761,7 +761,7 @@ struct AppOpenerTests {
         let harness = await OpenerHarness(servers: [makeServer("server-a")])
         harness.connection("server-a")._getSessionRecordForTesting = { _ in throw URLError(.notConnectedToInternet) }
         harness.coordinator._getSessionRecordForTesting = { _, _ in throw URLError(.notConnectedToInternet) }
-        harness.navigation.openWorkspaceSession(.init(serverId: "server-a", sessionId: "current", workspaceId: "w1"))
+        harness.navigation.open(.chat(.init(serverId: "server-a", sessionId: "current", workspaceId: "w1")))
 
         for link in [
             SessionOpen(serverId: "server-a", sessionId: "gone", origin: .externalURL),
@@ -1064,11 +1064,11 @@ struct AppOpenerTests {
 
         harness.opener.open(.session(SessionOpen(serverId: "server-b", sessionId: "child", origin: .inAppHyperlink)))
         for _ in 0..<500 where release == nil || harness.lastSessionRoute == nil { await Task.yield() }
-        harness.navigation.openReferencedSession(WorkspaceSessionNavTarget(
+        harness.navigation.open(.chat(WorkspaceSessionNavTarget(
             serverId: "server-b",
             sessionId: "manual",
             workspaceId: "w1"
-        ))
+        )), from: .link())
 
         release?.resume()
         await harness.settle()
@@ -1138,11 +1138,11 @@ struct AppOpenerTests {
         harness.opener.open(.thread(SessionOpen(serverId: "server-b", sessionId: "child", origin: .externalURL)))
         for _ in 0..<500 where release == nil || harness.navigation.pendingThreadFocus == nil { await Task.yield() }
         if navigatedOn {
-            harness.navigation.openReferencedSession(WorkspaceSessionNavTarget(
+            harness.navigation.open(.chat(WorkspaceSessionNavTarget(
                 serverId: "server-b",
                 sessionId: "manual",
                 workspaceId: "w1"
-            ))
+            )), from: .link())
         }
         release?.resume()
         await harness.settle()
@@ -1271,11 +1271,11 @@ struct AppOpenerTests {
         )
         harness.addSession("current", workspaceId: "w1", to: "server-a")
         harness.addSession("locked", workspaceId: "w2", to: "server-b")
-        harness.navigation.openWorkspaceSession(.init(
+        harness.navigation.open(.chat(.init(
             serverId: "server-a",
             sessionId: "current",
             workspaceId: "w1"
-        ))
+        )))
         harness.scopedLock.lock(.session(serverId: "server-b", sessionId: "locked"), workspaceId: "w2")
 
         harness.opener.open(.session(SessionOpen(
@@ -1835,11 +1835,11 @@ struct AppOpenerTests {
             authOutcomes: [.cancelled]
         )
         harness.addSession("current", workspaceId: "w1", to: "server-a")
-        harness.navigation.openWorkspaceSession(.init(
+        harness.navigation.open(.chat(.init(
             serverId: "server-a",
             sessionId: "current",
             workspaceId: "w1"
-        ))
+        )))
         // The session is not cached: only its loaded record names the locked
         // workspace, so the gate before the switch cannot know it.
         let target = harness.connection("server-b")
@@ -1900,11 +1900,11 @@ struct AppOpenerTests {
             authOutcomes: [.cancelled]
         )
         harness.addSession("current", workspaceId: "w1", to: "server-a")
-        harness.navigation.openWorkspaceSession(.init(
+        harness.navigation.open(.chat(.init(
             serverId: "server-a",
             sessionId: "current",
             workspaceId: "w1"
-        ))
+        )))
         let connection = harness.connection("server-a")
         connection.focusSession("current")
         // Not cached: only the loaded record names the locked workspace.
@@ -1936,11 +1936,11 @@ struct AppOpenerTests {
             authOutcomes: [.cancelled]
         )
         harness.addSession("current", workspaceId: "w1", to: "server-a")
-        harness.navigation.openWorkspaceSession(.init(
+        harness.navigation.open(.chat(.init(
             serverId: "server-a",
             sessionId: "current",
             workspaceId: "w1"
-        ))
+        )))
         let connection = harness.connection("server-a")
         connection.focusSession("current")
         stubLockedWorkspaceOnlyInDialogs(on: connection, harness: harness)

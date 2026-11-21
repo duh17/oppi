@@ -166,9 +166,7 @@ struct PaneRestorationTests: PaneFixtureBuilding {
         #expect(panes.zoomedCell == files, "the restored stack showing is not navigation")
         #expect(host.panes.primary.view.isHidden)
 
-        after.navigation.openWorkspaceSession(
-            WorkspaceSessionNavTarget(serverId: serverId, sessionId: "s-2", workspaceId: "ws-1")
-        )
+        after.navigation.open(.chat(WorkspaceSessionNavTarget(serverId: serverId, sessionId: "s-2", workspaceId: "ws-1")))
         host.act { host.panes.routedLeafWillShowScreen() }
         #expect(panes.zoomedCell == nil, "the zoom ends")
         #expect(host.panes.focusedLeaf == .primary)
@@ -177,9 +175,7 @@ struct PaneRestorationTests: PaneFixtureBuilding {
         // Collapsed, it expands the same way.
         host.act { host.panes.collapse(panes.routedLeafID) }
         #expect(panes.collapsedCells.contains(panes.routedLeafID))
-        after.navigation.openWorkspaceSession(
-            WorkspaceSessionNavTarget(serverId: serverId, sessionId: "s-1", workspaceId: "ws-1")
-        )
+        after.navigation.open(.chat(WorkspaceSessionNavTarget(serverId: serverId, sessionId: "s-1", workspaceId: "ws-1")))
         host.act { host.panes.routedLeafWillShowScreen() }
         #expect(!panes.collapsedCells.contains(panes.routedLeafID))
     }
@@ -246,7 +242,7 @@ struct PaneRestorationTests: PaneFixtureBuilding {
     @Test func aPanelWithoutItsChatOpensTheChatWithThePanelBesideIt() async throws {
         let root = try await makeRoot(sessions: [session("s-1")])
         let entry = PaneStackEntry(serverId: serverId, route: .panel(session: "s-1", id: "jobs"))
-        root.navigation.pushPaneEntry(entry)
+        root.navigation.open(.page(.paneEntry(entry)))
         let screen = PaneLeafStateViewController(entry: entry, root: root)
         let window = try makeWindow()
         window.rootViewController = screen
@@ -295,7 +291,7 @@ struct PaneRestorationTests: PaneFixtureBuilding {
     @Test func aRemovedServersLeafOffersCloseAndLeavesTheStack() async throws {
         let root = try await makeRoot(sessions: [])
         let entry = PaneStackEntry(serverId: "sha256:removed", route: .session("s-1"))
-        root.navigation.pushPaneEntry(entry)
+        root.navigation.open(.page(.paneEntry(entry)))
         let screen = PaneLeafStateViewController(entry: entry, root: root)
         let window = try makeWindow()
         window.rootViewController = screen
@@ -314,7 +310,7 @@ struct PaneRestorationTests: PaneFixtureBuilding {
     @Test func anEntryOpensItsContentOnceTheStoresHoldIt() async throws {
         let root = try await makeRoot(sessions: [])
         let entry = PaneStackEntry(serverId: serverId, route: .session("s-late"))
-        root.navigation.pushPaneEntry(entry)
+        root.navigation.open(.page(.paneEntry(entry)))
         let screen = PaneLeafStateViewController(entry: entry, root: root)
         let window = try makeWindow()
         window.rootViewController = screen
@@ -459,7 +455,7 @@ struct PaneRestorationTests: PaneFixtureBuilding {
             return makeTestSession(id: id, workspaceId: "ws-other")
         }
         let entry = PaneStackEntry(serverId: "sha256:other", route: .session("s-elsewhere"))
-        root.navigation.pushPaneEntry(entry)
+        root.navigation.open(.page(.paneEntry(entry)))
         let screen = PaneLeafStateViewController(entry: entry, root: root)
         let window = try makeWindow()
         window.rootViewController = screen
