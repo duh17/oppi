@@ -380,15 +380,14 @@ final class AppOpener {
         self.systemOpen = systemOpen
     }
 
-    /// Whether the current request's file, folder or page opens in the main
-    /// pane even where a tapped link's would open beside it (a link menu's
-    /// Open Here).
-    @ObservationIgnored var opensInMainPane = false
+    /// Where the current request came from, which picks the pane its side
+    /// content opens beside (`openSideContent`).
+    @ObservationIgnored var sideContentOrigin = SideContentOrigin.focusedPane
 
-    /// The only way in. `inMainPane`: the request's file, folder or page
-    /// opens in the main pane, not in a pane beside the focused one
-    /// (`openBesideFocusedPane`).
-    func open(_ request: AppOpenRequest, inMainPane: Bool = false) {
+    /// The only way in. `origin`: a link in the window's content opens its
+    /// side content beside the pane it was tapped in, a link from outside the
+    /// app beside the main pane, and Open Here in the main pane.
+    func open(_ request: AppOpenRequest, from origin: SideContentOrigin = .focusedPane) {
 #if DEBUG
         if let observer = _openRequestObserverForTesting, observer(request) {
             return
@@ -401,7 +400,7 @@ final class AppOpener {
             return
         }
         supersede()
-        opensInMainPane = inMainPane
+        sideContentOrigin = origin
         let generation = generation
         deferredRequest = request
         appLock.performWhenUnlocked({ [weak self] in

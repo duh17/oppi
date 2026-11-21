@@ -204,4 +204,30 @@ struct PanePlacementTests: PaneFixtureBuilding {
             #expect(PanePlacement.shown(entry(other)) == .other, "\(other)")
         }
     }
+
+    /// Where `kind` from `origin` lands with focus on pane `focused`, as
+    /// `PaneHostController.openBeside` places it; nil when it opens in the main pane without trying beside.
+    private func place(
+        _ kind: PaneContentKind, in cells: PaneLayout, origin: SideContentOrigin, focused: String, size: CGSize = landscape
+    ) -> PanePlacement? {
+        PanePlacement.source(of: origin, focused: id(focused), mainPane: id("chat")).map { place(kind, in: cells, from: $0.raw, size: size) }
+    }
+
+    /// A link from outside the app (`oppi://file`, a share) has no pane of its
+    /// own: with a file beside the chat and the last touch in that file's
+    /// pane, the next outside file still opens beside the main pane, so it
+    /// takes the file's pane rather than opening a third. A link tapped in
+    /// the file's pane opens beside that pane, which keeps its file. Open
+    /// Here never opens beside.
+    @Test func anOutsideLinkOpensBesideTheMainPaneWhicheverPaneHasFocus() {
+        let cells = row([(leaf("chat"), 0.5), (leaf("doc", file), 0.5)])
+        let wide = CGSize(width: 2400, height: 744)
+        #expect(place(.file, in: cells, origin: .external, focused: "doc", size: wide) == .reuse(id("doc")))
+        #expect(place(.file, in: cells, origin: .external, focused: "chat", size: wide) == .reuse(id("doc")), "the same from either pane")
+        #expect(place(.folder, in: cells, origin: .external, focused: "doc", size: wide) == .split(id("doc"), .right))
+        #expect(place(.file, in: cells, origin: .focusedPane, focused: "doc", size: wide) == .split(id("doc"), .right))
+        #expect(place(.file, in: cells, origin: .focusedPane, focused: "chat", size: wide) == .reuse(id("doc")))
+        #expect(place(.file, in: cells, origin: .pane(id("doc")), focused: "chat", size: wide) == .split(id("doc"), .right))
+        #expect(place(.file, in: cells, origin: .mainPane, focused: "doc", size: wide) == nil)
+    }
 }

@@ -120,7 +120,7 @@ final class PaneRestorePreviewController: PreviewRootController {
             serverId: Self.serverId,
             route: .local(PaneLocalScreen.terminal(workspaceId: ChatRoutesFixture.workspace.id).token)
         )
-        host.openBeside(PaneOpenContent(entry: entry), kind: .terminal, from: host.panes.routedLeafID, screen: terminal)
+        host.openBeside(PaneOpenContent(entry: entry), kind: .terminal, from: .pane(host.panes.routedLeafID), screen: terminal)
     }
 
     private static func paneHost(in controller: UIViewController) -> PaneHostController? {

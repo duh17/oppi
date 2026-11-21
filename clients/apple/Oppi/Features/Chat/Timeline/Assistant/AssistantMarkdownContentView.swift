@@ -566,7 +566,7 @@ enum MarkdownLinkInteractionSupport {
             open: { [weak textView] placement in
                 guard let textView, let opener = AppRootEnvironment.near(textView)?.opener else { return }
                 guard placement != .here else {
-                    opener.open(request, inMainPane: true)
+                    opener.open(request, from: .mainPane)
                     return
                 }
                 PaneOpenMenu.open(placement, from: textView) { await opener.paneContent(for: request) }

@@ -615,6 +615,34 @@ struct PaneTreeHostTests {
         #expect(host.scenePanes.splitLeaves.count == 2, "the file got a pane of its own")
     }
 
+    /// A link from outside the app opens beside the main pane whichever pane
+    /// was touched last: with focus in a file pane, the next outside file
+    /// takes that pane instead of opening a second one, while a link tapped
+    /// in that pane opens beside it.
+    @Test func anOutsideFileLinkReusesTheFilePaneWhenFocusIsInIt() async throws {
+        let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
+        defer { host.hide() }
+        try await newPanes(host)
+        let file = { (path: String) in
+            PaneOpenContent(entry: PaneStackEntry(serverId: "s", route: .file(.host, path: path, line: nil)))
+        }
+        host.act { _ = host.panes.openBeside(file("/tmp/a.md"), kind: .file) }
+        let pane = try #require(host.scenePanes.splitLeaves.first?.id)
+        #expect(host.scenePanes.cellLayout.focus == pane)
+
+        var opened = false
+        host.act { opened = host.panes.openBeside(file("/tmp/b.md"), kind: .file, from: .external) }
+        #expect(opened)
+        #expect(host.scenePanes.splitLeaves.map(\.id) == [pane], "still one side pane")
+        #expect(host.scenePanes.topEntry(of: pane).route == .file(.host, path: "/tmp/b.md", line: nil))
+
+        host.act {
+            host.panes.focus(cell: pane)
+            _ = host.panes.openBeside(file("/tmp/c.md"), kind: .file)
+        }
+        #expect(host.scenePanes.splitLeaves.count == 2, "a link tapped in the file's pane opens beside it")
+    }
+
     /// New Panes settings of the test's own, so a saved side on the
     /// simulator never reaches it; `sides` are saved through the settings
     /// store, as the settings rows save them.
@@ -656,7 +684,7 @@ struct PaneTreeHostTests {
             var opened = false
             host.act {
                 opened = host.panes.openBeside(
-                    PaneOpenContent(entry: entry), kind: .terminal, from: host.scenePanes.routedLeafID, screen: screen
+                    PaneOpenContent(entry: entry), kind: .terminal, from: .pane(host.scenePanes.routedLeafID), screen: screen
                 )
             }
             #expect(opened)
@@ -696,6 +724,13 @@ struct PaneTreeHostTests {
         #expect(try splitBesideChat(host).axis == .column, "a tap follows the setting")
     }
 
+    /// A file the terminal resolved, opened as the terminal opens it.
+    private func openFromTerminal(_ content: PaneOpenContent, from terminal: UIViewController, makeScreen: () -> UIViewController) {
+        PaneHostController.open(content, kind: .file, from: terminal) {
+            SSHTerminalOpenRoute.push(from: terminal, makeScreen: makeScreen)
+        }
+    }
+
     private func terminalFile(_ host: PaneTestHost) -> (WorkspaceLinkedFileNavTarget, () -> UIViewController) {
         let target = WorkspaceLinkedFileNavTarget.hostFile(
             serverId: "s", workspaceId: "", path: "/Users/alex/oppi/server/src/session-broadcast.ts",
@@ -720,7 +755,7 @@ struct PaneTreeHostTests {
         host.act { host.panes.focus(cell: terminalPane) }
         let (target, makeScreen) = terminalFile(host)
 
-        host.act { SSHTerminalOpenRoute.open(PaneOpenContent(file: target), kind: .file, from: terminal, makeScreen: makeScreen) }
+        host.act { openFromTerminal(PaneOpenContent(file: target), from: terminal, makeScreen: makeScreen) }
 
         #expect(terminal.navigationController?.topViewController === terminal, "nothing pushed over the terminal")
         #expect(host.scenePanes.topEntry(of: terminalPane) == terminalEntry, "the terminal keeps its pane")
@@ -751,7 +786,7 @@ struct PaneTreeHostTests {
         let terminal = host.screen
         let (target, makeScreen) = terminalFile(host)
 
-        host.act { SSHTerminalOpenRoute.open(PaneOpenContent(file: target), kind: .file, from: terminal, makeScreen: makeScreen) }
+        host.act { openFromTerminal(PaneOpenContent(file: target), from: terminal, makeScreen: makeScreen) }
 
         #expect(host.scenePanes.splitLeaves.isEmpty, "no pane")
         let pushed = terminal.navigationController?.topViewController as? WorkspaceLinkedFileViewController

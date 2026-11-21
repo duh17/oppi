@@ -20,22 +20,34 @@ extension AppOpener {
             guard await scopedLock.authorize(.server(serverId)), isCurrent(generation) else { return .finished }
         }
         guard isCurrent(generation) else { return .finished }
-        // The pane opens beside, or the push lands in, the window's focused
-        // leaf: the one the link was tapped in, since a touch focuses its leaf.
-        guard let screen = navigation.window.flatMap(Router.focusedScreen(in:)) else {
+        guard let screen = linkSourceScreen else {
             toast(String(localized: "Open a screen first, then tap the terminal link again."))
             return .finished
         }
-        TerminalLinkPresenter.show(route, from: screen) { [weak self] message in self?.toast(message) }
+        TerminalLinkPresenter.show(route, from: screen, serverId: serverId) { [weak self] message in self?.toast(message) }
         return .finished
+    }
+
+    /// The screen a terminal link opens from: the main pane's front screen
+    /// for a link from outside the app, which has no pane of its own; else
+    /// the window's front screen, the one the link was tapped in.
+    private var linkSourceScreen: UIViewController? {
+        guard let window = navigation.window else { return nil }
+        if sideContentOrigin == .external, let host = PaneHostController.focused(in: window) {
+            return host.frontScreen(ofCell: host.panes.routedLeafID)
+        }
+        return Router.focusedScreen(in: window)
     }
 }
 
 @MainActor
 enum TerminalLinkPresenter {
+    /// `serverId` is the server the link belongs to, which `.openPane`
+    /// always has: its saved host matched that server's host.
     static func show(
         _ route: TerminalLinkRoute,
         from screen: UIViewController,
+        serverId: String?,
         toast: (String) -> Void
     ) {
         switch route {
@@ -56,17 +68,13 @@ enum TerminalLinkPresenter {
             if let list = screen as? SSHTerminalRexSessionsViewController, list.profileID == profile.id {
                 list.openLinkedPane(pane)
             } else {
+                // The host's Rex list beside `screen`'s pane, else over `screen`.
                 let list = SSHTerminalRexSessionsViewController(profile: profile, opening: pane)
-                if !openBeside(list, from: screen) { Router.push(list, from: screen) }
+                let entry = PaneStackEntry(serverId: serverId ?? "", route: .local(PaneLocalScreen.rex.token))
+                PaneHostController.open(PaneOpenContent(entry: entry), kind: .rex, from: screen, standIn: list) {
+                    Router.push(list, from: screen)
+                }
             }
         }
-    }
-
-    /// The host's Rex list in a pane beside `screen`'s, where `PanePlacement`
-    /// puts Rex; false where it belongs over `screen`.
-    private static func openBeside(_ list: SSHTerminalRexSessionsViewController, from screen: UIViewController) -> Bool {
-        guard let host = PaneHostController.containing(screen), let cell = host.cell(holding: screen) else { return false }
-        let entry = PaneStackEntry(serverId: host.panes.context(of: cell).serverId, route: .local(PaneLocalScreen.rex.token))
-        return host.openBeside(PaneOpenContent(entry: entry), kind: .rex, from: cell, screen: list)
     }
 }

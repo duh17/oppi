@@ -51,6 +51,19 @@ struct PaneOpenContent {
             ?? PaneStackEntry(serverId: target.serverId, route: .local(PaneLocalToken(raw: "folder/\(UUID().uuidString)")))
     }
 
+    /// What the item shows as in the main pane: a workspace's sessions is that
+    /// place, a file or folder its page, anything else the entry's leaf state,
+    /// which turns into the content when it can.
+    @MainActor
+    func mainPaneDestination(coordinator: ConnectionCoordinator) -> NavigationDestination {
+        switch element ?? PaneEntries.element(for: entry, coordinator: coordinator) {
+        case .workspace(let target)?: .place(.sessions(target))
+        case .linkedFile(let target)?: .page(.linkedFile(target))
+        case .fileBrowser(let target)?: .page(.fileBrowser(target))
+        default: .page(.paneEntry(entry))
+        }
+    }
+
     /// The scoped lock that holds the item.
     @MainActor
     var lockTarget: ScopedLockTarget {
@@ -367,8 +380,8 @@ extension PaneHostController {
         case .pane(let id):
             guard choices.targets.contains(where: { $0.id == id }) else { return }
             if id == panes.routedLeafID {
-                // The routed leaf is the shell's stack: the item pushes there.
-                showInRoutedLeaf(content, root: root)
+                // The routed leaf is the shell's stack: the item opens there.
+                root.navigation.open(content.mainPaneDestination(coordinator: root.coordinator))
                 focus(cell: id)
                 return
             }
@@ -381,17 +394,5 @@ extension PaneHostController {
         updateVisibility()
         offerUndo()
         announceLayoutChange()
-    }
-
-    private func showInRoutedLeaf(_ content: PaneOpenContent, root: AppRootEnvironment) {
-        let navigation = root.navigation
-        switch content.element ?? PaneEntries.element(for: content.entry, coordinator: root.coordinator) {
-        case .linkedFile(let target)?:
-            navigation.open(.page(.linkedFile(target)))
-        case .fileBrowser(let target)?:
-            navigation.open(.page(.fileBrowser(target)))
-        default:
-            navigation.open(.page(.paneEntry(content.entry)))
-        }
     }
 }

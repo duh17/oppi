@@ -410,24 +410,13 @@ enum SSHTerminalMenuHeader {
     }
 }
 
-/// Where the terminal shows a file or folder it resolved: the pane owner's
-/// `openBeside`, from the terminal's own pane, as the chat bar's Terminal and
-/// a Rex link do. On a wide window it opens in a pane
-/// beside the terminal (on the New Panes side for files), and a terminal is
-/// never replaced. Elsewhere (a compact window, a full window
-/// of panes) it is pushed over the terminal in the terminal's own navigation,
-/// never onto the Workspaces stack a chat link falls back to: the terminal may
-/// sit on the Terminal tab.
+/// Where the terminal shows a file or folder it resolved when no pane beside
+/// takes it (`PaneHostController.open(_:kind:from:otherwise:)`: a compact
+/// window, a full window of panes) or Open Here asks: pushed over the terminal
+/// in the terminal's own navigation, never onto the Workspaces stack a chat
+/// link falls back to, since the terminal may sit on the Terminal tab.
 @MainActor
 enum SSHTerminalOpenRoute {
-    static func open(
-        _ content: PaneOpenContent, kind: PaneContentKind, from screen: UIViewController, makeScreen: () -> UIViewController
-    ) {
-        if let host = PaneHostController.containing(screen), let cell = host.cell(holding: screen),
-           host.openBeside(content, kind: kind, from: cell) { return }
-        push(from: screen, makeScreen: makeScreen)
-    }
-
     /// Over the terminal, unless something already covers it (Back before
     /// the lookup finished, another screen pushed meanwhile).
     static func push(from screen: UIViewController, makeScreen: () -> UIViewController) {

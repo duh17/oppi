@@ -141,13 +141,7 @@ extension AppOpener {
             return .unreachable
         }
         await dismissCoveringDocumentOverlayThenNavigateIfCurrent(generation: generation) { [weak self] in
-            guard let self, !openLinkedFileBeside(target, reference: reference) else { return }
-            NotificationCenter.default.post(
-                name: .workspaceLinkedFileWillOpen,
-                object: target.sourceSessionId,
-                userInfo: [Notification.Name.workspaceLinkedFileSourceServerIDKey: target.serverId]
-            )
-            navigation.open(.page(.linkedFile(target)), from: .link)
+            self?.openLinkedFile(target, reference: reference)
         }
         return .finished
     }
@@ -488,11 +482,7 @@ extension AppOpener {
             }
 
             await dismissCoveringDocumentOverlayThenNavigateIfCurrent(generation: generation) { [weak self] in
-                guard let self else { return }
-                let target = Self.linkedFileTarget(file, reference: reference)
-                guard !openLinkedFileBeside(target, reference: reference) else { return }
-                postWorkspaceLinkedFileWillOpen(reference: reference)
-                navigation.open(.page(.linkedFile(target)), from: .link)
+                self?.openLinkedFile(Self.linkedFileTarget(file, reference: reference), reference: reference)
             }
             return .finished
 
@@ -512,11 +502,7 @@ extension AppOpener {
             }
 
             await dismissCoveringDocumentOverlayThenNavigateIfCurrent(generation: generation) { [weak self] in
-                guard let self else { return }
-                let target = Self.linkedFileTarget(file, reference: reference)
-                guard !openLinkedFileBeside(target, reference: reference) else { return }
-                postWorkspaceLinkedFileWillOpen(reference: reference)
-                navigation.open(.page(.linkedFile(target)), from: .link)
+                self?.openLinkedFile(Self.linkedFileTarget(file, reference: reference), reference: reference)
             }
             return .finished
         }
@@ -660,8 +646,7 @@ extension AppOpener {
         }
 
         await dismissCoveringDocumentOverlayThenNavigateIfCurrent(generation: generation) { [weak self] in
-            guard let self, !openBesideFocusedPane(PaneOpenContent(file: target), kind: .file) else { return }
-            navigation.open(.page(.linkedFile(target)))
+            self?.openSideContent(PaneOpenContent(file: target), kind: .file)
         }
         return .finished
     }
@@ -713,8 +698,7 @@ extension AppOpener {
             return .unreachable
         }
         await dismissCoveringDocumentOverlayThenNavigateIfCurrent(generation: generation) { [weak self] in
-            guard let self, !openBesideFocusedPane(content, kind: .folder) else { return }
-            navigation.open(.page(.fileBrowser(target)))
+            self?.openSideContent(content, kind: .folder)
         }
         return .finished
     }

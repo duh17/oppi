@@ -991,8 +991,7 @@ extension ChatViewController {
                 let folderTarget = SSHTerminalFolderTarget(
                     serverHost: host, folder: folder, label: label, isWorktree: isWorktree, serverOffers: serverOffers
                 )
-                if openTerminalBeside(folderTarget, workspaceId: workspaceId) { return }
-                SSHTerminalFolderEntry.open(folderTarget, from: self)
+                openTerminal(folderTarget, workspaceId: workspaceId)
             case .noFolder:
                 SSHTerminalFolderEntry.open(target, from: self, missingReason: .noFolder)
             case .failure(let message):
@@ -1001,14 +1000,17 @@ extension ChatViewController {
         }
     }
 
-    /// The folder terminal in a pane beside the chat, focused; false leaves
-    /// it to the push.
-    private func openTerminalBeside(_ target: SSHTerminalFolderTarget, workspaceId: String) -> Bool {
-        guard let host = PaneHostController.containing(self),
-              let cell = host.cell(holding: self),
-              let serverId = connection.currentServerId ?? serverIdHint,
-              let screen = SSHTerminalFolderEntry.screen(for: target) else { return false }
+    /// The folder terminal in a pane beside the chat, focused, else pushed
+    /// over the chat.
+    private func openTerminal(_ target: SSHTerminalFolderTarget, workspaceId: String) {
+        guard let serverId = connection.currentServerId ?? serverIdHint,
+              let screen = SSHTerminalFolderEntry.screen(for: target) else {
+            SSHTerminalFolderEntry.open(target, from: self)
+            return
+        }
         let entry = PaneStackEntry(serverId: serverId, route: .local(PaneLocalScreen.terminal(workspaceId: workspaceId).token))
-        return host.openBeside(PaneOpenContent(entry: entry), kind: .terminal, from: cell, screen: screen)
+        PaneHostController.open(PaneOpenContent(entry: entry), kind: .terminal, from: self, standIn: screen) {
+            Router.push(screen, from: self)
+        }
     }
 }

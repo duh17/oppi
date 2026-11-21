@@ -1930,7 +1930,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     }
 
     /// Opens a held or tapped target. With no `placement` it goes where a
-    /// tapped chat link's would (`SSHTerminalOpenRoute`); the hold menu's
+    /// tapped chat link's would (`PanePlacement`); the hold menu's
     /// pane items name one (`PaneOpenMenu`).
     private func open(_ target: SSHTerminalOpenTarget, placement: PaneOpenPlacement?) {
         switch target {
@@ -2064,7 +2064,9 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     ) {
         switch placement {
         case nil:
-            SSHTerminalOpenRoute.open(content, kind: kind, from: self, makeScreen: makeScreen)
+            PaneHostController.open(content, kind: kind, from: self) {
+                SSHTerminalOpenRoute.push(from: self, makeScreen: makeScreen)
+            }
         case .here?:
             SSHTerminalOpenRoute.push(from: self, makeScreen: makeScreen)
         case let placement?:

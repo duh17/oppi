@@ -101,7 +101,7 @@ struct TerminalPaneTests {
             var opened = false
             host.act {
                 opened = host.panes.openBeside(
-                    PaneOpenContent(entry: entry), kind: .terminal, from: host.scenePanes.routedLeafID, screen: folder
+                    PaneOpenContent(entry: entry), kind: .terminal, from: .pane(host.scenePanes.routedLeafID), screen: folder
                 )
             }
             try #require(opened, "the terminal opened in a pane beside the chat")

@@ -2,27 +2,29 @@ import Foundation
 
 // Pane links (`oppi://sessions`, `file`, `files`, `git`, `panel`), decoded by
 // `PaneLinkCodec`. A link opens on the server it names, else the server it
-// came from, else the active one. A file, a folder or a workspace's sessions
-// open beside the focused pane where there is room (`openBesideFocusedPane`);
-// what else the primary
-// leaf can show opens there; content the app cannot show yet (a server this device has not
-// paired, a server still connecting, a session it must look up, content
-// behind a scoped lock) opens as the entry's leaf state
-// (`PaneLeafStateViewController`), which turns into the content when it can.
-// A panel opens beside its session's chat (`ScenePanes.openPanel`). A
-// browser link opens its page beside the focused pane on a wide window, else
-// as a tapped web link does; needing no server, it never switches one. A Git
-// or commit link opens beside the focused pane on a wide window, else pushed
-// (`PaneGitScreens`). A Godot link opens beside the focused pane on a wide
-// window, else in the primary stack, and only with the Godot Pane experiment on
-// and a server that offers it (its Godot Pane switch, and games to serve).
+// came from, else the active one. A file, a folder, a workspace's sessions,
+// Git, a commit, a web page and a game are side content (`openSideContent`):
+// beside the pane the link came from (the main pane for a link from outside
+// the app) where there is room, else in the main pane. `oppi://sessions` is
+// the All Sessions place, always in the main pane. Content the app cannot
+// show yet (a server this device has not paired, a server still connecting, a
+// session it must look up, content behind a scoped lock) opens as the entry's
+// leaf state (`PaneLeafStateViewController`), which turns into the content
+// when it can. A panel opens beside its session's chat
+// (`ScenePanes.openPanel`). A browser link needs no server, so it never
+// switches one; with no server at all it opens as a tapped web link does. A
+// Godot link opens only with the Godot Pane experiment on and a server that
+// offers it (its Godot Pane switch, and games to serve).
 extension AppOpener {
     func performPane(_ link: PaneLink, sourceServerID: String?, generation: UInt64) async -> AppOpenOutcome {
         if case .browser(let url) = link.route {
-            // Beside the focused pane on a wide window; else as a tapped web
-            // link opens (the in-app browser or Safari, per Settings).
+            // Beside where side content opens; else as a tapped web link
+            // opens (Oppi's browser or the system's, by the Browser setting).
             if let serverId = link.server ?? sourceServerID ?? windowServerId,
-               openBesideFocusedPane(PaneOpenContent(entry: PaneStackEntry(serverId: serverId, route: link.route)), kind: .webPage) {
+               let window = navigation.window, let host = PaneHostController.focused(in: window),
+               host.openBeside(
+                   PaneOpenContent(entry: PaneStackEntry(serverId: serverId, route: link.route)), kind: .webPage, from: sideContentOrigin
+               ) {
                 return .finished
             }
             presentWebLink(url)
@@ -83,59 +85,51 @@ extension AppOpener {
                 generation: generation
             )
         }
-        if case .godot = link.route, let window = navigation.window,
-           PaneHostController.focused(in: window)?.openGodot(entry) == true {
-            return .finished
-        }
-        switch link.route {
-        case .git, .commit:
-            // A workspace's Git or a commit (`PaneGitScreens`): beside the
-            // focused pane on a wide window, else pushed.
-            if !openBesideFocusedPane(PaneOpenContent(entry: entry), kind: .git) {
-                navigation.open(.page(.paneEntry(entry)))
-            }
-            return .finished
+        // A game, a workspace's Git or a commit (`PaneGitScreens`), a
+        // workspace's sessions, a folder or a file is side content; anything
+        // else, or what the stores do not know yet, is the entry's leaf state.
+        let kind: PaneContentKind? = switch link.route {
+        case .godot: .game
+        case .git, .commit: .git
         default:
-            break
+            switch PaneEntries.element(for: entry, coordinator: coordinator) {
+            case .workspace?: .sessions
+            case .fileBrowser?: .folder
+            case .linkedFile?: .file
+            default: nil
+            }
         }
-        switch PaneEntries.element(for: entry, coordinator: coordinator) {
-        case .workspace(let target)?:
-            if !openBesideFocusedPane(PaneOpenContent(entry: entry), kind: .sessions) {
-                navigation.open(.place(.sessions(target)))
-            }
-        case .fileBrowser(let target)?:
-            if !openBesideFocusedPane(PaneOpenContent(entry: entry), kind: .folder) {
-                navigation.open(.page(.fileBrowser(target)))
-            }
-        case .linkedFile(let target)?:
-            if !openBesideFocusedPane(PaneOpenContent(entry: entry), kind: .file) {
-                navigation.open(.page(.linkedFile(target)))
-            }
-        default:
+        if let kind {
+            openSideContent(PaneOpenContent(entry: entry), kind: kind)
+        } else {
             navigation.open(.page(.paneEntry(entry)))
         }
         return .finished
     }
 
-    /// Opens a link's content in a pane beside the focused one, where
-    /// `PaneHostController.openBeside` puts it. False when it opens
-    /// in the main pane as before: a compact window, no room
-    /// for a pane, a sheet in front, or Open Here (`opensInMainPane`).
-    /// A file a chat's text links to opens beside that chat as its reader, as
-    /// a file pill does, when the chat shows with room for its panels; else
-    /// beside the focused pane (`openBesideFocusedPane`). False when it
-    /// belongs in the main pane.
-    func openLinkedFileBeside(_ target: WorkspaceLinkedFileNavTarget, reference: ResourceReference) -> Bool {
-        if !opensInMainPane, let sessionId = reference.sourceSessionID, let serverId = reference.sourceServerID,
+    /// A file a chat's text links to: beside that chat as its reader, as a
+    /// file pill opens, when the chat shows with room for its panels; else as
+    /// side content, telling the chat before the file covers it.
+    func openLinkedFile(_ target: WorkspaceLinkedFileNavTarget, reference: ResourceReference) {
+        if sideContentOrigin != .mainPane, let sessionId = reference.sourceSessionID, let serverId = reference.sourceServerID,
            navigation.panes.openLinkedFileBesideChat(target, sessionId: sessionId, serverId: serverId) {
-            return true
+            return
         }
-        return openBesideFocusedPane(PaneOpenContent(file: target), kind: .file)
+        openSideContent(PaneOpenContent(file: target), kind: .file) {
+            postWorkspaceLinkedFileWillOpen(reference: reference)
+        }
     }
 
-    func openBesideFocusedPane(_ content: PaneOpenContent, kind: PaneContentKind) -> Bool {
-        guard !opensInMainPane, let window = navigation.window,
-              let host = PaneHostController.focused(in: window) else { return false }
-        return host.openBeside(content, kind: kind)
+    /// Side content a link opens: beside the pane the request's origin names
+    /// (`SideContentOrigin`), where `PanePlacement` puts it; else in the main
+    /// pane after `beforeMainPane`. Beside needs a wide window, room for a
+    /// pane, and no sheet in front.
+    func openSideContent(_ content: PaneOpenContent, kind: PaneContentKind, beforeMainPane: () -> Void = {}) {
+        if let window = navigation.window, let host = PaneHostController.focused(in: window),
+           host.openBeside(content, kind: kind, from: sideContentOrigin) {
+            return
+        }
+        beforeMainPane()
+        navigation.open(content.mainPaneDestination(coordinator: coordinator))
     }
 }
