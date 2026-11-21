@@ -747,7 +747,11 @@ function withCompiledBuiltins(
 ): string[] | undefined {
   if (paths === undefined || compiled === undefined) return paths;
   const wanted: McpBuiltinName[] = [];
-  if (compiled.mcp.enabled && options.mcpOn) wanted.push("mcp", "tool-search");
+  if (compiled.mcp.enabled && options.mcpOn) wanted.push("mcp");
+  // A plan that affords tool search loads it even with no server: a plugin's deferred tools are
+  // declared to nobody until the search extension is there to load them.
+  if ((compiled.mcp.enabled && options.mcpOn) || compiled.discovery.includes("tool_search"))
+    wanted.push("tool-search");
   // A full Agent keeps codemode when the Pi Tools setting enables it (local JS batching); a
   // read-only Agent gets it only when an admitted MCP server is reached through it.
   const codemode =
@@ -1613,6 +1617,20 @@ export class SdkBackend implements AgentBackend {
         ...(effectiveToolPolicy.allowed ? { tools: effectiveToolPolicy.allowed } : {}),
         ...(effectiveToolPolicy.excluded ? { excludeTools: effectiveToolPolicy.excluded } : {}),
       });
+
+      // Pi registers `tool_search` inactive, so a plugin's deferred tools are declared to the
+      // model only once it is on. Only a full Agent turns it on here: a read-only one states what
+      // it reaches, and a server's deferred exposure is Pi's own rule, left alone. The extension
+      // must be loaded too, which `withCompiledBuiltins` saw to for an Agent that selects plugins.
+      if (compiled?.core === "full" && compiled.discovery.includes("tool_search")) {
+        const activeToolNames = createResult.session.getActiveToolNames();
+        if (
+          !activeToolNames.includes("tool_search") &&
+          createResult.session.getToolDefinition("tool_search") !== undefined
+        ) {
+          createResult.session.setActiveToolsByName([...activeToolNames, "tool_search"]);
+        }
+      }
 
       // A name Oppi holds from creation (`oppi session create --name`, an Agent's session name)
       // is the session's name. Pi does not know it, so give it over, or an extension that names

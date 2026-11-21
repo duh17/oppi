@@ -145,7 +145,23 @@ describe("compileAgentCapabilities", () => {
     const compiled = compile({ name: "A" }, { mcpAvailable: false });
     expect(compiled.mcp).toEqual({ enabled: false, servers: [] });
     expect(compiled.excluded).toContain("mcp__*");
-    expect(compiled.discovery).toEqual([]);
+    // The search is not an MCP tool: a full Agent keeps it for its plugins' deferred tools, and
+    // with no server it reaches nothing.
+    expect(compiled.discovery).toEqual(["tool_search"]);
+  });
+
+  it("affords tool search to a full Agent, not to a read-only one", () => {
+    // A plugin's deferred tool is declared to the model only once tool_search loads it. A full
+    // Agent may reach every loaded plugin, so the search is part of a normal session. A read-only
+    // Agent states what it reaches: Oppi's catalog reports tool names, not exposures, so nothing
+    // can say whether a plugin it named defers a tool, and the search would hand it unnamed tools.
+    expect(compile({ name: "A" }, { mcpServers: [] }).discovery).toEqual(["tool_search"]);
+    const sealed = compile({
+      name: "A",
+      capabilities: { core: "readonly", plugins: ["imagen", "secret"], mcp: {} },
+    });
+    expect(sealed.discovery).toEqual([]);
+    expect(sealed.excluded).toContain("tool_search");
   });
 
   it("carries the context toggles straight through", () => {

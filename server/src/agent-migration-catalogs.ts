@@ -8,6 +8,7 @@ import { join } from "node:path";
 import type { AgentMigrationCatalogs } from "./agent-definition-migration.js";
 import { mcpServerFacts } from "./durable-mcp.js";
 import { readMcpDocument } from "./mcp-config.js";
+import { workspaceMountRoot } from "./session-work-root.js";
 import type { ServerExtensionSummary } from "./server-resource-service.js";
 import type { Workspace } from "./types.js";
 import { isRecord } from "./json-shape.js";
@@ -45,17 +46,26 @@ export async function buildAgentMigrationCatalogs(input: {
   for (const [name, tools] of plugins) if (tools.length === 0) plugins.delete(name);
 
   const userMcpServers = mcpServerNames(join(input.agentDir, "mcp.json"));
-  const workspaceMcpServers = new Map<string, readonly string[]>();
+  // A workspace's folder is stored in display form (`~/workspace/nanny`), so it is read through
+  // the mount root every session uses: an unexpanded `~` is a relative path that finds nothing,
+  // and the project's servers and their cached tools would both be missing from these catalogs.
+  const projectScopes = input.workspaces.map((workspace) => {
+    const cwd = workspaceMountRoot(workspace, { create: false });
+    return { id: workspace.id, cwd, names: mcpServerNames(join(cwd, ".pi", "mcp.json")) };
+  });
+  const workspaceMcpServers: ReadonlyMap<string, readonly string[]> = new Map(
+    projectScopes.map((scope) => [scope.id, scope.names] as const),
+  );
   const mcpServerTools = new Map<string, readonly string[]>();
   const scopes: Array<{ cwd: string; names: readonly string[]; projectTrusted: boolean }> = [
     {
-      cwd: input.workspaces[0]?.hostMount ?? input.agentDir,
+      cwd: projectScopes[0]?.cwd ?? input.agentDir,
       names: userMcpServers,
       projectTrusted: false,
     },
-    ...input.workspaces.map((workspace) => ({
-      cwd: workspace.hostMount,
-      names: mcpServerNames(join(workspace.hostMount, ".pi", "mcp.json")),
+    ...projectScopes.map((scope) => ({
+      cwd: scope.cwd,
+      names: scope.names,
       projectTrusted: true,
     })),
   ];
@@ -74,12 +84,6 @@ export async function buildAgentMigrationCatalogs(input: {
       const known = new Set([...(mcpServerTools.get(fact.name) ?? []), ...fact.tools]);
       if (known.size > 0) mcpServerTools.set(fact.name, [...known].sort());
     }
-  }
-  for (const workspace of input.workspaces) {
-    workspaceMcpServers.set(
-      workspace.id,
-      mcpServerNames(join(workspace.hostMount, ".pi", "mcp.json")),
-    );
   }
 
   return {

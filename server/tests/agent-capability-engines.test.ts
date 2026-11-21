@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -56,6 +56,18 @@ function writeServers(): void {
         gmail: command,
         xcode: { ...command, exposure: "direct" },
         coros: { ...command, exposure: "deferred" },
+      },
+    }),
+  );
+}
+
+/** One server at Pi's default exposure (codemode): nothing in it asks for the search. */
+function writeCodemodeServer(): void {
+  writeFileSync(
+    join(agentDir, "mcp.json"),
+    JSON.stringify({
+      mcpServers: {
+        gmail: { command: process.execPath, args: ["-e", "process.exit(0)"] },
       },
     }),
   );
@@ -167,6 +179,112 @@ describe("classic engine", () => {
     expect(compiled.mcp).toEqual({ enabled: false, servers: [] });
     expect(compiled.excluded).toContain("mcp__*");
     expect(compiled.discovery).toEqual([]);
+  });
+
+  /**
+   * A global extension whose tool is declared `deferred`: Pi registers it and declares it to the
+   * model only once `tool_search` loads it, so an inactive search means the tool is unreachable.
+   */
+  function writeDeferredPlugin(): void {
+    const extensions = join(agentDir, "extensions");
+    mkdirSync(extensions, { recursive: true });
+    writeFileSync(
+      join(extensions, "probe-plugin.ts"),
+      [
+        "export default function (pi) {",
+        "  pi.registerTool({",
+        "    name: 'probe_deferred',",
+        "    label: 'Probe',",
+        "    description: 'A deferred probe',",
+        "    exposure: 'deferred',",
+        "    parameters: { type: 'object', properties: {} },",
+        "    execute: async () => ({ content: [{ type: 'text', text: 'probe-ran' }] }),",
+        "  });",
+        "}",
+      ].join("\n"),
+    );
+  }
+
+  async function launch(definition: AgentDefinition, cwd: string): Promise<SdkBackend> {
+    return SdkBackend.create({
+      session: makeSession(),
+      workspace: {
+        id: "workspace-1",
+        name: "Deferred",
+        runtime: "host",
+        hostMount: cwd,
+      } as Workspace,
+      agentDefinition: definition,
+      onEvent: vi.fn(),
+      onEnd: vi.fn(),
+    });
+  }
+
+  it("gives a full Agent the search that declares a plugin's deferred tool", async () => {
+    writeDeferredPlugin();
+    const backend = await launch(
+      { name: "Maker", capabilities: { plugins: ["probe-plugin"] } },
+      tempDir("oppi-deferred-full-"),
+    );
+    try {
+      const active = backend.session.getActiveToolNames();
+      expect(active).toContain("tool_search");
+      // Registered and callable, but never declared on its own: only the search loads it.
+      expect(backend.session.getToolDefinition("probe_deferred")).toBeDefined();
+      expect(active).not.toContain("probe_deferred");
+    } finally {
+      await backend.dispose();
+    }
+  });
+
+  it("leaves a read-only Agent without the search, so a deferred tool stays out of reach", async () => {
+    writeDeferredPlugin();
+    const backend = await launch(
+      { name: "Sealed", capabilities: { core: "readonly", plugins: ["probe-plugin"] } },
+      tempDir("oppi-deferred-readonly-"),
+    );
+    try {
+      const active = backend.session.getActiveToolNames();
+      expect(active).toContain("read");
+      expect(active).not.toContain("tool_search");
+      expect(active).not.toContain("probe_deferred");
+    } finally {
+      await backend.dispose();
+    }
+  });
+
+  it("leaves a read-only Agent's codemode server without the search too", async () => {
+    // `compileMcp` reports both transports a default-exposure server needs, but the search is the
+    // one that loads deferred plugin tools, which only a full Agent may reach. The server here is
+    // at Pi's default exposure, so this is the engine's own rule and not Pi turning the search on
+    // for a deferred server. The durable engine never offers it for codemode alone either
+    // (`durable-mcp.ts`, `discoveryTools`): the two engines agree.
+    writeCodemodeServer();
+    const definition: AgentDefinition = {
+      name: "Mail triage",
+      capabilities: { core: "readonly", plugins: [], mcp: { gmail: "all" } },
+    };
+    const compiled = compileAgentCapabilities({
+      definition,
+      engine: "classic",
+      runtime: "host",
+      mcpServers: await mcpServerFacts({
+        agentDir,
+        cwd: agentDir,
+        projectTrusted: false,
+        dataDir: agentDir,
+      }),
+    });
+    expect(compiled.discovery).toEqual(["codemode", "tool_search"]);
+
+    const backend = await launch(definition, tempDir("oppi-search-readonly-"));
+    try {
+      const active = backend.session.getActiveToolNames();
+      expect(active).toContain("codemode");
+      expect(active).not.toContain("tool_search");
+    } finally {
+      await backend.dispose();
+    }
   });
 });
 

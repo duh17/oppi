@@ -32,7 +32,10 @@ import {
   agentMcpNamespace,
 } from "./agent-capabilities.js";
 import { isRecord } from "./json-shape.js";
+import { createLogger } from "./logger.js";
 import type { ThinkingLevel } from "./thinking-levels.js";
+
+const log = createLogger({ base: { component: "agent_migration" } });
 
 /** What the migration needs to know about this server, built once per run. */
 export interface AgentMigrationCatalogs {
@@ -110,7 +113,9 @@ export function migrateAgentDefinitionV1(
   const plugins = noTools
     ? []
     : pluginsFor(allowed, resources.extensionIds, excluded, catalogs, notes);
-  const mcp = noTools ? {} : mcpFor(allowed, excluded, v1.launchConstraints, catalogs, notes);
+  const mcp = noTools
+    ? {}
+    : mcpFor(v1.name, allowed, excluded, v1.launchConstraints, catalogs, notes);
   const capabilities: AgentCapabilities = {
     ...(core === "full" ? {} : { core }),
     ...(toggles.ask ? {} : { ask: false }),
@@ -270,6 +275,7 @@ function pluginsFor(
  * left. Neither list means every configured server, which is what the Agent reached before.
  */
 function mcpFor(
+  agentName: string,
   allowed: readonly string[] | undefined,
   excluded: readonly string[],
   launchConstraints: unknown,
@@ -307,6 +313,11 @@ function mcpFor(
     }
     // A tool an exclusion refuses cannot be part of a grant: state the rest of the server's tools
     // instead, which is the only way to keep one tool out of a selection.
+    //
+    // A whole-server grant whose tools no scope has listed cannot be narrowed at all. That widens
+    // the Agent by exactly the refused tools, so it is said once per server, as a note and a
+    // warning: the owner has to check the Agent, and the server log is where a warning is read.
+    const unlisted = new Map<string, string[]>();
     for (const entry of excluded) {
       const part = select(entry);
       if (!part) continue;
@@ -319,9 +330,12 @@ function mcpFor(
         // Remove from what is selected now, not from the server's whole list: two exclusions on
         // one server must both hold.
         const current = selection[server];
-        const kept = (
-          current === "all" ? (catalogs.mcpServerTools.get(server) ?? []) : (current ?? [])
-        ).filter((tool) => !tools.includes(tool));
+        const known = current === "all" ? catalogs.mcpServerTools.get(server) : (current ?? []);
+        if (known === undefined) {
+          unlisted.set(server, [...(unlisted.get(server) ?? []), ...tools]);
+          continue;
+        }
+        const kept = known.filter((tool) => !tools.includes(tool));
         if (kept.length === 0) {
           notes.push(
             `dropped MCP tool ${tools.join(", ")} and no other tool is known for ${server}`,
@@ -334,6 +348,17 @@ function mcpFor(
           `listed ${server}'s ${kept.length} other tools instead of all but ${tools.join(", ")}`,
         );
       }
+    }
+    for (const [server, refused] of unlisted) {
+      const tools = [...new Set(refused)];
+      notes.push(
+        `kept all of ${server}: no session has listed its tools here, so ${tools.join(", ")} ${tools.length === 1 ? "stays" : "stay"} reachable. Check this Agent.`,
+      );
+      log.warn("agents.migration_kept_whole_server", {
+        agent: agentName,
+        server,
+        tools,
+      });
     }
     return Object.fromEntries(Object.entries(selection).sort(([a], [b]) => a.localeCompare(b)));
   }

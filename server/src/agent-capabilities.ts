@@ -140,7 +140,7 @@ export interface CompiledAgentCapabilities {
    */
   readonly allowed?: readonly string[];
   readonly excluded: readonly string[];
-  /** `codemode` / `tool_search`, implied by the admitted servers' exposure. */
+  /** `codemode` / `tool_search`: the discovery tools this session may use. */
   readonly discovery: readonly AgentDiscoveryTool[];
   /** `servers` undefined means every configured server; an empty list means none. */
   readonly mcp: {
@@ -230,9 +230,23 @@ export function compileAgentCapabilities(
     runtime: input.runtime,
   });
 
+  // Pi registers `tool_search` inactive and declares a deferred tool to nobody until it loads.
+  // A full Agent may reach every loaded plugin, so the search is part of a normal session here,
+  // whatever the Pi Tools setting says: a plugin's deferred tools (imagen's image tools, secret's)
+  // are otherwise unreachable. A read-only Agent does not get it: Oppi's catalog reports tool
+  // names, not exposures, so nothing can say whether a plugin it named defers a tool, and the
+  // search would let it load tools it never named. MCP servers ask for it through their own
+  // exposure, which `compileMcp` reports.
+  const discovery: AgentDiscoveryTool[] = [
+    ...mcp.discovery,
+    ...(core === "full" && !mcp.discovery.includes("tool_search")
+      ? (["tool_search"] as const)
+      : []),
+  ];
+
   const deniedDiscovery = mcp.selection.enabled
     ? []
-    : AGENT_DISCOVERY_TOOLS.filter((tool) => !mcp.discovery.includes(tool));
+    : AGENT_DISCOVERY_TOOLS.filter((tool) => !discovery.includes(tool));
   const excluded = [
     ...AGENT_TIER_DENIED_TOOLS[core],
     ...(ask ? [] : [AGENT_TOGGLE_TOOLS.ask.tool]),
@@ -249,7 +263,7 @@ export function compileAgentCapabilities(
   return {
     core,
     excluded: [...new Set(excluded)],
-    discovery: mcp.discovery,
+    discovery,
     mcp: mcp.selection,
     ...(plugins === undefined ? {} : { plugins: [...new Set(plugins)] }),
     ...(input.definition.context?.skills === undefined
