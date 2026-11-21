@@ -336,7 +336,7 @@ enum AppPreferenceStore {
 
     /// Which side of the pane it comes from a new pane opens on, per kind of
     /// content, when nothing says (Settings › Panes › New Panes, wide
-    /// windows). `PanePlacement` reads it; an explicit
+    /// windows). `SidePanePlacement` reads it; an explicit
     /// choice (Open in New Pane Below, a drop on an edge, Split Right) wins.
     enum NewPanes {
         /// The kinds a person can set: Rex goes with Terminal, and a file with

@@ -715,7 +715,7 @@ struct PaneTreeHostTests {
         try #require(AppRootEnvironment.near(host.panes) != nil, "the host sees the app root")
         try await newPanes(host, [.files: .below])
         let file = PaneOpenContent(entry: PaneStackEntry(serverId: "s", route: .file(.host, path: "/tmp/a.md", line: nil)))
-        host.act { host.panes.open(file, .newPane(.right), from: host.scenePanes.routedLeafID) }
+        host.act { host.panes.place(file, at: .newPane(.right), from: host.scenePanes.routedLeafID) }
         #expect(try splitBesideChat(host).axis == .row)
         host.act { host.panes.undoPanes() }
         #expect(host.scenePanes.splitLeaves.isEmpty)
@@ -725,7 +725,7 @@ struct PaneTreeHostTests {
 
     /// A file the terminal resolved, opened as the terminal opens it.
     private func openFromTerminal(_ content: PaneOpenContent, from terminal: UIViewController, makeScreen: () -> UIViewController) {
-        PaneHostController.open(content, kind: .file, from: terminal) {
+        PaneHostController.openBeside(content, kind: .file, from: terminal) {
             SSHTerminalOpenRoute.push(from: terminal, makeScreen: makeScreen)
         }
     }

@@ -121,7 +121,7 @@ extension AppOpener {
     }
 
     /// Side content a link opens: beside the pane the request's origin names
-    /// (`SideContentOrigin`), where `PanePlacement` puts it; else in the main
+    /// (`SidePaneOrigin`), where `SidePanePlacement` puts it; else in the main
     /// pane after `beforeMainPane`. Beside needs a wide window, room for a
     /// pane, and no sheet in front.
     func openSideContent(_ content: PaneOpenContent, kind: PaneContentKind, beforeMainPane: () -> Void = {}) {

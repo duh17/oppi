@@ -203,7 +203,7 @@ final class AISharingConsentSheetViewController: UIViewController, UIAdaptivePre
         policyConfig.baseForegroundColor = palette.ui.comment
         let policy = UIButton(configuration: policyConfig, primaryAction: UIAction { [weak self] _ in
             self?.finish(false)
-            AppDelegate.opener?.open(.webLink(AppSupportLinks.privacyPolicyURL))
+            AppDelegate.opener?.follow(.webLink(AppSupportLinks.privacyPolicyURL))
         })
         policy.accessibilityIdentifier = "aiConsent.privacyPolicy"
 

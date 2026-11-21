@@ -246,7 +246,7 @@ final class BrowserPaneViewController: UIViewController, PaneVisibilityObserving
 
     private func openInSafari() {
         guard let url else { return }
-        root?.opener.open(.system(url))
+        root?.opener.follow(.system(url))
     }
 
     private func makeWebView() -> WKWebView {
@@ -448,7 +448,7 @@ extension BrowserPaneViewController: WKNavigationDelegate, WKUIDelegate {
         // Another scheme (mail, an app, an Oppi link) opens only from a tap,
         // through the opener every other link takes.
         if action.navigationType == .linkActivated {
-            root?.opener.open(AppOpenRequest(url: target, origin: .link))
+            root?.opener.follow(AppOpenRequest(url: target, origin: .link))
         }
         return (.cancel, preferences)
     }

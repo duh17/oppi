@@ -837,7 +837,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         guard let view = viewIfLoaded else { return [] }
         return PaneOpenMenu.items(near: view, includesOpenHere: false) { [weak self] placement in
             guard let self, let file = paneFile, let view = viewIfLoaded else { return }
-            PaneOpenMenu.open(placement, from: view) { PaneOpenContent(file: file) }
+            PaneOpenMenu.place(placement, from: view) { PaneOpenContent(file: file) }
         }.map(\.element)
     }
 

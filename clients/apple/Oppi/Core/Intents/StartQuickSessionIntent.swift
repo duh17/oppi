@@ -87,7 +87,7 @@ struct StartQuickSessionIntent: AppIntent {
     func perform() async throws -> some IntentResult {
         let start = try await start()
         // The opener waits for App Lock, launch, and the shell, then presents.
-        await AppDelegate.opener?.open(.quickSession(start))
+        await AppDelegate.opener?.follow(.quickSession(start))
         return .result()
     }
 

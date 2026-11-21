@@ -210,7 +210,7 @@ final class PluginScreenViewController: ListScreenController<String, String> {
 
     private func openURL(_ text: String) {
         guard let url = URL(string: text), ["http", "https"].contains(url.scheme) else { return }
-        root.opener.open(.webLink(url))
+        root.opener.follow(.webLink(url))
     }
 
     // MARK: - Bars

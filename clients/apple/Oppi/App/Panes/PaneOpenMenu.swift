@@ -284,13 +284,13 @@ enum PaneOpenMenu {
         attach(to: view) { [weak view] placement in
             guard placement != .here else { return here() }
             guard let view else { return }
-            open(placement, from: view) { content() }
+            place(placement, from: view) { content() }
         }
     }
 
-    /// Opens what `content` resolves to at `placement`, from the pane `view`
+    /// Places what `content` resolves to at `placement`, from the pane `view`
     /// sits in, once its scoped lock allows. `.here` is the surface's own.
-    static func open(
+    static func place(
         _ placement: PaneOpenPlacement,
         from view: UIView,
         content: @escaping @MainActor () async -> PaneOpenContent?
@@ -304,7 +304,7 @@ enum PaneOpenMenu {
             }
             guard await ScopedLockService.shared.authorize(content.lockTarget),
                   let view, let (host, cell) = locate(view) else { return }
-            host.open(content, placement, from: cell)
+            host.place(content, at: placement, from: cell)
         }
     }
 
@@ -370,10 +370,10 @@ extension PaneHostController {
         )
     }
 
-    /// Opens `content` from cell `source` where `placement` says, if the
+    /// Places `content` from cell `source` where `placement` says, if the
     /// window still offers it there. A new pane takes focus and, when it
     /// cannot sit beside its pane, fills the window; both opens offer Undo.
-    func open(_ content: PaneOpenContent, _ placement: PaneOpenPlacement, from source: PaneID) {
+    func place(_ content: PaneOpenContent, at placement: PaneOpenPlacement, from source: PaneID) {
         guard let choices = openChoices(from: source), let root = AppRootEnvironment.near(self) else { return }
         // The shell's own screen for the item, when its entry cannot say all
         // of it; else the leaf builds it from the entry.
@@ -383,7 +383,7 @@ extension PaneHostController {
             return
         case .newPane(let edge):
             guard let newPane = edge == .bottom ? choices.below : choices.right,
-                  panes.open(content.entry, at: edge, ofCell: source, full: newPane == .full) != nil else { return }
+                  panes.newPane(content.entry, at: edge, ofCell: source, full: newPane == .full) != nil else { return }
             syncSplitLeaves()
         case .pane(let id):
             guard choices.targets.contains(where: { $0.id == id }) else { return }
@@ -393,7 +393,7 @@ extension PaneHostController {
                 focus(cell: id)
                 return
             }
-            panes.open(content.entry, inCell: id)
+            panes.replace(content.entry, inCell: id)
             syncSplitLeaves()
         }
         relayoutCells()

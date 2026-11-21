@@ -152,7 +152,7 @@ final class ExtensionNoticeViewController: UIViewController {
             attributes: AttributeContainer([.font: UIFont.preferredFont(forTextStyle: .body)])
         )
         let link = UIButton(configuration: linkConfiguration, primaryAction: UIAction { [weak self] _ in
-            self?.root.opener.open(.webLink(url))
+            self?.root.opener.follow(.webLink(url))
         })
         link.contentHorizontalAlignment = .leading
         link.accessibilityIdentifier = "extension.notice.link"

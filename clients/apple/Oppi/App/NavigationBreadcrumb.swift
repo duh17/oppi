@@ -260,13 +260,13 @@ final class LinkOpenTimer {
     static let message = "Link opened"
 
     private let kind: String
-    private let origin: NavigationOrigin
+    private let origin: MainPaneOrigin
     private let clock = ContinuousClock()
     private let start: ContinuousClock.Instant
     private var durations: [String: Int] = [:]
     var path: Path = .blocking
 
-    init(kind: String, origin: NavigationOrigin) {
+    init(kind: String, origin: MainPaneOrigin) {
         self.kind = kind
         self.origin = origin
         start = clock.now

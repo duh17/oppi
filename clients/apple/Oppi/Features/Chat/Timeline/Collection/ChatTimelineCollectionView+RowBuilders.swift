@@ -275,7 +275,7 @@ extension ChatTimelineController {
         guard let request = item.openRequest(serverID: serverId, workspaceID: workspaceId, sessionID: sessionId) else {
             return
         }
-        AppRootEnvironment.near(sourceView)?.opener.open(request)
+        AppRootEnvironment.near(sourceView)?.opener.follow(request)
     }
 
     func thinkingRowConfiguration(itemID: String, item: ChatItem) -> ThinkingTimelineRowConfiguration? {

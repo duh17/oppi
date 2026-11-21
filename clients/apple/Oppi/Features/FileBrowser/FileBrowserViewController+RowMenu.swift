@@ -112,7 +112,7 @@ extension FileBrowserViewController {
             return
         }
         let content = paneContent(path: path)
-        PaneOpenMenu.open(placement, from: view) { content }
+        PaneOpenMenu.place(placement, from: view) { content }
     }
 
     /// False when the row is gone or its file cannot be read now.

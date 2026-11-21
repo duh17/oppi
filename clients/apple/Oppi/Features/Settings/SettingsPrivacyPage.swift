@@ -139,7 +139,7 @@ final class SettingsPrivacyViewController: ListScreenController<SettingsPrivacyV
             identifier: "settings.privacyPolicy",
             hint: String(localized: "Opens Oppi's public Privacy Policy")
         ) { [weak self] in
-            self?.root.opener.open(.webLink(AppSupportLinks.privacyPolicyURL))
+            self?.root.opener.follow(.webLink(AppSupportLinks.privacyPolicyURL))
         }
     }
 

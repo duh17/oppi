@@ -165,7 +165,7 @@ struct StartOppiSessionIntent: AppIntent {
 
             // The receipt above is the durability; the opener is the open. It
             // takes the receipt once the server is up and the app is unlocked.
-            AppDelegate.opener?.open(.session(SessionOpen(
+            AppDelegate.opener?.follow(.session(SessionOpen(
                 serverId: target.serverId,
                 sessionId: sessionId,
                 workspaceId: target.workspaceId,

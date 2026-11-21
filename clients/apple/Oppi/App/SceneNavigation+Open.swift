@@ -4,7 +4,7 @@ import Foundation
 // list row, button, link, notification and key that shows a place, a chat or
 // a page calls `SceneNavigation.open(_:from:)`, and
 // `MainPaneRoute.placement(of:from:split:)` is the one table that says where
-// it goes. Content that can open in a pane beside (`PanePlacement`) comes here
+// it goes. Content that can open in a pane beside (`SidePanePlacement`) comes here
 // only when it opens in the main pane.
 
 /// What an open shows in the main pane.
@@ -64,7 +64,7 @@ enum NavigationDestination: Equatable {
 }
 
 /// Where an open comes from, which decides what Back returns to.
-enum NavigationOrigin: Equatable {
+enum MainPaneOrigin: Equatable {
     /// A row, button, sidebar row or key on one of the window's screens.
     /// `workspace` is the workspace that screen belongs to: a chat opens on
     /// its list.
@@ -112,7 +112,7 @@ extension SceneNavigation {
     /// after success; cancel leaves the window as it was. The destination's screen gates again, which covers an unlock that
     /// expires under an open screen. Anything but an outside open is the
     /// person's own navigation, so it ends an AVKit full screen's hold on the stack.
-    func open(_ destination: NavigationDestination, from origin: NavigationOrigin = .screen()) {
+    func open(_ destination: NavigationDestination, from origin: MainPaneOrigin = .screen()) {
         var destination = destination
         if case .chat(let chat) = destination, case .screen(let workspace?) = origin {
             destination = .chat(chat.withWorkspaceIdIfMissing(workspace.workspace.id))
@@ -156,7 +156,7 @@ extension MainPaneRoute {
     /// shows. A page (a terminal too) sits over its opener. Workspace
     /// Settings sits on its workspace's list. The host switcher's jobs
     /// replace each other.
-    func placement(of destination: NavigationDestination, from origin: NavigationOrigin, split: Bool) -> MainPanePlacement {
+    func placement(of destination: NavigationDestination, from origin: MainPaneOrigin, split: Bool) -> MainPanePlacement {
         switch destination {
         case .place(let place):
             return .root(place)

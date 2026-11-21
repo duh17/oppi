@@ -57,7 +57,7 @@ enum AppOpenRequest: Equatable, Sendable {
     /// server; a scene URL carries no server, so session resolution falls
     /// back to the cached stores. `sourceSessionID` is the session an in-app
     /// link was tapped in, for the internal URLs that belong to it.
-    init(url: URL, origin: NavigationOrigin, sourceServerID: String? = nil, sourceSessionID: String? = nil) {
+    init(url: URL, origin: MainPaneOrigin, sourceServerID: String? = nil, sourceSessionID: String? = nil) {
         let scheme = url.scheme?.lowercased()
         if let decoded = PaneLinkCodec.decode(url) {
             switch decoded {
@@ -89,7 +89,7 @@ enum AppOpenRequest: Equatable, Sendable {
 
     /// A pane link as its URL opens: a session or thread as a session link,
     /// anything else as a pane. A pin opens through here too.
-    init(link: PaneLink, origin: NavigationOrigin, sourceServerID: String?) {
+    init(link: PaneLink, origin: MainPaneOrigin, sourceServerID: String?) {
         // A link that names its server opens there; else on the server it
         // came from (an in-app link), else by lookup.
         let serverId = link.server ?? sourceServerID
@@ -129,7 +129,7 @@ struct SessionOpen: Equatable, Sendable {
     /// Hint only; the session's own record wins once it is loaded.
     var workspaceId: String?
     /// `.external` replaces the visible route; `.link` keeps the back stack.
-    var origin: NavigationOrigin
+    var origin: MainPaneOrigin
     /// Siri "Start Session": the durable receipt to consume once its server is
     /// up (the created row and any unsent prompt).
     var startedSessionRequestID: Int?
@@ -138,7 +138,7 @@ struct SessionOpen: Equatable, Sendable {
         serverId: String? = nil,
         sessionId: String,
         workspaceId: String? = nil,
-        origin: NavigationOrigin,
+        origin: MainPaneOrigin,
         startedSessionRequestID: Int? = nil
     ) {
         self.serverId = serverId
@@ -382,12 +382,14 @@ final class AppOpener {
 
     /// Where the current request came from, which picks the pane its side
     /// content opens beside (`openSideContent`).
-    @ObservationIgnored var sideContentOrigin = SideContentOrigin.focusedPane
+    @ObservationIgnored var sideContentOrigin = SidePaneOrigin.focusedPane
 
-    /// The only way in. `origin`: a link in the window's content opens its
-    /// side content beside the pane it was tapped in, a link from outside the
-    /// app beside the main pane, and Open Here in the main pane.
-    func open(_ request: AppOpenRequest, from origin: SideContentOrigin = .focusedPane) {
+    /// The only way in: a link, a notification, Siri or a Shortcut follows its
+    /// request through App Lock, launch, the scoped lock and the target server
+    /// until it shows. `origin`: a link in the window's content opens its side
+    /// content beside the pane it was tapped in, a link from outside the app
+    /// beside the main pane, and Open Here in the main pane.
+    func follow(_ request: AppOpenRequest, from origin: SidePaneOrigin = .focusedPane) {
 #if DEBUG
         if let observer = _openRequestObserverForTesting, observer(request) {
             return
@@ -428,7 +430,7 @@ final class AppOpener {
         // request is the newer one: it wins the slot.
         if parked == nil, deferredRequest == nil, let receipt = intentSessionOpenTrigger.peek() {
             if intentReceiptIsFresh(receipt) {
-                open(.session(SessionOpen(
+                follow(.session(SessionOpen(
                     serverId: receipt.serverId,
                     sessionId: receipt.sessionId,
                     workspaceId: receipt.workspaceId,
@@ -860,7 +862,7 @@ final class AppOpener {
         sessionId: String,
         workspaceIdHint: String?,
         connection: ServerConnection,
-        origin: NavigationOrigin,
+        origin: MainPaneOrigin,
         previousServerId: String?,
         generation: UInt64,
         timer: LinkOpenTimer? = nil
@@ -975,7 +977,7 @@ final class AppOpener {
         sessionId: String,
         workspaceIdHint: String?,
         connection: ServerConnection,
-        origin: NavigationOrigin,
+        origin: MainPaneOrigin,
         previousServerId: String?,
         generation: UInt64,
         timer: LinkOpenTimer
@@ -1207,7 +1209,7 @@ final class AppOpener {
     }
 
     /// The list, with the notice a thread link to an unknown session shows.
-    private func showThreadNotFound(_ origin: NavigationOrigin) {
+    private func showThreadNotFound(_ origin: MainPaneOrigin) {
         navigation.open(.place(.allSessions), from: origin)
         toast("Session not found for this thread link")
     }
@@ -1459,7 +1461,7 @@ extension AppOpener {
         guard let url = Self.e2eInAppBrowserURL() else { return }
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(300))
-            open(.webLink(url))
+            follow(.webLink(url))
         }
     }
 

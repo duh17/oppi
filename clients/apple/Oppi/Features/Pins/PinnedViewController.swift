@@ -316,7 +316,7 @@ final class PinnedViewController: UIViewController {
     /// stack. A game the opener can't play (Godot Pane off) gets its toast.
     private func open(_ pin: Pin, serverId: String, inMainPane: Bool) {
         let link = PaneLink(server: serverId, route: pin.target)
-        root.opener.open(AppOpenRequest(link: link, origin: .link, sourceServerID: serverId), from: inMainPane ? .mainPane : .focusedPane)
+        root.opener.follow(AppOpenRequest(link: link, origin: .link, sourceServerID: serverId), from: inMainPane ? .mainPane : .focusedPane)
     }
 
     // MARK: Editing

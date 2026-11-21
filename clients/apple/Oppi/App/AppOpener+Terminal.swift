@@ -71,7 +71,7 @@ enum TerminalLinkPresenter {
                 // The host's Rex list beside `screen`'s pane, else over `screen`.
                 let list = TerminalNavTarget { SSHTerminalRexSessionsViewController(profile: profile, opening: pane) }
                 let content = PaneOpenContent(terminal: list, as: .rex, serverId: serverId ?? "")
-                PaneHostController.open(content, kind: .rex, from: screen) {
+                PaneHostController.openBeside(content, kind: .rex, from: screen) {
                     list.show(from: screen)
                 }
             }

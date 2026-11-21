@@ -346,7 +346,7 @@ final class ScenePanes {
     /// `.bottom`), focused, filling the window when `full` (the fit rule: it
     /// cannot sit beside it). Undo takes it back. Returns the new leaf's id.
     @discardableResult
-    func open(_ entry: PaneStackEntry, at edge: PaneEdge = .right, ofCell id: PaneID, full: Bool) -> PaneID? {
+    func newPane(_ entry: PaneStackEntry, at edge: PaneEdge = .right, ofCell id: PaneID, full: Bool) -> PaneID? {
         guard edge.isTrailing, tree.leaves.count < PaneLayout.maximumLeaves else { return nil }
         let leaf = PaneLeaf(id: freshLeafID(), name: nil, stack: [entry], attachedTo: nil, origin: .split)
         undoable(Self.openAction) { cells in
@@ -358,7 +358,7 @@ final class ScenePanes {
 
     /// Open in Pane: a split leaf shows `entry` in place of what it showed,
     /// focused. Undo brings back what it showed.
-    func open(_ entry: PaneStackEntry, inCell id: PaneID) {
+    func replace(_ entry: PaneStackEntry, inCell id: PaneID) {
         guard id != routedLeafID, tree.leaf(id)?.attachedTo == nil else { return }
         undoable(Self.openInPaneAction) { cells in
             var cells = cells

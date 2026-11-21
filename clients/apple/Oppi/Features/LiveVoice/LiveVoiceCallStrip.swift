@@ -232,7 +232,7 @@ final class LiveVoiceCallStripController: UIViewController {
     /// servers and asks for a lock as any other open does.
     private func openCallSession() {
         guard let key = content?.key else { return }
-        root.opener.open(.session(SessionOpen(
+        root.opener.follow(.session(SessionOpen(
             serverId: key.serverId,
             sessionId: key.sessionId,
             origin: .link

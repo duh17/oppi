@@ -320,7 +320,7 @@ final class ProviderSignInViewController: ListScreenController<ProviderSignInVie
 
     private func openSignInPage() {
         guard let auth = attempt.flow.auth, let url = ProviderAuthFlowPresentation.signInURL(auth.url) else { return }
-        root.opener.open(.webLink(url))
+        root.opener.follow(.webLink(url))
     }
 }
 

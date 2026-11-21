@@ -308,7 +308,7 @@ final class NativeMarkdownUSDZView: UIView {
 
     private func openFile() {
         guard let reference = currentEmbed?.reference else { return }
-        AppRootEnvironment.near(self)?.opener.open(.resourceReference(reference))
+        AppRootEnvironment.near(self)?.opener.follow(.resourceReference(reference))
     }
 
     private func expand() {
@@ -517,7 +517,7 @@ final class FullScreenUSDZViewController: UIViewController {
         configuration.secondaryButton = open
         configuration.secondaryButtonProperties.primaryAction = UIAction { [weak self] _ in
             guard let self else { return }
-            AppRootEnvironment.near(self)?.opener.open(.resourceReference(embed.reference))
+            AppRootEnvironment.near(self)?.opener.follow(.resourceReference(embed.reference))
         }
         statusView.configuration = configuration
     }

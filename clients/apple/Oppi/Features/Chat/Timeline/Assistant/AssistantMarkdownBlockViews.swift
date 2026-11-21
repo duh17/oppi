@@ -1523,7 +1523,7 @@ final class NativeTableBlockView: UIView {
     /// Opens a link from a drawn cell (a VoiceOver activation): the same
     /// request a tap on the link in a text view makes.
     private func openLink(_ url: URL, from view: UIView) {
-        AppRootEnvironment.near(view)?.opener.open(classifyLink(url) ?? .system(url))
+        AppRootEnvironment.near(view)?.opener.follow(classifyLink(url) ?? .system(url))
     }
 
     private static func containsLink(_ cells: [[MarkdownInline]]) -> Bool {

@@ -194,14 +194,14 @@ final class SceneDelegate: NSObject, UIWindowSceneDelegate, @preconcurrency AppI
         default: break
         }
         for context in urlContexts {
-            app.root.opener.open(AppOpenRequest(url: context.url, origin: .external), from: .external)
+            app.root.opener.follow(AppOpenRequest(url: context.url, origin: .external), from: .external)
         }
     }
 
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
         guard let app else { return }
         for context in URLContexts {
-            app.root.opener.open(AppOpenRequest(url: context.url, origin: .external), from: .external)
+            app.root.opener.follow(AppOpenRequest(url: context.url, origin: .external), from: .external)
         }
     }
 
@@ -229,13 +229,13 @@ final class SceneDelegate: NSObject, UIWindowSceneDelegate, @preconcurrency AppI
     /// opens the Pinned screen. False for an action this build does not know.
     private func perform(_ shortcut: UIApplicationShortcutItem) -> Bool {
         guard shortcut.type.hasSuffix(".pinned"), let app else { return false }
-        app.root.opener.open(.pinned)
+        app.root.opener.follow(.pinned)
         return true
     }
 
     /// A system control's Open intent routes here: show Quick Session in its mode.
     private func perform(_ intent: any UISceneAppIntent) {
         guard let intent = intent as? QuickSessionOpenIntent else { return }
-        AppDelegate.opener?.open(.quickSession(QuickSessionStart(mode: intent.target)))
+        AppDelegate.opener?.follow(.quickSession(QuickSessionStart(mode: intent.target)))
     }
 }

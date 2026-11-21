@@ -68,7 +68,7 @@ extension ChatViewController {
             return false
         }
         if let request = outcome.request {
-            root?.opener.open(request)
+            root?.opener.follow(request)
         }
         return true
     }

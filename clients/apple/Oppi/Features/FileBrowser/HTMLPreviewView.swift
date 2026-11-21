@@ -317,7 +317,7 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, ReaderBody {
         if HTMLContentSecurity.isHTTPURL(navigationAction.request.url),
            navigationAction.navigationType != .other,
            let url = navigationAction.request.url {
-            AppRootEnvironment.near(webView)?.opener.open(.webLink(url))
+            AppRootEnvironment.near(webView)?.opener.follow(.webLink(url))
         }
         decisionHandler(.cancel)
     }
@@ -333,7 +333,7 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, ReaderBody {
         }
         if HTMLContentSecurity.isHTTPURL(navigationAction.request.url),
            let url = navigationAction.request.url {
-            AppRootEnvironment.near(webView)?.opener.open(.webLink(url))
+            AppRootEnvironment.near(webView)?.opener.follow(.webLink(url))
         }
         return nil
     }

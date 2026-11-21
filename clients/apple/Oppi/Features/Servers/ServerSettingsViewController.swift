@@ -682,7 +682,7 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
             connection: connection,
             presenter: self,
             openPrivacyPolicy: { [weak self] in
-                self?.root.opener.open(.webLink(AppSupportLinks.privacyPolicyURL))
+                self?.root.opener.follow(.webLink(AppSupportLinks.privacyPolicyURL))
             },
             progress: { notifications.apply($0) }
         )
@@ -714,7 +714,7 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
             identifier: "liveActivity.enable.disclosure",
             onTurnOn: turnOn,
             onCancel: { [weak self] in self?.notifications.redraw() },
-            onPrivacyPolicy: { [weak self] in self?.root.opener.open(.webLink(AppSupportLinks.privacyPolicyURL)) }
+            onPrivacyPolicy: { [weak self] in self?.root.opener.follow(.webLink(AppSupportLinks.privacyPolicyURL)) }
         )
     }
 

@@ -600,7 +600,7 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
             return
         }
         Task { @MainActor in
-            self.opener?.open(request)
+            self.opener?.follow(request)
         }
         completionHandler()
     }

@@ -76,7 +76,7 @@ final class SettingsStorageViewController: ListScreenController<SettingsStorageV
             identifier: "settings.supportContact",
             hint: String(localized: "Opens Oppi's public support and contact page")
         ) { [weak self] in
-            self?.root.opener.open(.webLink(AppSupportLinks.supportURL))
+            self?.root.opener.follow(.webLink(AppSupportLinks.supportURL))
         }
     }
 

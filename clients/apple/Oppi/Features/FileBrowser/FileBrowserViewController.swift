@@ -1042,7 +1042,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             navigation.open(.page(.linkedFile(target)))
             return
         }
-        PaneHostController.open(PaneOpenContent(file: target), kind: .file, from: self, otherwise: pushReader)
+        PaneHostController.openBeside(PaneOpenContent(file: target), kind: .file, from: self, otherwise: pushReader)
     }
 
     func readerRequest(

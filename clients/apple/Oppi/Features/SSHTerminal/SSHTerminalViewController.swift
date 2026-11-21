@@ -1934,7 +1934,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     }
 
     /// Opens a held or tapped target. With no `placement` it goes where a
-    /// tapped chat link's would (`PanePlacement`); the hold menu's
+    /// tapped chat link's would (`SidePanePlacement`); the hold menu's
     /// pane items name one (`PaneOpenMenu`).
     private func open(_ target: SSHTerminalOpenTarget, placement: PaneOpenPlacement?) {
         switch target {
@@ -1943,10 +1943,10 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             guard let placement, placement != .here, let grid = gridView else {
                 // The app's one open owner applies the link browser preference
                 // and puts the page beside the terminal on a wide window.
-                opener.open(.webLink(url))
+                opener.follow(.webLink(url))
                 return
             }
-            PaneOpenMenu.open(placement, from: grid) { await opener.paneContent(for: .webLink(url)) }
+            PaneOpenMenu.place(placement, from: grid) { await opener.paneContent(for: .webLink(url)) }
         case .path(let path, let line):
             openHostPath(path, line: line, placement: placement)
         }
@@ -2059,7 +2059,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         }
     }
 
-    /// A resolved file or folder: beside the terminal where `PanePlacement`
+    /// A resolved file or folder: beside the terminal where `SidePanePlacement`
     /// puts it, Open Here over the terminal in its own navigation, or the
     /// pane the hold menu named.
     private func show(
@@ -2068,14 +2068,14 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     ) {
         switch placement {
         case nil:
-            PaneHostController.open(content, kind: kind, from: self) {
+            PaneHostController.openBeside(content, kind: kind, from: self) {
                 SSHTerminalOpenRoute.push(from: self, makeScreen: makeScreen)
             }
         case .here?:
             SSHTerminalOpenRoute.push(from: self, makeScreen: makeScreen)
         case let placement?:
             guard let grid = gridView else { return }
-            PaneOpenMenu.open(placement, from: grid) { content }
+            PaneOpenMenu.place(placement, from: grid) { content }
         }
     }
 

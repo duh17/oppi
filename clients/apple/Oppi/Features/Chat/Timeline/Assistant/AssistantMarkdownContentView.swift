@@ -511,7 +511,7 @@ enum MarkdownLinkInteractionSupport {
         guard let request else { return defaultAction }
         return UIAction { [weak view] _ in
             guard let view else { return }
-            AppRootEnvironment.near(view)?.opener.open(request)
+            AppRootEnvironment.near(view)?.opener.follow(request)
         }
     }
 
@@ -537,7 +537,7 @@ enum MarkdownLinkInteractionSupport {
             image: UIImage(systemName: "safari")
         ) { [weak textView] _ in
             guard let textView else { return }
-            AppRootEnvironment.near(textView)?.opener.open(.webLink(normalizedURL))
+            AppRootEnvironment.near(textView)?.opener.follow(.webLink(normalizedURL))
         }
 
         let shareAction = UIAction(
@@ -557,7 +557,7 @@ enum MarkdownLinkInteractionSupport {
     /// main pane), Open in New Pane to the Right or Below, and for a file or
     /// folder Open in Pane ▸, above the system's items, on a window wide
     /// enough for panes. A tap opens it beside the chat where there is room
-    /// (`PanePlacement`).
+    /// (`SidePanePlacement`).
     private static func withPaneItems(_ request: AppOpenRequest?, defaultMenu: UIMenu, textView: UITextView) -> UIMenu {
         guard let request, AppOpener.opensInPane(request) else { return defaultMenu }
         let isWebPage = if case .webLink = request { true } else { false }
@@ -566,10 +566,10 @@ enum MarkdownLinkInteractionSupport {
             open: { [weak textView] placement in
                 guard let textView, let opener = AppRootEnvironment.near(textView)?.opener else { return }
                 guard placement != .here else {
-                    opener.open(request, from: .mainPane)
+                    opener.follow(request, from: .mainPane)
                     return
                 }
-                PaneOpenMenu.open(placement, from: textView) { await opener.paneContent(for: request) }
+                PaneOpenMenu.place(placement, from: textView) { await opener.paneContent(for: request) }
             }
         ) else { return defaultMenu }
         return UIMenu(children: [section] + defaultMenu.children)
@@ -627,7 +627,7 @@ extension AssistantMarkdownContentView: UITextViewDelegate {
             // declines still goes to the app's opener.
             return UIAction { _ in
                 guard !linkOpenHandler(url) else { return }
-                AppRootEnvironment.near(textView)?.opener.open(request)
+                AppRootEnvironment.near(textView)?.opener.follow(request)
             }
         }
         return MarkdownLinkInteractionSupport.primaryAction(

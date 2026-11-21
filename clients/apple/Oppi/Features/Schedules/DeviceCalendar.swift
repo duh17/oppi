@@ -113,7 +113,7 @@ final class DeviceCalendar {
     /// The system Settings page for Oppi, where calendar access is given back.
     static func openSystemSettings(_ opener: AppOpener) {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-        opener.open(.system(url))
+        opener.follow(.system(url))
     }
 }
 

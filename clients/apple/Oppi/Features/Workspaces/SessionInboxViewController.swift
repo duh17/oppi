@@ -820,7 +820,7 @@ final class SessionInboxViewController: UIViewController {
             connection: connection,
             presenter: self,
             openPrivacyPolicy: { [weak self] in
-                self?.root.opener.open(.webLink(AppSupportLinks.privacyPolicyURL))
+                self?.root.opener.follow(.webLink(AppSupportLinks.privacyPolicyURL))
             },
             progress: { [weak self] outcome in
                 switch outcome {

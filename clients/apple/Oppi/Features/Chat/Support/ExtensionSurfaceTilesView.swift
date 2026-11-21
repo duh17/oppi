@@ -215,7 +215,7 @@ final class BlocksTilesView: UIView, BlocksColumnFillable {
             return
         }
         let link = PaneLink(server: serverID, route: route)
-        root.opener.open(AppOpenRequest(link: link, origin: .link, sourceServerID: serverID))
+        root.opener.follow(AppOpenRequest(link: link, origin: .link, sourceServerID: serverID))
     }
 }
 

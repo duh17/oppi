@@ -315,7 +315,7 @@ final class NativeMarkdownAudioView: UIView {
     }
 
     private func openResourceReference(_ reference: ResourceReference) {
-        AppRootEnvironment.near(self)?.opener.open(.resourceReference(reference))
+        AppRootEnvironment.near(self)?.opener.follow(.resourceReference(reference))
     }
 
     private func ensurePlaying(timedText: TimedText.LoadResult?) {

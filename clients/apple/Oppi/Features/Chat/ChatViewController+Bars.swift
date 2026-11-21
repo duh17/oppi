@@ -956,7 +956,7 @@ extension ChatViewController {
     /// else its workspace's root, opened on the saved SSH host that serves this
     /// session's server — inside the host's multiplexer when its Run on Connect
     /// command starts one. A window wide enough to split opens it in a pane
-    /// beside the chat, where `PanePlacement` puts a terminal (below unless
+    /// beside the chat, where `SidePanePlacement` puts a terminal (below unless
     /// New Panes says otherwise); otherwise it pushes over the chat.
     func openTerminalHere() {
         guard !model.isOpeningTerminal,
@@ -1009,7 +1009,7 @@ extension ChatViewController {
             return
         }
         let content = PaneOpenContent(terminal: terminal, as: .terminal(workspaceId: workspaceId), serverId: serverId)
-        PaneHostController.open(content, kind: .terminal, from: self) {
+        PaneHostController.openBeside(content, kind: .terminal, from: self) {
             terminal.show(from: self)
         }
     }

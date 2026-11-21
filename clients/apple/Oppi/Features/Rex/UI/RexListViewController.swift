@@ -923,7 +923,7 @@ final class RexListViewController: ListScreenController<RexListViewController.Se
             return
         }
         let serverId = AppRootEnvironment.near(self)?.windowServerId ?? ""
-        PaneOpenMenu.open(placement, from: view) {
+        PaneOpenMenu.place(placement, from: view) {
             let screen = TerminalNavTarget {
                 SSHTerminalRexPaneViewController(
                     source: resolved.source,

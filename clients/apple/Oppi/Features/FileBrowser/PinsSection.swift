@@ -349,7 +349,7 @@ class PinsSection {
                         return
                     }
                     guard let source else { return }
-                    PaneOpenMenu.open(placement, from: source) { PaneOpenContent(entry: entry) }
+                    PaneOpenMenu.place(placement, from: source) { PaneOpenContent(entry: entry) }
                 }
             } ?? []
             let open = isOff ? [] : panes.isEmpty
@@ -407,7 +407,7 @@ class PinsSection {
         let entry = pin.paneEntry(serverId: serverId)
         return own + PaneOpenMenu.accessibilityActions(near: source, includesOpenHere: false) { [weak source] placement in
             guard let source else { return }
-            PaneOpenMenu.open(placement, from: source) { PaneOpenContent(entry: entry) }
+            PaneOpenMenu.place(placement, from: source) { PaneOpenContent(entry: entry) }
         }
     }
 

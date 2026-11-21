@@ -1192,7 +1192,7 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
             workspaceID: link.workspaceID,
             sessionID: link.sessionID ?? ""
         ) else { return }
-        AppRootEnvironment.near(sourceView)?.opener.open(request)
+        AppRootEnvironment.near(sourceView)?.opener.follow(request)
     }
 
     private func openQueuedMessage(_ item: MessageQueueItem) {

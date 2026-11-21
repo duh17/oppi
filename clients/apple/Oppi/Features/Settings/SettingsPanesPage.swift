@@ -1,7 +1,7 @@
 import UIKit
 
 /// Settings > Panes: New Panes, the side each kind of new pane opens on when
-/// nothing says (`SettingsCatalog.newPaneSide`, read by `PanePlacement`), saved
+/// nothing says (`SettingsCatalog.newPaneSide`, read by `SidePanePlacement`), saved
 /// on this device. Settings lists the page only where panes split (see
 /// `SettingsRootViewController.showsPanes`); a compact window never places one.
 final class SettingsPanesViewController: ListScreenController<SettingsPanesViewController.Section, SettingsPanesViewController.Item> {

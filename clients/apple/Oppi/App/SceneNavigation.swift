@@ -729,7 +729,7 @@ final class SceneNavigation {
     var pendingThreadFocus: ThreadFocus?
 
     /// Shows All Sessions (the matching list in a split layout) with the thread of `rootId` open.
-    func showThread(serverId: String, rootId: String, from origin: NavigationOrigin = .screen()) {
+    func showThread(serverId: String, rootId: String, from origin: MainPaneOrigin = .screen()) {
         open(.place(.allSessions), from: origin)
         pendingThreadFocus = ThreadFocus(serverId: serverId, rootId: rootId)
     }

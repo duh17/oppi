@@ -54,7 +54,7 @@ extension ChatViewController {
         return { [weak self] request in
             if request.placement != .here {
                 let content = presenter.paneContent(for: request)
-                PaneOpenMenu.open(request.placement, from: request.sourceView) { content }
+                PaneOpenMenu.place(request.placement, from: request.sourceView) { content }
             } else if let self, opensPanelsBeside {
                 showPanel(.timeline(request.panelTarget))
             } else {
@@ -238,7 +238,7 @@ extension ChatViewController {
             return
         }
         guard placement == .here else {
-            PaneOpenMenu.open(placement, from: view) { PaneOpenContent(file: target) }
+            PaneOpenMenu.place(placement, from: view) { PaneOpenContent(file: target) }
             return
         }
 

@@ -39,9 +39,9 @@ struct MainPanePlacementTests {
 
     struct Row {
         let journey: String
-        var start: [(NavigationDestination, NavigationOrigin)] = []
+        var start: [(NavigationDestination, MainPaneOrigin)] = []
         let open: NavigationDestination
-        var from: NavigationOrigin = .screen()
+        var from: MainPaneOrigin = .screen()
         let stack: Outcome
         let split: Outcome
     }

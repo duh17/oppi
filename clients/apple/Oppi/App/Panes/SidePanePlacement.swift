@@ -3,10 +3,11 @@ import UIKit
 // Where side content goes when nothing says: the one owner for every opener
 // that shows a file, folder, Git, web page, session list, terminal, Rex or
 // game without the person picking a side. A link (`AppOpener.openSideContent`,
-// `openBrowser`) and a screen's own row or button (`PaneHostController.open(_:kind:from:otherwise:)`:
-// a path in a terminal, the File Browser's row, the chat bar's Terminal, a Rex
-// link) all come through the host's `openBeside`, which reads its source pane
-// from `SideContentOrigin` and its placement from `PanePlacement`. When no pane
+// `openBrowser`) and a screen's own row or button
+// (`PaneHostController.openBeside(_:kind:from:otherwise:)`: a path in a
+// terminal, the File Browser's row, the chat bar's Terminal, a Rex link) all
+// come through the host's `openBeside`, which reads its source pane
+// from `SidePaneOrigin` and its placement from `SidePanePlacement`. When no pane
 // beside takes it, a link opens it in the main pane (`SceneNavigation.open`)
 // and a screen pushes it over itself. A side the person picks is not decided
 // here: Open in New Pane to the Right or Below (`PaneOpenMenu`), a drop on a
@@ -50,7 +51,7 @@ enum PaneContentKind: Equatable, Sendable, CaseIterable {
 
 /// Where side content was opened from: the pane it opens beside, and where it
 /// goes when no pane beside takes it.
-enum SideContentOrigin: Equatable {
+enum SidePaneOrigin: Equatable {
     /// A row, button or link in a screen that opens it itself, in pane `id`:
     /// beside that pane, else over the screen in its own pane.
     case pane(PaneID)
@@ -85,7 +86,7 @@ enum SideContentOrigin: Equatable {
 ///   splits (`PaneReadingWidth`); every other new pane takes half.
 /// - On a compact window, or with the window at its
 ///   most panes and none to reuse, it opens in the main pane.
-enum PanePlacement: Equatable {
+enum SidePanePlacement: Equatable {
     case reuse(PaneID)
     /// A new pane at an edge (`.right` or `.bottom`) of a pane.
     case split(PaneID, PaneEdge)
@@ -124,7 +125,7 @@ enum PanePlacement: Equatable {
 
     /// The pane content from `origin` opens beside: nil when it opens in the
     /// main pane without trying beside.
-    static func source(of origin: SideContentOrigin, focused: PaneID, mainPane: PaneID) -> PaneID? {
+    static func source(of origin: SidePaneOrigin, focused: PaneID, mainPane: PaneID) -> PaneID? {
         switch origin {
         case .pane(let id): id
         case .focusedPane: focused
@@ -184,9 +185,9 @@ enum PanePlacement: Equatable {
 extension PaneHostController {
     /// Side content `opener` opens itself (a path in a terminal, the File
     /// Browser's row, the chat bar's Terminal, a Rex link): beside the
-    /// opener's pane where `PanePlacement` puts it, else `otherwise`, which
+    /// opener's pane where `SidePanePlacement` puts it, else `otherwise`, which
     /// shows it over the opener in its own pane.
-    static func open(
+    static func openBeside(
         _ content: PaneOpenContent,
         kind: PaneContentKind,
         from opener: UIViewController,
@@ -198,16 +199,16 @@ extension PaneHostController {
     }
 
     /// Opens `content` in a pane beside the pane `origin` names, where
-    /// `PanePlacement` puts it, and focuses that pane; a game already shown
+    /// `SidePanePlacement` puts it, and focuses that pane; a game already shown
     /// in a pane is focused there. False when no pane beside takes it: the
-    /// opener shows it in the main pane, or over itself (`SideContentOrigin`).
+    /// opener shows it in the main pane, or over itself (`SidePaneOrigin`).
     @discardableResult
     func openBeside(
         _ content: PaneOpenContent,
         kind: PaneContentKind,
-        from origin: SideContentOrigin = .focusedPane
+        from origin: SidePaneOrigin = .focusedPane
     ) -> Bool {
-        guard let source = PanePlacement.source(of: origin, focused: focusedCell, mainPane: panes.routedLeafID) else {
+        guard let source = SidePanePlacement.source(of: origin, focused: focusedCell, mainPane: panes.routedLeafID) else {
             return false
         }
         if kind == .game, AdaptiveWidth.isWide(traitCollection),
@@ -216,7 +217,7 @@ extension PaneHostController {
             return true
         }
         let cells = panes.cellLayout
-        let placement = PanePlacement.resolve(
+        let placement = SidePanePlacement.resolve(
             kind,
             side: AppPreferenceStore.NewPanes.side(for: kind.setting, in: panes.preferences),
             isWide: AdaptiveWidth.isWide(traitCollection),
@@ -269,12 +270,12 @@ extension PaneHostController {
 
     /// What `leaf` shows as the placement weighs it, naming the screen an
     /// entry with no link of its own holds (a file or folder opened from a chat).
-    func placementShown(_ leaf: PaneLeaf) -> PanePlacement.Shown {
-        guard let top = leaf.stack.last, case .local = top.route else { return PanePlacement.shown(leaf.stack.last) }
+    func placementShown(_ leaf: PaneLeaf) -> SidePanePlacement.Shown {
+        guard let top = leaf.stack.last, case .local = top.route else { return SidePanePlacement.shown(leaf.stack.last) }
         switch panes.standIns[top] {
         case .linkedFile?: return .kind(.file)
         case .fileBrowser?: return .kind(.folder)
-        default: return PanePlacement.shown(leaf.stack.last)
+        default: return SidePanePlacement.shown(leaf.stack.last)
         }
     }
 }
