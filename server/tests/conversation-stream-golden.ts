@@ -122,7 +122,7 @@ export async function buildConversationStreamGolden(): Promise<string> {
   const renderers = new MobileRendererRegistry();
   // User-message and tool-result images are stored under the session, like the server does at
   // projection time.
-  const images = { dataDir: dir, sessionId: "golden-session" };
+  const media = { dataDir: dir, sessionId: "golden-session" };
   const frames: ConversationStreamServerMessage[] = [];
   const record = (frame: ConversationStreamServerMessage) =>
     frames.push(JSON.parse(JSON.stringify(frame)) as ConversationStreamServerMessage);
@@ -152,7 +152,7 @@ export async function buildConversationStreamGolden(): Promise<string> {
         harness,
         conversationId: id,
         renderers,
-        images,
+        media,
         ...(afterEntryId !== undefined ? { afterEntryId } : {}),
         send: (frame) => {
           record(frame);
@@ -320,7 +320,7 @@ export async function buildConversationStreamGolden(): Promise<string> {
         harness,
         conversationId: id,
         renderers,
-        images,
+        media,
         beforeEntryId: Math.min(...held),
       });
       record(frame);
@@ -330,7 +330,7 @@ export async function buildConversationStreamGolden(): Promise<string> {
     subscription.dispose();
 
     const trace = withMobileRenderSegments(
-      await readDurableTrace(harness, id, "full", undefined, images),
+      await readDurableTrace(harness, id, "full", undefined, media),
       renderers,
       true,
       [],

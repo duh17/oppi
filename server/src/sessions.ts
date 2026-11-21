@@ -36,6 +36,7 @@ import { recordOwnerStop } from "./durable-ui.js";
 import { WorkspaceRuntime, resolveRuntimeLimits } from "./workspace-runtime.js";
 import { type SessionBackendEvent } from "./pi-events.js";
 import { MobileRendererRegistry } from "./mobile-renderer.js";
+import { trustedSessionAttachmentSourceRoots } from "./chat-attachments.js";
 import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import {
   createSessionCoordinatorBundle,
@@ -639,14 +640,14 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   ): Promise<TracePageResult | null> {
     return this.withDurableConversation(sessionId, (harness, conversationId) =>
       import("./durable-history.js").then(({ readDurableTracePage }) => {
-        // Same image scope the full trace and the stream use: the session bound to the
+        // Same media scope the full trace and the stream use: the session bound to the
         // conversation, which is where the bytes are stored.
         const session = this.storage.getSession(sessionId);
-        const images = session ? this.messageImageScope(session, conversationId) : undefined;
+        const media = session ? this.messageMediaScope(session, conversationId) : undefined;
         return readDurableTracePage(harness, conversationId, {
           ...options,
-          ...(images
-            ? { attachmentDataDir: images.dataDir, attachmentSessionId: images.sessionId }
+          ...(media
+            ? { attachmentDataDir: media.dataDir, attachmentSessionId: media.sessionId }
             : {}),
           entryRenderers: this.getEntryRenderers(sessionId),
           cacheMissNotices: this.getCacheMissNotices(sessionId),
@@ -753,20 +754,21 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   }
 
   /**
-   * Where the images of a conversation's user messages and tool results are stored: the session
-   * bound to it, in the server's data directory. Absent only when a conversation has no session
-   * to own them.
+   * Where the media of a conversation's user messages and tool results is stored: the session
+   * bound to it, in the server's data directory, with the local folders a tool may hand an
+   * audio clip over from. Absent only when a conversation has no session to own them.
    */
-  private messageImageScope(
+  private messageMediaScope(
     session: Session,
     conversationId: number,
-  ): { dataDir: string; sessionId: string } | undefined {
+  ): { dataDir: string; sessionId: string; trustedSourceRoots: string[] } | undefined {
     const owner = this.storage.findSessionByDurableConversation(
       requireDurableStoreId(session),
       conversationId,
     );
     if (!owner) return undefined;
-    return { dataDir: this.storage.getDataDir(), sessionId: owner.id };
+    const stored = { dataDir: this.storage.getDataDir(), sessionId: owner.id };
+    return { ...stored, trustedSourceRoots: trustedSessionAttachmentSourceRoots() };
   }
 
   /**
@@ -781,10 +783,10 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     send: (frame: ConversationStreamServerMessage) => void,
   ): Promise<() => void> {
     const host = await (await this.durableHarness).openHost(requireDurableStoreId(session));
-    const images = this.messageImageScope(session, conversationId);
+    const media = this.messageMediaScope(session, conversationId);
     return host.transcript(conversationId as ConversationId, {
       renderers: this.mobileRenderers,
-      ...(images ? { images } : {}),
+      ...(media ? { media } : {}),
       cacheMissNotices: () => this.getCacheMissNotices(session.id),
       mode: request.mode ?? "full",
       ...(request.afterEntryId !== undefined ? { afterEntryId: request.afterEntryId } : {}),
@@ -801,10 +803,10 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     if (conversationId === undefined)
       throw new Error("The conversation stream requires a durable session");
     const host = await (await this.durableHarness).openHost(requireDurableStoreId(session));
-    const images = this.messageImageScope(session, conversationId);
+    const media = this.messageMediaScope(session, conversationId);
     return host.olderEntries(conversationId, {
       renderers: this.mobileRenderers,
-      ...(images ? { images } : {}),
+      ...(media ? { media } : {}),
       cacheMissNotices: this.getCacheMissNotices(session.id),
       beforeEntryId: request.beforeEntryId,
       ...(request.limit !== undefined ? { limit: request.limit } : {}),
@@ -822,13 +824,13 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     return this.withDurableConversation(sessionId, (harness, conversationId) =>
       import("./durable-history.js").then(({ readDurableTrace }) => {
         const session = this.storage.getSession(sessionId);
-        const images = session ? this.messageImageScope(session, conversationId) : undefined;
+        const media = session ? this.messageMediaScope(session, conversationId) : undefined;
         return readDurableTrace(
           harness,
           conversationId,
           view,
           this.getEntryRenderers(sessionId),
-          images,
+          media,
           this.getCacheMissNotices(sessionId),
         );
       }),

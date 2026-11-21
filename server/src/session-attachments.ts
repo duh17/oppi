@@ -909,6 +909,66 @@ export function storeMessageImages(options: {
   return stored;
 }
 
+/**
+ * `details` with `audio` replaced by the session attachment now holding its bytes, or by a
+ * sanitized record when it has an `id` already or no readable bytes. `undefined` when `details`
+ * carries no `audio` record. The audio half of `materializeToolMediaDetails`, shared with the
+ * durable projection (`storeToolResultAudio`), which has no earlier materialization step.
+ */
+function audioDetailsWithStoredAttachment({
+  dataDir,
+  sessionId,
+  toolCallId,
+  details,
+  trustedSourceRoots,
+}: MaterializeToolAudioOptions): Record<string, unknown> | undefined {
+  const root = asRecord(details);
+  const audio = asRecord(root?.audio);
+  if (!root || audio?.kind !== "audio") return undefined;
+  if (typeof audio.id === "string" && audio.id.trim()) {
+    return sanitizeMediaDetails(root, "audio", audio);
+  }
+
+  const bytes = bytesFromAudioDetails(audio, trustedSourceRoots);
+  if (!bytes) return sanitizeMediaDetails(root, "audio", audio);
+
+  const mimeType = normalizeAudioMimeType(audio.mimeType);
+  const record = storeAttachment({
+    dataDir,
+    sessionId,
+    toolCallId,
+    kind: "audio",
+    mimeType,
+    fileName: safeFileName(audio.fileName ?? audio.path, mimeType, "audio"),
+    bytes,
+    ...(typeof audio.durationSeconds === "number"
+      ? { durationSeconds: audio.durationSeconds }
+      : {}),
+    ...(typeof root.message === "string" ? { text: root.message } : {}),
+  });
+  return { ...root, audio: attachmentDetails(record) };
+}
+
+/**
+ * A tool result's `audio` stored at projection time, for a runtime that never materialized it
+ * before committing the result (the durable conversation stream; classic materializes in
+ * `materializeAgentEventMedia` as the event arrives). Same bytes, roots, and 50 MB cap as
+ * classic, so the voice card plays from the session attachment route and neither a local path
+ * nor base64 reaches a client. Nothing to store returns `details` itself. A failed write leaves
+ * the record sanitized instead of failing the projection, as `storeMessageImages` leaves an
+ * image it cannot store inline: one attachment must not cost the client its snapshot.
+ */
+export function storeToolResultAudio(options: MaterializeToolAudioOptions): unknown {
+  const root = asRecord(options.details);
+  const audio = asRecord(root?.audio);
+  if (!root || audio?.kind !== "audio") return options.details;
+  try {
+    return audioDetailsWithStoredAttachment(options) ?? options.details;
+  } catch {
+    return sanitizeMediaDetails(root, "audio", audio);
+  }
+}
+
 export function materializeToolMediaDetails({
   dataDir,
   sessionId,
@@ -919,34 +979,14 @@ export function materializeToolMediaDetails({
   const root = asRecord(details);
   if (!root) return details;
 
-  const audio = asRecord(root.audio);
-  let nextRoot: Record<string, unknown> = root;
-  if (audio?.kind === "audio") {
-    if (typeof audio.id === "string" && audio.id.trim()) {
-      nextRoot = sanitizeMediaDetails(nextRoot, "audio", audio);
-    } else {
-      const bytes = bytesFromAudioDetails(audio, trustedSourceRoots);
-      if (!bytes) {
-        nextRoot = sanitizeMediaDetails(nextRoot, "audio", audio);
-      } else {
-        const mimeType = normalizeAudioMimeType(audio.mimeType);
-        const record = storeAttachment({
-          dataDir,
-          sessionId,
-          toolCallId,
-          kind: "audio",
-          mimeType,
-          fileName: safeFileName(audio.fileName ?? audio.path, mimeType, "audio"),
-          bytes,
-          ...(typeof audio.durationSeconds === "number"
-            ? { durationSeconds: audio.durationSeconds }
-            : {}),
-          ...(typeof root.message === "string" ? { text: root.message } : {}),
-        });
-        nextRoot = { ...nextRoot, audio: attachmentDetails(record) };
-      }
-    }
-  }
+  let nextRoot: Record<string, unknown> =
+    audioDetailsWithStoredAttachment({
+      dataDir,
+      sessionId,
+      toolCallId,
+      details: root,
+      trustedSourceRoots,
+    }) ?? root;
 
   const image = asRecord(root.image);
   if (image?.kind === "image") {

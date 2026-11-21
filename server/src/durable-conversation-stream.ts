@@ -46,7 +46,7 @@ import {
   toolCallsOf,
   type DocPresenter,
   type ToolPresenter,
-  type MessageImageStoreScope,
+  type MessageMediaStoreScope,
 } from "./durable-conversation-view.js";
 import {
   isAbortedAttempt,
@@ -181,8 +181,8 @@ class ConversationRoom implements DocPresenter {
     private readonly harness: Harness,
     readonly conversationId: ConversationId,
     private readonly renderers: MobileRendererRegistry,
-    /** Where user-message and tool-result images of this conversation's session are stored. */
-    private readonly images?: MessageImageStoreScope,
+    /** Where this conversation's user-message and tool-result media is stored. */
+    private readonly media?: MessageMediaStoreScope,
     /** Present while the session shows cache-miss notices; read when notices are derived. */
     private readonly cacheMissNotices?: () => CacheMissNoticeSource | undefined,
   ) {
@@ -562,7 +562,7 @@ class ConversationRoom implements DocPresenter {
           hidden: this.hidden.has(entry.id),
           cacheMiss: this.cacheMisses.get(entry.id),
         },
-        this.images,
+        this.media,
       );
       this.entryViews.set(entry.id, view);
     }
@@ -848,7 +848,7 @@ async function roomFor(
   harness: Harness,
   conversationId: ConversationId,
   renderers: MobileRendererRegistry,
-  images?: MessageImageStoreScope,
+  scope?: MessageMediaStoreScope,
   cacheMissNotices?: () => CacheMissNoticeSource | undefined,
 ): Promise<ConversationRoom> {
   let rooms = ROOMS.get(harness);
@@ -858,7 +858,7 @@ async function roomFor(
   }
   let room = rooms.get(conversationId);
   if (!room) {
-    room = new ConversationRoom(harness, conversationId, renderers, images, cacheMissNotices);
+    room = new ConversationRoom(harness, conversationId, renderers, scope, cacheMissNotices);
     rooms.set(conversationId, room);
   }
   await room.ready;
@@ -874,8 +874,8 @@ export async function attachConversationStream(options: {
   harness: Harness;
   conversationId: ConversationId;
   renderers: MobileRendererRegistry;
-  /** Where user-message and tool-result images of the conversation's session are stored. */
-  images?: MessageImageStoreScope;
+  /** Where the conversation's user-message and tool-result media is stored. */
+  media?: MessageMediaStoreScope;
   /** Present while the session shows cache-miss notices, which entries then carry. */
   cacheMissNotices?: () => CacheMissNoticeSource | undefined;
   /** Default `full`. */
@@ -891,7 +891,7 @@ export async function attachConversationStream(options: {
       options.harness,
       options.conversationId,
       options.renderers,
-      options.images,
+      options.media,
       options.cacheMissNotices,
     );
     // The first frame shows decided presentation only.
@@ -928,8 +928,8 @@ export async function readOlderConversationEntries(options: {
   harness: Harness;
   conversationId: ConversationId;
   renderers: MobileRendererRegistry;
-  /** Where user-message and tool-result images of the conversation's session are stored. */
-  images?: MessageImageStoreScope;
+  /** Where the conversation's user-message and tool-result media is stored. */
+  media?: MessageMediaStoreScope;
   /** Present while the session shows cache-miss notices, which entries then carry. */
   cacheMissNotices?: CacheMissNoticeSource;
   beforeEntryId: number;
@@ -998,7 +998,7 @@ export async function readOlderConversationEntries(options: {
         renderers,
         tools,
         { inputCard: cards.get(entry.id as EntryId), cacheMiss: notices.get(entry.id) },
-        options.images,
+        options.media,
       ),
     ),
     hasOlder: shown.length > limit || cursor !== undefined,

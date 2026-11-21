@@ -1,9 +1,11 @@
-import {} from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { applyImmutable, type Op } from "@earendil-works/chord/delta";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { obj } from "@earendil-works/pi-schema";
 import {
   fauxAssistantMessage,
   fauxProvider,
@@ -17,6 +19,7 @@ import {
   createRegistry,
   defineExtension,
   defineTask,
+  defineTool,
   type CommitObserver,
   type CommitPublication,
   type Conversation,
@@ -36,6 +39,8 @@ import {
   type ConversationStreamSubscription,
 } from "../src/durable-conversation-stream.js";
 import { readDurableTrace } from "../src/durable-history.js";
+import { getSessionAttachment } from "../src/session-attachments.js";
+import type { MessageMediaStoreScope } from "../src/durable-conversation-view.js";
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import type { ConversationEntryView, ConversationStreamServerMessage } from "../src/types.js";
 import {
@@ -161,12 +166,14 @@ async function attach(
   client = new Client(),
   mode?: "live",
   cacheMissNotices?: () => Record<string, never>,
+  media?: MessageMediaStoreScope,
 ): Promise<Client> {
   client.subscription = await attachConversationStream({
     harness: f.harness,
     conversationId: f.conversation.id,
     renderers: new MobileRendererRegistry(),
     ...(cacheMissNotices ? { cacheMissNotices } : {}),
+    ...(media ? { media } : {}),
     ...(mode ? { mode } : {}),
     ...(afterEntryId !== undefined ? { afterEntryId } : {}),
     send: (frame) => {
@@ -358,6 +365,73 @@ describe("durable conversation stream", { timeout: 30_000 }, () => {
     expect(textOps.filter((op) => op[0] === "a").length).toBeGreaterThan(0);
     expect(textOps.filter((op) => op[0] !== "a")).toEqual([]);
     await expectConverged(f, client);
+  });
+
+  // Classic stores a tool's voice clip as the event arrives; a durable session commits the
+  // result without that step, so its card played a transcript the app had no bytes for.
+  it("stores a tool's voice clip so the durable card plays from the session attachment route", async () => {
+    const audioRoot = makeTempDir("oppi-stream-voice-");
+    const dataDir = makeTempDir("oppi-stream-attachments-");
+    const wav = Buffer.from("RIFF\u0000\u0000\u0000\u0000WAVEfmt ", "latin1");
+    const sourcePath = join(audioRoot, "reply.wav");
+    writeFileSync(sourcePath, wav);
+    const speak = defineExtension({
+      name: "oppi.test-speak",
+      tools: [
+        defineTool({
+          name: "speak",
+          description: "Answer with a recorded voice clip.",
+          parameters: obj({}),
+          async execute() {
+            return {
+              output: [{ type: "text", text: "Voice message" }],
+              details: {
+                kind: "audio_presentation",
+                text: "Here is the recorded answer.",
+                playbackBehavior: "playNow",
+                audio: { kind: "audio", mimeType: "audio/wav", path: sourcePath },
+              },
+            };
+          },
+        }),
+      ],
+    });
+    const f = await fixture(
+      [
+        fauxAssistantMessage([fauxToolCall("speak", {}, { id: "call-voice" })], {
+          stopReason: "toolUse",
+        }),
+        fauxAssistantMessage("done"),
+      ],
+      { toolExtensions: [speak] },
+    );
+    const client = await attach(f, undefined, undefined, undefined, undefined, {
+      dataDir,
+      sessionId: "s-audio",
+      trustedSourceRoots: [audioRoot],
+    });
+    await prompt(f.conversation, "say it");
+    await settle();
+
+    const result = client.entries.find((entry) => entry.kind === "pi.tool-result");
+    const details = (result?.model?.[0] as { details?: Record<string, unknown> } | undefined)
+      ?.details as
+      | {
+          kind?: string;
+          text?: string;
+          audio?: { id?: string; path?: string; storageKey?: string };
+        }
+      | undefined;
+    expect(details?.kind).toBe("audio_presentation");
+    expect(details?.text).toBe("Here is the recorded answer.");
+    expect(details?.audio?.id).toMatch(/^att_call-voice_/);
+    expect(details?.audio).not.toHaveProperty("path");
+    expect(JSON.stringify(client.frames)).not.toContain(audioRoot);
+
+    // The attachment route the app fetches plays it.
+    const stored = await getSessionAttachment(dataDir, "s-audio", String(details?.audio?.id));
+    expect(stored?.record).toMatchObject({ kind: "audio", mimeType: "audio/wav" });
+    expect(stored ? readFileSync(stored.path) : null).toEqual(wav);
   });
 
   it("lists a code mode script's calls live while it runs and on its result, with the same ids", async () => {

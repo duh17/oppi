@@ -29,6 +29,7 @@ import { resolveToolDisplay, type MobileRendererRegistry } from "./mobile-render
 import {
   sessionAttachmentMediaDetailsForToolResult,
   storeMessageImages,
+  storeToolResultAudio,
 } from "./session-attachments.js";
 import { resolveToolArguments } from "./tool-call-arguments.js";
 import { durableNestedCalls, validatedNestedCalls } from "./tool-nested-calls.js";
@@ -212,10 +213,15 @@ const CLIENT_BLOCK_FIELDS = new Map<string, readonly string[]>([
   ["image", ["type", "data", "mimeType", "attachment"]],
 ]);
 
-/** Where the image bytes of user messages and tool results are stored: the session's attachment store. */
-export interface MessageImageStoreScope {
+/**
+ * Where the bytes of a conversation's user-message and tool-result media live: the session
+ * bound to it and its attachment store. `trustedSourceRoots` are the local folders a tool may
+ * hand over by `audio.path`; without it such a record is dropped, as classic drops it.
+ */
+export interface MessageMediaStoreScope {
   dataDir: string;
   sessionId: string;
+  trustedSourceRoots?: string[];
 }
 
 function pick(source: Record<string, unknown>, fields: readonly string[]): Record<string, unknown> {
@@ -251,7 +257,7 @@ type BlockProjector = (block: unknown, attachment?: Record<string, unknown>) => 
 /** `message` with only the fields clients read (`CLIENT_MESSAGE_FIELDS`). */
 function projectMessage(
   message: Message,
-  images?: MessageImageStoreScope,
+  media?: MessageMediaStoreScope,
   project: BlockProjector = projectBlock,
 ): ConversationMessageView {
   const record = message as unknown as ConversationMessageView;
@@ -268,11 +274,11 @@ function projectMessage(
       ? record.toolCallId
       : undefined;
   const storedByIndex =
-    images && (record.role === "user" || toolCallId)
+    media && (record.role === "user" || toolCallId)
       ? new Map(
           storeMessageImages({
-            dataDir: images.dataDir,
-            sessionId: images.sessionId,
+            dataDir: media.dataDir,
+            sessionId: media.sessionId,
             content: view.content,
             ...(toolCallId ? { toolCallId } : {}),
           }).map((stored) => [stored.blockIndex, stored.details]),
@@ -381,7 +387,7 @@ export function projectEntry(
   renderers: MobileRendererRegistry,
   tools: ToolPresenter,
   presentation: EntryPresentation = {},
-  images?: MessageImageStoreScope,
+  scope?: MessageMediaStoreScope,
 ): ConversationEntryView {
   const view: ConversationEntryView = { id: entry.id, kind: entry.kind };
   if (presentation.hidden) return { ...view, hidden: true };
@@ -391,25 +397,39 @@ export function projectEntry(
     const model: ConversationMessageView[] = [];
     for (const message of entry.model) {
       // The stored tool result ends with the diagnostics block pi-durable adds for the model.
-      const projected = projectMessage(clientToolResult(message, entry.data), images);
+      const projected = projectMessage(clientToolResult(message, entry.data), scope);
       model.push(projected);
       if (message.role !== "toolResult") continue;
       // Trace history normalizes audio and strips server-private paths at the client
-      // boundary; so does the stream.
+      // boundary; so does the stream. A tool that hands its clip over by local path or base64
+      // (`audio_presentation`) is stored first, as classic stores it as the event arrives
+      // (`materializeAgentEventMedia`): the card then plays from the session attachment route
+      // and neither the path nor the bytes reach a client.
       const raw =
         message.details === undefined
           ? undefined
           : normalizeAudioPresentationDetails(message.details);
-      const sanitized = raw === undefined ? undefined : sanitizeToolResultDetails(raw).details;
+      const materialized =
+        raw !== undefined && scope
+          ? storeToolResultAudio({
+              dataDir: scope.dataDir,
+              sessionId: scope.sessionId,
+              toolCallId: message.toolCallId,
+              details: raw,
+              ...(scope.trustedSourceRoots ? { trustedSourceRoots: scope.trustedSourceRoots } : {}),
+            })
+          : raw;
+      const sanitized =
+        materialized === undefined ? undefined : sanitizeToolResultDetails(materialized).details;
       // Stored media is listed in `details.media`, as trace history lists it, which is where
       // a tool row looks for the images it paints.
-      const media = images
+      const media = scope
         ? sessionAttachmentMediaDetailsForToolResult(
-            images.dataDir,
-            images.sessionId,
+            scope.dataDir,
+            scope.sessionId,
             message.toolCallId,
             message.content,
-            message.details,
+            materialized,
           )
         : [];
       const details = media.length ? { ...(asRecord(sanitized) ?? {}), media } : sanitized;

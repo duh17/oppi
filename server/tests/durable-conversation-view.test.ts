@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -214,6 +214,193 @@ describe("conversation entry view: tool result images", () => {
     const details = (view.model?.[0] as { details?: Record<string, unknown> }).details;
     expect(details?.expandedText).toBe("one pixel");
     expect(details?.media).toHaveLength(1);
+  });
+});
+
+// Classic stores a tool's audio as the event arrives (`materializeAgentEventMedia`), so the voice
+// card plays from the session attachment route. A durable session commits the result without that
+// step, and its projection is the only place left to store the bytes.
+describe("conversation entry view: tool result audio", () => {
+  let dataDir: string;
+  let audioRoot: string;
+
+  beforeEach(() => {
+    dataDir = mkdtempSync(join(tmpdir(), "oppi-conversation-view-"));
+    audioRoot = mkdtempSync(join(tmpdir(), "oppi-voice-"));
+  });
+  afterEach(() => {
+    rmSync(dataDir, { recursive: true, force: true });
+    rmSync(audioRoot, { recursive: true, force: true });
+  });
+
+  const WAV = Buffer.from("RIFF\u0000\u0000\u0000\u0000WAVEfmt ", "latin1");
+
+  function toolResultEntry(details: unknown): EntryRecord {
+    return {
+      id: 14,
+      conversationId: 3,
+      kind: "pi.tool-result",
+      model: [
+        {
+          role: "toolResult",
+          toolCallId: "call-voice",
+          toolName: "speak",
+          content: [{ type: "text", text: "Voice message" }],
+          isError: false,
+          details,
+          timestamp: 1_791_650_000_000,
+        } as never,
+      ],
+    };
+  }
+
+  type AudioDetails = {
+    kind?: string;
+    text?: string;
+    playbackBehavior?: string;
+    audio?: Record<string, unknown>;
+    media?: Array<Record<string, unknown>>;
+  };
+
+  /** The projected `details` of the entry, projected with trusted audio roots when given. */
+  function projectAudio(
+    entry: EntryRecord,
+    trustedSourceRoots?: string[],
+  ): {
+    details: AudioDetails;
+    wire: string;
+  } {
+    const view = projectEntry(
+      entry,
+      new MobileRendererRegistry(),
+      tools,
+      {},
+      {
+        dataDir,
+        sessionId: "s-voice",
+        ...(trustedSourceRoots ? { trustedSourceRoots } : {}),
+      },
+    );
+    const message = view.model?.[0] as { details?: AudioDetails };
+    return { details: message.details ?? {}, wire: JSON.stringify(view) };
+  }
+
+  const manifest = () => {
+    const path = join(dataDir, "session-attachments", "s-voice", "manifest.json");
+    return existsSync(path)
+      ? (JSON.parse(readFileSync(path, "utf8")) as { attachments: Array<{ id: string }> })
+      : undefined;
+  };
+
+  it("stores a clip the tool handed over by path and sends the attachment the card plays", async () => {
+    const sourcePath = join(audioRoot, "reply.wav");
+    writeFileSync(sourcePath, WAV);
+
+    const { details, wire } = projectAudio(
+      toolResultEntry({
+        kind: "audio_presentation",
+        text: "Here is the recorded answer.",
+        playbackBehavior: "playNow",
+        audio: {
+          kind: "audio",
+          mimeType: "audio/wav",
+          path: sourcePath,
+          fileName: "reply.wav",
+          durationSeconds: 2.5,
+        },
+      }),
+      [audioRoot],
+    );
+
+    // The card keeps its transcript and playback behavior, and plays from stored bytes.
+    expect(details.kind).toBe("audio_presentation");
+    expect(details.text).toBe("Here is the recorded answer.");
+    expect(details.playbackBehavior).toBe("playNow");
+    expect(details.audio).toMatchObject({
+      kind: "audio",
+      mimeType: "audio/wav",
+      fileName: "reply.wav",
+      durationSeconds: 2.5,
+    });
+    expect(String(details.audio?.id)).toMatch(/^att_call-voice_/);
+    expect(details.audio).not.toHaveProperty("path");
+    expect(details.audio).not.toHaveProperty("base64");
+    // The local path is server-private; the stream never carries it.
+    expect(wire).not.toContain(audioRoot);
+    // Listed like trace history lists stored media, which is where a tool row looks.
+    expect(details.media).toEqual([details.audio]);
+
+    const stored = await getSessionAttachment(dataDir, "s-voice", String(details.audio?.id));
+    expect(stored?.record).toMatchObject({ kind: "audio", toolCallId: "call-voice" });
+    expect(stored ? readFileSync(stored.path) : null).toEqual(WAV);
+  });
+
+  it("stores base64 audio bytes a tool inlined", async () => {
+    const { details, wire } = projectAudio(
+      toolResultEntry({
+        kind: "audio_presentation",
+        text: "Voice message",
+        audio: { kind: "audio", mimeType: "audio/wav", base64: WAV.toString("base64") },
+      }),
+    );
+
+    expect(String(details.audio?.id)).toMatch(/^att_call-voice_/);
+    expect(wire).not.toContain(WAV.toString("base64"));
+    const stored = await getSessionAttachment(dataDir, "s-voice", String(details.audio?.id));
+    expect(stored ? readFileSync(stored.path) : null).toEqual(WAV);
+  });
+
+  it("drops an audio path outside the trusted roots and keeps the card", () => {
+    const outsidePath = join(dataDir, "not-voice.wav");
+    writeFileSync(outsidePath, WAV);
+
+    const { details, wire } = projectAudio(
+      toolResultEntry({
+        kind: "audio_presentation",
+        text: "Here it is.",
+        audio: { kind: "audio", mimeType: "audio/wav", path: outsidePath },
+      }),
+      [audioRoot],
+    );
+
+    expect(details.text).toBe("Here it is.");
+    expect(details.audio).toBeDefined();
+    expect(details.audio).not.toHaveProperty("id");
+    expect(details.audio).not.toHaveProperty("path");
+    expect(wire).not.toContain("not-voice.wav");
+    expect(details.media).toBeUndefined();
+    expect(manifest()).toBeUndefined();
+  });
+
+  it("stores the same clip once across projections", async () => {
+    const sourcePath = join(audioRoot, "reply.wav");
+    writeFileSync(sourcePath, WAV);
+    const entry = toolResultEntry({
+      kind: "audio_presentation",
+      text: "Here it is.",
+      audio: { kind: "audio", mimeType: "audio/wav", path: sourcePath },
+    });
+
+    const first = projectAudio(entry, [audioRoot]).details.audio?.id;
+    const second = projectAudio(entry, [audioRoot]).details.audio?.id;
+
+    expect(second).toBe(first);
+    expect(manifest()?.attachments).toHaveLength(1);
+  });
+
+  it("leaves audio as committed when projection has no media scope", () => {
+    const view = projectEntry(
+      toolResultEntry({
+        kind: "audio_presentation",
+        text: "Here it is.",
+        audio: { kind: "audio", mimeType: "audio/wav", path: "/tmp/reply.wav" },
+      }),
+      new MobileRendererRegistry(),
+      tools,
+    );
+    const details = (view.model?.[0] as { details?: AudioDetails }).details;
+
+    expect(details?.audio).toMatchObject({ kind: "audio", path: "/tmp/reply.wav" });
   });
 });
 

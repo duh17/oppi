@@ -334,14 +334,14 @@ export async function readDurableTrace(
   view: TraceViewMode,
   entryRenderers?: LiveEntryRendererSet,
   /** Where user-message and tool-result image bytes are stored; without it they stay data URIs. */
-  images?: { dataDir: string; sessionId: string },
+  media?: { dataDir: string; sessionId: string },
   cacheMissNotices?: CacheMissNoticeSource,
 ): Promise<TraceEvent[]> {
   return buildSessionContext(await projectEntries(harness, await allEntries(harness, id)), {
     view,
     entryRenderers,
     ...(cacheMissNotices ? { cacheMissNotices } : {}),
-    ...(images ? { attachmentDataDir: images.dataDir, attachmentSessionId: images.sessionId } : {}),
+    ...(media ? { attachmentDataDir: media.dataDir, attachmentSessionId: media.sessionId } : {}),
   });
 }
 
