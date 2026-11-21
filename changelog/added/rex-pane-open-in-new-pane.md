@@ -1,0 +1,1 @@
+- **Client:** On iPad, long-press a pane on the **Rex** screen and choose **Open in New Pane to the Right** or **Open in New Pane Below** to put its terminal beside a chat. It opens the same way a tap does, so a Rex reached over Tailscale never asks you to sign in. If that pane is already open, its pane comes forward instead. VoiceOver and keyboard users get the same two actions.

@@ -698,6 +698,10 @@ final class RexListViewController: ListScreenController<RexListViewController.Se
                 label: pane.accessibilityLabel,
                 value: [pane.status.label, pane.activity].compactMap { $0 }.joined(separator: ", "),
                 hint: "Open this pane",
+                actions: { [weak self] in
+                    guard let self else { return [] }
+                    return self.rexPaneAccessibilityActions(near: self.collectionView, for: item)
+                },
                 perform: perform
             )
         case .newSession(let busy):
@@ -856,6 +860,93 @@ final class RexListViewController: ListScreenController<RexListViewController.Se
                 done(false)
             },
         ]
+    }
+
+    // MARK: - Long press
+
+    /// A pane's row's long press: its own actions beside Open in New Pane to the
+    /// Right and Below on a window with panes (`rexPaneMenuItems(near:for:)`).
+    override func collectionView(
+        _ collectionView: UICollectionView,
+        contextMenuConfigurationForItemsAt indexPaths: [IndexPath],
+        point: CGPoint
+    ) -> UIContextMenuConfiguration? {
+        guard let item = indexPaths.first.flatMap({ dataSource?.itemIdentifier(for: $0)?.pageItem }) else {
+            return super.collectionView(collectionView, contextMenuConfigurationForItemsAt: indexPaths, point: point)
+        }
+        let panes = rexPaneMenuItems(near: collectionView, for: item)
+        guard !panes.isEmpty else {
+            return super.collectionView(collectionView, contextMenuConfigurationForItemsAt: indexPaths, point: point)
+        }
+        let own = rowActions(for: item).map(\.menuAction)
+        return UIContextMenuConfiguration(actionProvider: { _ in UIMenu(children: own + panes.map(\.element)) })
+    }
+
+    /// What a pane's row offers besides its own actions: that Rex pane's terminal
+    /// in a pane of its own, for both saved hosts and tailnet-only Rexes (and
+    /// saved hosts deduplicated into a tailnet Rex). Nothing on a window with no
+    /// pane to open beside.
+    func rexPaneMenuItems(near view: UIView, for item: Item) -> [PaneMenuItem] {
+        guard case .rexRow(let hostID, _) = item, case .pane(let pane)? = rexRows[item]?.kind,
+              rexFollower(hostID) != nil else { return [] }
+        // Only a new pane: the row's own tap is its open here, and a Rex terminal
+        // is no file another pane takes in place of what it shows.
+        return PaneOpenMenu.items(near: view, includesOpenHere: false, offersOtherPanes: false) { [weak self] placement in
+            self?.openRexPaneInNewPane(hostID: hostID, pane: pane, placement: placement, from: view)
+        }
+    }
+
+    /// The same new-pane choices for VoiceOver and Full Keyboard Access.
+    private func rexPaneAccessibilityActions(near view: UIView, for item: Item) -> [UIAccessibilityCustomAction] {
+        guard case .rexRow(let hostID, _) = item, case .pane(let pane)? = rexRows[item]?.kind,
+              rexFollower(hostID) != nil else { return [] }
+        return PaneOpenMenu.accessibilityActions(near: view, includesOpenHere: false, offersOtherPanes: false) { [weak self] placement in
+            self?.openRexPaneInNewPane(hostID: hostID, pane: pane, placement: placement, from: view)
+        }
+    }
+
+    /// Opens `pane` on `hostID` in a new pane directly through the same connect
+    /// path as a row tap, or focuses the pane already showing its live terminal.
+    private func openRexPaneInNewPane(
+        hostID: UUID,
+        pane: SSHTerminalRexListPane,
+        placement: PaneOpenPlacement,
+        from view: UIView
+    ) {
+        guard placement != .here, let resolved = rexPaneOpener(hostID: hostID) else { return }
+        let target = RexPaneTarget(sessionID: pane.sessionID, blockID: pane.blockID, label: pane.name)
+        if let live = resolved.session.registry.terminal(for: hostID, folder: nil, rexPane: target),
+           PaneHostController.containing(self)?.focusPane(showing: live.channel, besides: self) == true {
+            if let model = live.channel.rex, model.sessionID == target.sessionID {
+                model.show(target.blockID)
+            }
+            return
+        }
+        let serverId = AppRootEnvironment.near(self)?.windowServerId ?? ""
+        PaneOpenMenu.open(placement, from: view) {
+            let screen = TerminalNavTarget {
+                SSHTerminalRexPaneViewController(
+                    source: resolved.source,
+                    target: target,
+                    session: resolved.session.makePaneSession()
+                )
+            }
+            return PaneOpenContent(terminal: screen, as: .rex, serverId: serverId)
+        }
+    }
+
+    /// The Rex source and connect session behind a listed host: a saved host's
+    /// profile or a tailnet Rex's node.
+    private func rexPaneOpener(
+        hostID: UUID
+    ) -> (source: SSHTerminalRexPaneViewController.Source, session: SSHTerminalConnectSession)? {
+        if let follower = rexHosts[hostID]?.follower {
+            return (.saved(follower.profile), follower.session)
+        }
+        if let follower = tailnetRex.follower(id: hostID) {
+            return (.tailnet(follower.host), follower.session)
+        }
+        return nil
     }
 
     // MARK: - Hosts

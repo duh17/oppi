@@ -572,10 +572,16 @@ struct SSHTerminalRexSectionTests {
         let window: UIWindow
         let navigation: UINavigationController
         let built: Built
+        /// The window's pane host, when the tab was mounted in the iPad's window.
+        var panes: PaneHostController?
+        var scenePanes: ScenePanes?
+        var tailnetRex: RexTailnetSection?
 
         func tearDown() {
             built.followers.values.forEach { $0.close() }
-            window.isHidden = true
+            tailnetRex?.listedFollowers.forEach { $0.close() }
+            tailnetRex?.stop()
+            hideTestWindow(window)
             window.rootViewController = nil
         }
     }
@@ -584,11 +590,11 @@ struct SSHTerminalRexSectionTests {
     /// `standIn` makes a host's Rex when it is not the preview's.
     private func mountTab(
         _ profiles: [SSHTerminalProfile], registry: SSHTerminalRegistry = SSHTerminalRegistry(),
-        standIn: (@MainActor (SSHTerminalProfile) -> any RexStreamHost)? = nil
+        standIn: (@MainActor (SSHTerminalProfile) -> any RexStreamHost)? = nil, inPanes: Bool = false
     ) throws -> Rig {
         let built = Built()
         let store = hosts.store
-        return try mount(profiles, built: built) { profile in
+        return try mount(profiles, built: built, inPanes: inPanes) { profile in
             let stream = RexPreviewStreamHost()
             let follower = SSHTerminalRexFollower(
                 profile: profile, promptsAutomatically: false,
@@ -627,15 +633,16 @@ struct SSHTerminalRexSectionTests {
 
     private func mount(
         _ profiles: [SSHTerminalProfile], built: Built,
-        tailnetStore: RexDirectStore? = nil,
+        tailnetStore: RexDirectStore? = nil, tailnetRex customTailnet: RexTailnetSection? = nil,
+        inPanes: Bool = false,
         makeFollower: @escaping @MainActor (SSHTerminalProfile) -> SSHTerminalRexFollower
     ) throws -> Rig {
         try hosts.save(profiles)
         // Off the tailnet whatever machine runs the test, with nothing saved:
         // these tests are about the saved hosts' Rex sections alone.
-        let tailnetRex = RexTailnetSection(
+        let tailnetRex = try customTailnet ?? RexTailnetSection(
             // A suite of its own, never the app's: another test reads that.
-            store: try tailnetStore ?? RexDirectStore(
+            store: tailnetStore ?? RexDirectStore(
                 defaults: #require(UserDefaults(suiteName: "rex-list-tests-tailnet-\(UUID().uuidString)"))
             ),
             discovery: RexTailnetDiscovery { _ in .unreachable },
@@ -646,15 +653,32 @@ struct SSHTerminalRexSectionTests {
         )
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
-        // Tall enough that every unfolded session's panes are on screen (a row off
-        // screen is not dequeued).
-        window.frame = CGRect(x: 0, y: 0, width: 390, height: 2400)
-        window.traitOverrides.appRootEnvironment = makeTestAppRoot()
         let navigation = RouterNavigationController(rootViewController: list)
-        window.rootViewController = navigation
+        var panes: PaneHostController?
+        var scenePanes: ScenePanes?
+        if inPanes {
+            // The iPad mini in landscape, where a pane sits beside the tab.
+            window.frame = CGRect(x: 0, y: 0, width: 1133, height: 744)
+            window.traitOverrides.horizontalSizeClass = .regular
+            window.traitOverrides.verticalSizeClass = .regular
+            let state = ScenePanes()
+            state.preferences = try #require(UserDefaults(suiteName: "SSHTerminalRexListTests-panes-\(UUID().uuidString)"))
+            panes = PaneHostController(primary: navigation, panes: state)
+            scenePanes = state
+        } else {
+            // Tall enough that every unfolded session's panes are on screen (a row off
+            // screen is not dequeued).
+            window.frame = CGRect(x: 0, y: 0, width: 390, height: 2400)
+        }
+        window.traitOverrides.appRootEnvironment = makeTestAppRoot()
+        window.rootViewController = panes ?? navigation
         window.makeKeyAndVisible()
         list.view.layoutIfNeeded()
-        return Rig(list: list, window: window, navigation: navigation, built: built)
+        window.layoutIfNeeded()
+        return Rig(
+            list: list, window: window, navigation: navigation, built: built,
+            panes: panes, scenePanes: scenePanes, tailnetRex: tailnetRex
+        )
     }
 
     private func actionCells(in rig: Rig) -> [SSHTerminalRexListActionCell] {
@@ -1210,6 +1234,299 @@ struct SSHTerminalRexSectionTests {
         let row = try #require(sessionCells(in: rig).first)
         try tap(row, in: rig)
         #expect(opened.last?.blockID == claudeBlock)
+    }
+
+    /// A fake Rex over Tailscale (both session list and terminal attach), for
+    /// tests that open a Rex pane beside the list with no SSH sign-in.
+    private func makeTailscaleRexRig(
+        host: SSHTerminalProfile,
+        rexURL: URL,
+        registry: SSHTerminalRegistry
+    ) throws -> (rig: Rig, world: RexFakeWorld, fake: RexFakeSession) {
+        let world = RexFakeWorld(sessions: [.init(id: "session:1", label: "work", serverLabel: "work", windows: [
+            .init(id: "window:1", label: "Window 1", panes: [
+                .init(block: "b1", title: "zsh"),
+                .init(block: "b2", title: "pi"),
+            ]),
+        ])])
+        let fake = RexFakeSession(sessionID: "session:1", panes: [
+            .init(block: "b1", label: "shell", title: "zsh", screen: "first pane"),
+            .init(block: "b2", label: "shell", title: "pi", screen: "second pane"),
+        ])
+        world.setStatus(url: rexURL, hostID: "host-1")
+        fake.setStatus(url: rexURL, hostID: "host-1")
+        try hosts.save([host])
+        hosts.store().rexDirect.apply(.available(url: rexURL, hostID: "host-1"), for: RexDirectHost(profile: host))
+        let store = hosts.store
+        let plan = RexRoutePlan(
+            host: RexDirectHost(profile: host), store: store().rexDirect, tailnetUsable: { true }, isCurrent: { true },
+            openDirect: { _, _, _, sink in world.host().open(sink: sink) }
+        )
+        let built = Built()
+        let rig = try mount([host], built: built, inPanes: true) { profile in
+            let follower = SSHTerminalRexFollower(
+                profile: profile, promptsAutomatically: false,
+                session: SSHTerminalConnectSession(
+                    registry: registry, profileStore: store, openRexDirect: fake.openDirect(), rexTailnetUsable: { true }
+                ),
+                monitor: RexMonitor(
+                    directHost: RexDirectHost(profile: profile), publishDelay: .milliseconds(20),
+                    retryDelay: { _, _ in .seconds(30) }
+                ),
+                signsInSilently: { _ in false },
+                tailnetPlan: { _ in plan }
+            )
+            built.followers[profile.id] = follower
+            return follower
+        }
+        return (rig, world, fake)
+    }
+
+    /// A saved host whose Rex serves on Tailscale opens its pane in a new pane
+    /// straight over Tailscale: no password prompt, no Rex list re-read, and no
+    /// `SSHTerminalRexSessionsViewController` under the terminal. VoiceOver gets
+    /// the same choices as custom actions, and Back closes the split pane.
+    @Test func aSavedHostWithTailscaleOpensRexPaneInNewPaneWithoutPasswordPrompt() async throws {
+        let rexURL = try #require(URL(string: "https://rex.tail0000.ts.net"))
+        let registry = SSHTerminalRegistry(
+            backgroundTasks: FakeBackgroundTasks(), sleep: { _ in try await Task.sleep(for: .seconds(3600)) }
+        )
+        defer { registry.closeAll(reason: "done") }
+        // Password auth with no saved password, unreachable SSH host, and
+        // opensRexSessions off: only a direct Tailscale pane open succeeds.
+        let host = SSHTerminalProfile(
+            host: "no-such-host.invalid", username: "alex", authentication: .password, opensRexSessions: false
+        )
+        let (rig, world, fake) = try makeTailscaleRexRig(host: host, rexURL: rexURL, registry: registry)
+        defer { rig.tearDown() }
+        let panes = try #require(rig.panes)
+        let row = RexListViewController.Item.rexRow(host: host.id, id: "pane|session:1|b2")
+        let cellID = "sshTerminal.rexList.\(host.id.uuidString).b2"
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
+            self.pass(rig)
+            return rig.list.indexPath(for: row) != nil
+                && self.actionCells(in: rig).contains { $0.accessibilityIdentifier == cellID }
+        }, "the saved host's Rex pane row did not appear")
+        let indexPath = try #require(rig.list.indexPath(for: row))
+        let collection = try #require(collectionView(rig.list))
+        let cell = try #require(actionCells(in: rig).first { $0.accessibilityIdentifier == cellID })
+        let follower = try #require(rig.built.followers[host.id])
+
+        #expect(rig.list.collectionView(collection, contextMenuConfigurationForItemsAt: [indexPath], point: .zero) != nil)
+        let items = rig.list.rexPaneMenuItems(near: collection, for: row)
+        #expect(items.map(\.title) == ["Open in New Pane to the Right", "Open in New Pane Below"])
+        #expect(items.map(\.identifier) == ["pane.open.newPane.right", "pane.open.newPane.below"])
+        #expect(cell.accessibilityCustomActions?.map(\.name) == ["Open in New Pane to the Right", "Open in New Pane Below"])
+
+        let listReadsBefore = world.requests("session.list").count
+        items[0].run()
+
+        var terminal: SSHTerminalViewController?
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
+            guard panes.panes.tree.leaves.count == 2, let opened = rig.scenePanes?.splitLeaves.first else { return false }
+            terminal = panes.frontScreen(ofCell: opened.id) as? SSHTerminalViewController
+            return terminal?.channel.connected == true
+        }, "the Right item did not open the Rex pane's terminal")
+        let shown = try #require(terminal)
+        let target = RexPaneTarget(sessionID: "session:1", blockID: "b2", label: "pi")
+        #expect(shown.channel.rex?.route == .tailscale(rexURL))
+        #expect(shown.channel.rex?.shownTarget.blockID == "b2")
+        #expect(registry.terminal(for: host.id, folder: nil, rexPane: target)?.channel === shown.channel)
+        #expect(fake.requests("session.attach").count == 1)
+        #expect(world.requests("session.list").count == listReadsBefore, "no Rex list re-read")
+        #expect(!follower.session.passwordPrompt && !follower.session.showsTerminal)
+        #expect(rig.list.presentedViewController == nil && panes.presentedViewController == nil, "no password prompt")
+        #expect(shown.navigationController?.viewControllers.first is SSHTerminalRexPaneViewController)
+        #expect(!(shown.navigationController?.viewControllers.contains { $0 is SSHTerminalRexSessionsViewController } ?? false))
+
+        // Leaving the terminal closes its pane and ends its client channel.
+        _ = shown.accessibilityPerformEscape()
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
+            rig.scenePanes?.splitLeaves.isEmpty == true
+        }, "Back did not close the split pane")
+        #expect(!registry.holds(shown.channel))
+    }
+
+    /// A tailnet-only Rex — including a saved SSH host deduplicated into it —
+    /// offers the new-pane items and accessibility actions and opens the pane's
+    /// terminal over Tailscale in a new pane.
+    @Test func aTailnetOnlyRexRowOffersNewPaneItemsAndOpens() async throws {
+        let tailnetHost = try #require(RexTailnetHost(address: "rex.tail0000.ts.net", name: "Studio Rex"))
+        let registry = SSHTerminalRegistry(
+            backgroundTasks: FakeBackgroundTasks(), sleep: { _ in try await Task.sleep(for: .seconds(3600)) }
+        )
+        defer { registry.closeAll(reason: "done") }
+        let world = RexFakeWorld(sessions: [.init(id: "session:1", label: "work", serverLabel: "work", windows: [
+            .init(id: "window:1", label: "Window 1", panes: [
+                .init(block: "b1", title: "zsh"),
+                .init(block: "b2", title: "pi"),
+            ]),
+        ])])
+        let fake = RexFakeSession(sessionID: "session:1", panes: [
+            .init(block: "b1", label: "shell", title: "zsh", screen: "first pane"),
+            .init(block: "b2", label: "shell", title: "pi", screen: "second pane"),
+        ])
+        world.setStatus(url: tailnetHost.url, hostID: "host-1")
+        fake.setStatus(url: tailnetHost.url, hostID: "host-1")
+        let tailnetStore = RexDirectStore(
+            defaults: try #require(UserDefaults(suiteName: "rex-list-tailnet-pane-\(UUID().uuidString)"))
+        )
+        tailnetStore.saveTailnetHost(tailnetHost)
+        // A saved host reaching the same Rex is deduplicated into the tailnet
+        // Rex; its pane rows still get the new-pane actions under the tailnet node.
+        let deduped = SSHTerminalProfile(host: "mac-studio", username: "alex", authentication: .password, opensRexSessions: true)
+        tailnetStore.apply(.available(url: tailnetHost.url, hostID: "host-1"), for: RexDirectHost(profile: deduped))
+        let store = hosts.store
+        let tailnetSection = RexTailnetSection(
+            store: tailnetStore,
+            discovery: RexTailnetDiscovery { _ in .unreachable },
+            reach: { .systemOnly },
+            makeFollower: { host in
+                RexTailnetFollower(
+                    host: host,
+                    monitor: RexMonitor(
+                        tailnet: host,
+                        openDirect: { _, _, _, sink in world.host().open(sink: sink) },
+                        publishDelay: .milliseconds(20),
+                        retryDelay: { _, _ in .seconds(30) }
+                    ),
+                    session: SSHTerminalConnectSession(
+                        registry: registry, profileStore: store, openRexDirect: fake.openDirect()
+                    )
+                )
+            }
+        )
+        let built = Built()
+        let rig = try mount([deduped], built: built, tailnetRex: tailnetSection, inPanes: true) { profile in
+            let follower = SSHTerminalRexFollower(
+                profile: profile, promptsAutomatically: false,
+                session: SSHTerminalConnectSession(registry: registry, profileStore: store),
+                signsInSilently: { _ in false }
+            )
+            built.followers[profile.id] = follower
+            return follower
+        }
+        defer { rig.tearDown() }
+        let panes = try #require(rig.panes)
+        let row = RexListViewController.Item.rexRow(host: tailnetHost.id, id: "pane|session:1|b2")
+        let cellID = "sshTerminal.rexList.\(tailnetHost.id.uuidString).b2"
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
+            self.pass(rig)
+            return rig.list.indexPath(for: row) != nil
+                && self.actionCells(in: rig).contains { $0.accessibilityIdentifier == cellID }
+        }, "the tailnet Rex pane row did not appear")
+        #expect(built.followers[deduped.id] == nil, "the saved host was deduplicated into the tailnet Rex")
+
+        let indexPath = try #require(rig.list.indexPath(for: row))
+        let collection = try #require(collectionView(rig.list))
+        let cell = try #require(actionCells(in: rig).first { $0.accessibilityIdentifier == cellID })
+        #expect(rig.list.collectionView(collection, contextMenuConfigurationForItemsAt: [indexPath], point: .zero) != nil)
+        let items = rig.list.rexPaneMenuItems(near: collection, for: row)
+        #expect(items.map(\.title) == ["Open in New Pane to the Right", "Open in New Pane Below"])
+        #expect(items.map(\.identifier) == ["pane.open.newPane.right", "pane.open.newPane.below"])
+        let actions = try #require(cell.accessibilityCustomActions)
+        #expect(actions.map(\.name) == ["Open in New Pane to the Right", "Open in New Pane Below"])
+
+        // Activate via VoiceOver's Below custom action.
+        let below = try #require(actions.last)
+        _ = below.actionHandler?(below)
+
+        var terminal: SSHTerminalViewController?
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
+            guard panes.panes.tree.leaves.count == 2, let opened = rig.scenePanes?.splitLeaves.first else { return false }
+            terminal = panes.frontScreen(ofCell: opened.id) as? SSHTerminalViewController
+            return terminal?.channel.connected == true
+        }, "the tailnet Rex pane did not open in a new pane")
+        let shown = try #require(terminal)
+        let target = RexPaneTarget(sessionID: "session:1", blockID: "b2", label: "pi")
+        #expect(shown.channel.rex?.route == .tailscale(tailnetHost.url))
+        #expect(shown.channel.rex?.shownTarget.blockID == "b2")
+        #expect(registry.terminal(for: tailnetHost.id, folder: nil, rexPane: target)?.channel === shown.channel)
+        #expect(panes.presentedViewController == nil)
+        #expect(shown.navigationController?.viewControllers.first is SSHTerminalRexPaneViewController)
+    }
+
+    /// On a compact window (iPhone, narrow multitasking), a Rex pane row offers
+    /// neither a new-pane context menu nor new-pane accessibility custom actions,
+    /// and cell reuse clears them.
+    @Test func compactWidthShowsNoNewPaneItemsAndReuseClearsActions() async throws {
+        let rig = try mountTab([rexHost], inPanes: true)
+        defer { rig.tearDown() }
+        let row = RexListViewController.Item.rexRow(host: rexHost.id, id: "pane|\(oppiSession)|\(piBlock)")
+        let cellID = "sshTerminal.rexList.\(rexHost.id.uuidString).\(piBlock)"
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
+            self.pass(rig)
+            return rig.list.indexPath(for: row) != nil
+                && self.actionCells(in: rig).contains { $0.accessibilityIdentifier == cellID }
+        }, "the Rex pane row did not appear")
+        let indexPath = try #require(rig.list.indexPath(for: row))
+        let collection = try #require(collectionView(rig.list))
+        let cell = try #require(actionCells(in: rig).first { $0.accessibilityIdentifier == cellID })
+        #expect(cell.accessibilityCustomActions?.map(\.name) == ["Open in New Pane to the Right", "Open in New Pane Below"])
+
+        rig.window.traitOverrides.horizontalSizeClass = .compact
+        rig.window.layoutIfNeeded()
+        #expect(rig.list.rexPaneMenuItems(near: collection, for: row).isEmpty)
+        #expect(rig.list.collectionView(collection, contextMenuConfigurationForItemsAt: [indexPath], point: .zero) == nil)
+        #expect(cell.accessibilityCustomActions == nil)
+
+        rig.window.traitOverrides.horizontalSizeClass = .regular
+        rig.window.layoutIfNeeded()
+        #expect(cell.accessibilityCustomActions?.count == 2)
+        cell.prepareForReuse()
+        #expect(cell.accessibilityCustomActions == nil)
+    }
+
+    /// When another pane already shows the Rex session's live terminal, Open in
+    /// New Pane focuses that pane and switches it to the picked pane instead of
+    /// opening a duplicate pane or dialing again.
+    @Test func anAlreadyLiveRexTerminalFocusesItsPaneInsteadOfOpeningANewOne() async throws {
+        let rexURL = try #require(URL(string: "https://rex.tail0000.ts.net"))
+        let registry = SSHTerminalRegistry(
+            backgroundTasks: FakeBackgroundTasks(), sleep: { _ in try await Task.sleep(for: .seconds(3600)) }
+        )
+        defer { registry.closeAll(reason: "done") }
+        let host = SSHTerminalProfile(
+            host: "no-such-host.invalid", username: "alex", authentication: .password, opensRexSessions: false
+        )
+        let (rig, _, fake) = try makeTailscaleRexRig(host: host, rexURL: rexURL, registry: registry)
+        defer { rig.tearDown() }
+        let panes = try #require(rig.panes)
+        let b1Row = RexListViewController.Item.rexRow(host: host.id, id: "pane|session:1|b1")
+        let b2Row = RexListViewController.Item.rexRow(host: host.id, id: "pane|session:1|b2")
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
+            self.pass(rig)
+            return rig.list.indexPath(for: b1Row) != nil && rig.list.indexPath(for: b2Row) != nil
+        }, "the Rex pane rows did not appear")
+        let collection = try #require(collectionView(rig.list))
+
+        // Open b1 in a split pane first.
+        let b1Items = rig.list.rexPaneMenuItems(near: collection, for: b1Row)
+        try #require(b1Items.first).run()
+        var terminal: SSHTerminalViewController?
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
+            guard panes.panes.tree.leaves.count == 2, let opened = rig.scenePanes?.splitLeaves.first else { return false }
+            terminal = panes.frontScreen(ofCell: opened.id) as? SSHTerminalViewController
+            return terminal?.channel.connected == true
+        })
+        let shown = try #require(terminal)
+        let splitID = try #require(rig.scenePanes?.splitLeaves.first?.id)
+        #expect(shown.channel.rex?.shownTarget.blockID == "b1")
+        #expect(fake.requests("session.attach").count == 1)
+
+        // Move focus back to the Rex list pane, then ask to open b2 in a new pane.
+        panes.focus(cell: panes.panes.routedLeafID)
+        #expect(panes.panes.tree.focus == panes.panes.routedLeafID)
+
+        let b2Items = rig.list.rexPaneMenuItems(near: collection, for: b2Row)
+        try #require(b2Items.first).run()
+
+        #expect(panes.panes.tree.focus == splitID, "focus moved to the pane already showing the live terminal")
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(250)) {
+            panes.panes.tree.leaves.count == 2
+        }, "no duplicate pane was opened")
+        #expect(shown.channel.rex?.shownTarget.blockID == "b2", "the live terminal switched to the picked pane")
+        #expect(fake.requests("session.attach").count == 1, "no second Rex session connection")
     }
 
     // MARK: Changing Rex

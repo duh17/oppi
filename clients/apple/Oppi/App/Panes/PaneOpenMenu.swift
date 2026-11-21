@@ -250,9 +250,10 @@ enum PaneOpenMenu {
     static func accessibilityActions(
         near view: UIView,
         includesOpenHere: Bool = true,
+        offersOtherPanes: Bool = true,
         open: @escaping @MainActor (PaneOpenPlacement) -> Void
     ) -> [UIAccessibilityCustomAction] {
-        items(near: view, includesOpenHere: includesOpenHere, open: open).flatMap(\.leaves).map { item in
+        items(near: view, includesOpenHere: includesOpenHere, offersOtherPanes: offersOtherPanes, open: open).flatMap(\.leaves).map { item in
             let run = item.run
             return UIAccessibilityCustomAction(name: item.actionName) { _ in
                 run()

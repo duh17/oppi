@@ -317,16 +317,35 @@ extension SSHTerminalRexFollower {
 /// screen routes through its selection.
 final class SSHTerminalRexListActionCell: SSHTerminalOverviewCell {
     private var perform: (() -> Void)?
+    /// Read when VoiceOver asks, so the pane items follow the window's width.
+    private var customActions: (() -> [UIAccessibilityCustomAction])?
+
+    override var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
+        get {
+            guard let actions = customActions?(), !actions.isEmpty else { return super.accessibilityCustomActions }
+            return actions
+        }
+        set { super.accessibilityCustomActions = newValue }
+    }
 
     /// Resets what a reused cell carried, then sets the row's.
-    func configureAction(identifier: String, label: String, value: String?, hint: String?, perform: @escaping () -> Void) {
+    func configureAction(
+        identifier: String,
+        label: String,
+        value: String?,
+        hint: String?,
+        actions: (() -> [UIAccessibilityCustomAction])? = nil,
+        perform: @escaping () -> Void
+    ) {
         self.perform = perform
+        customActions = actions
         isAccessibilityElement = true
         accessibilityIdentifier = identifier
         accessibilityLabel = label
         accessibilityValue = value
         accessibilityHint = hint
         accessibilityTraits = .button
+        super.accessibilityCustomActions = nil
     }
 
     override func accessibilityActivate() -> Bool {
@@ -338,12 +357,14 @@ final class SSHTerminalRexListActionCell: SSHTerminalOverviewCell {
     override func prepareForReuse() {
         super.prepareForReuse()
         perform = nil
+        customActions = nil
         accessories = []
         accessibilityIdentifier = nil
         accessibilityLabel = nil
         accessibilityValue = nil
         accessibilityHint = nil
         accessibilityTraits = []
+        super.accessibilityCustomActions = nil
     }
 }
 

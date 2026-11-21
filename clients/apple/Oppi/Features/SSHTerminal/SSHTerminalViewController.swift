@@ -1341,14 +1341,14 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         updateBottomRows()
     }
 
-    /// Leaves this terminal. When the screen under it is the folder screen
-    /// that only connected it, that screen leaves with it, so Back never stops
-    /// on its connecting page: it returns to the chat, or closes the pane the
-    /// terminal opened in (`SSHTerminalFolderViewController.leave`).
+    /// Leaves this terminal. When the screen under it is an opener screen
+    /// (`SSHTerminalOpener`) that only connected it, that screen leaves with
+    /// it, so Back never stops on its connecting page: it returns to the chat,
+    /// or closes the pane the terminal opened in.
     private func goBack() {
         if let stack = navigationController?.viewControllers,
            let index = stack.firstIndex(of: self), index > 0,
-           let opener = stack[index - 1] as? SSHTerminalFolderViewController {
+           let opener = stack[index - 1] as? any SSHTerminalOpener {
             opener.leave()
         } else {
             Router.finish(self)
@@ -1356,11 +1356,11 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     }
 
     /// `goBack` closes the stack's root instead of popping: the terminal is
-    /// its stack's first screen, or sits on the folder screen that only
+    /// its stack's first screen, or sits on the opener screen that only
     /// connected it there (a side pane's terminal, or one in a sheet).
     private var leavingClosesStack: Bool {
         guard let stack = navigationController?.viewControllers, let index = stack.firstIndex(of: self) else { return false }
-        return index == 0 || (index == 1 && stack[0] is SSHTerminalFolderViewController)
+        return index == 0 || (index == 1 && stack[0] is any SSHTerminalOpener)
     }
 
     /// VoiceOver's two-finger scrub goes back, as it would with a bar.

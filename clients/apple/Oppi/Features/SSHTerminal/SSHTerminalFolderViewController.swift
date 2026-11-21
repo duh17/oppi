@@ -10,7 +10,15 @@ import UIKit
 /// its own terminal (Herdr) shows the host's terminal and hands it the folder, a
 /// multiplexer that wants a terminal of its own (tmux) gets one running its
 /// attach command, and a plain host gets the login shell in the folder.
-final class SSHTerminalFolderViewController: UIViewController {
+/// A connecting screen that only exists to open a terminal and leaves with it
+/// when the terminal closes (`SSHTerminalFolderViewController`,
+/// `SSHTerminalRexPaneViewController`).
+@MainActor
+protocol SSHTerminalOpener: UIViewController {
+    func leave()
+}
+
+final class SSHTerminalFolderViewController: UIViewController, SSHTerminalOpener {
     /// Follows the password sheet's Save Password toggle, like the host list's
     /// connecting profile, so the saved choice is the one used and stored.
     private var profile: SSHTerminalProfile

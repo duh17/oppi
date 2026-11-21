@@ -72,7 +72,7 @@ final class SSHTerminalConnectSession {
     var devicePasscodeChanged = false
     private var task: Task<Void, Never>?
     private var runID = UUID()
-    @ObservationIgnored private let registry: SSHTerminalRegistry
+    @ObservationIgnored let registry: SSHTerminalRegistry
     /// Where profiles and saved passwords live. Tests pass a store over their
     /// own defaults and an in-memory keychain.
     @ObservationIgnored private let profileStore: @Sendable () -> SSHTerminalProfileStore
@@ -364,19 +364,32 @@ final class SSHTerminalConnectSession {
         }
     }
 
+    /// A fresh session using the same registry, profile store, and Rex direct
+    /// transport, for a pane that opens its own terminal independently of this
+    /// session's screen.
+    func makePaneSession() -> SSHTerminalConnectSession {
+        SSHTerminalConnectSession(
+            registry: registry,
+            profileStore: profileStore,
+            openRexDirect: openRexDirect,
+            rexTailnetUsable: rexTailnetUsable,
+            access: access
+        )
+    }
+
     /// Shows a Rex pane of `profile`, the saved host Rex was read for, in a
     /// terminal of its own beside the host's shell: the open one if it is still
     /// connected, else a new connection with the host's sign-in. The host comes
     /// from the caller, not from this session's connection: a Rex list read
     /// over Tailscale has signed in nowhere. The session then stands for the
     /// pane, so Reconnect reopens it.
-    func openRexPane(_ pane: RexPaneTarget, on profile: SSHTerminalProfile) {
+    func openRexPane(_ pane: RexPaneTarget, on profile: SSHTerminalProfile, suppliedPassword: String? = nil) {
         folder = nil
         folderTerminalCommand = nil
         multiplexerFolder = nil
         listsRexSessions = false
         rexPane = pane
-        connect(profile: profile)
+        connect(profile: profile, suppliedPassword: suppliedPassword)
     }
 
     /// Shows a session of a Rex reached over Tailscale alone, on `pane`: the
