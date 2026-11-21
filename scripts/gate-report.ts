@@ -190,10 +190,11 @@ export type Cause = "selector" | "compile" | "test-failure" | "infra" | "quarant
 /**
  * First match wins: the tests themselves never ran, or their run is void, so nothing else in the output
  * explains the lane. A lost build volume (sim-pool, build-root.ts) takes every build on it down at once,
- * with compile errors and failed tests that are its echo, not the change's.
+ * with compile errors and failed tests that are its echo, not the change's. So does a full build disk, and
+ * the compile cache it leaves half-written (CAS entries whose results are missing or truncated).
  */
 const NO_TESTS_RAN: [Cause, RegExp][] = [
-  ["infra", /build volume (?:lost|missing):/],
+  ["infra", /build volume (?:lost|missing):|[Nn]o space left on device|CAS error encountered|unexpected output schema for cached result/],
   ["selector", /no test matches the selector|unknown --test|unknown profile|declares no (?:type|test)|ambiguous --test|No test files? found/],
   ["quarantine", /quarantine (?:expired|entry)/],
 ];

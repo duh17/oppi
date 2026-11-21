@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { buildRoot, buildRootFor, buildVolumeLost, buildVolumeMissing, buildVolumeOf, ensureBuildLink, isManagedBuildLink } from "./build-root";
+import { buildRoot, buildRootFor, buildVolumeLost, buildVolumeMissing, buildVolumeOf, ensureBuildLink, isManagedBuildLink, relieveBuildRoot } from "./build-root";
 
 const made: string[] = [];
 function temp(): string {
@@ -99,6 +99,59 @@ describe("build root", () => {
     expect(ensureBuildLink(a, env)).toBe(folderA);
     expect(existsSync(join(folderA, "kept"))).toBe(true);
     expect(existsSync(folderB)).toBe(false);
+    // A checkout whose link is already in place reaps too: removing a worktree only drops its link.
+    const c = checkout(base, "wt-c");
+    const folderC = ensureBuildLink(c, env)!;
+    rmSync(join(base, "wt-c"), { recursive: true });
+    expect(ensureBuildLink(a, env)).toBe(folderA);
+    expect(existsSync(folderC)).toBe(false);
+    expect(existsSync(join(folderA, "kept"))).toBe(true);
+  });
+
+  test("low on space, a build start frees stale runs oldest first, then the compile cache only while no xcodebuild runs", () => {
+    const base = temp();
+    const root = join(base, "ram");
+    mkdirSync(root);
+    const folder = ensureBuildLink(checkout(base, "wt-a"), { OPPI_BUILD_ROOT: root })!;
+    const file = (path: string, bytes: number, ageHours = 0) => {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, "x".repeat(bytes));
+      const at = new Date(Date.now() - ageHours * 3_600_000);
+      utimesSync(path, at, at);
+      utimesSync(dirname(path), at, at);
+    };
+    file(join(folder, "runs", "older", "out"), 1000, 30);
+    file(join(folder, "runs", "old", "out"), 1000, 20);
+    file(join(folder, "runs", "busy", "out"), 1000, 40);
+    file(join(folder, "runs", "fresh", "out"), 1000);
+    file(join(folder, "dd", "out"), 1000, 40);
+    file(join(root, "xcode-cache", "Xcode-1.app", "cas", "blob"), 3000, 40);
+    file(join(root, "xcode-cache", "Xcode-1.app", "modulecache", "m"), 1000, 40);
+    // A volume of 10,000 bytes: free space is what the files under the root leave (about 900 now).
+    const used = (dir: string): number =>
+      readdirSync(dir, { withFileTypes: true }).reduce((n, e) => n + (e.isDirectory() ? used(join(dir, e.name)) : statSync(join(dir, e.name)).size), 0);
+    let building = true;
+    const probe = { freeBytes: () => 10_000 - used(root), inUse: (dir: string) => dir.endsWith("busy"), xcodebuildRunning: () => building };
+    const runs = () => readdirSync(join(folder, "runs")).sort();
+
+    // Enough room: nothing goes.
+    expect(relieveBuildRoot(root, 500, probe)).toEqual([]);
+    // Short by about 600 bytes: the oldest stale run that nothing uses goes, and that is enough.
+    expect(relieveBuildRoot(root, 1500, probe).join("\n")).toContain(join(folder, "runs", "older"));
+    expect(runs()).toEqual(["busy", "fresh", "old"]);
+    // Still short after every stale run: the cache stays while a build runs, and the log says why.
+    const kept = relieveBuildRoot(root, 3000, probe);
+    expect(runs()).toEqual(["busy", "fresh"]);
+    expect(kept.join("\n")).toContain("xcodebuild is running");
+    expect(existsSync(join(root, "xcode-cache", "Xcode-1.app", "cas", "blob"))).toBe(true);
+    // With no build running, cas and modulecache go; a live checkout's runs in use, fresh runs, and DerivedData stay.
+    building = false;
+    const cleared = relieveBuildRoot(root, 3000, probe);
+    expect(cleared.join("\n")).toContain(join(root, "xcode-cache", "Xcode-1.app", "cas"));
+    expect(readdirSync(join(root, "xcode-cache", "Xcode-1.app"))).toEqual([]);
+    expect(runs()).toEqual(["busy", "fresh"]);
+    expect(existsSync(join(folder, "dd", "out"))).toBe(true);
+    expect(existsSync(join(folder, ".checkout"))).toBe(true);
   });
 
   test("a link to another checkout's folder is relinked; a link outside the root is left alone", () => {

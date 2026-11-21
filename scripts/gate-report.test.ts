@@ -134,6 +134,18 @@ describe("red lanes", () => {
     expect(guessCause("error: INFRASTRUCTURE failure: build volume missing: /x/.build links to /ram/x, but the build root /ram (OPPI_BUILD_ROOT) is not mounted.", []).cause).toBe("infra");
   });
 
+  test("a full build disk or a broken compile cache is infrastructure, whatever compile errors and failed tests it left behind", () => {
+    const full = [
+      "error: unable to write file '/ram/x/dd/Build/Intermediates.noindex/Oppi.build/A.o': No space left on device",
+      "/x/Oppi/A.swift:1:8: error: no such module 'OppiCore'",
+      "[unit-shards] FAILED OppiTests/A/testB",
+    ].join("\n");
+    expect(guessCause(full, failedTestsInOutput(full))).toEqual({ cause: "infra", evidence: "error: unable to write file '/ram/x/dd/Build/Intermediates.noindex/Oppi.build/A.o': No space left on device" });
+    expect(guessCause("Error: ENOSPC: no space left on device, write", []).cause).toBe("infra");
+    const cas = "error: CAS error encountered during loading cached results: unexpected output schema for cached result\n/x/Oppi/B.swift:1:8: error: no such module 'Oppi'\n** TEST BUILD FAILED **";
+    expect(guessCause(cas, []).cause).toBe("infra");
+  });
+
   test("failing tests come from the runners' FAILED lines and Vitest, not from XCTest lines a rerun may have cleared", () => {
     const output = [
       "Test Case '-[OppiUITests.A testFlaky]' failed (3.0 seconds).",
