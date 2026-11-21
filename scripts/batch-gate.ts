@@ -16,6 +16,11 @@
 // from before that suffix exists rejects it. An older gate exits 2 on the unknown flag. The same
 // holds for `--supports-pre-push` (PRE_PUSH_CAPABILITY) and `--build-cache` (below).
 //
+// `--check-tests --test <s>... [--profile <p>]...` runs the selector parser and the declaration check
+// only, then prints TESTS_VALID and exits 0, or one `batch-gate: test-problem: <error>` line per
+// refused value and exits 2. A queue runs it when a branch is added, so a selector this gate would
+// reject reaches the person who typed it instead of failing a batch in 0 s.
+//
 // --with-pre-push <push row>: run `.githooks/pre-push origin` (the row on its stdin, as git would
 // give it) alongside the lanes instead of before them, so the UI lanes do not wait minutes for the
 // unit shards and the Release compile. The UI lanes start once the hook's Apple build
@@ -120,6 +125,8 @@ export const PRE_PUSH_CAPABILITY = "batch-gate: runs-pre-push";
 /** `--build-cache` output: one line per kept path, then one key line. */
 export const BUILD_CACHE_LINE = "batch-gate: build-cache";
 export const BUILD_CACHE_KEY_LINE = "batch-gate: build-cache-key";
+/** The line `--check-tests` prints when every --test value would run; the queue matches it exactly. */
+export const TESTS_VALID = "batch-gate: tests-valid";
 /** What a reused queue worktree keeps: everything the Apple builds can build incrementally from. */
 export const BUILD_CACHE_PATHS = [
   "clients/apple/.build/dd",
@@ -826,6 +833,7 @@ async function main(argv: string[]): Promise<number> {
   const tests: string[] = [];
   const profiles: string[] = [];
   let prePushRow: string | undefined;
+  let checkTests = false;
   for (let i = 0; i < argv.length; i += 1) {
     const value = argv[i + 1];
     switch (argv[i]) {
@@ -834,6 +842,7 @@ async function main(argv: string[]): Promise<number> {
       case "--test": tests.push(value); i += 1; break;
       case "--profile": profiles.push(value); i += 1; break;
       case "--with-pre-push": prePushRow = value; i += 1; break;
+      case "--check-tests": checkTests = true; break;
       default:
         console.error(`[batch-gate] unknown argument ${argv[i]}`);
         return 2;
@@ -852,6 +861,17 @@ async function main(argv: string[]): Promise<number> {
   // plan on the spelled DerivedData path, so a non-canonical spelling recompiles the whole
   // app (~100 s) over the build pre-push just finished. Derive every path from the real one.
   worktree = realpathSync.native(worktree);
+  if (checkTests) {
+    // No lane and no checkout state: the one thing a queue's `add` asks, before a branch is queued.
+    const plan = planGate(worktree, tests, profiles);
+    for (const line of plan.resolutions) console.log(`[batch-gate] ${line}`);
+    if (plan.errors.length > 0) {
+      for (const error of plan.errors) console.error(`[batch-gate] test-problem: ${error}`);
+      return 2;
+    }
+    console.log(TESTS_VALID);
+    return 0;
+  }
   // A checkout whose `.build` links into a build volume that is gone would fail part way through
   // every lane; say so once, as the machine's failure, before any lane starts.
   const missingVolume = buildVolumeMissing(join(worktree, "clients", "apple"));

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { declarations, executedTests, planGate, PROFILE_SCOPE_CAPABILITY } from "./batch-gate";
+import { declarations, executedTests, planGate, PROFILE_SCOPE_CAPABILITY, TESTS_VALID } from "./batch-gate";
 
 const sources: Record<string, string[]> = {
   OppiTests: [
@@ -248,6 +248,43 @@ describe("batch gate capability probe", () => {
     const run = Bun.spawnSync(["bun", join(import.meta.dir, "batch-gate.ts"), "--supports-profile-scope"], { cwd: tmpdir(), stdout: "pipe", stderr: "pipe" });
     expect(run.exitCode).toBe(0);
     expect(run.stdout.toString()).toBe(`${PROFILE_SCOPE_CAPABILITY}\n`);
+  });
+});
+
+describe("batch gate --check-tests", () => {
+  // A queue runs this when a branch is added: the selector a run would refuse must fail there, with
+  // the gate's own words, instead of failing the batch in 0 s.
+  test("a value the gate would refuse exits 2 with the gate's reason", () => {
+    const dir = mkdtempSync(join(tmpdir(), "batch-gate-check-"));
+    try {
+      const checkout = fakeCheckout(realpathSync.native(dir));
+      const run = Bun.spawnSync(["bun", join(import.meta.dir, "batch-gate.ts"), "--worktree", checkout, "--check-tests", "--test", "server"], {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(run.exitCode).toBe(2);
+      expect(run.stderr.toString()).toContain("test-problem: unknown --test 'server'");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a declared selector passes without running a lane", () => {
+    const dir = mkdtempSync(join(tmpdir(), "batch-gate-check-ok-"));
+    try {
+      const real = realpathSync.native(dir);
+      const checkout = fakeCheckout(real);
+      const run = Bun.spawnSync(["bun", join(import.meta.dir, "batch-gate.ts"), "--worktree", checkout, "--check-tests", "--test", "OppiTests/FooTests"], {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(run.exitCode).toBe(0);
+      expect(run.stdout.toString()).toContain(TESTS_VALID);
+      // No lane ran: the stand-in sim-pool records every run it is asked for.
+      expect(() => readFileSync(join(real, "seen"))).toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

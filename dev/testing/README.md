@@ -54,7 +54,7 @@ A queue gates a batch with two repo-owned commands from a checkout of the batch:
 
 Selectors: `OppiTests/<Suite>[/<test>]`; `OppiUITests/<Suite>[/<test>]`; `OppiE2ETests/<Suite>[/<test>]` (suites that call `TwoServerFixture.<member>` run through `bun server/scripts/e2e-two-server.ts`; `e2e.sh` groups skip them, so name them); bare `<Suite>Tests[/<test>]` resolves to its one declaring target (ambiguity is an error); `e2e-group:<name>`; `server/tests/<file>.test.ts`.
 
-Exit codes: `0` pass or nothing named; `1` a lane failed (every lane runs) or a quarantine entry expired or lacks a field; `2` unknown or ambiguous selector, unknown profile, undeclared suite, bad argument, not an Oppi checkout; `143` signal; the deps-sync exit code. A named selector that executes zero tests fails as `zero tests ran for ...`.
+Exit codes: `0` pass or nothing named; `1` a lane failed (every lane runs) or a quarantine entry expired or lacks a field; `2` unknown or ambiguous selector, unknown profile, undeclared suite, bad argument, not an Oppi checkout; `143` signal; the deps-sync exit code. A named selector that executes zero tests fails as `zero tests ran for ...`. `--check-tests` checks selectors only, for a queue's `add`.
 
 ## Gate reports
 

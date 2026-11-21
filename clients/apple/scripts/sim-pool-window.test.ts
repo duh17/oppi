@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -7,10 +8,13 @@ import { APP_BUNDLE_ID, loadConfig, prepareSimulator } from "./sim-pool-ops";
 import { CommandSession } from "./sim-pool-supervise";
 import { SUBPROCESS_TEST_TIMEOUT_MS } from "./sim-pool-test-support";
 import {
+  floatingKeyboardRemembered,
+  forgetFloatingKeyboard,
   forgetPersistedWindow,
   frontBoardStorePath,
   isCompactWindow,
   isPadDeviceType,
+  keyboardPreferencesPath,
   readPersistedWindow,
 } from "./sim-pool-window";
 
@@ -62,6 +66,27 @@ function tempHome(): string {
   return home;
 }
 
+/** The keyboard's preference domain as the device writes it: binary plist, no floating keys when docked. */
+function makeKeyboardPrefs(home: string, floating: boolean): string {
+  const path = keyboardPreferencesPath(home, UDID);
+  mkdirSync(dirname(path), { recursive: true });
+  const prefs = {
+    AutomaticMinimizationEnabled: true,
+    ...(floating
+      ? {
+          KeyboardFloatingPersistentHorizontalOffset: 0.27,
+          KeyboardFloatingPersistentVerticalOffset: 0.28,
+          KeyboardIsFloating: true,
+        }
+      : {}),
+    KeyboardsCurrentAndNext: ["en_US@sw=QWERTY;hw=Automatic"],
+  };
+  const result = Bun.spawnSync(["/usr/bin/plutil", "-convert", "binary1", "-o", "-", "-"], { stdin: Buffer.from(JSON.stringify(prefs)) });
+  if (result.exitCode !== 0) throw new Error(result.stderr.toString());
+  writeFileSync(path, result.stdout);
+  return path;
+}
+
 describe("remembered window", () => {
   test("a window smaller than its display is compact; one that fills it is not", () => {
     const display = { displayWidth: 744, displayHeight: 1133 };
@@ -99,11 +124,34 @@ describe("remembered window", () => {
   });
 });
 
+describe("remembered floating keyboard", () => {
+  test("forgets the floating flag and its offsets, and keeps the rest of the domain", () => {
+    const prefs = makeKeyboardPrefs(tempHome(), true);
+
+    expect(floatingKeyboardRemembered(prefs)).toBe(true);
+    expect(forgetFloatingKeyboard(prefs)).toBe(true);
+    expect(floatingKeyboardRemembered(prefs)).toBe(false);
+    const kept = spawnSync("/usr/bin/plutil", ["-convert", "json", "-o", "-", prefs], { encoding: "utf8" });
+    expect(JSON.parse(kept.stdout)).toEqual({
+      AutomaticMinimizationEnabled: true,
+      KeyboardsCurrentAndNext: ["en_US@sw=QWERTY;hw=Automatic"],
+    });
+    expect(forgetFloatingKeyboard(prefs)).toBe(false);
+  });
+
+  test("a slot with no keyboard file, or a docked keyboard, remembers none", () => {
+    const home = tempHome();
+    expect(floatingKeyboardRemembered(keyboardPreferencesPath(home, "NEW-SLOT"))).toBe(false);
+    expect(floatingKeyboardRemembered(makeKeyboardPrefs(home, false))).toBe(false);
+  });
+});
+
 /** `prepareSimulator` on a booted slot, against a fake simctl that logs what it was asked. */
-async function prepareBootedSlot(deviceType: string, size: { Width: number; Height: number }) {
+async function prepareBootedSlot(deviceType: string, size: { Width: number; Height: number }, floatingKeyboard = false) {
   const root = tempHome();
   const home = join(root, "home");
   const store = makeStore(home, size);
+  const keyboard = makeKeyboardPrefs(home, floatingKeyboard);
   const bin = join(root, "bin");
   mkdirSync(bin);
   writeFileSync(
@@ -152,7 +200,7 @@ esac
     }
   }
   const calls = existsSync(join(root, "calls.log")) ? readFileSync(join(root, "calls.log"), "utf8").split("\n") : [];
-  return { calls, remembered: readPersistedWindow(store, APP_BUNDLE_ID) };
+  return { calls, remembered: readPersistedWindow(store, APP_BUNDLE_ID), keyboardFloating: floatingKeyboardRemembered(keyboard) };
 }
 
 describe("prepareSimulator and the remembered window", () => {
@@ -178,5 +226,22 @@ describe("prepareSimulator and the remembered window", () => {
 
     expect(calls).not.toContain("simctl shutdown");
     expect(remembered).not.toBeNull();
+  });
+
+  test("an iPad slot whose keyboard is floating is recycled and boots with it docked", async () => {
+    const { calls, remembered, keyboardFloating } = await prepareBootedSlot(IPAD, { Width: 744, Height: 1133 }, true);
+
+    expect(calls).toContain("simctl shutdown");
+    expect(calls.indexOf("simctl shutdown")).toBeLessThan(calls.indexOf("simctl boot"));
+    expect(keyboardFloating).toBe(false);
+    // The boot forgets the app's remembered window too, whatever size it was.
+    expect(remembered).toBeNull();
+  });
+
+  test("an iPhone slot keeps its keyboard preferences", async () => {
+    const { calls, keyboardFloating } = await prepareBootedSlot(IPHONE, { Width: 744, Height: 1133 }, true);
+
+    expect(calls).not.toContain("simctl shutdown");
+    expect(keyboardFloating).toBe(true);
   });
 });

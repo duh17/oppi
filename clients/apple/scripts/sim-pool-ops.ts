@@ -74,10 +74,13 @@ import {
 } from "./sim-pool-supervise";
 import { readTestResults, unmatchedSelectors, untangledRunLines, xcresultTestIds, type RecordedResults } from "./unit-shards";
 import {
+  floatingKeyboardRemembered,
+  forgetFloatingKeyboard,
   forgetPersistedWindow,
   frontBoardStorePath,
   isCompactWindow,
   isPadDeviceType,
+  keyboardPreferencesPath,
   type PersistedWindow,
   readPersistedWindow,
 } from "./sim-pool-window";
@@ -1098,13 +1101,21 @@ function compactRememberedWindow(config: PoolConfig, udid: string): PersistedWin
   return window && isCompactWindow(window) ? window : undefined;
 }
 
-/** Run on a shut-down iPad slot just before its boot, so the app opens at full size whatever the last run left. */
-function forgetRememberedWindow(config: PoolConfig, udid: string): void {
+/** Whether an iPad slot's keyboard preferences remember a floating keyboard (see sim-pool-window.ts). */
+function remembersFloatingKeyboard(config: PoolConfig, udid: string): boolean {
+  return isPadDeviceType(config.deviceType) && floatingKeyboardRemembered(keyboardPreferencesPath(config.homeDir, udid));
+}
+
+/** Run on a shut-down iPad slot just before its boot, so the app opens at full size with a docked keyboard whatever the last run left. */
+function forgetPersistedSlotState(config: PoolConfig, udid: string): void {
   if (!isPadDeviceType(config.deviceType)) {
     return;
   }
   if (forgetPersistedWindow(frontBoardStorePath(config.homeDir, udid), APP_BUNDLE_ID)) {
     log(`[sim-pool] Forgot the app's remembered window on ${udid}; it opens full size`);
+  }
+  if (forgetFloatingKeyboard(keyboardPreferencesPath(config.homeDir, udid))) {
+    log(`[sim-pool] Forgot the floating keyboard on ${udid}; it opens docked`);
   }
 }
 
@@ -1155,7 +1166,8 @@ export async function prepareSimulator(
       if (await waitForBootReadyWithRetries(session, config, udid)) {
         const leaked = await leakedDeviceE2EEnv(session, udid);
         const compact = compactRememberedWindow(config, udid);
-        if (leaked.length === 0 && !compact) {
+        const floatingKeyboard = remembersFloatingKeyboard(config, udid);
+        if (leaked.length === 0 && !compact && !floatingKeyboard) {
           const slim = await slimSimulator(session, config, udid);
           if (!slim.quiescent) {
             die(slim.note ?? "slim did not reach quiescence");
@@ -1166,6 +1178,8 @@ export async function prepareSimulator(
           log(
             `[sim-pool] Simulator ${udid} remembers a ${compact.width}x${compact.height} floating window for the app (display ${compact.displayWidth}x${compact.displayHeight}); recycling it so this run opens full size`,
           );
+        } else if (floatingKeyboard) {
+          log(`[sim-pool] Simulator ${udid} remembers a floating keyboard; recycling it so this run finds a docked one`);
         } else {
           log(
             `[sim-pool] Simulator ${udid} carries leaked E2E device environment (${leaked.join(", ")}); recycling it so this run does not start the app in E2E mode`,
@@ -1197,7 +1211,7 @@ export async function prepareSimulator(
       gate.release();
       gate = undefined;
     }
-    forgetRememberedWindow(config, udid);
+    forgetPersistedSlotState(config, udid);
     await runSimctl(session, ["boot", udid], "simctl boot");
     if (!(await waitForBootReadyWithRetries(session, config, udid))) {
       die(
@@ -2959,8 +2973,8 @@ function lstatIsSymlink(path: string): boolean {
 export function usage(): never {
   process.stderr.write(`Usage:
   sim-pool.sh run [--root <checkout>] [--device-profile NAME] -- <xcodebuild args...>
-  sim-pool.sh claim --device-profile NAME [--owner SESSION]
-  sim-pool.sh release [UDID] [--owner SESSION]
+  sim-pool.sh claim --device-profile NAME [--owner SESSION-ID]
+  sim-pool.sh release [UDID] [--owner SESSION-ID]
   sim-pool.sh reap
   sim-pool.sh self-test
   sim-pool.sh status
@@ -2996,9 +3010,10 @@ A caller's own test-without-building runs in a slot against .build/dd (or its
 -xctestrun). run injects -destination and -derivedDataPath and releases the
 slot on exit. An already-booted pool
 simulator is reused unless OPPI_SIM_POOL_FORCE_CLEAN_BOOT=1 or, on an iPad
-profile, it remembers a floating (compact) window for the app: SpringBoard keeps
-that window across uninstalls, so the pool shuts such a slot down, forgets the
-window, and boots it again. Pool simulators
+profile, it remembers a floating (compact) window for the app or a floating
+keyboard: SpringBoard and the keyboard keep
+them across uninstalls, so the pool shuts such a slot down, forgets
+them, and boots it again (and a slot it boots anyway forgets them first). Pool simulators
 stay booted after a run unless OPPI_SIM_POOL_KEEP_BOOTED=0; at the end of each
 run, claim, and release the reaper shuts down pool simulators idle for
 OPPI_SIM_POOL_IDLE_MINUTES (15) except the OPPI_SIM_POOL_KEEP_WARM (2) most
@@ -3012,7 +3027,9 @@ disabled unless OPPI_SIM_POOL_INDEX_STORE=1 or the command already sets
 COMPILER_INDEX_STORE_ENABLE. Ordinary run does not delete unavailable
 simulators or CoreSimulator device caches.
 
-claim gives the calling Oppi session (OPPI_CALLER_SESSION_ID, or --owner) its
+claim gives the calling Oppi session (OPPI_CALLER_SESSION_ID, or --owner, which takes a
+live session id and not a label: the reaper looks the owner up with the oppi CLI and
+frees a claim at once whose session it cannot find) its
 own booted, slimmed simulator for the profile and prints its UDID on stdout.
 Claiming again returns the same simulator (waiting if a reaper is working on
 it) and boots it if the reaper shut it down. release shuts down the owner's
