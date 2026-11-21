@@ -45,23 +45,23 @@ private actor IconAssetFetchCounterForTimeline {
 struct AssistantTimelineRowContentViewTests {
     @MainActor
     @Test func assistantBadgeUsesAgentIconAndKeepsFixedGeometry() throws {
-        let badge = SessionGridBadgeView()
+        let badge = SessionGridBadgeView(iconSize: 18)
         badge.sessionId = "session-1"
         badge.agentId = "agent-reviewer"
         badge.agentIcon = .symbol("checkmark.shield")
 
-        let imageView = try #require(badge.subviews.compactMap { $0 as? UIImageView }.first)
-        #expect(imageView.image != nil)
+        let drawing = try #require(badgeDrawing(badge))
+        #expect(drawing.image != nil)
         #expect(badge.intrinsicContentSize == CGSize(width: 18, height: 18))
 
         badge.agentIcon = .symbol("not/a/symbol")
-        #expect(imageView.image != nil)
+        #expect(badgeDrawing(badge)?.image != nil)
         #expect(badge.intrinsicContentSize == CGSize(width: 18, height: 18))
     }
 
     @MainActor
     @Test func savedAgentBadgeUsesLaunchIconInsteadOfPiIdentity() {
-        let badge = SessionGridBadgeView()
+        let badge = SessionGridBadgeView(iconSize: 18)
         badge.configure(
             sessionId: "agent-session",
             agentId: "agent-1",
@@ -93,7 +93,7 @@ struct AssistantTimelineRowContentViewTests {
             },
             decode: { _, _ in (expectedImage, NSObject()) }
         )
-        let badge = SessionGridBadgeView()
+        let badge = SessionGridBadgeView(iconSize: 18)
         badge.configure(
             sessionId: "saved-agent-avatar-notification",
             agentId: "agent-1",
@@ -102,13 +102,19 @@ struct AssistantTimelineRowContentViewTests {
             iconAssetCache: cache
         )
 
-        let imageView = try #require(badge.subviews.compactMap { $0 as? UIImageView }.first)
-        for _ in 0..<50 where !showsPinkArtwork(imageView.image) {
+        for _ in 0..<50 where !showsPinkArtwork(badgeDrawing(badge)?.image) {
             try await Task.sleep(for: .milliseconds(10))
         }
-        #expect(showsPinkArtwork(imageView.image))
+        #expect(showsPinkArtwork(badgeDrawing(badge)?.image))
         #expect(badge.accessibilityLabel == "Saved Agent, Image icon")
         #expect(await fetchCounter.recordedIDs() == [assetId])
+    }
+
+    /// The badge's still drawing: the icon view's own image, which the badge
+    /// places at its size.
+    private func badgeDrawing(_ badge: SessionGridBadgeView) -> UIImageView? {
+        badge.subviews.compactMap { $0 as? IconChoiceUIView }.first?
+            .subviews.compactMap { $0 as? UIImageView }.first { !$0.isHidden }
     }
 
     /// Whether the badge draws the pink artwork the cache decodes, by colour:
@@ -157,7 +163,7 @@ struct AssistantTimelineRowContentViewTests {
             }
         )
         let firstId = "ia_" + String(repeating: "A", count: 43)
-        let badge = SessionGridBadgeView()
+        let badge = SessionGridBadgeView(iconSize: 18)
         badge.iconAssetCache = cache
         badge.agentId = "agent-1"
         badge.agentIcon = .genmoji(assetId: firstId, contentDescription: "First")
@@ -169,8 +175,7 @@ struct AssistantTimelineRowContentViewTests {
 
         #expect(await gate.recordedIDs() == [firstId])
         // The asset that arrived late belongs to the icon the badge no longer shows.
-        let imageView = try #require(badge.subviews.compactMap { $0 as? UIImageView }.first)
-        #expect(imageView.image?.pngData() == EntityIcon.image(.agent(.emoji("🧘")), size: 18).pngData())
+        #expect(badgeDrawing(badge)?.image?.pngData() == EntityIcon.image(.agent(.emoji("🧘")), size: 18).pngData())
     }
 
     @MainActor

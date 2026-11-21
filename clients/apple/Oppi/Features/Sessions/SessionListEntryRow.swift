@@ -147,7 +147,8 @@ final class SessionListEntryContentView: UIView, UIContentView {
     static let verticalInset: CGFloat = 15
     /// Indent per thread level: one title column, so a child row's icon sits where its parent's title
     /// starts. Deeper threads stop indenting at `maxIndentLevels` so rows keep their width.
-    static let indentPerLevel: CGFloat = SessionRowView.textInset
+    /// One title column of the row this list draws, at the width the list has.
+    private var indentPerLevel: CGFloat { rowView.textInset }
     static let maxIndentLevels = 4
 
     /// The separator starts under the title, past the identity icon.
@@ -167,7 +168,7 @@ final class SessionListEntryContentView: UIView, UIContentView {
         let session = entry.session
         let style = SessionRowStyle.for(configuration.themeID)
         let status = row.status(of: session)
-        leadingConstraint?.constant = CGFloat(min(entry.depth, Self.maxIndentLevels)) * Self.indentPerLevel
+        leadingConstraint?.constant = CGFloat(min(entry.depth, Self.maxIndentLevels)) * indentPerLevel
 
         rowView.apply(
             SessionRowView.Content(

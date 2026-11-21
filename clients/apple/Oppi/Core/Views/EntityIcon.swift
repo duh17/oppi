@@ -207,14 +207,14 @@ enum EntityIcon {
         let fallbackTile = tiledSymbol(fallback, side: box) ?? tile(side: box)
         switch AgentIconContent.resolve(choice) {
         case .symbol(let name):
-            // A symbol's effect plays only in `IconChoiceUIView` with `animates`.
+            // A symbol's effect plays only in `IconChoiceUIView`, which animates or bursts it.
             return (tiledSymbol(name, side: box) ?? fallbackTile, true)
         case .text(let emoji):
             let font = UIFont.systemFont(ofSize: box * tileEmojiShare)
             return (tiled(box) { rect in drawCentred(emoji, font: font, in: rect) }, true)
         case .genmoji(let assetId, _), .image(let assetId):
             // An animated image draws its first frame here; only
-            // `IconChoiceUIView` with `animates` plays it.
+            // `IconChoiceUIView` plays it, when it animates or bursts.
             if let assets, let artwork = assets.cachedImage(assetId: assetId, size: artworkSize(box)) {
                 let image = raster(box) { rect in
                     if case .image = choice {

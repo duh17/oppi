@@ -1,5 +1,30 @@
 import UIKit
 
+/// The session row's identity column: the tile beside its title and details.
+/// A compact layout keeps the 20-pt tile the row was drawn with. A wide one
+/// (an iPad, or the Duo's inner display) draws 32 pt: beside two lines of text
+/// there — the 17-pt title and its caption detail line, about 39 pt together at
+/// the default text size — a 20-pt tile read small.
+enum SessionRowIdentity {
+    static let spacing: CGFloat = 8
+    /// The tile's slack around it in its column, per side.
+    private static let slack: CGFloat = 2
+
+    /// The tile's side: 20 pt in a compact layout, 32 pt in a wide one.
+    static func tileSide(isWide: Bool) -> CGFloat {
+        isWide ? 32 : 20
+    }
+
+    /// The column holding the tile, and where the text starts past it.
+    static func columnWidth(isWide: Bool) -> CGFloat {
+        tileSide(isWide: isWide) + slack * 2
+    }
+
+    static func textInset(isWide: Bool) -> CGFloat {
+        columnWidth(isWide: isWide) + spacing
+    }
+}
+
 // MARK: - Session Row
 
 /// Unified session row used in every session list and the Session Rows preview.
@@ -29,8 +54,10 @@ final class SessionRowView: UIView {
 
     /// Accessibility activation of a list row: the same open as a tap on the cell.
     var onActivate: (() -> Void)?
-    /// Where the title and details start, past the identity icon.
+    /// Where the title and details start, past the identity icon, and how far in
+    /// that is: a thread's child rows take their indent from it.
     var textLeadingAnchor: NSLayoutXAxisAnchor { column.leadingAnchor }
+    var textInset: CGFloat { identityColumnWidth + SessionRowIdentity.spacing }
     /// Where the row's text ends: the time in the title row, the status under the details.
     var textTrailingAnchor: NSLayoutXAxisAnchor { column.trailingAnchor }
 
@@ -40,7 +67,10 @@ final class SessionRowView: UIView {
     private var style = SessionRowStyle.for(ThemeRuntimeState.currentThemeID())
 
     private let iconContainer = UIView()
-    private let icon = SessionGridBadgeView()
+    private lazy var icon = SessionGridBadgeView(iconSize: SessionRowIdentity.tileSide(isWide: laysOutWide))
+    /// The tile column's width and height, and the tile's, set to the idiom's.
+    private var identityColumnConstraints: [NSLayoutConstraint] = []
+    private var identityTileConstraints: [NSLayoutConstraint] = []
     private let attentionDot = UIView()
     private let column = UIStackView()
 
@@ -81,6 +111,10 @@ final class SessionRowView: UIView {
     private var topPadding: NSLayoutConstraint?
     private var bottomPadding: NSLayoutConstraint?
     private var iconTop: NSLayoutConstraint?
+    /// The session whose attention this row's icon has already played for, so
+    /// a reload of the same attention does not play it again. Nil while the
+    /// row shows no attention, which arms the next burst.
+    private var announcedAttention: String?
     private var lastApplied: (display: SessionRowDisplay, themeID: ThemeID, iconAssetCache: IconAssetCache?)?
     private var joinsDetailRows = false
     private var clock: Timer?
@@ -90,6 +124,10 @@ final class SessionRowView: UIView {
         super.init(frame: .zero)
         isAccessibilityElement = combinesAccessibility
         buildHierarchy()
+        // A layout that turns wide or compact (Split View, rotation) resizes the tile.
+        registerForTraitChanges([UITraitHorizontalSizeClass.self]) { (row: Self, _: UITraitCollection) in
+            row.applyIdentitySize()
+        }
     }
 
     @available(*, unavailable)
@@ -106,12 +144,14 @@ final class SessionRowView: UIView {
         let status = presentation.statusKind
         let colors = style.colors
 
+        applyIdentitySize()
         icon.configure(
             sessionId: session.id,
             agentId: session.launch?.agentId,
             agentIcon: session.launch?.agentIcon,
             iconAssetCache: iconAssetCache
         )
+        announceAttention(needsAttention: status.needsAttention, sessionId: session.id)
         attentionDot.isHidden = !status.needsAttention
         attentionDot.backgroundColor = style.tint(status)
 
@@ -330,7 +370,7 @@ final class SessionRowView: UIView {
         guard let content, display.isCompact, !content.hidesDetails, width > 0 else {
             return arrangeDetailRows(joined: false)
         }
-        let available = width - Self.iconWidth - Self.iconSpacing - Self.trailingInset
+        let available = width - identityColumnWidth - SessionRowIdentity.spacing - Self.trailingInset
         return arrangeDetailRows(joined: joinedRowWidth() <= available)
     }
 
@@ -410,10 +450,35 @@ final class SessionRowView: UIView {
         if window == nil {
             clock?.invalidate()
             clock = nil
+            // The row's next appearance plays the burst for what it shows then.
+            announcedAttention = nil
         } else {
             updateTime()
             startClock()
+            applyIdentitySize()
+            if let content {
+                announceAttention(
+                    needsAttention: content.presentation.statusKind.needsAttention,
+                    sessionId: content.presentation.session.id
+                )
+            }
         }
+    }
+
+    /// The icon plays one short burst for each attention the row shows: when the
+    /// session starts needing the person, and when the row is displayed already
+    /// needing them. A reload of the same attention, and every other pass over
+    /// the row, leaves the icon still.
+    private func announceAttention(needsAttention: Bool, sessionId: String) {
+        guard needsAttention else {
+            guard announcedAttention != nil else { return }
+            announcedAttention = nil
+            icon.stopBurst()
+            return
+        }
+        guard window != nil, announcedAttention != sessionId else { return }
+        announcedAttention = sessionId
+        icon.playBurst()
     }
 
     /// Running turns tick every second; finished ones every minute.
@@ -494,16 +559,36 @@ final class SessionRowView: UIView {
 
     // MARK: Hierarchy
 
-    private static let iconWidth: CGFloat = 24
-    private static let iconSpacing: CGFloat = 8
     private static let trailingInset: CGFloat = 4
     private static let detailSpacing: CGFloat = 6
 
-    /// The row's two columns: its text starts `textInset` in from the row's leading edge, past the
-    /// identity icon, and ends `trailingTextInset` before its trailing edge. A thread's strip, its
-    /// stopped fold, and its child rows line up on these, so a thread draws as one block.
-    static let textInset: CGFloat = iconWidth + iconSpacing
+    /// The row's two columns: its text starts past the identity column and ends
+    /// `trailingTextInset` before its trailing edge. A thread's strip, its stopped
+    /// fold, and its child rows line up on these, so a thread draws as one block.
     static let trailingTextInset: CGFloat = trailingInset
+
+    /// Whether the row lays out wide, where the tile is larger.
+    private var laysOutWide: Bool {
+        AdaptiveWidth.isWide(traitCollection)
+    }
+
+    private var identityColumnWidth: CGFloat {
+        SessionRowIdentity.columnWidth(isWide: laysOutWide)
+    }
+
+    /// The tile beside the title follows the layout's width. A compact layout is
+    /// unchanged; a wide one grows the tile, its column, and where the text starts.
+    private func applyIdentitySize() {
+        let column = identityColumnWidth
+        guard column != identityColumnConstraints.first?.constant else { return }
+        for constraint in identityColumnConstraints { constraint.constant = column }
+        for constraint in identityTileConstraints {
+            constraint.constant = SessionRowIdentity.tileSide(isWide: laysOutWide)
+        }
+        icon.iconSize = SessionRowIdentity.tileSide(isWide: laysOutWide)
+        invalidateIntrinsicContentSize()
+        setNeedsLayout()
+    }
 
     private func buildHierarchy() {
         iconContainer.translatesAutoresizingMaskIntoConstraints = false
@@ -606,21 +691,27 @@ final class SessionRowView: UIView {
         topPadding = top
         bottomPadding = bottom
         self.iconTop = iconTop
+        let columnWidth = iconContainer.widthAnchor.constraint(equalToConstant: identityColumnWidth)
+        let columnHeight = iconContainer.heightAnchor.constraint(equalToConstant: identityColumnWidth)
+        let tileWidth = icon.widthAnchor.constraint(equalToConstant: SessionRowIdentity.tileSide(isWide: laysOutWide))
+        let tileHeight = icon.heightAnchor.constraint(equalToConstant: SessionRowIdentity.tileSide(isWide: laysOutWide))
+        identityColumnConstraints = [columnWidth, columnHeight]
+        identityTileConstraints = [tileWidth, tileHeight]
         NSLayoutConstraint.activate([
             iconContainer.leadingAnchor.constraint(equalTo: leadingAnchor),
             iconTop,
-            iconContainer.widthAnchor.constraint(equalToConstant: Self.iconWidth),
-            iconContainer.heightAnchor.constraint(equalToConstant: Self.iconWidth),
+            columnWidth,
+            columnHeight,
             bottomAnchor.constraint(greaterThanOrEqualTo: iconContainer.bottomAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 20),
-            icon.heightAnchor.constraint(equalToConstant: 20),
+            tileWidth,
+            tileHeight,
             icon.centerXAnchor.constraint(equalTo: iconContainer.centerXAnchor),
             icon.centerYAnchor.constraint(equalTo: iconContainer.centerYAnchor),
             attentionDot.widthAnchor.constraint(equalToConstant: 9),
             attentionDot.heightAnchor.constraint(equalToConstant: 9),
             attentionDot.trailingAnchor.constraint(equalTo: iconContainer.trailingAnchor, constant: 3),
             attentionDot.topAnchor.constraint(equalTo: iconContainer.topAnchor, constant: -3),
-            column.leadingAnchor.constraint(equalTo: iconContainer.trailingAnchor, constant: Self.iconSpacing),
+            column.leadingAnchor.constraint(equalTo: iconContainer.trailingAnchor, constant: SessionRowIdentity.spacing),
             column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.trailingInset),
             top,
             bottom,

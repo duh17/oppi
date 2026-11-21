@@ -99,7 +99,7 @@ final class SessionThreadStoppedFoldContentView: UIView, UIContentView {
         let fold = configuration.fold
         let colors = SessionRowStyle.for(configuration.themeID).colors
         leadingConstraint?.constant = CGFloat(min(configuration.depth, SessionListEntryContentView.maxIndentLevels))
-            * SessionListEntryContentView.indentPerLevel
+            * SessionRowIdentity.textInset(isWide: AdaptiveWidth.isWide(traitCollection))
         control.backgroundColor = colors.bgHighlight.withAlphaComponent(0.45)
         chevron.image = UIImage.scaledSymbol(
             fold.isOpen ? "chevron.down" : "chevron.right", style: .caption1, weight: .semibold

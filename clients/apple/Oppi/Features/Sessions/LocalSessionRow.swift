@@ -21,7 +21,7 @@ struct LocalSessionRowConfiguration: UIContentConfiguration {
 }
 
 final class LocalSessionRowContentView: UIView, UIContentView {
-    private let icon = SessionGridBadgeView()
+    private let icon = SessionGridBadgeView(iconSize: 20)
     private let titleLabel = UILabel()
     private let timeLabel = UILabel()
     private let badgeLabel = InsetLabel(insets: UIEdgeInsets(top: 1, left: 5, bottom: 1, right: 5), capsule: false)

@@ -13,7 +13,10 @@ import UIKit
 /// page, an Agent's or a workspace's, and the icon picker): then they play
 /// while the view is in a window and Reduce Motion, Low Power Mode, and the
 /// system's Auto-Play Animated Images allow it, with a sandbox workspace's lock
-/// mark kept over them. Only the chat timeline animates anything else.
+/// mark kept over them. A view that never animates can still play one short
+/// `playBurst()` — a session row's icon when its session needs the person — and
+/// rests on its still drawing after it. Only the chat timeline animates
+/// anything else.
 @MainActor
 final class IconChoiceUIView: UIView {
     enum Content: Equatable {
@@ -66,6 +69,8 @@ final class IconChoiceUIView: UIView {
     private var isKnownStill = false
     /// Bumped by every stop, so a fetch that lands after one starts nothing.
     private var playGeneration = 0
+    /// The pending end of a `playBurst()`; nil when nothing bursts.
+    private var burst: Task<Void, Never>?
 
     init(frameSize: CGFloat, animates: Bool = false) {
         self.frameSize = frameSize
@@ -158,11 +163,12 @@ final class IconChoiceUIView: UIView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        guard animates else { return }
         if window == nil {
+            // Playing stops with the window, a burst included.
+            guard animates || burst != nil else { return }
             stopPlaying()
             render()
-        } else {
+        } else if animates {
             startPlayingIfAllowed()
         }
     }
@@ -195,21 +201,70 @@ final class IconChoiceUIView: UIView {
 
     // MARK: - Animation
 
-    /// Whether an icon may animate right now, wherever it is allowed at all.
-    private static var motionAllowed: Bool {
-        !UIAccessibility.isReduceMotionEnabled
-            && !ProcessInfo.processInfo.isLowPowerModeEnabled
-            && AccessibilitySettings.animatedImagesEnabled
+    /// How long a burst plays: about two loops of a typical animated icon, and
+    /// longer than one run of a symbol's effect.
+    static let burstDuration: Duration = .milliseconds(2_400)
+
+    /// Whether an icon may move: Reduce Motion, Low Power Mode, and the
+    /// system's Auto-Play Animated Images each hold it still.
+    static func motionAllowed(
+        reduceMotion: Bool = UIAccessibility.isReduceMotionEnabled,
+        lowPowerMode: Bool = ProcessInfo.processInfo.isLowPowerModeEnabled,
+        animatedImages: Bool = AccessibilitySettings.animatedImagesEnabled
+    ) -> Bool {
+        !reduceMotion && !lowPowerMode && animatedImages
     }
 
     private func motionPolicyChanged() {
-        guard animates else { return }
-        if Self.motionAllowed {
+        guard animates || burst != nil else { return }
+        if Self.motionAllowed() {
             startPlayingIfAllowed()
         } else {
             stopPlaying()
             render()
         }
+    }
+
+    // MARK: - Burst
+
+    /// Plays the icon briefly and then rests on its still drawing: an animated
+    /// image's frames for `burstDuration`, or a symbol's effect once. A session
+    /// row plays one when its session starts needing the person, and when the
+    /// row appears already needing them. Reduce Motion, Low Power Mode, and
+    /// Auto-Play Animated Images off keep it still, and a view that already
+    /// animates ignores it.
+    func playBurst() {
+        guard !animates, !isKnownStill, window != nil, Self.motionAllowed() else { return }
+        // A burst replaces whatever the view showed, so a reused row never
+        // keeps the previous session's burst.
+        stopPlaying()
+        observeMotionPolicy()
+        if let symbolEffect {
+            playSymbol(symbolEffect.name, effect: symbolEffect.effect, repeats: false)
+        } else if let imageBytes {
+            playImage(imageBytes)
+        } else {
+            return
+        }
+        burst = Task { [weak self] in
+            try? await Task.sleep(for: Self.burstDuration)
+            guard !Task.isCancelled else { return }
+            self?.endBurst()
+        }
+    }
+
+    /// Stops a playing burst and returns to the still drawing, for a row whose
+    /// session stops needing the person.
+    func stopBurst() {
+        guard burst != nil else { return }
+        stopPlaying()
+        render()
+    }
+
+    private func endBurst() {
+        burst = nil
+        stopPlaying()
+        render()
     }
 
     /// Where the content's image bytes come from, when it is an image icon.
@@ -233,16 +288,17 @@ final class IconChoiceUIView: UIView {
     }
 
     private func startPlayingIfAllowed() {
-        guard animates, !isPlaying, !isKnownStill, window != nil, Self.motionAllowed else { return }
+        guard animates, !isPlaying, !isKnownStill, window != nil, Self.motionAllowed() else { return }
         if let symbolEffect {
-            playSymbol(symbolEffect.name, effect: symbolEffect.effect)
+            playSymbol(symbolEffect.name, effect: symbolEffect.effect, repeats: true)
         } else if let imageBytes {
             playImage(imageBytes)
         }
     }
 
-    /// The symbol over an empty tile, running its effect as an idle loop.
-    private func playSymbol(_ name: String, effect: IconSymbolEffect) {
+    /// The symbol over an empty tile, running its effect: as an idle loop, or
+    /// once for a burst.
+    private func playSymbol(_ name: String, effect: IconSymbolEffect, repeats: Bool) {
         guard let symbol = EntityIcon.tileSymbol(name, side: frameSize) else { return }
         isPlaying = true
         imageView.image = EntityIcon.tile(side: frameSize)
@@ -250,17 +306,19 @@ final class IconChoiceUIView: UIView {
         liveView.image = symbol
         liveView.isHidden = false
         showSandboxMarkIfNeeded()
+        let periodically: SymbolEffectOptions = repeats ? .repeat(.periodic(delay: 1.2)) : .default
+        let continuously: SymbolEffectOptions = repeats ? .repeat(.continuous) : .default
         switch effect {
         case .bounce:
-            liveView.addSymbolEffect(.bounce, options: .repeat(.periodic(delay: 1.2)))
+            liveView.addSymbolEffect(.bounce, options: periodically)
         case .wiggle:
-            liveView.addSymbolEffect(.wiggle, options: .repeat(.periodic(delay: 1.2)))
+            liveView.addSymbolEffect(.wiggle, options: periodically)
         case .pulse:
-            liveView.addSymbolEffect(.pulse, options: .repeat(.continuous))
+            liveView.addSymbolEffect(.pulse, options: continuously)
         case .breathe:
-            liveView.addSymbolEffect(.breathe, options: .repeat(.continuous))
+            liveView.addSymbolEffect(.breathe, options: continuously)
         case .rotate:
-            liveView.addSymbolEffect(.rotate, options: .repeat(.continuous))
+            liveView.addSymbolEffect(.rotate, options: continuously)
         }
     }
 
@@ -296,6 +354,8 @@ final class IconChoiceUIView: UIView {
     }
 
     private func stopPlaying() {
+        burst?.cancel()
+        burst = nil
         playGeneration += 1
         playback.stop()
         liveView.removeAllSymbolEffects()

@@ -317,7 +317,7 @@ final class SessionThreadAgentClusterView: UIStackView {
         groupTotal = groups.count
         appliedGroups = shown.count
         while items.count < shown.count {
-            let icon = SessionGridBadgeView()
+            let icon = SessionGridBadgeView(iconSize: 14)
             icon.translatesAutoresizingMaskIntoConstraints = false
             NSLayoutConstraint.activate([
                 icon.widthAnchor.constraint(equalToConstant: 14),

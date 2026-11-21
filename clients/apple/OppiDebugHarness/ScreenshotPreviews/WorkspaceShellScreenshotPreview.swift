@@ -57,6 +57,16 @@ final class WorkspaceShellPreviewController: PreviewRootController {
             session(id: "rail-2", name: "Keep Message on the phone bar", status: .ready, minutesAgo: 18),
             // A third section, Stopped · Today: the list's headers are the screen's own.
             session(id: "rail-3", name: "Wire the sidebar toggle", status: .stopped, minutesAgo: 25),
+            // Your Turn: a saved Agent's session that ended unseen, so the row
+            // draws its attention dot and its icon plays its burst as the list
+            // appears, then rests on its first frame.
+            session(
+                id: "rail-4",
+                name: "Ask before I ship the rail",
+                status: .ready,
+                minutesAgo: 1,
+                agent: ("agent-rail-reviewer", .symbol("sparkles", effect: .bounce))
+            ),
         ]
         return coordinator
     }
@@ -83,14 +93,19 @@ final class WorkspaceShellPreviewController: PreviewRootController {
         return server
     }
 
+    /// `agent` launches the session from a saved Agent with that icon, and the
+    /// session ends unseen, as one does when the person has not opened it yet:
+    /// the preview's seen ledger starts at launch, so the outcome dates from
+    /// just after it.
     private static func session(
         id: String,
         name: String,
         status: SessionStatus,
-        minutesAgo: Double
+        minutesAgo: Double,
+        agent: (id: String, icon: IconChoice)? = nil
     ) -> Session {
         let lastActivity = Date().addingTimeInterval(-minutesAgo * 60)
-        return Session(
+        var session = Session(
             id: id,
             workspaceId: workspace.id,
             workspaceName: workspace.name,
@@ -103,6 +118,11 @@ final class WorkspaceShellPreviewController: PreviewRootController {
             tokens: TokenUsage(input: 8_000, output: 1_200),
             cost: 0.18
         )
+        if let agent {
+            session.launch = SessionLaunchMetadata(agentId: agent.id, agentIcon: agent.icon)
+            session.programStatus = ProgramStatus(state: .done, since: Date(timeIntervalSinceNow: 1))
+        }
+        return session
     }
 }
 #endif

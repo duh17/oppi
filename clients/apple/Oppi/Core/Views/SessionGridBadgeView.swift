@@ -2,9 +2,25 @@ import UIKit
 
 /// Session identity badge. Ordinary sessions paint the Pi mark; saved-Agent
 /// rows paint the launch snapshot icon and never consult Pi identity. The
-/// artwork is `EntityIcon`'s; this view places it at the badge's size.
+/// artwork is `EntityIcon`'s and the moving is `IconChoiceUIView`'s; this view
+/// places it at the badge's size and passes on the row's burst
+/// (`playBurst()`, `stopBurst()`) when the session needs the person.
 final class SessionGridBadgeView: UIView {
-    private let imageView = UIImageView()
+    private var icon: IconChoiceUIView
+    /// The badge's side in points. The session row points it at the idiom's
+    /// tile once it knows its traits (iPad draws a larger one), which redraws
+    /// the icon at the new size.
+    var iconSize: CGFloat {
+        didSet {
+            guard iconSize != oldValue else { return }
+            icon.removeFromSuperview()
+            icon = IconChoiceUIView(frameSize: iconSize)
+            placeIcon()
+            lastApplied = nil
+            updateIfNeeded()
+            invalidateIntrinsicContentSize()
+        }
+    }
 
     var sessionId: String = "" {
         didSet { updateIfNeeded() }
@@ -28,55 +44,39 @@ final class SessionGridBadgeView: UIView {
 
     /// What the badge last drew, so a pass that changes nothing keeps its image.
     private var lastApplied: String?
-    private var iconLoadObserver: NSObjectProtocol?
     private var isConfiguring = false
 
-    override init(frame: CGRect) {
-        super.init(frame: frame)
+    /// `iconSize` is the badge's own side: its holder lays it out at that
+    /// square, and the icon draws to fill it. The Agent icon view listens for
+    /// artwork and theme changes itself, so the badge only says what to draw.
+    init(iconSize: CGFloat) {
+        self.iconSize = iconSize
+        icon = IconChoiceUIView(frameSize: iconSize)
+        super.init(frame: .zero)
         isOpaque = false
         isAccessibilityElement = true
         accessibilityTraits = .image
         backgroundColor = .clear
-        imageView.contentMode = .scaleAspectFit
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(imageView)
-        NSLayoutConstraint.activate([
-            imageView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            imageView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            imageView.topAnchor.constraint(equalTo: topAnchor),
-            imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
-        iconLoadObserver = NotificationCenter.default.addObserver(
-            forName: .oppiEntityIconDidLoad,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.lastApplied = nil
-                self?.updateIfNeeded()
-            }
-        }
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(themeDidChange(_:)),
-            name: .oppiThemeDidChange,
-            object: nil
-        )
+        placeIcon()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("Not supported") }
 
-    isolated deinit {
-        if let iconLoadObserver {
-            NotificationCenter.default.removeObserver(iconLoadObserver)
-        }
-        NotificationCenter.default.removeObserver(self)
+    private func placeIcon() {
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(icon)
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor),
+            icon.trailingAnchor.constraint(equalTo: trailingAnchor),
+            icon.topAnchor.constraint(equalTo: topAnchor),
+            icon.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
     }
 
     func prepareForReuse() {
         lastApplied = nil
-        imageView.image = nil
+        icon.clear()
     }
 
     /// Applies one session identity atomically. SwiftUI and collection rows use
@@ -96,14 +96,18 @@ final class SessionGridBadgeView: UIView {
         updateIfNeeded()
     }
 
-    override var intrinsicContentSize: CGSize {
-        CGSize(width: 18, height: 18)
+    /// Plays the icon once, briefly; the row asks when its session needs the person.
+    func playBurst() {
+        icon.playBurst()
     }
 
-    @objc private func themeDidChange(_ notification: Notification) {
-        // The mark's colors follow the theme, so the badge draws again.
-        lastApplied = nil
-        updateIfNeeded()
+    /// Stops a playing burst; the icon rests on its still drawing.
+    func stopBurst() {
+        icon.stopBurst()
+    }
+
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: iconSize, height: iconSize)
     }
 
     private func updateIfNeeded() {
@@ -121,15 +125,14 @@ final class SessionGridBadgeView: UIView {
             accessibilityLabel = "Saved Agent, \(content.accessibilityDescription)"
             identity = "agent:\(content)"
         }
-        let applied = "\(sessionId):\(ThemeRuntimeState.currentThemeID().rawValue):\(identity)"
-        guard applied != lastApplied else { return }
-        lastApplied = applied
+        guard identity != lastApplied else { return }
+        lastApplied = identity
 
         switch presentation {
         case .agent:
-            imageView.image = EntityIcon.image(.agent(agentIcon), size: 18, assets: iconAssetCache)
+            icon.apply(.choice(agentIcon, purpose: .agent, sandbox: false), assetCache: iconAssetCache)
         case .globalAvatar:
-            imageView.image = EntityIcon.image(.pi, size: 18)
+            icon.apply(.piAvatar)
         }
     }
 }

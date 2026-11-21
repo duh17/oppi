@@ -9,7 +9,7 @@ import UIKit
 struct PiAvatarTests {
     @Test("ordinary session identity is labeled Pi")
     func ordinarySessionIdentityIsLabeledPi() {
-        let view = SessionGridBadgeView()
+        let view = SessionGridBadgeView(iconSize: 18)
         view.configure(
             sessionId: "mounted-row",
             agentId: nil,
