@@ -173,7 +173,7 @@ describe("oppi help", () => {
     }
     expect(text).toContain("session create --agent");
     expect(text).toContain(
-      "name, icon, description, instructions, resources, sessionDefaults, launchConstraints",
+      "name, icon, description, instructions, capabilities, context, sessionDefaults, launchConstraints",
     );
     expect(text).toContain("target, workspaceId, worktreeId, cwd, schedule, attachments, images");
   });
@@ -429,13 +429,15 @@ describe("oppi help", () => {
           "--name <name>",
           "--model",
           "--thinking",
-          "--tools",
-          "--exclude-tools",
-          "--no-tools",
-          "--no-builtin-tools",
-          "Allowed AgentDefinition keys: name, icon, description, instructions, resources, sessionDefaults, launchConstraints",
+          "--core <full|readonly>",
+          "--plugins <all|csv>",
+          "--mcp <all|none|csv>",
+          "--skills <all|csv>",
+          "--no-context-files",
+          "--no-session-history",
+          "Allowed AgentDefinition keys: name, icon, description, instructions, sessionDefaults, capabilities, context, launchConstraints",
           "Forbidden launch-only keys: target, workspaceId, worktreeId, cwd, schedule, attachments, images",
-          "unavailable names are dropped with a session warning, not a launch failure",
+          "There is no tool list: what a session has comes from its tier, its plugins, and its MCP servers.",
         ],
       },
       {
@@ -446,15 +448,17 @@ describe("oppi help", () => {
           "--definition-json <json-object>",
           "--model",
           "--thinking",
-          "--tools",
-          "--exclude-tools",
-          "--no-tools",
-          "--no-builtin-tools",
+          "--core <full|readonly>",
+          "--plugins <all|csv>",
+          "--clear-plugins",
+          "--mcp <all|none|csv>",
+          "--clear-mcp",
+          "--skills <all|csv>",
           "Update is a PATCH: omitted fields keep their stored values",
           "JSON null clears a field or nested key",
           "Run 'oppi agent get <agent>' first, then patch only the changed fields",
           "--expected-version",
-          "sessionDefaults.tools",
+          "capabilities",
         ],
       },
       {

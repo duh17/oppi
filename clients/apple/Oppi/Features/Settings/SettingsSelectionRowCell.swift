@@ -4,12 +4,14 @@ import UIKit
 /// leading artwork (`EntityIcon`: a workspace's icon), a title, optional lines
 /// under it, and a mark that says whether it is chosen. The whole row is one
 /// button, so a tap, a VoiceOver activation, and `app.buttons[id]` all run the
-/// row's action. Like the kit's index and menu rows, its own labels paint the
-/// row and the overlay `SettingsRowButton` is its one accessible element; a
-/// chosen row carries the selected trait and says so in its value.
+/// row's action. A row that also opens a page of its own (`disclosure`) is two
+/// real buttons, `<id>` and `<id>.disclosure`, as the accessibility guide asks.
+/// Like the kit's index and menu rows, its own labels paint the row and the
+/// overlay `SettingsRowButton` is its one accessible element; a chosen row
+/// carries the selected trait and says so in its value.
 ///
-/// Used by the Agent editor's selection pages (tools, Skills, Extensions,
-/// workspaces) and the schedule time zone list.
+/// Used by the Agent editor's selection pages (capabilities, tools, workspaces)
+/// and the schedule time zone list.
 final class SettingsSelectionRowCell: UICollectionViewListCell {
     /// Where the row's mark sits.
     enum Mark {
@@ -21,7 +23,17 @@ final class SettingsSelectionRowCell: UICollectionViewListCell {
         case trailingCheck
     }
 
+    /// A second action beside the row's own: the page that narrows what the row picks
+    /// (an MCP server's tools). A row with this carries the `.circle` mark; the whole
+    /// row's trailing area is its chevron.
+    struct Disclosure {
+        let identifier: String
+        let label: String
+        let action: () -> Void
+    }
+
     private let button = SettingsRowButton(type: .system)
+    private let disclosureButton = UIButton(type: .system)
     private let leading = UIStackView()
     private let imageView = UIImageView()
     private let leadingMark = UIImageView()
@@ -34,6 +46,7 @@ final class SettingsSelectionRowCell: UICollectionViewListCell {
     private var textAtMargin: NSLayoutConstraint?
     private var textBeforeCheck: NSLayoutConstraint?
     private var textAtTrailingMargin: NSLayoutConstraint?
+    private var textBeforeDisclosure: NSLayoutConstraint?
     /// Active only while the row has artwork: a hidden arranged image keeps a
     /// fixed size, which would leave a gap in the leading stack.
     private var imageSize: [NSLayoutConstraint] = []
@@ -72,7 +85,10 @@ final class SettingsSelectionRowCell: UICollectionViewListCell {
             .applying(UIImage.SymbolConfiguration(weight: .semibold))
         trailingMark.setContentHuggingPriority(.required, for: .horizontal)
         trailingMark.setContentCompressionResistancePriority(.required, for: .horizontal)
-        for view in [leading, textStack, trailingMark, button] {
+        // The row's own button comes before the disclosure, so the disclosure sits above
+        // it: the row button covers the whole cell, and a tap on the chevron is the
+        // chevron's, not the row's.
+        for view in [leading, textStack, trailingMark, button, disclosureButton] {
             view.translatesAutoresizingMaskIntoConstraints = false
             contentView.addSubview(view)
         }
@@ -88,6 +104,14 @@ final class SettingsSelectionRowCell: UICollectionViewListCell {
         textAtMargin = atMargin
         textBeforeCheck = beforeCheck
         textAtTrailingMargin = atTrailing
+        let beforeDisclosure = textStack.trailingAnchor.constraint(
+            equalTo: disclosureButton.leadingAnchor, constant: -8
+        )
+        textBeforeDisclosure = beforeDisclosure
+        disclosureButton.setContentHuggingPriority(.required, for: .horizontal)
+        disclosureButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        disclosureButton.accessibilityTraits = .button
+        disclosureButton.isHidden = true
         let imageWidth = imageView.widthAnchor.constraint(equalToConstant: Self.imageWidth)
         let imageHeight = imageView.heightAnchor.constraint(equalToConstant: Self.imageWidth)
         imageSize = [imageWidth, imageHeight]
@@ -97,6 +121,10 @@ final class SettingsSelectionRowCell: UICollectionViewListCell {
             leading.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
             trailingMark.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
             trailingMark.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            disclosureButton.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
+            disclosureButton.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            disclosureButton.heightAnchor.constraint(equalToConstant: 44),
+            disclosureButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
             atTrailing,
             textStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 11),
             textStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -11),
@@ -123,6 +151,8 @@ final class SettingsSelectionRowCell: UICollectionViewListCell {
     ///   - isEnabled: a row that is not chosen and cannot be, which reads dimmed.
     ///   - value: what VoiceOver says after the title; the chosen state and any status.
     ///   - hint: the description VoiceOver reads after the value.
+    ///   - disclosure: a second control at the trailing edge that opens the page narrowing
+    ///     this row (an MCP server's tools); its own identifier is `<identifier>.disclosure`.
     func configure(
         title: String,
         image: UIImage? = nil,
@@ -135,6 +165,7 @@ final class SettingsSelectionRowCell: UICollectionViewListCell {
         value: String? = nil,
         hint: String? = nil,
         identifier: String,
+        disclosure: Disclosure? = nil,
         action: @escaping () -> Void
     ) {
         let style = SettingsStyle.current
@@ -179,7 +210,39 @@ final class SettingsSelectionRowCell: UICollectionViewListCell {
         if isChosen { traits.insert(.selected) }
         button.accessibilityTraits = traits
         button.setTapAction(action)
+
+        if let disclosure {
+            var configuration = UIButton.Configuration.plain()
+            configuration.image = UIImage(
+                systemName: "chevron.forward",
+                withConfiguration: UIImage.SymbolConfiguration(textStyle: .body, scale: .small)
+            )
+            configuration.baseForegroundColor = style.value
+            configuration.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 0)
+            disclosureButton.configuration = configuration
+            disclosureButton.isHidden = false
+            disclosureButton.accessibilityIdentifier = identifier + ".disclosure"
+            disclosureButton.accessibilityLabel = disclosure.label
+            disclosureButton.accessibilityValue = value
+            disclosureButton.removeAction(identifiedBy: Self.disclosureActionIdentifier, for: .touchUpInside)
+            disclosureButton.addAction(
+                UIAction(identifier: Self.disclosureActionIdentifier) { _ in disclosure.action() },
+                for: .touchUpInside
+            )
+            trailingMark.isHidden = true
+            textBeforeCheck?.isActive = false
+            textAtTrailingMargin?.isActive = false
+            textBeforeDisclosure?.isActive = true
+            accessibilityElements = [button, disclosureButton]
+        } else {
+            disclosureButton.isHidden = true
+            disclosureButton.configuration = nil
+            textBeforeDisclosure?.isActive = false
+            accessibilityElements = [button]
+        }
     }
+
+    private static let disclosureActionIdentifier = UIAction.Identifier("settings.row.disclosure")
 
     override func prepareForReuse() {
         super.prepareForReuse()
@@ -188,6 +251,13 @@ final class SettingsSelectionRowCell: UICollectionViewListCell {
         button.accessibilityLabel = nil
         button.accessibilityValue = nil
         button.accessibilityHint = nil
+        disclosureButton.isHidden = true
+        disclosureButton.configuration = nil
+        disclosureButton.accessibilityIdentifier = nil
+        disclosureButton.accessibilityLabel = nil
+        disclosureButton.accessibilityValue = nil
+        disclosureButton.removeAction(identifiedBy: Self.disclosureActionIdentifier, for: .touchUpInside)
+        textBeforeDisclosure?.isActive = false
         imageView.image = nil
         titleLabel.text = nil
         subtitleLabel.text = nil

@@ -59,31 +59,74 @@ const AGENT_EDITOR_FLAGS = [
   "instructions",
   "instructions-file",
   "instructions-mode",
+  "core",
+  "ask",
+  "no-ask",
+  "notify",
+  "no-notify",
+  "subagent",
+  "no-subagent",
+  "plugins",
+  "mcp",
   "skills",
-  "extensions",
+  "context-files",
+  "no-context-files",
+  "session-history",
+  "no-session-history",
   "allowed-workspaces",
   "required-runtime",
   "required-engine",
   "clear-description",
   "clear-icon",
   "clear-instructions",
+  "clear-plugins",
+  "clear-mcp",
   "clear-skills",
-  "clear-extensions",
   "clear-allowed-workspaces",
   "clear-required-runtime",
   "clear-required-engine",
 ] as const;
 
-export function hasSessionDefaultFlags(flags: Record<string, string>): boolean {
-  return ["model", "thinking", "tools", "exclude-tools", "no-tools", "no-builtin-tools"].some(
-    (key) => Object.hasOwn(flags, key),
-  );
+/** A saved Agent's `sessionDefaults` holds a model and a thinking level, nothing else. */
+export function hasAgentModelFlags(flags: Record<string, string>): boolean {
+  return ["model", "thinking"].some((key) => Object.hasOwn(flags, key));
 }
 
 export function hasAgentDefinitionFlags(flags: Record<string, string>): boolean {
-  return (
-    hasSessionDefaultFlags(flags) || AGENT_EDITOR_FLAGS.some((key) => Object.hasOwn(flags, key))
-  );
+  return hasAgentModelFlags(flags) || AGENT_EDITOR_FLAGS.some((key) => Object.hasOwn(flags, key));
+}
+
+/**
+ * The model and thinking level a saved Agent launches with. A saved Agent's capabilities are its
+ * own: a launch cannot widen or narrow them, so no tool-policy flag applies here.
+ */
+export function applyAgentModelFlags(
+  definition: Record<string, unknown>,
+  flags: Record<string, string>,
+  resolvedModel?: ResolvedCliModel,
+): Record<string, unknown> {
+  const thinking = resolveThinkingFromFlags(flags, resolvedModel?.thinkingLevel);
+  if (resolvedModel === undefined && thinking === undefined) return definition;
+  const current = isRecord(definition.sessionDefaults) ? { ...definition.sessionDefaults } : {};
+  if (resolvedModel) current.model = resolvedModel.canonicalId;
+  if (thinking !== undefined) current.thinkingLevel = thinking;
+  return { ...definition, sessionDefaults: current };
+}
+
+/**
+ * `all` clears the selection (the Agent follows everything), `none` selects nothing, else the CSV
+ * names. An empty value is refused: it reads as "everything" to anyone who meant "nothing".
+ */
+export function parseAgentSelectionFlag(value: string): string[] | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error(
+      "an empty value is neither none nor all: pass 'none' for no choice, or 'all' for every one",
+    );
+  }
+  if (trimmed === "all") return null;
+  if (trimmed === "none") return [];
+  return parseCsvList(trimmed);
 }
 
 export function applySessionDefaultFlags(

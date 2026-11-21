@@ -57,7 +57,7 @@ import {
 } from "./plugin-host.js";
 import type { DurableMcp } from "./durable-mcp.js";
 import { DurableAgentController } from "./durable-agent-controller.js";
-import { OppiAgentDoc, pluginAllowedIn, type ClassicExtensionIndex } from "./durable-agent.js";
+import { OppiAgentDoc, pluginAllowedIn } from "./durable-agent.js";
 import {
   attachConversationStream,
   readOlderConversationEntries,
@@ -1887,11 +1887,6 @@ export class DurableHarness {
   /** Every loaded owner plugin, with the classic IDs saved Agents select it by. */
   get loadedPackages(): readonly LoadedPlugin[] {
     return this.packageExtensions;
-  }
-
-  /** The classic Extension IDs a saved Agent may select that the built-ins cover, and every ID's name. */
-  get classicExtensions(): ClassicExtensionIndex {
-    return this.pluginHost?.classic ?? { bundled: new Set(), names: new Map() };
   }
 
   /**

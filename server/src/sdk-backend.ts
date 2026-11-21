@@ -8,10 +8,10 @@
 import { AgentConfigurationError } from "./agent-launch-errors.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { createLogger } from "./logger.js";
-import { existsSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { basename, isAbsolute, join, posix, relative, resolve as resolvePath } from "node:path";
+import { basename, join, posix, resolve as resolvePath } from "node:path";
 import { isPathWithinRoot } from "./path-utils.js";
 
 import {
@@ -51,7 +51,15 @@ import {
   resolveInitialScopedSessionPins,
 } from "./session-scoped-models.js";
 
-import type { AgentDefinition } from "./agent-launch-service.js";
+import type { AgentDefinition } from "./agent-definition.js";
+import {
+  compileAgentCapabilities,
+  type AgentBuiltinPluginFact,
+  missingAgentSkillsWarning,
+  selectAgentSkills,
+  type CompiledAgentCapabilities,
+} from "./agent-capabilities.js";
+import { mcpServerFacts } from "./durable-mcp.js";
 import { computeCacheWaste, type CacheMissModelPriceSource } from "./cache-miss.js";
 import type { AgentBackend } from "./agent-backend.js";
 import { extensionNameForAllowlist } from "./extension-loader.js";
@@ -81,9 +89,9 @@ import {
   BUILTIN_EXTENSION_PATH_PREFIX,
   createMcpBuiltinExtensions,
   isBuiltinExtensionPath,
+  type McpBuiltinName,
 } from "./host-mcp-extensions.js";
 import { classicSandboxMcp, sandboxMcpForWorkspace } from "./sandbox-mcp.js";
-import { loadPiMcpInternals } from "./pi-mcp-internals.js";
 import { createLifecycleJournalExtension } from "./lifecycle-journal-extension.js";
 import { createNotifyExtension } from "./session-notify-extension.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
@@ -95,7 +103,8 @@ import type { ExtensionErrorEvent, PiStateSnapshot, SessionBackendEvent } from "
 import { addSessionAttachmentFile, type SessionAttachmentKind } from "./session-attachments.js";
 import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
-import { resolveSelectedAgentExtensionPaths } from "./agent-extension-selection.js";
+import { resolveAgentPluginPaths, resolveAgentSkillPaths } from "./agent-plugin-selection.js";
+import { piDefaultTools } from "./durable-agent.js";
 import { keepAutoDiscoveryOffHost, resolveSandboxExtensions } from "./sandbox-host-extensions.js";
 import { canonicalServerResourcePath } from "./server-resource-id.js";
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
@@ -448,18 +457,10 @@ type SkillLoadResult = {
 
 type ExtensionLoadResult = ReturnType<DefaultResourceLoader["getExtensions"]>;
 
+/** A resolved plugin path that no longer exists fails the reload before Pi presents it. */
 export function assertSelectedAgentResourcesAvailable(
-  selectedSkillPaths: string[] | undefined,
   selectedExtensionPaths: string[] | undefined,
 ): void {
-  const unavailableSkills = (selectedSkillPaths ?? []).filter((path) => !existsSync(path));
-  if (unavailableSkills.length > 0) {
-    throw new AgentConfigurationError(
-      "agent_skills_unavailable",
-      { unavailableSkills },
-      `Selected Agent Skill is unavailable: ${unavailableSkills.join(", ")}`,
-    );
-  }
   // `builtin:<name>` selections are not files; the selection resolver already
   // restricted them to built-ins this session supplies.
   const unavailableExtensions = (selectedExtensionPaths ?? []).filter(
@@ -467,32 +468,9 @@ export function assertSelectedAgentResourcesAvailable(
   );
   if (unavailableExtensions.length > 0) {
     throw new AgentConfigurationError(
-      "agent_extensions_unavailable",
-      { unavailableExtensions },
-      `Selected Agent Extension is unavailable: ${unavailableExtensions.join(", ")}`,
-    );
-  }
-}
-
-export function assertSelectedAgentSkillsLoaded(
-  selectedPaths: string[] | undefined,
-  result: SkillLoadResult,
-): void {
-  if (selectedPaths === undefined) return;
-  const unavailableSkills = selectedPaths.filter(
-    (selectedPath) =>
-      !result.skills.some(
-        (skill) =>
-          isPathWithin(selectedPath, skill.filePath) ||
-          isPathWithin(selectedPath, skill.baseDir) ||
-          isPathWithin(skill.baseDir, selectedPath),
-      ),
-  );
-  if (unavailableSkills.length > 0) {
-    throw new AgentConfigurationError(
-      "agent_skills_unavailable",
-      { unavailableSkills },
-      `Selected Agent Skill is unavailable: ${unavailableSkills.join(", ")}`,
+      "agent_plugins_unavailable",
+      { unavailablePlugins: unavailableExtensions },
+      `Selected Agent plugin is unavailable: ${unavailableExtensions.join(", ")}`,
     );
   }
 }
@@ -515,9 +493,9 @@ function assertSelectedAgentExtensionsLoaded(
   );
   if (unavailableExtensions.length > 0) {
     throw new AgentConfigurationError(
-      "agent_extensions_unavailable",
-      { unavailableExtensions },
-      `Selected Agent Extension could not be loaded: ${unavailableExtensions.join(", ")}`,
+      "agent_plugins_unavailable",
+      { unavailablePlugins: unavailableExtensions },
+      `Selected Agent plugin could not be loaded: ${unavailableExtensions.join(", ")}`,
     );
   }
 }
@@ -527,68 +505,6 @@ function isPathWithin(parent: string, child: string): boolean {
 }
 
 /** Real path when it exists (symlinks followed), else the lexical path; like Pi's canonicalizePath. */
-function canonicalPath(path: string): string {
-  try {
-    return realpathSync(path);
-  } catch {
-    return resolvePath(path);
-  }
-}
-
-/** Saved Agent Skill paths resolved against the session's host cwd. */
-export function normalizeSelectedAgentSkillPaths(
-  paths: string[] | undefined,
-  hostCwd: string,
-): string[] | undefined {
-  return paths?.map((path) => (isAbsolute(path) ? path : resolvePath(hostCwd, path)));
-}
-
-/**
- * Explicit Skill paths are CLI resources to Pi. They must not bypass a host
- * session's denial of protected project directories. Compare real paths so a
- * symlinked cwd (or a skill path given through the real location) cannot slip
- * past the protected-directory check.
- */
-export function assertSelectedAgentSkillsOutsideUntrustedProject(
-  selectedPaths: string[] | undefined,
-  hostCwd: string,
-): void {
-  const canonicalCwd = canonicalPath(hostCwd);
-  const canonicalHome = canonicalPath(homedir());
-  // `.pi` itself may be a symlink; canonicalize it like the .agents/skills walk.
-  const canonicalProjectPi = canonicalPath(join(canonicalCwd, ".pi"));
-  const unavailableSkills = (selectedPaths ?? []).filter((original) => {
-    const path = canonicalPath(original);
-    if (isPathWithin(canonicalProjectPi, path)) return true;
-    for (let parent = canonicalCwd; ; parent = resolvePath(parent, "..")) {
-      if (
-        parent !== canonicalHome &&
-        isPathWithin(canonicalPath(join(parent, ".agents", "skills")), path)
-      )
-        return true;
-      if (parent === resolvePath(parent, "..")) return false;
-    }
-  });
-  if (unavailableSkills.length > 0)
-    throw new AgentConfigurationError(
-      "agent_skills_unavailable",
-      { unavailableSkills },
-      `Selected Agent Skill is unavailable in an untrusted project: ${unavailableSkills.join(", ")}`,
-    );
-}
-
-export function hostWorkspacePathToGuest(
-  hostCwd: string,
-  guestCwd: string,
-  hostPath: string,
-): string | null {
-  if (!isPathWithin(hostCwd, hostPath)) {
-    return null;
-  }
-
-  const rel = relative(resolvePath(hostCwd), resolvePath(hostPath));
-  return rel ? posix.join(guestCwd, rel.split(/[\\/]/).join("/")) : guestCwd;
-}
 
 /**
  * Keep a classic sandbox loader's Pi from walking the guest's `.agents/skills` on the host.
@@ -683,16 +599,6 @@ Guidelines:
 - Show sandbox file paths clearly when working with files.`;
 }
 
-function normalizeAgentContextFiles(
-  agentDefinition: AgentDefinition | undefined,
-  sandboxGuestCwd?: string,
-): AgentContextFile[] {
-  return (agentDefinition?.resources?.agentsFiles ?? []).map((file) => ({
-    path: sandboxGuestCwd ? posix.join(sandboxGuestCwd, file.path) : file.path,
-    content: file.content,
-  }));
-}
-
 export interface SdkBackendConfig {
   session: Session;
   workspace?: Workspace;
@@ -700,14 +606,18 @@ export interface SdkBackendConfig {
   onEvent: (event: SessionBackendEvent) => void;
   /** Called when the session ends. */
   onEnd: (reason: string) => void;
-  /** Resolved skill directory paths for this workspace. */
-  skillPaths?: string[];
   /** Oppi server data directory for session-owned tool attachments. */
   dataDir?: string;
   /** Server telemetry for SDK session setup timing. */
   metrics?: ServerTelemetry;
   /** Saved Agent definition used to configure this runtime. */
   agentDefinition?: AgentDefinition;
+  /**
+   * Oppi's own plugin tools, for a read-only Agent's exclusions (see `agent-capabilities.ts`);
+   * `null` means the catalog could not be read, which refuses a read-only Agent's launch.
+   */
+  getBuiltinPluginFacts?: () => Promise<readonly AgentBuiltinPluginFact[] | null>;
+
   /** The prompt hint switches, read at each resource load: absent adds no hint. */
   getPromptHints?: () => Pick<ServerConfig, "oppiDocsPrompt" | "oppiCliPrompt">;
   /** Reads one atomic Mobile Output Guide snapshot for each managed runtime rebuild. */
@@ -787,77 +697,68 @@ export class QueuedModelTurnsReconciliationError extends Error {
 }
 
 /**
- * Whether an allowlist entry names a dynamic MCP tool that can still register
- * after `session_start` once MCP servers connect. On host, any MCP tool name is
- * exempt while an MCP extension is loaded; in a sandbox, only tools whose
- * server namespace is in `workspace.sandboxConfig.mcpServers` (or MCP resource
- * tools when at least one server is picked) can connect.
+ * A classic extension list that is exact also has to carry the packages the capability toggles
+ * need: `ask` and `subagents` are Pi packages, not Pi built-ins. A missing one loses that tool and
+ * says nothing, because the Agent did not ask for it by name.
  */
-function isPendingMcpToolEntry(
-  entry: string,
-  options: {
-    mcpRegisteredDynamically: boolean;
-    /** Sandbox only: `mcpNamespace(name)` for each picked server. Undefined on host. */
-    sandboxMcpNamespaces?: ReadonlySet<string>;
-    isMcpToolName: (name: string) => boolean;
-    createToolNameMatcher: (entries: readonly string[]) => (name: string) => boolean;
+async function withTogglePlugins(
+  paths: string[],
+  definition: AgentDefinition | undefined,
+  where: {
+    cwd: string;
+    agentDir: string;
+    settingsManager: Parameters<typeof resolveAgentPluginPaths>[3];
   },
-): boolean {
-  if (!options.mcpRegisteredDynamically || !options.isMcpToolName(entry)) return false;
-  const allowedNamespaces = options.sandboxMcpNamespaces;
-  if (!allowedNamespaces) return true;
-  if (allowedNamespaces.size === 0) return false;
-  if (!entry.startsWith("mcp__")) return true;
-  const sep = entry.indexOf("__", "mcp__".length);
-  if (sep > "mcp__".length) {
-    const namespace = entry.slice(0, sep);
-    if (!namespace.includes("*")) return allowedNamespaces.has(namespace);
-    const matcher = options.createToolNameMatcher([namespace]);
-    return [...allowedNamespaces].some((candidate) => matcher(candidate));
+): Promise<string[]> {
+  if (!definition) return paths;
+  const capabilities = definition.capabilities ?? {};
+  const wanted = [
+    ...(capabilities.ask === false ? [] : ["ask"]),
+    ...(capabilities.subagent === false ? [] : ["subagents"]),
+  ];
+  if (!wanted.length) return paths;
+  try {
+    const extra = await resolveAgentPluginPaths(
+      wanted,
+      where.cwd,
+      where.agentDir,
+      where.settingsManager,
+    );
+    return [...new Set([...paths, ...(extra ?? [])])];
+  } catch {
+    return paths;
   }
-  if (!entry.includes("*")) return false;
-  const matcher = options.createToolNameMatcher([entry]);
-  return [...allowedNamespaces].some((candidate) => matcher(`${candidate}__`));
 }
 
 /**
- * Allowed tool names from a saved Agent's sessionDefaults that no registered
- * non-hidden tool matches at launch. These names are stale: the running Pi
- * session can never activate them, so launches drop them from the effective
- * tool set and surface a session warning instead of failing the whole launch.
- * The saved Agent definition is never mutated.
- *
- * When the MCP extension is loaded, MCP tool names (`mcp__*` and MCP resource
- * tools) register asynchronously after `session_start` once their servers
- * connect (and stay inactive when `deferred` or `codemode`), so they cannot be
- * judged unavailable before `bindExtensions()`.
+ * The Pi built-ins an exact extension list has to name. An Agent that selects plugins gets
+ * `noExtensions: true`, so MCP, codemode, and tool search load only when they are listed: the
+ * compiler already decided whether this session affords them.
  */
-function findUnavailableConfiguredAgentTools(
-  configuredAllowed: readonly string[] | undefined,
-  configuredExcluded: readonly string[] | undefined,
-  availableToolNames: readonly string[],
+function withCompiledBuiltins(
+  paths: string[] | undefined,
+  compiled: CompiledAgentCapabilities | undefined,
   options: {
-    mcpRegisteredDynamically: boolean;
-    sandboxMcpNamespaces?: ReadonlySet<string>;
-    isMcpToolName: (name: string) => boolean;
-    createToolNameMatcher: (entries: readonly string[]) => (name: string) => boolean;
+    mcpOn: boolean;
+    /** Built-ins this runtime may load (`availableMcpBuiltinNames`). */
+    builtins: readonly McpBuiltinName[];
+    piTools: ReadonlySet<string>;
   },
-): string[] {
-  if (!configuredAllowed) return [];
-  const excludedEntries = configuredExcluded ?? [];
-  const excludedExact = new Set(excludedEntries);
-  const excludedMatcher =
-    excludedEntries.length > 0 ? options.createToolNameMatcher(excludedEntries) : undefined;
-  const available = new Set(availableToolNames);
-  return [...new Set(configuredAllowed)].filter((entry) => {
-    if (excludedExact.has(entry) || excludedMatcher?.(entry)) return false;
-    if (isPendingMcpToolEntry(entry, options)) return false;
-    if (entry.includes("*")) {
-      const matcher = options.createToolNameMatcher([entry]);
-      return !availableToolNames.some((name) => matcher(name));
-    }
-    return !available.has(entry);
-  });
+): string[] | undefined {
+  if (paths === undefined || compiled === undefined) return paths;
+  const wanted: McpBuiltinName[] = [];
+  if (compiled.mcp.enabled && options.mcpOn) wanted.push("mcp", "tool-search");
+  // A full Agent keeps codemode when the Pi Tools setting enables it (local JS batching); a
+  // read-only Agent gets it only when an admitted MCP server is reached through it.
+  const codemode =
+    compiled.discovery.includes("codemode") ||
+    (compiled.core === "full" && options.piTools.has("codemode"));
+  if (codemode) wanted.push("codemode");
+  const additions = wanted
+    .filter((name) => options.builtins.includes(name))
+    .map((name) => `${BUILTIN_EXTENSION_PATH_PREFIX}${name}`)
+    .filter((path) => !paths.includes(path));
+  return [...paths, ...additions];
 }
 
 /**
@@ -902,25 +803,6 @@ function intersectSandboxToolAllowlist(
     if (!dropped.includes(name)) dropped.push(name);
   }
   return { allowed: kept, dropped };
-}
-
-function recordDroppedAgentToolsWarning(
-  session: Session,
-  configuredAllowed: readonly string[],
-  missingTools: readonly string[],
-): void {
-  const eligibleCount = new Set(configuredAllowed).size;
-  const noun = missingTools.length === 1 ? "tool is" : "tools are";
-  const warning =
-    missingTools.length >= eligibleCount
-      ? `Every configured Agent tool is unavailable and was dropped from this session: ${missingTools.join(", ")}. The session started with only the remaining default/reserved tools and may not work as intended. Edit the Agent's Allowed Tools or selected Extensions, then start again.`
-      : `Configured Agent ${noun} unavailable and was dropped from this session: ${missingTools.join(", ")}. The session continues with the remaining allowed tools. Edit the Agent's Allowed Tools or selected Extensions to stop this warning.`;
-  session.warnings = [...new Set([...(session.warnings ?? []), warning])];
-  log.warn("sdk.agent_tools_dropped", {
-    sessionId: session.id,
-    droppedTools: [...missingTools],
-    allConfiguredToolsDropped: missingTools.length >= eligibleCount,
-  });
 }
 
 const log = createLogger({ base: { component: "sdk_backend" } });
@@ -1226,12 +1108,6 @@ export class SdkBackend implements AgentBackend {
       const hostCwd = sandboxMode ? initialHostCwd : cwd;
       const guestCwd = sandboxMode && workspace ? resolveSandboxGuestCwd(workspace) : cwd;
       const sessionCwd = sandboxMode ? guestCwd : cwd;
-      const savedAgentFiles = normalizeAgentContextFiles(
-        agentDefinition,
-        sandboxMode ? sessionCwd : undefined,
-      );
-      const selectedAgentSkillPaths = agentDefinition?.resources?.skillPaths;
-      const selectedAgentExtensionIds = agentDefinition?.resources?.extensionIds;
       const modelRuntime = await ModelRuntime.create({
         authPath: join(runtimeAgentDir, "auth.json"),
         modelsPath: join(runtimeAgentDir, "models.json"),
@@ -1241,6 +1117,23 @@ export class SdkBackend implements AgentBackend {
         SettingsManager.create(hostCwd, runtimeAgentDir, { projectTrusted: !trustManagedProject }),
       );
       let sessionTrust: boolean | undefined;
+      // The Agent's own plugin selection decides the classic extension list; undefined is Pi
+      // discovery. It is resolved before the trust decision, which bootstraps the project-trust
+      // extensions from exactly these paths while the project is still untrusted.
+      const strictPluginPaths = await resolveAgentPluginPaths(
+        agentDefinition?.capabilities?.plugins,
+        hostCwd,
+        runtimeAgentDir,
+        settingsManager,
+      );
+      const selectedAgentExtensionPaths =
+        strictPluginPaths === undefined
+          ? undefined
+          : await withTogglePlugins(strictPluginPaths, agentDefinition, {
+              cwd: hostCwd,
+              agentDir: runtimeAgentDir,
+              settingsManager,
+            });
       const resolveTrust = async (): Promise<void> => {
         if (!trustManagedProject) return;
         // Nothing to gate is not a decision: do not cache it. Protected files
@@ -1265,7 +1158,7 @@ export class SdkBackend implements AgentBackend {
               event: "project_trust",
               error: safeErrorMessage(error),
             }),
-          selectedAgentExtensionIds,
+          selectedAgentExtensionPaths,
         );
         settingsManager.setProjectTrusted(sessionTrust);
         await settingsManager.reload();
@@ -1282,15 +1175,6 @@ export class SdkBackend implements AgentBackend {
       const loadedBuiltinNames = mcpOn
         ? mcpBuiltinNames
         : mcpBuiltinNames.filter((name) => name !== "mcp");
-      const selectedAgentExtensionPaths = (
-        await resolveSelectedAgentExtensionPaths(
-          selectedAgentExtensionIds,
-          hostCwd,
-          runtimeAgentDir,
-          settingsManager,
-          mcpBuiltinNames,
-        )
-      )?.filter((path) => mcpOn || path !== MCP_BUILTIN_EXTENSION_PATH);
       // A sandbox loads host extensions only by opt-in: its Agent's selection or the
       // workspace's `hostExtensions`. Their tools run in this process, past the VM.
       const sandboxExtensions = sandboxMode
@@ -1307,7 +1191,6 @@ export class SdkBackend implements AgentBackend {
         const warning = `This sandbox's host extensions are not installed or are turned off: ${sandboxExtensions.unavailable.join(", ")}. Fix the workspace's sandboxConfig.hostExtensions.`;
         session.warnings = [...new Set([...(session.warnings ?? []), warning])];
       }
-      const loadedExtensionPaths = sandboxExtensions?.paths ?? selectedAgentExtensionPaths;
       // A sandbox gets only the global servers its owner picked, with stdio servers
       // run inside the VM. Servers connect at session_start, after the VM exists below.
       let sandboxVm: GondolinVm | undefined;
@@ -1331,6 +1214,44 @@ export class SdkBackend implements AgentBackend {
               }),
             )
           : undefined;
+      // What this Agent may do here: one compiler answer, which the tool policy, the extension
+      // list, the Skills filter, and the context toggles below all read.
+      // Only an Agent's compile needs the catalog.
+      const agentBuiltinFacts =
+        agentDefinition && config.getBuiltinPluginFacts
+          ? await config.getBuiltinPluginFacts()
+          : undefined;
+      const compiled = agentDefinition
+        ? compileAgentCapabilities({
+            definition: agentDefinition,
+            engine: "classic",
+            runtime: sandboxMode ? "sandbox" : "host",
+            mcpServers: await mcpServerFacts({
+              agentDir: runtimeAgentDir,
+              cwd: hostCwd,
+              projectTrusted: settingsManager.isProjectTrusted(),
+              ...(sandboxMcp ? { sandbox: sandboxMcp } : {}),
+              dataDir: config.dataDir,
+            }),
+            mcpAvailable: mcpOn,
+            ...(agentBuiltinFacts ? { builtinPlugins: agentBuiltinFacts } : {}),
+            ...(agentBuiltinFacts === null ? { builtinPluginsUnknown: true } : {}),
+          })
+        : undefined;
+      // An Agent's named Skills, resolved to Pi's own paths: including the Skills Pi's settings
+      // disable, which its enabled discovery would drop before any override could keep them.
+      const namedSkills = sandboxMode
+        ? undefined
+        : await resolveAgentSkillPaths(compiled?.skills, hostCwd, runtimeAgentDir, settingsManager);
+      const loadedExtensionPaths = withCompiledBuiltins(
+        sandboxExtensions?.paths ?? selectedAgentExtensionPaths,
+        compiled,
+        {
+          mcpOn,
+          builtins: mcpBuiltinNames,
+          piTools: piDefaultTools(settingsManager),
+        },
+      );
 
       // Resource loader: follow Pi's normal cwd/settings/package discovery.
       // Oppi no longer applies a workspace-level skills/extensions policy for
@@ -1363,20 +1284,16 @@ export class SdkBackend implements AgentBackend {
             : []),
         ];
       };
-      const normalizedSelectedAgentSkillPaths = normalizeSelectedAgentSkillPaths(
-        selectedAgentSkillPaths,
-        hostCwd,
-      );
-      if (trustManagedProject && !settingsManager.isProjectTrusted())
-        assertSelectedAgentSkillsOutsideUntrustedProject(
-          normalizedSelectedAgentSkillPaths,
-          hostCwd,
-        );
+      // The Agent's Skills are names, filtered out of whatever this session discovers, so there
+      // are no selected host paths left to checkpoint; the plugin paths still are.
+      const recordMissingAgentSkills = (missing: readonly string[]): void => {
+        const warning = missingAgentSkillsWarning(missing);
+        if (!warning) return;
+        session.warnings = [...new Set([...(session.warnings ?? []), warning])];
+        log.warn("sdk.agent_skills_missing", { sessionId: session.id, missing: [...missing] });
+      };
       assertSelectedResourcesAvailableBeforeReload = () =>
-        assertSelectedAgentResourcesAvailable(
-          normalizedSelectedAgentSkillPaths,
-          selectedAgentExtensionPaths,
-        );
+        assertSelectedAgentResourcesAvailable(selectedAgentExtensionPaths);
       // Resource selection is a startup and reload-preflight invariant. The
       // SdkBackend preflight rejects known missing paths before Pi shutdown.
       // During a live Pi reload, validation runs after Pi has emitted
@@ -1399,8 +1316,7 @@ export class SdkBackend implements AgentBackend {
       // A sandbox's Skills, as its VM last presented them (`loadSandboxSkills`), at guest paths.
       let sandboxSkills: Skill[] = [];
       let sandboxSkillCommand: InlineExtension | undefined;
-      let loadSandboxSkillsFromVm:
-        (() => Promise<{ skills: Skill[]; unavailable?: Error }>) | undefined;
+      let loadSandboxSkillsFromVm: (() => Promise<Skill[]>) | undefined;
       // The workspace VM comes before the loader: Skills and context files are what it mounts
       // and serves, whichever session booted it.
       if (sandboxMode && workspace) {
@@ -1412,7 +1328,7 @@ export class SdkBackend implements AgentBackend {
         const { expandSkillCommand, loadSandboxSkills } =
           await import("./durable-project-resources.js");
         const env = new GondolinExecutionEnv(vm, workspace.id, guestCwd);
-        loadSandboxSkillsFromVm = () => loadSandboxSkills(env, hostCwd, selectedAgentSkillPaths);
+        loadSandboxSkillsFromVm = () => loadSandboxSkills(env);
         sandboxSkillCommand = createSandboxSkillCommandExtension((text) =>
           expandSkillCommand(text, { skills: sandboxSkills }, (path) =>
             env.readSkillFile(path, BACKGROUND_CONTEXT),
@@ -1451,17 +1367,11 @@ export class SdkBackend implements AgentBackend {
           ...createMcpBuiltinExtensions(loadedBuiltinNames, sandboxMcp),
           ...(sandboxSkillCommand ? [sandboxSkillCommand] : []),
         ],
-        ...(sandboxMode
-          ? {}
-          : selectedAgentSkillPaths !== undefined
-            ? { noSkills: true, additionalSkillPaths: selectedAgentSkillPaths }
-            : config.skillPaths
-              ? { additionalSkillPaths: config.skillPaths }
-              : {}),
+        ...(namedSkills ? { noSkills: true, additionalSkillPaths: namedSkills.paths } : {}),
         ...(loadedExtensionPaths !== undefined
           ? { noExtensions: true, additionalExtensionPaths: loadedExtensionPaths }
           : {}),
-        ...(agentDefinition?.resources?.noContextFiles ? { noContextFiles: true } : {}),
+        ...(compiled && !compiled.contextFiles ? { noContextFiles: true } : {}),
         ...(agentDefinition?.instructions?.mode === "replace"
           ? { systemPromptOverride: () => agentDefinition.instructions?.text }
           : {}),
@@ -1472,41 +1382,33 @@ export class SdkBackend implements AgentBackend {
               // `AGENTS.md` a link to a file the VM hides (`.env`), or a huge one. The VM's
               // read, taken before each load, is the only text the session presents.
               noContextFiles: true,
-              agentsFilesOverride: () => ({
-                agentsFiles: [...sandboxContextFiles, ...savedAgentFiles],
-              }),
+              agentsFilesOverride: () => ({ agentsFiles: [...sandboxContextFiles] }),
               // Pi discovers no Skill on the host: its walk follows guest-planted links
               // (`.agents/skills/loop -> .`) and reads `SKILL.md` targets the VM hides. The
               // VM's discovery, taken before each load, is the only list the session presents.
               noSkills: true,
-              skillsOverride: (): SkillLoadResult => ({ skills: sandboxSkills, diagnostics: [] }),
-            }
-          : {
-              agentsFilesOverride: (base: { agentsFiles: AgentContextFile[] }) => ({
-                agentsFiles: [...base.agentsFiles, ...savedAgentFiles],
+              skillsOverride: (): SkillLoadResult => ({
+                skills:
+                  compiled?.skills === undefined
+                    ? sandboxSkills
+                    : selectAgentSkills(sandboxSkills, compiled.skills).skills,
+                diagnostics: [],
               }),
-            }),
+            }
+          : {}),
       });
       if (sandboxMode) keepSandboxSkillDiscoveryOffHost(loader);
       const reload = loader.reload.bind(loader);
       loader.reload = async (options) => {
         selectedResourceReloadError = undefined;
         await resolveTrust();
-        if (sandboxVm && !agentDefinition?.resources?.noContextFiles)
+        if (sandboxVm && compiled?.contextFiles !== false)
           sandboxContextFiles = await readSandboxContextFiles(sandboxVm, hostCwd, guestCwd);
-        if (loadSandboxSkillsFromVm) {
-          // A saved Agent selecting a Skill the VM cannot serve fails instead of silently
-          // losing it: the launch on first load, later model turns after a reload.
-          const { skills, unavailable } = await loadSandboxSkillsFromVm();
-          sandboxSkills = skills;
-          if (unavailable && isInitialResourceLoad) throw unavailable;
-          if (unavailable) recordSelectedResourceReloadError(unavailable);
-        }
+        // A sandbox presents only what its VM discovers; an Agent that names Skills filters it.
+        if (loadSandboxSkillsFromVm) sandboxSkills = await loadSandboxSkillsFromVm();
         await reload(options);
         try {
-          if (!sandboxMode) {
-            assertSelectedAgentSkillsLoaded(normalizedSelectedAgentSkillPaths, loader.getSkills());
-          }
+          if (namedSkills) recordMissingAgentSkills(namedSkills.missing);
           assertSelectedAgentExtensionsLoaded(selectedAgentExtensionPaths, loader.getExtensions());
         } catch (error) {
           if (isInitialResourceLoad) throw error;
@@ -1628,27 +1530,27 @@ export class SdkBackend implements AgentBackend {
       }
 
       const workspaceTools = sandboxTools && workspace?.tools?.length ? workspace.tools : undefined;
-      const agentDefaultToolPolicy = agentDefinition?.sessionDefaults
-        ? {
-            allowed: agentDefinition.sessionDefaults.tools,
-            excluded: agentDefinition.sessionDefaults.excludeTools,
-            noTools: agentDefinition.sessionDefaults.noTools,
-          }
-        : undefined;
-      const launchToolPolicy = session.launch?.tools ?? agentDefaultToolPolicy;
+      // An Agent's compiled policy is exclusions only, so the Pi Tools setting and the session's
+      // own extensions stay in force. A session with no Agent (`oppi session create --tools`,
+      // `POST /workspaces/:id/sessions`, a schedule that names no Agent) still carries the policy
+      // it was launched with. A workspace Tools list is a sandbox VM policy, not an Agent's.
+      const launchTools = compiled ? undefined : session.launch?.tools;
       const configuredToolPolicy = {
-        allowed: launchToolPolicy?.allowed ?? workspaceTools,
-        excluded: launchToolPolicy?.excluded,
-        noTools: launchToolPolicy?.noTools ?? (sandboxTools ? ("builtin" as const) : undefined),
+        allowed: launchTools?.allowed ?? workspaceTools,
+        excluded: compiled
+          ? compiled.excluded.length
+            ? [...compiled.excluded]
+            : undefined
+          : launchTools?.excluded,
+        // A sandbox runs Pi's built-in file tools itself, through `customTools`.
+        noTools: sandboxTools ? ("builtin" as const) : launchTools?.noTools,
       };
       const sandboxAllowlist = sandboxTools
-        ? intersectSandboxToolAllowlist(configuredToolPolicy.allowed, [], {
-            keepHostExtensionTools: Boolean(launchToolPolicy?.allowed),
-          })
+        ? intersectSandboxToolAllowlist(configuredToolPolicy.allowed, [])
         : { allowed: configuredToolPolicy.allowed, dropped: [] };
       // Pi admits extension tools by exact name, and MCP tool names are known only after
       // connecting, so a workspace Tools list leaves picked MCP servers unreachable.
-      if (sandboxMcpPicks.length > 0 && !launchToolPolicy?.allowed && workspaceTools) {
+      if (sandboxMcpPicks.length > 0 && workspaceTools) {
         const warning =
           "This sandbox's Tools list hides its MCP servers. Clear the workspace Tools list to use them.";
         session.warnings = [...new Set([...(session.warnings ?? []), warning])];
@@ -1723,41 +1625,10 @@ export class SdkBackend implements AgentBackend {
         createResult.session.setSessionName(session.name);
       }
 
-      if (agentDefinition && launchToolPolicy?.allowed) {
-        const { isMcpToolName, createToolNameMatcher, mcpNamespace } = await loadPiMcpInternals();
-        const mcpRegisteredDynamically =
-          (!sandboxMode || sandboxMcpPicks.length > 0) &&
-          loader
-            .getExtensions()
-            .extensions.some(
-              (extension) =>
-                extension.path === MCP_BUILTIN_EXTENSION_PATH || extension.commands.has("mcp"),
-            );
-        const sandboxMcpNamespaces = sandboxMode
-          ? new Set(sandboxMcpPicks.map((name) => mcpNamespace(name)))
-          : undefined;
-        const availableToolNames = createResult.session
-          .getAllTools()
-          .filter((tool) => tool.exposure !== "hidden")
-          .map((tool) => tool.name);
-        const missingTools = findUnavailableConfiguredAgentTools(
-          launchToolPolicy.allowed,
-          launchToolPolicy.excluded,
-          availableToolNames,
-          {
-            mcpRegisteredDynamically,
-            ...(sandboxMcpNamespaces ? { sandboxMcpNamespaces } : {}),
-            isMcpToolName,
-            createToolNameMatcher,
-          },
-        );
-        if (missingTools.length > 0) {
-          // Warn and start: stale allowlist names never enter the running
-          // session's effective tool set because Pi filters the allowlist
-          // against registered tools, so the active set above already
-          // excludes them. Only Extensions and Skills stay fail-closed.
-          recordDroppedAgentToolsWarning(session, launchToolPolicy.allowed, missingTools);
-        }
+      // What this Agent asked for that this session cannot present, in plain words: the same
+      // warnings the durable engine records, so the app's warning pill says what is missing.
+      if (compiled?.warnings.length) {
+        session.warnings = [...new Set([...(session.warnings ?? []), ...compiled.warnings])];
       }
 
       SdkBackend.applyDefaultQueueModes(createResult.session);

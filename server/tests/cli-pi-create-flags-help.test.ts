@@ -41,14 +41,14 @@ describe("Pi create-flag help", () => {
       const text = helpText(path);
       expect(text, path.join(" ")).toContain("--model");
       expect(text, path.join(" ")).toContain("--thinking");
-      expect(text, path.join(" ")).toContain("--tools");
-      expect(text, path.join(" ")).toContain("-t");
-      expect(text, path.join(" ")).toContain("--exclude-tools");
-      expect(text, path.join(" ")).toContain("-xt");
-      expect(text, path.join(" ")).toContain("--no-tools");
-      expect(text, path.join(" ")).toContain("-nt");
-      expect(text, path.join(" ")).toContain("--no-builtin-tools");
-      expect(text, path.join(" ")).toContain("-nbt");
+      expect(text, path.join(" ")).toContain("--core");
+      expect(text, path.join(" ")).toContain("--plugins");
+      expect(text, path.join(" ")).toContain("--mcp");
+      expect(text, path.join(" ")).toContain("--ask");
+      expect(text, path.join(" ")).toContain("--subagent");
+      // A saved Agent has no tool list and no Pi tool-policy flags.
+      expect(text, path.join(" ")).not.toContain("--tools");
+      expect(text, path.join(" ")).not.toContain("--no-builtin-tools");
       expect(text, path.join(" ")).toContain("sessionDefaults");
       expect(text, path.join(" ")).toContain(":thinking");
     }
@@ -81,8 +81,10 @@ describe("Pi create-flag help", () => {
       "--instructions",
       "--instructions-file",
       "--instructions-mode",
+      "--core",
+      "--plugins",
+      "--mcp",
       "--skills",
-      "--extensions",
       "--allowed-workspaces",
       "--required-runtime",
     ];
@@ -90,14 +92,15 @@ describe("Pi create-flag help", () => {
       "--clear-description",
       "--clear-icon",
       "--clear-instructions",
+      "--clear-plugins",
+      "--clear-mcp",
       "--clear-skills",
-      "--clear-extensions",
       "--clear-allowed-workspaces",
       "--clear-required-runtime",
     ];
     const mappings = [
-      "resources.skillPaths",
-      "resources.extensionIds",
+      "capabilities.plugins",
+      "context.skills",
       "launchConstraints.allowedWorkspaceIds",
     ];
 
@@ -129,12 +132,10 @@ describe("Pi create-flag help", () => {
       expect(update).toContain(flag);
       expect(create).not.toContain(flag);
     }
-    expect(update).toContain("omit them to inherit");
-    expect(create).toContain("empty CSV is none");
-    expect(create).toContain("<skill-path>");
-    expect(create).toContain("extension_<id>");
+    expect(create).toContain("all or an empty value clears it");
+    expect(create).toContain("An Agent states capabilities, never Pi wiring");
+    expect(create).toContain("Skill names (a Skill's folder name), not paths");
     expect(create).not.toMatch(/--skills\s+review\b/);
-    expect(create).not.toMatch(/--extensions\s+git\b/);
 
     const get = helpText(["agent", "get"]);
     expect(get).toContain("For the full definition, run `oppi agent get <agent> --json`");

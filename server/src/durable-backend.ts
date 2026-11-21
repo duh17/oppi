@@ -132,6 +132,13 @@ import { DurableMcp } from "./durable-mcp.js";
 import { McpToolCache, mcpToolCachePath } from "./mcp-tool-cache.js";
 import { sandboxMcpForWorkspace } from "./sandbox-mcp.js";
 import { expandSkillCommand, loadDurableProjectResources } from "./durable-project-resources.js";
+import {
+  compileAgentCapabilities,
+  type AgentBuiltinPluginFact,
+  type CompiledAgentCapabilities,
+} from "./agent-capabilities.js";
+import { durableAgentWarnings, durableLoadablePlugins } from "./durable-agent-warnings.js";
+import { mcpServerFacts } from "./durable-mcp.js";
 import { ProjectContextDoc } from "../plugins/project-context/contract.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
@@ -172,6 +179,11 @@ interface DurableBackendOptions {
   session: Session;
   workspace?: Workspace;
   agentDefinition?: AgentDefinition;
+  /**
+   * Oppi's own plugin tools, for a read-only Agent's exclusions (see `agent-capabilities.ts`);
+   * `null` means the catalog could not be read, which refuses a read-only Agent's launch.
+   */
+  getBuiltinPluginFacts?: () => Promise<readonly AgentBuiltinPluginFact[] | null>;
   dataDir: string;
   persistBinding: () => void;
   onEvent: (event: SessionBackendEvent) => void;
@@ -247,21 +259,6 @@ interface LaunchedAs {
   spawn: boolean;
   /** For the conversation this attach creates: the resolved agent and document. */
   created?: ReturnType<typeof resolveDurableAgent>;
-}
-
-/**
- * The saved Agent's Extensions this session runs without, as a session warning like the classic
- * dropped-tools one: it is stored with the session, so a launch nobody watched still shows it.
- */
-function recordSkippedExtensionsWarning(session: Session, skipped: readonly string[]): void {
-  const warning = `Selected Agent Extensions are not loaded in this durable session (no durable version, or turned off with oppi extensions disable): ${skipped.join(", ")}. Edit the Agent's selected Extensions, or start it Classic, to use them.`;
-  if (session.warnings?.includes(warning)) return;
-  session.warnings = [...(session.warnings ?? []), warning];
-  log.warn("durable_agent.extensions_skipped", {
-    sessionId: session.id,
-    agentId: session.launch?.agentId,
-    skipped: [...skipped],
-  });
 }
 
 /** The model and thinking level a new conversation starts with: the session's, else Pi's defaults. */
@@ -399,6 +396,64 @@ export class DurableBackend implements AgentBackend {
     const piTools = piDefaultTools(piSettings);
     // Host-only owner plugins a sandbox workspace opted into; a host session needs none.
     const hostExtensionIds = sandbox ? (workspace.sandboxConfig?.hostExtensions ?? []) : [];
+    // A sandbox's VM comes first: its Skills and context files are what it mounts and reads.
+    const sandboxEnv = sandbox
+      ? await DurableBackend.sandboxEnv(workspace, hostCwd, cwd)
+      : undefined;
+    const sandboxMcp =
+      sandbox && workspace
+        ? await sandboxMcpForWorkspace({
+            workspace,
+            agentDir,
+            dataDir: options.dataDir,
+            guestCwd: cwd,
+            // This attachment's VM, as classic sandbox sessions use theirs.
+            vm: async () => {
+              if (!sandboxEnv) throw new Error("The sandbox VM is not ready");
+              return sandboxEnv.vm;
+            },
+          })
+        : undefined;
+    // Only an Agent's compile needs the catalog: a plain or control session must not pay for the
+    // read, nor be refused because of one.
+    const builtinFacts =
+      !control && options.agentDefinition && options.getBuiltinPluginFacts
+        ? await options.getBuiltinPluginFacts()
+        : undefined;
+    const compiled =
+      !control && options.agentDefinition
+        ? compileAgentCapabilities({
+            definition: options.agentDefinition,
+            engine: "durable",
+            runtime: sandbox ? "sandbox" : "host",
+            mcpServers: await mcpServerFacts({
+              agentDir,
+              cwd,
+              projectTrusted,
+              ...(sandboxMcp ? { sandbox: sandboxMcp } : {}),
+              dataDir: options.dataDir,
+              ...(workspace && sandbox ? { toolScope: `sandbox:${workspace.id}` } : {}),
+            }),
+            mcpAvailable: options.mcpEnabled?.() !== false,
+            ...(builtinFacts ? { builtinPlugins: builtinFacts } : {}),
+            ...(builtinFacts === null ? { builtinPluginsUnknown: true } : {}),
+          })
+        : undefined;
+    // A plugin or Skill the Agent names that this engine cannot load is skipped: say so, rather
+    // than start a session that quietly does less than its definition says.
+    const warnings = durableAgentWarnings({
+      compiled,
+      loadablePlugins: durableLoadablePlugins(options.host.runtime, sandbox ? "sandbox" : "host"),
+    });
+    // What the Agent asked for that this session cannot present, on the row the warning pill reads.
+    if (warnings.length) {
+      session.warnings = [...new Set([...(session.warnings ?? []), ...warnings])];
+      log.warn("durable_agent.capabilities_narrowed", {
+        sessionId: session.id,
+        agentId: session.launch?.agentId,
+        warnings,
+      });
+    }
     const launched = control
       ? undefined
       : await DurableBackend.launchedAs(options, {
@@ -407,9 +462,9 @@ export class DurableBackend implements AgentBackend {
           sandbox,
           piTools,
           hostExtensionIds,
+          ...(compiled ? { compiled } : {}),
         });
-    // Owner plugins' extensions allowed in this runtime, or the exact selection the session
-    // launched with; never on control.
+    // Owner plugins this runtime allows, or the exact selection the session launched with.
     const exact = launched?.doc?.extensions?.packages;
     const packageExtensions = control
       ? []
@@ -417,7 +472,7 @@ export class DurableBackend implements AgentBackend {
         ? host.runtime.loadedPackages
             .filter(
               (loaded) =>
-                exact.includes(loaded.extension.name) &&
+                exact.includes(loaded.name) &&
                 host.runtime.isExtensionEnabled(loaded.extension.name),
             )
             .map((loaded) => loaded.extension)
@@ -431,14 +486,6 @@ export class DurableBackend implements AgentBackend {
           packageExtensions.includes(loaded.extension),
       )
       .flatMap((loaded) => (loaded.extension.tools ?? []).map((tool) => tool.name));
-    const skipped = launched?.doc?.extensions?.skipped;
-    if (skipped?.length) recordSkippedExtensionsWarning(session, skipped);
-    // A sandbox's workspace VM comes first: its Skills and context files are what this VM
-    // mounts and reads, whichever session booted it. Before the conversation exists, so a
-    // saved Agent selection the VM cannot present still fails the launch before it binds.
-    const sandboxEnv = sandbox
-      ? await DurableBackend.sandboxEnv(workspace, hostCwd, cwd)
-      : undefined;
     // An Oppi Control session presents no AGENTS files and no Skills, global or project, as
     // with `/reload`. Oppi's appends read the settings and the workspace prompt each time, so an
     // attach or `/reload` applies a change from the next request, as an SDK session's runtime
@@ -451,7 +498,7 @@ export class DurableBackend implements AgentBackend {
         mobileOutputGuide: (
           options.getMobileOutputGuideSettings?.() ?? DEFAULT_MOBILE_OUTPUT_GUIDE_SETTINGS
         ).enabled,
-        replace: launched?.doc?.projectContext === false,
+        replace: launched?.doc?.replacePrompt === true,
         hostTools,
       });
       if (control) return { contextFiles: [], skills: [], appends };
@@ -461,11 +508,25 @@ export class DurableBackend implements AgentBackend {
         ...(sandboxEnv ? { sandbox: sandboxEnv } : {}),
         projectTrusted,
         ...(launched?.doc?.resources ? { resources: launched.doc.resources } : {}),
-        projectContext: launched?.doc?.projectContext !== false,
       });
       return { ...files, appends };
     };
     const resources = await loadResources();
+    // A named Skill this session cannot read is said out loud, as classic says it: a session that
+    // quietly runs without what its definition names is worse than one that says so.
+    const resourceWarnings = durableAgentWarnings({
+      compiled: undefined,
+      loadablePlugins: [],
+      ...(resources.missingSkills ? { missingSkills: resources.missingSkills } : {}),
+    });
+    if (resourceWarnings.length) {
+      session.warnings = [...new Set([...(session.warnings ?? []), ...resourceWarnings])];
+      log.warn("durable_agent.skills_missing", {
+        sessionId: session.id,
+        agentId: session.launch?.agentId,
+        warnings: resourceWarnings,
+      });
+    }
     // An Oppi Control session selects an exact extension list; it gets no MCP tools, and an
     // exact Extension selection without `builtin:mcp` gets none either. Nor does any session
     // while the server's MCP switch is off; its attach closes the servers an earlier one opened.
@@ -481,21 +542,10 @@ export class DurableBackend implements AgentBackend {
               cwd,
               agentDir,
               projectTrusted,
-              ...(sandbox
-                ? {
-                    sandbox: await sandboxMcpForWorkspace({
-                      workspace,
-                      agentDir,
-                      dataDir: options.dataDir,
-                      guestCwd: cwd,
-                      // This attachment's VM, as classic sandbox sessions use theirs.
-                      vm: async () => {
-                        if (!sandboxEnv) throw new Error("The sandbox VM is not ready");
-                        return sandboxEnv.vm;
-                      },
-                    }),
-                  }
-                : {}),
+              ...(sandboxMcp ? { sandbox: sandboxMcp } : {}),
+              // A server the Agent does not admit is dropped before it connects or prints a
+              // codemode namespace; undefined admits every configured server.
+              ...(compiled?.mcp.servers ? { servers: compiled.mcp.servers } : {}),
               policy: session.launch?.tools,
               piTools,
               providerToken: (provider) => registry.getApiKeyForProvider(provider),
@@ -561,6 +611,7 @@ export class DurableBackend implements AgentBackend {
       sandbox: boolean;
       piTools: ReadonlySet<string>;
       hostExtensionIds: readonly string[];
+      compiled?: CompiledAgentCapabilities;
     },
   ): Promise<LaunchedAs> {
     const { harness, session, host } = options;
@@ -582,7 +633,7 @@ export class DurableBackend implements AgentBackend {
         ? { saved: { id: agentId, version: session.launch?.agentVersion ?? 0, definition } }
         : {}),
       ...seedModel(options.models, target.hostCwd, session),
-      ...(session.launch?.tools ? { policy: session.launch.tools } : {}),
+      ...(target.compiled ? { compiled: target.compiled } : {}),
       runtime,
       base: [
         ...offeredGodot(host.runtime.builtInsFor(runtime), options),
@@ -592,7 +643,6 @@ export class DurableBackend implements AgentBackend {
       hostExtensionIds: target.hostExtensionIds,
       // A launch through Oppi's API: whoever picked the Agent already acts on the host.
       agentOptsIn: true,
-      classic: host.runtime.classicExtensions,
       enabled: (name) => host.runtime.isExtensionEnabled(name),
       piTools: target.piTools,
       codemode: host.runtime.codemode,
@@ -633,7 +683,7 @@ export class DurableBackend implements AgentBackend {
     const spawn = launched?.spawn === true;
     // Asked again on every attach: push may have turned on or off since the last one.
     const notifies = host.runtime.offersNotify(session.id);
-    // A saved Agent's exact Extension selection without `builtin:codemode` has none.
+    // A read-only Agent is offered codemode only through an admitted MCP server.
     const codemode = launched?.doc?.extensions?.codemode !== false;
     const attached = host.runtime.attachedBuiltIns(spawn, notifies);
     const builtIns = [

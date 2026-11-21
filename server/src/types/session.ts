@@ -71,8 +71,15 @@ export type AgentConfigurationFailureCode =
   | "agent_workspace_incompatible"
   | "agent_workspace_unavailable"
   | "agent_tools_unavailable"
-  | "agent_extensions_unavailable"
-  | "agent_skills_unavailable";
+  | "agent_plugins_unavailable"
+  | "agent_skills_unavailable"
+  /** The stored Agent is still in the v1 shape the migration could not rewrite. */
+  | "agent_definition_v2_required"
+  /**
+   * A read-only Agent, and Oppi could not read the plugin inventory that keeps unnamed tools out
+   * of its session: refused rather than launched wider than the Agent said.
+   */
+  | "agent_builtin_plugins_unavailable";
 
 export interface AgentConfigurationFailureDetails {
   targetWorkspaceId?: string;
@@ -82,7 +89,7 @@ export interface AgentConfigurationFailureDetails {
   actualRuntime?: "host" | "sandbox";
   workspaceError?: string;
   missingTools?: string[];
-  unavailableExtensions?: string[];
+  unavailablePlugins?: string[];
   unavailableSkills?: string[];
 }
 

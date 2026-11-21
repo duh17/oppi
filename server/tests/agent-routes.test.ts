@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AgentDefinitionStore } from "../src/agent-definitions.js";
 import { AgentConfigurationError } from "../src/agent-launch-errors.js";
 import { openDatabase } from "../src/sqlite-compat.js";
+import { emptyMigrationCatalogs } from "./helpers/agent-migration-catalogs.js";
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createAgentRoutes } from "../src/routes/agents.js";
 import { RouteHandler } from "../src/routes/index.js";
@@ -359,7 +360,8 @@ describe("agent routes", () => {
             name: "Reviewer",
             description: "Reviews diffs",
             instructions: { mode: "append", text: "Focus on risk." },
-            resources: { skillPaths: [".pi/skills/reviewer"] },
+            capabilities: { core: "readonly", plugins: [], mcp: {} },
+            context: { skills: ["reviewer"] },
             sessionDefaults: { model: "openai-codex/gpt-5.5", thinkingLevel: "medium" },
             launchConstraints: {
               allowedWorkspaceIds: ["review-workspace"],
@@ -411,7 +413,8 @@ describe("agent routes", () => {
         definition: {
           name: "Reviewer",
           description: "Reviews diffs",
-          resources: { skillPaths: [".pi/skills/reviewer"] },
+          capabilities: { core: "readonly", plugins: [], mcp: {} },
+          context: { skills: ["reviewer"] },
         },
       });
 
@@ -445,7 +448,8 @@ describe("agent routes", () => {
         req: makeRequest({
           description: null,
           instructions: null,
-          resources: null,
+          capabilities: null,
+          context: null,
           sessionDefaults: { model: null, thinkingLevel: null },
         }) as never,
         res: clearRes as never,
@@ -453,7 +457,8 @@ describe("agent routes", () => {
       const cleared = JSON.parse(clearRes.body).agent as { definition: Record<string, unknown> };
       expect(cleared.definition).not.toHaveProperty("description");
       expect(cleared.definition).not.toHaveProperty("instructions");
-      expect(cleared.definition).not.toHaveProperty("resources");
+      expect(cleared.definition).not.toHaveProperty("capabilities");
+      expect(cleared.definition).not.toHaveProperty("context");
       expect(cleared.definition.sessionDefaults).toEqual({});
 
       const archiveRes = makeResponse();
@@ -816,7 +821,7 @@ describe("agent routes", () => {
       db.close();
 
       store = new AgentDefinitionStore(dataDir);
-      store.migrateStoredIconChoices();
+      store.migrateStoredDefinitions(emptyMigrationCatalogs());
       const updated = store.updateAgent(agent.id, { description: "Updated description" });
       expect(updated?.definition).toMatchObject({
         icon: { kind: "default" },
@@ -835,26 +840,23 @@ describe("agent routes", () => {
     }
   });
 
-  it("validates, keeps across partial updates, and clears resources.noSessionHistory", () => {
+  it("validates, keeps across partial updates, and clears the context toggles", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-session-history-"));
     const store = new AgentDefinitionStore(dataDir);
     try {
       expect(() =>
-        store.createAgent({ name: "Bad", resources: { noSessionHistory: "yes" } } as never),
-      ).toThrow("resources.noSessionHistory must be a boolean");
+        store.createAgent({ name: "Bad", context: { sessionHistory: "yes" } } as never),
+      ).toThrow("context.sessionHistory must be a boolean");
       const agent = store.createAgent({
         name: "Sealed",
-        resources: { noSessionHistory: true, skillPaths: [".pi/skills/a"] },
+        context: { sessionHistory: false, skills: ["a"] },
       });
-      expect(agent.definition.resources).toEqual({
-        noSessionHistory: true,
-        skillPaths: [".pi/skills/a"],
-      });
-      // A patch of another resources key merges over the stored ones.
-      const merged = store.updateAgent(agent.id, { resources: { skillPaths: [] } });
-      expect(merged?.definition.resources).toEqual({ noSessionHistory: true, skillPaths: [] });
-      const cleared = store.updateAgent(agent.id, { resources: { noSessionHistory: null } });
-      expect(cleared?.definition.resources).toEqual({ skillPaths: [] });
+      expect(agent.definition.context).toEqual({ sessionHistory: false, skills: ["a"] });
+      // A patch of another context key merges over the stored ones.
+      const merged = store.updateAgent(agent.id, { context: { skills: [] } });
+      expect(merged?.definition.context).toEqual({ sessionHistory: false, skills: [] });
+      const cleared = store.updateAgent(agent.id, { context: { sessionHistory: null } });
+      expect(cleared?.definition.context).toEqual({ skills: [] });
     } finally {
       store.close();
       rmSync(dataDir, { recursive: true, force: true });
@@ -1222,8 +1224,8 @@ describe("agent routes", () => {
       });
 
       startSession.mockRejectedValueOnce(
-        new AgentConfigurationError("agent_extensions_unavailable", {
-          unavailableExtensions: ["/extensions/research-bundle.ts"],
+        new AgentConfigurationError("agent_plugins_unavailable", {
+          unavailablePlugins: ["/extensions/research-bundle.ts"],
         }),
       );
       const configurationRes = makeResponse();
@@ -1240,20 +1242,20 @@ describe("agent routes", () => {
 
       expect(configurationRes.statusCode).toBe(422);
       expect(JSON.parse(configurationRes.body)).toMatchObject({
-        code: "agent_extensions_unavailable",
+        code: "agent_plugins_unavailable",
         error:
-          "Reviewer can’t start in Oppi because selected Extensions are unavailable: /extensions/research-bundle.ts. Edit Reviewer → Resources → Extensions and replace or remove the unavailable selections. Then start again.",
+          "Reviewer can’t start in Oppi because selected plugins are unavailable: /extensions/research-bundle.ts. Edit Reviewer → Tools → Plugins and replace or remove the unavailable selections. Then start again.",
         receipt: {
           accepted: false,
           retryable: false,
-          reason: "agent_extensions_unavailable",
+          reason: "agent_plugins_unavailable",
           promptDispatch: "not_sent",
         },
         recovery: {
           actions: ["edit_agent"],
           agentId: agent.id,
           workspaceId: "ws-1",
-          unavailableExtensions: ["/extensions/research-bundle.ts"],
+          unavailablePlugins: ["/extensions/research-bundle.ts"],
         },
       });
       expect(JSON.parse(configurationRes.body).sessionId).toEqual(expect.any(String));
@@ -1264,7 +1266,7 @@ describe("agent routes", () => {
           (session) =>
             session.status === "error" &&
             session.launch?.promptDispatch === "not_sent" &&
-            session.launch.failure?.code === "agent_extensions_unavailable",
+            session.launch.failure?.code === "agent_plugins_unavailable",
         ),
       ).toBe(true);
 
@@ -1335,7 +1337,7 @@ describe("agent routes", () => {
       db.close();
 
       store = new AgentDefinitionStore(dataDir);
-      store.migrateStoredIconChoices();
+      store.migrateStoredDefinitions(emptyMigrationCatalogs());
       const sessions: Session[] = [];
       const ctx = {
         storage: {
@@ -1413,12 +1415,10 @@ describe("agent routes", () => {
         expect(launched.launch?.agentIcon).toEqual({ kind: "default" });
       }
 
+      // A launch may choose a model; capabilities are the Agent's, so no tool override is valid.
       for (const [overrides, errorFragment] of [
         [{ model: "   " }, "model"],
         [{ thinkingLevel: "turbo" }, "thinkingLevel"],
-        [{ tools: "bash" }, "tools"],
-        [{ excludeTools: [42] }, "excludeTools"],
-        [{ noTools: "none" }, "noTools"],
       ] as const) {
         const sessionCount = sessions.length;
         const res = makeResponse();

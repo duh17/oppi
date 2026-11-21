@@ -161,6 +161,8 @@ import { DictationDictionaryStore } from "./storage/dictation-dictionary-store.j
 import { DEFAULT_XAI_STT_MODEL } from "./xai-stt-provider.js";
 import { ProviderAuthManager } from "./provider-auth/provider-auth-manager.js";
 import { McpService } from "./mcp-service.js";
+import { buildAgentMigrationCatalogs } from "./agent-migration-catalogs.js";
+import { createBuiltinPluginFactsReader } from "./agent-capabilities.js";
 import { ScreensStreamMux } from "./screens-stream.js";
 import { featureOn, serverFeatures } from "./server-features.js";
 import { ProviderQuotaService } from "./provider-quota/service.js";
@@ -624,6 +626,9 @@ export class Server {
     this.sessions.contextWindowResolver = (modelId: string) =>
       this.models.getContextWindow(modelId);
     this.sessions.skillPathResolver = (names: string[]) => this.resolveSkillPaths(names);
+    // Oppi's own plugins and their tools, read once and kept for a minute: a read-only Agent may
+    // not use one it did not name, and both engines compile from this same answer.
+    this.sessions.builtinPluginFacts = this.builtinPluginFacts;
     this.sessions.notifyPort = this.sessionPushNotifier;
 
     this.mirrorRuntime = new PiTuiMirrorRuntime(this.storage, {
@@ -944,6 +949,32 @@ export class Server {
     // to durable streams; a second ModelRuntime would keep Pi's built-in Anthropic provider.
     await this.sessions.bindDurableModels(this.modelRuntime);
     this.mcp = new McpService({ agentDir, listWorkspaces: () => this.storage.listWorkspaces() });
+    // Saved Agents written before capabilities were introduced are rewritten once, from what is
+    // stored now: the extension catalog, the plugins' tools, and each scope's MCP servers. It
+    // needs those three, which is why it runs here and not when the store opened.
+    if (this.storage.getAgentDefinitionStore().hasV1Definitions()) {
+      try {
+        const { extensions } = await this.serverResources.listExtensions({ plugins: true });
+        const { migrated, notes, backupPath } = this.storage.migrateAgentDefinitions(
+          await buildAgentMigrationCatalogs({
+            extensions,
+            workspaces: this.storage.listWorkspaces(),
+            agentDir,
+            dataDir: this.storage.getDataDir(),
+          }),
+        );
+        // Every row's notes say what was dropped and why: the owner reads the golden file, and
+        // this is the same reasoning, per Agent, in the server's own log.
+        for (const entry of notes) {
+          log.info("agents.migrated_row", { agentId: entry.id, notes: entry.notes });
+        }
+        log.info("agents.migrated_to_capabilities", { migrated, backupPath });
+      } catch (error) {
+        log.warn("agents.migration_failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     this.providerAuth = new ProviderAuthManager({
       modelRuntime: this.modelRuntime,
       // Same global-settings id the Pi CLI uses, so both share one ChatGPT agent host.
@@ -1672,7 +1703,27 @@ export class Server {
     this.skillsInitialized = true;
   }
 
-  /** Resolve workspace skill names to Pi-discovered host directory paths. */
+  /**
+   * Oppi's own plugins and their tools, for a read-only Agent's exclusions: read from the catalog
+   * once per minute. A failed read with nothing cached answers `null`, and the compiler refuses a
+   * read-only Agent's launch rather than hand it tools the Agent never named.
+   */
+  private readonly builtinPluginFacts = createBuiltinPluginFactsReader(
+    async () => {
+      const { extensions } = await this.serverResources.listExtensions({ plugins: true });
+      return extensions
+        .filter((row) => row.source === "built-in" && (row.plugin?.tools.length ?? 0) > 0)
+        .map((row) => ({ name: row.name, tools: [...(row.plugin?.tools ?? [])] }));
+    },
+    {
+      onError: (error: unknown) => {
+        log.warn("agents.builtin_plugin_facts_failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      },
+    },
+  );
+
   private async resolveSkillPaths(skillNames: string[]): Promise<string[]> {
     await this.ensureSkillsInitialized();
     const paths: string[] = [];

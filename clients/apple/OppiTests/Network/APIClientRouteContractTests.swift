@@ -691,11 +691,6 @@ extension APIClientEndpoint {
         APIClientEndpoint("createAgent") {
             _ = try? await $0.createAgent(AgentDefinition(name: "Agent"))
         },
-        APIClientEndpoint("updateAgent") {
-            _ = try? await $0.updateAgent(
-                agentId: Placeholder.agent, definition: AgentDefinition(name: "Agent")
-            )
-        },
         APIClientEndpoint("setAgentDefaultModel") {
             _ = try? await $0.setAgentDefaultModel(
                 agentId: Placeholder.agent, version: 1, model: "claude-4"
@@ -717,10 +712,10 @@ extension APIClientEndpoint {
                 name: "Agent",
                 description: nil,
                 instructions: nil,
+                capabilities: nil,
+                context: nil,
                 model: nil,
-                thinkingLevel: nil,
-                skillPaths: nil,
-                extensionIds: nil
+                thinkingLevel: nil
             )
         },
         APIClientEndpoint("updateAgentIcon") {
@@ -831,9 +826,6 @@ extension APIClientEndpoint {
         },
         APIClientEndpoint("listServerExtensions") { _ = try? await $0.listServerExtensions(plugins: true) },
         APIClientEndpoint("getServerExtension") { _ = try? await $0.getServerExtension(id: "ext1") },
-        APIClientEndpoint("inspectAgentExtensionTools") {
-            _ = try? await $0.inspectAgentExtensionTools(id: "ext1")
-        },
         APIClientEndpoint("setServerExtensionEnabled") {
             _ = try? await $0.setServerExtensionEnabled(id: "ext1", enabled: true)
         },

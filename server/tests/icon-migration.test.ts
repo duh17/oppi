@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AgentDefinitionStore } from "../src/agent-definitions.js";
+import { emptyMigrationCatalogs } from "./helpers/agent-migration-catalogs.js";
 import { openDatabase } from "../src/sqlite-compat.js";
 import { Storage } from "../src/storage.js";
 import { ConfigStore } from "../src/storage/config-store.js";
@@ -61,7 +62,7 @@ describe("coordinated icon migration", () => {
     db.close();
 
     store = new AgentDefinitionStore(dataDir);
-    store.migrateStoredIconChoices();
+    store.migrateStoredDefinitions(emptyMigrationCatalogs());
     expect(store.getAgent(agent.id)).toMatchObject({
       version: 1,
       definition: { icon: { kind: "emoji", value: "🧘" } },
@@ -299,9 +300,7 @@ describe("coordinated icon migration", () => {
   it("retains old syntactic asset references in future icons and malformed launch parents", () => {
     const storage = new Storage(dataDir);
     const old = Date.now() - ICON_ASSET_ORPHAN_GRACE_MS - 1;
-    const futureAsset = storage
-      .getIconAssetStore()
-      .put(sample("future-tagged-reference"), old);
+    const futureAsset = storage.getIconAssetStore().put(sample("future-tagged-reference"), old);
     const malformedParentAsset = storage
       .getIconAssetStore()
       .put(sample("malformed-parent-reference"), old);
@@ -378,12 +377,8 @@ describe("coordinated icon migration", () => {
     const storage = new Storage(dataDir);
     const old = Date.now() - ICON_ASSET_ORPHAN_GRACE_MS - 1;
     const abandoned = storage.getIconAssetStore().put(sample("abandoned"), old);
-    const agentCurrentAsset = storage
-      .getIconAssetStore()
-      .put(sample("agent-current"), old);
-    const agentHistoryAsset = storage
-      .getIconAssetStore()
-      .put(sample("agent-history"), old);
+    const agentCurrentAsset = storage.getIconAssetStore().put(sample("agent-current"), old);
+    const agentHistoryAsset = storage.getIconAssetStore().put(sample("agent-history"), old);
     const workspaceAsset = storage.getIconAssetStore().put(sample("workspace"), old);
     const sessionAsset = storage.getIconAssetStore().put(sample("session"), old);
 

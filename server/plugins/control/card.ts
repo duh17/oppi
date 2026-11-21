@@ -414,7 +414,50 @@ const LIFTS: { [path: string]: { empty: string; gone: string; sentence: string }
     gone: "every tool allowed",
     sentence: "Without a tools list, every tool is allowed.",
   },
+  // An Agent states what it may reach, so a removed or emptied entry here widens it. The card
+  // names that in the same words as the sandbox lists above, because "removed" alone reads as
+  // narrower.
+  "capabilities.mcp": {
+    empty: "no MCP server",
+    gone: "every MCP server",
+    sentence: "Without an MCP server list, every configured MCP server is reachable.",
+  },
+  "capabilities.plugins": {
+    empty: "no plugin",
+    gone: "every plugin",
+    sentence: "Without a plugin list, every enabled plugin loads.",
+  },
+  "context.skills": {
+    empty: "no Skill",
+    gone: "every Skill Pi discovers",
+    sentence: "Without a Skill list, the session gets every Skill Pi discovers.",
+  },
+  "capabilities.core": {
+    empty: "the full tool set",
+    gone: "the full tool set",
+    sentence: "Without a core tier, the Agent has a normal session's tools, which include writing.",
+  },
+  "capabilities.ask": {
+    empty: "it can ask",
+    gone: "it can ask",
+    sentence: "Without this switch, the Agent can ask you questions.",
+  },
+  "capabilities.notify": {
+    empty: "it can notify",
+    gone: "it can notify",
+    sentence: "Without this switch, the Agent can send you a push.",
+  },
+  "capabilities.subagent": {
+    empty: "it can delegate",
+    gone: "it can delegate",
+    sentence: "Without this switch, the Agent can start child sessions.",
+  },
 };
+
+/** A list or map with nothing in it: what a lifting field shows as empty. */
+const isEmptyValue = (value: JsonValue | undefined): boolean =>
+  (Array.isArray(value) && value.length === 0) ||
+  (record(value) !== undefined && Object.keys(record(value) ?? {}).length === 0);
 
 /** What a removed field lifts: a removed allowed hosts list, or a removed config that held one. */
 const liftedBy = (field: Field): (typeof LIFTS)[string] | undefined =>
@@ -527,6 +570,13 @@ function changes(body: Obj, current: JsonValue, hidden: ReadonlySet<string>): Fi
     if (fields && WHOLE_OBJECT.has(path)) return replaced(path, before, patch, out);
     if (fields && path === "action" && fields.type !== undefined && fields.type !== was?.type)
       return replaced(path, before, patch, out);
+    // An empty object patches nothing key by key: it replaces the map it names (an Agent's MCP
+    // selection emptied is "no server", not "unchanged").
+    if (fields && Object.keys(fields).length === 0) {
+      if (was !== undefined && Object.keys(was).length > 0)
+        out.push({ path, before, after: patch });
+      return;
+    }
     if (fields && !WHOLE_VALUE.has(path)) {
       for (const [key, value] of Object.entries(fields))
         walk(value, was ? own(was, key) : undefined, path ? `${path}.${key}` : key);
@@ -756,9 +806,7 @@ function render(
   const lifts = own(LIFTS, field.path);
   const dropped = liftedBy(field);
   const emptied =
-    field.removed !== true && lifts && Array.isArray(field.after) && field.after.length === 0
-      ? ` (${lifts.empty})`
-      : "";
+    field.removed !== true && lifts && isEmptyValue(field.after) ? ` (${lifts.empty})` : "";
   const effect = dropped ? `: ${dropped.gone}` : "";
   const block = (lines: string[]): string =>
     `**${label}**${key}\n\n${fenced("diff", lines.join("\n"))}${dropped ? `\n\n${dropped.sentence}` : ""}`;

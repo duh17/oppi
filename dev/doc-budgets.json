@@ -6,8 +6,8 @@
       "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 300 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-client.md": {
-      "words": 5990,
-      "reason": "Client owners and rules: forked syntax grammars, ServerConnection's state-machine owners, UIKit ownership and the guard-named sections (navigation bar, load states, alerts, settings pages, document editing), shell, the server-feature and Experiment rule, Live Voice, SSH/Rex, and the boundary rules the architecture check links to. 4974 words, plus 180 for server features (2026-11-15), plus 30 for the main pane's sidebar button owner (2026-11-20); headroom max(15%, 100 words)."
+      "words": 6015,
+      "reason": "Client owners and rules: forked syntax grammars, ServerConnection's state-machine owners, UIKit ownership and the guard-named sections (navigation bar, load states, alerts, settings pages, document editing), shell, the server-feature and Experiment rule, Live Voice, SSH/Rex, and the boundary rules the architecture check links to. 4974 words, plus 180 for server features (2026-11-15), plus 30 for the main pane's sidebar button owner (2026-11-20), plus 25 for the Agent editor's draft and capability pages (2026-11-21); headroom max(15%, 100 words)."
     },
     "dev/architecture-client/blocks.md": {
       "words": 1290,
@@ -54,8 +54,8 @@
       "reason": "Session list and history read models, touched-file and worktree change views with their git budget, and the app-event allowlist. 477 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-server/runtime.md": {
-      "words": 3325,
-      "reason": "Session runtime owners and invariants: runtime dispatch, managed SDK and sandbox Skills, server durable (stores, classic-event facade, sandbox execution, restart and store failure, MCP, extensions), subagents, Oppi Control's cards and replay risks, durable gaps and tree navigation, Agents and schedules, mirror. 2829 words; headroom max(15%, 100 words); raised 20 for durable tree navigation; raised 45 more for the Skill path identity the catalog publishes."
+      "words": 3345,
+      "reason": "Session runtime owners and invariants: runtime dispatch, managed SDK and sandbox Skills, server durable (stores, classic-event facade, sandbox execution, restart and store failure, MCP, extensions), subagents, Oppi Control's cards and replay risks, durable gaps and tree navigation, Agents and schedules, mirror. 2829 words; headroom max(15%, 100 words); raised 20 for durable tree navigation; raised 45 more for the Skill path identity the catalog publishes; raised 20 for the Agents v2 cutover owners (agent-capabilities, the store migration with its backup)."
     },
     "dev/architecture-server/tool-inspection.md": {
       "words": 480,

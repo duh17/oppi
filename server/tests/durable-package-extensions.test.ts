@@ -853,7 +853,7 @@ describe("plugins in a sandbox workspace", () => {
     // An Agent made for host work, with no runtime constraint, selecting the host-only package.
     f.storage.getAgentDefinitionStore().createAgent({
       name: "Hosty",
-      resources: { extensionIds: [serverResourceId("extension", join(hostOnly, "index.ts"))] },
+      capabilities: { plugins: ["hostpkg"] },
     });
     const sandbox = f.storage.updateWorkspace(f.workspace.id, { runtime: "sandbox" })!;
 
@@ -862,9 +862,8 @@ describe("plugins in a sandbox workspace", () => {
     const child = f.storage.listSessions().find((session) => session.name === "Kid")!;
     const id = child.serverDurable!.conversationId as ConversationId;
     const agent = await (await (await f.harness()).conversation(id, context))!.agent(context);
-    // The sandbox's model chose the Agent, so its selection is no opt-in; the workspace's is.
+    // The sandbox's model chose the Agent, so its plugin selection is no opt-in; the workspace's is.
     expect(agent.tools.map((tool) => tool.name)).not.toContain("hostpkg_version");
-    expect(child.warnings?.join("\n")).toContain("hostpkg");
   });
 });
 

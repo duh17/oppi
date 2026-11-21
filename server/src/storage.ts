@@ -11,6 +11,7 @@
 
 import { dirname } from "node:path";
 import { AgentDefinitionStore } from "./agent-definitions.js";
+import type { AgentMigrationCatalogs } from "./agent-definition-migration.js";
 import { iconAssetId } from "./icon-choice.js";
 import { AgentScheduleStore } from "./agent-schedules.js";
 import { syncProgramStatus } from "./program-status.js";
@@ -90,7 +91,6 @@ export class Storage {
     // The string-to-object icon change of July 2026, once per data directory.
     this.sessionStore.runMigrationOnceSync("stored_icon_choices_v1", () => {
       this.sessionStore.migrateStoredIconChoices();
-      this.agentDefinitionStore.migrateStoredIconChoices();
       return this.workspaceStore.migrateStoredIconChoices();
     });
     if (options.migrateWorkspaceFolders) {
@@ -110,6 +110,29 @@ export class Storage {
    */
   runMigrationOnceSync(key: string, run: () => boolean): boolean {
     return this.sessionStore.runMigrationOnceSync(key, run);
+  }
+
+  /**
+   * The one-time Agent v1 → v2 rewrite, over the rows and version history stored now. Runs once
+   * per data directory; a row it cannot rewrite stays and refuses to launch by name.
+   */
+  migrateAgentDefinitions(catalogs: AgentMigrationCatalogs): {
+    migrated: number;
+    notes: Array<{ id: string; notes: string[] }>;
+    backupPath?: string;
+  } {
+    let result: {
+      migrated: number;
+      notes: Array<{ id: string; notes: string[] }>;
+      backupPath?: string;
+    } = { migrated: 0, notes: [] };
+    this.runMigrationOnceSync("agent_definitions_v2", () => {
+      const { backupPath, ...written } =
+        this.agentDefinitionStore.migrateStoredDefinitions(catalogs);
+      result = { ...written, backupPath };
+      return true;
+    });
+    return result;
   }
 
   // ─── Config ───

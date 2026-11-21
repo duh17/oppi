@@ -210,15 +210,18 @@ export class SessionLifecycleService {
     autoStop?: boolean;
     engine?: SessionEngine;
   }): Promise<CreateWorkspaceSessionResult> {
+    // A plain workspace session is not a saved Agent: its tool policy is this launch's only.
     const inlineAgent: AgentDefinition = {
       name: params.name?.trim() || params.workspace.name || "Workspace session",
       sessionDefaults: {
         model: params.model,
         thinkingLevel: params.thinking as ThinkingLevel | undefined,
-        ...(params.tools ? { tools: params.tools } : {}),
-        ...(params.excludeTools ? { excludeTools: params.excludeTools } : {}),
-        ...(params.noTools ? { noTools: params.noTools } : {}),
       },
+    };
+    const toolPolicy = {
+      ...(params.tools ? { allowed: params.tools } : {}),
+      ...(params.excludeTools ? { excluded: params.excludeTools } : {}),
+      ...(params.noTools ? { noTools: params.noTools } : {}),
     };
     const launchService = new AgentLaunchService({
       storage: this.deps.storage,
@@ -230,6 +233,7 @@ export class SessionLifecycleService {
     try {
       result = await launchService.launch({
         agent: inlineAgent,
+        ...(Object.keys(toolPolicy).length ? { toolPolicy } : {}),
         target: { workspace: params.workspace, worktreeId: params.worktreeId },
         prompt: params.prompt,
         attachments: params.attachments,

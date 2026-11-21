@@ -71,15 +71,11 @@ struct ServerResourceAPIClientTests {
         #expect(linkedSkill.path == canonical)
         #expect(linkedSkill.paths == [canonical, linked])
         #expect(linkedSkill.selectionPath == linked)
-        #expect(linkedSkill.preferredSelectionPath == linked)
-        #expect(linkedSkill.selectionPaths == [canonical, linked])
 
         let olderSkill = try #require(skills.first { $0.id == "skill_older" })
         #expect(olderSkill.path == olderPath)
         #expect(olderSkill.paths == nil)
         #expect(olderSkill.selectionPath == nil)
-        #expect(olderSkill.preferredSelectionPath == olderPath)
-        #expect(olderSkill.selectionPaths == [olderPath])
     }
 
     @Test func serverMetricsSettingsTolerateRevisionAndSendBaseRevisionOnlyWhenGiven() async throws {
@@ -191,23 +187,6 @@ struct ServerResourceAPIClientTests {
         #expect(detail.contributedToolDetails?.first?.description == "Review changes")
         #expect(detail.toolDefinitions?.first?.from == .piExtension)
         #expect(detail.toolDefinitions?.first?.parameters == .object(["type": .string("object")]))
-    }
-
-    @Test func agentToolInspectionUsesExplicitExtensionDetailQuery() async throws {
-        let client = makeClient()
-        defer { TestURLProtocol.handler = nil }
-
-        TestURLProtocol.handler = { request in
-            #expect(request.httpMethod == "GET")
-            #expect(request.url?.path == "/server/resources/extensions/extension_abc")
-            #expect(request.url?.query == "agentTools=true")
-            return mockResponse(json: """
-            {"summary":{"id":"extension_abc","name":"Search","kind":"file","provenance":{"kind":"piAgent","label":"~/.pi/agent/extensions"},"state":"off","warnings":[],"isRemovable":false,"contributedTools":["search"]},"contributedTools":["search"],"contributedToolDetails":[{"name":"search","description":"Search files"}]}
-            """)
-        }
-
-        let detail = try await client.inspectAgentExtensionTools(id: "extension_abc")
-        #expect(detail.contributedTools == ["search"])
     }
 
     @Test func mobileOutputGuideUsesDedicatedCASRoute() async throws {

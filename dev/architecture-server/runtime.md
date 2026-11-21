@@ -15,7 +15,7 @@ Part of [Oppi server architecture](../architecture-server.md).
 
 - `session-work-root.ts` is the one owner of a session's host directory (workspace mount or worktree, control cwd). Start and attachment writes ask for creation; reads and cleanup never create directories.
 - `GondolinManager` derives a VM's read-only Skill mounts at boot, one per workspace `.pi/skills` entry; they are outside the VM fingerprint, so a new entry waits for the next boot.
-- A sandbox session offers only Skills the VM can serve (`loadSandboxSkills`, `durable-project-resources.ts`); a selection it cannot serve fails `agent_skills_unavailable`. Classic turns off host Skill discovery (`keepSandboxSkillDiscoveryOffHost`): Pi's package manager otherwise walks `.agents/skills` from `/` synchronously with no cycle guard, and session creation fails if Pi changes that shape. Context files come through the VM (`readVmTextFileWithin`, 1 MiB).
+- A sandbox session offers only Skills the VM can serve (`loadSandboxSkills`, `durable-project-resources.ts`); an Agent's named Skill the VM cannot present is simply missing, and the session says so. Classic turns off host Skill discovery (`keepSandboxSkillDiscoveryOffHost`): Pi's package manager otherwise walks `.agents/skills` from `/` synchronously with no cycle guard, and session creation fails if Pi changes that shape. Context files come through the VM (`readVmTextFileWithin`, 1 MiB).
 - A sandbox session runs host-side extension code only by opt-in: a saved Agent's exact selection or the workspace's `sandboxConfig.hostExtensions` (extension IDs). Classic (`resolveSandboxExtensions`, `sandbox-host-extensions.ts`) loads with `noExtensions` and an explicit path list, so no other extension's code runs; a Pi package declaring `sandbox` in `oppi.classicRuntimes` needs no opt-in unless the guest can write it. Durable admits an owner plugin whose `runtimes` lack `sandbox` only through `pluginAllowedIn` (`durable-agent.ts`); a sandbox's `subagent spawn` passes `agentOptsIn: false`, because the guest's model picked that Agent. Both engines name opted-in host tools in the prompt (`oppiAppendSystemPrompt` `hostTools`). Decide from these declarations, never from extension or tool names.
 - Classic sandbox `/skill:` is expanded by an inline `input` handler (`createSandboxSkillCommandExtension`) through `GondolinExecutionEnv.readSkillFile`. A VM refusal is returned as `handled`, never thrown: `emitInput` would swallow the throw and Pi would `readFileSync` the guest path on the host.
 
@@ -98,11 +98,13 @@ A sandbox conversation persists its boundary in `oppi.execution-runtime` and att
 
 ## Saved Agents and schedules
 
-- `AgentLaunchService` owns idempotency, launch recovery, target constraints, and prompt dispatch. Incompatible targets and unavailable Skills or Extensions fail closed as typed configuration failures; allowed tool names with no matching tool are dropped and surfaced in `session.warnings`. Pre-start failures return a non-retryable 422 with no session; post-start failures keep one `error` session, and its focused stream closes with policy violation instead of reconnecting.
-- A Skill's identity is its canonical path; Pi keeps its discovered form. `listSkills` lists each Skill once with every form in `paths` (canonical first) and Pi's first discovered form in `selectionPath` (what new picks save). Any form is recognised (`assertSelectedAgentSkillsLoaded`).
+- `agent-capabilities.ts` is the one owner of Agent → session compilation, both engines: only it decides tools, extensions, MCP servers, and Skills. `DurableMcp` prunes to the compiled servers before connecting; classic excludes by pattern.
+- `agent-definitions.ts` owns validation and the one-time v1 → v2 rewrite at startup; an unmigratable row is marked `v1` and refuses to launch.
+- `AgentLaunchService` owns idempotency, launch recovery, target constraints, and prompt dispatch. Incompatible targets fail closed as typed configuration failures, and a launch may choose a model, never capabilities. A post-start failure keeps one `error` session whose focused stream closes with policy violation.
+- A Skill's identity is its canonical path; `listSkills` lists every form. An Agent names Skills by folder, and an unanswered name warns.
 - A launch left `launching` after a crash is never redispatched: persistence cannot tell a crash before send from one after Pi accepted the turn.
-- Agent and schedule validators reject unexpected fields and empty updates. There is no `oppi skill` CLI or Skill PUT; catalog editability is presentation, not authorization. Theme routes are read-only.
-- `AgentScheduleRunner` claims due runs with a lease and dispatches through the manual-run hooks. An `at` schedule archives itself in the transaction that completes its slot; restoring never reruns it because the run holds the idempotency key.
+- Agent and schedule validators reject unexpected fields and empty updates. Catalog editability is presentation, not authorization, and theme routes are read-only.
+- `AgentScheduleRunner` claims due runs with a lease. An `at` schedule archives itself in the transaction that completes its slot; restoring never reruns it because the run holds the idempotency key.
 
 ## Terminal mirror runtime
 

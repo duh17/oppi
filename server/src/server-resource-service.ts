@@ -1,6 +1,7 @@
 import { lstatSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { AGENT_TOGGLE_TOOLS } from "./agent-capabilities.js";
 import { canonicalRealPath, expandHome, isPathWithinRoot } from "./path-utils.js";
 
 import {
@@ -136,6 +137,13 @@ export interface ServerExtensionSummary {
   contributedTools?: string[];
   contributedToolDetails?: ServerToolSummary[];
   contributedCommands?: string[];
+  /**
+   * Whether a saved Agent may name this row as a plugin. The rule is the v1 migration's: a
+   * classic extension classic sessions can load (`user` or project scope, not a shipped
+   * built-in) that brings tools. A built-in plugin's tools are Oppi's own and are always there;
+   * a row with no tools offers nothing to choose.
+   */
+  agentSelectable?: boolean;
 }
 
 export type ServerExtensionRowKind = "plugin" | "pi-extension";
@@ -1338,6 +1346,29 @@ function copyToolSummary(summary: ServerToolSummary): ServerToolSummary {
  * (the classic one first, when both failed). When the plugins could not be listed, a row whose
  * package holds a plugin says why instead.
  */
+/** The tools a row brings, whichever facet of the plugin they come from. */
+function rowTools(summary: ServerExtensionSummary): string[] {
+  return [...new Set([...(summary.plugin?.tools ?? []), ...(summary.contributedTools ?? [])])];
+}
+
+/**
+ * Marks the rows a saved Agent may name. One rule for the server's list and the v1 migration's
+ * catalog (`agent-migration-catalogs.ts`), so an Agent the app offers is one that launches.
+ */
+export function withAgentSelectable(summary: ServerExtensionSummary): ServerExtensionSummary {
+  // A toggle's package is the switch's (`ask`, `subagents`): naming it in an Agent would say the
+  // same thing twice, and the migration leaves it to the toggle too.
+  const togglePackages = new Set<string>(
+    Object.values(AGENT_TOGGLE_TOOLS).map((toggle) => toggle.plugin as string),
+  );
+  const selectable =
+    summary.source !== "built-in" &&
+    summary.kinds.includes("pi-extension") &&
+    !togglePackages.has(summary.name) &&
+    rowTools(summary).length > 0;
+  return selectable ? { ...summary, agentSelectable: true } : summary;
+}
+
 function withPlugin(summary: ServerExtensionSummary, rows: PluginRows): ServerExtensionSummary {
   const plugin = rows.attached.get(summary.id);
   if (!plugin) {
@@ -1409,7 +1440,8 @@ function pluginProvenance(plugin: PluginListing, agentDir: string): ResourceProv
   return { kind: "userSettings", label: "Pi user settings" };
 }
 
-function copyExtensionSummary(summary: ServerExtensionSummary): ServerExtensionSummary {
+function copyExtensionSummary(source: ServerExtensionSummary): ServerExtensionSummary {
+  const summary = withAgentSelectable(source);
   return {
     ...summary,
     provenance: { ...summary.provenance },

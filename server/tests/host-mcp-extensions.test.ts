@@ -25,8 +25,8 @@ import { PROJECT_TRUST_OPTIONS, PROJECT_TRUST_TIMEOUT_MS } from "../src/project-
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AgentConfigurationError } from "../src/agent-launch-errors.js";
-import { resolveSelectedAgentExtensionPaths } from "../src/agent-extension-selection.js";
-import type { AgentDefinition } from "../src/agent-launch-service.js";
+import { resolveAgentPluginPaths } from "../src/agent-plugin-selection.js";
+import type { AgentDefinition } from "../src/agent-definition.js";
 import { availableMcpBuiltinNames } from "../src/host-mcp-extensions.js";
 import * as GondolinManagerModule from "../src/gondolin-manager.js";
 import { SdkBackend } from "../src/sdk-backend.js";
@@ -280,12 +280,12 @@ export default function (pi) {
     await plain.dispose();
     backends.length = 0;
 
-    // The Agent still starts, without the server it cannot have.
+    // An Agent that reaches every server still starts, without MCP: the compiler knows the switch.
     const agent = await create({
       mcpEnabled: () => false,
-      agentDefinition: { name: "Exact", resources: { extensionIds: ["builtin:mcp"] } },
+      agentDefinition: { name: "Reaching" },
     });
-    expect(extensionPaths(agent).filter((path) => path.startsWith("builtin:"))).toEqual([]);
+    expect(extensionPaths(agent)).not.toContain("builtin:mcp");
     expect(sessionOf(agent).getActiveToolNames()).not.toContain("mcp__echo__echo");
     expect(existsSync(marker)).toBe(false);
   });
@@ -569,23 +569,25 @@ export default function (pi) {
     }
   });
 
-  it("keeps saved Agents exact: builtins load only when explicitly selected", async () => {
-    const unselected = await create({
-      agentDefinition: { name: "Exact", resources: { extensionIds: [] } },
+  it("loads Pi's MCP builtin for an Agent that reaches MCP, and no builtin for one that does not", async () => {
+    const sealed = await create({
+      agentDefinition: {
+        name: "Sealed",
+        capabilities: { core: "readonly", plugins: [], mcp: {} },
+      },
     });
-    expect(extensionPaths(unselected).filter((path) => path.startsWith("builtin:"))).toEqual([]);
+    expect(extensionPaths(sealed).filter((path) => path.startsWith("builtin:"))).toEqual([]);
     expect(existsSync(marker)).toBe(false);
-    await unselected.dispose();
+    await sealed.dispose();
     backends.length = 0;
 
-    const selected = await create({
-      agentDefinition: { name: "Exact", resources: { extensionIds: ["builtin:mcp"] } },
+    const reaching = await create({
+      agentDefinition: { name: "Reaching", capabilities: { mcp: { echo: "all" } } },
     });
-    expect(extensionPaths(selected).filter((path) => path.startsWith("builtin:"))).toEqual([
-      "builtin:mcp",
-    ]);
-    expect(extensionPaths(selected).some((path) => path.includes("observer.ts"))).toBe(false);
-    await waitFor(() => existsSync(marker), "selected MCP server spawn");
+    // An Agent that admits a server loads the extension its tools need; `mcp: {}` loads none, so
+    // no server connects and no namespace is announced.
+    expect(extensionPaths(reaching)).toContain("builtin:mcp");
+    await expectEcho(reaching);
   });
 
   function projectMcp(): void {
@@ -821,88 +823,9 @@ export default function (pi) {
     },
   );
 
-  it.each(["real cwd, symlinked skill path", "symlinked cwd, real skill path"] as const)(
-    "rejects an explicit Skill inside a denied project's .pi through a symlink (%s)",
-    async (shape) => {
-      const skill = join(cwd, ".pi", "skills", "s");
-      mkdirSync(skill, { recursive: true });
-      writeFileSync(
-        join(skill, "SKILL.md"),
-        "---\nname: s\ndescription: Project skill.\n---\nBody.\n",
-      );
-      new ProjectTrustStore(agentDir).set(cwd, false);
-      const link = `${cwd}-link`;
-      symlinkSync(realpathSync(cwd), link);
-      try {
-        const symlinkedCwd = shape.startsWith("symlinked cwd");
-        const attempt = SdkBackend.create({
-          session: makeSession(),
-          workspace: {
-            id: "workspace-1",
-            name: "Host MCP",
-            runtime: "host",
-            hostMount: symlinkedCwd ? link : realpathSync(cwd),
-          } as Workspace,
-          agentDefinition: {
-            name: "Skill",
-            resources: {
-              skillPaths: [
-                symlinkedCwd
-                  ? join(realpathSync(cwd), ".pi", "skills", "s")
-                  : join(link, ".pi", "skills", "s"),
-              ],
-            },
-          },
-          onEvent: vi.fn(),
-          onEnd: vi.fn(),
-        });
-        await expect(attempt).rejects.toMatchObject({ code: "agent_skills_unavailable" });
-      } finally {
-        rmSync(link, { force: true });
-      }
-    },
-  );
-
-  it.each(["path through the .pi symlink", "real symlink target"] as const)(
-    "rejects an explicit Skill in a denied project whose .pi is a symlink (%s)",
-    async (shape) => {
-      const target = `${cwd}-pi-target`;
-      const skill = join(target, "skills", "s");
-      mkdirSync(skill, { recursive: true });
-      writeFileSync(
-        join(skill, "SKILL.md"),
-        "---\nname: s\ndescription: Project skill.\n---\nBody.\n",
-      );
-      symlinkSync(target, join(cwd, ".pi"));
-      new ProjectTrustStore(agentDir).set(cwd, false);
-      try {
-        const attempt = SdkBackend.create({
-          session: makeSession(),
-          workspace: {
-            id: "workspace-1",
-            name: "Host MCP",
-            runtime: "host",
-            hostMount: cwd,
-          } as Workspace,
-          agentDefinition: {
-            name: "Skill",
-            resources: {
-              skillPaths: [
-                shape === "real symlink target"
-                  ? join(realpathSync(target), "skills", "s")
-                  : join(cwd, ".pi", "skills", "s"),
-              ],
-            },
-          },
-          onEvent: vi.fn(),
-          onEnd: vi.fn(),
-        });
-        await expect(attempt).rejects.toMatchObject({ code: "agent_skills_unavailable" });
-      } finally {
-        rmSync(target, { recursive: true, force: true });
-      }
-    },
-  );
+  // An Agent names Skills, never their paths, so it cannot point at a file inside a denied
+  // project's `.pi`: Pi's own trust gate governs the discovery walk. The path-based guard these
+  // two cases covered no longer has an input.
 
   it("routes startup phone answers through SessionManager before the backend is active", async () => {
     projectMcp();
@@ -1154,7 +1077,7 @@ export default function (pi) {
       const backend = await create({
         agentDefinition: {
           name: "Exact trust",
-          resources: { extensionIds: selected ? [serverResourceId("extension", trustPath)] : [] },
+          capabilities: { plugins: selected ? ["trust"] : [], mcp: {} },
         },
       });
       expect(sessionOf(backend).settingsManager.isProjectTrusted()).toBe(!selected);
@@ -1341,27 +1264,30 @@ describe("builtin extension availability boundaries", () => {
     ]);
   });
 
-  it("resolves builtin selections only for available names", async () => {
+  it("resolves an Agent's plugin names and refuses one nothing provides", async () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-host-mcp-select-"));
     try {
+      const extensionDir = join(dir, "extensions");
+      mkdirSync(extensionDir, { recursive: true });
+      const extension = join(extensionDir, "webtools.ts");
+      writeFileSync(extension, "export default function () {}\n");
       const { SettingsManager } = await import("@earendil-works/pi-coding-agent");
       const settings = SettingsManager.inMemory({}, { projectTrusted: false });
-      await expect(
-        resolveSelectedAgentExtensionPaths(["builtin:mcp"], dir, dir, settings, ["mcp"]),
-      ).resolves.toEqual(["builtin:mcp"]);
-      // Sandbox and mirror runtimes pass no names; unknown names are never accepted.
-      await expect(
-        resolveSelectedAgentExtensionPaths(["builtin:mcp"], dir, dir, settings, []),
-      ).rejects.toMatchObject({ code: "agent_extensions_unavailable" });
-      await expect(
-        resolveSelectedAgentExtensionPaths(["builtin:nope"], dir, dir, settings, ["mcp"]),
-      ).rejects.toMatchObject({ code: "agent_extensions_unavailable" });
+      await expect(resolveAgentPluginPaths(["webtools"], dir, dir, settings)).resolves.toEqual([
+        extension,
+      ]);
+      // An Agent that selects nothing loads nothing; Pi discovery is an omitted selection.
+      await expect(resolveAgentPluginPaths([], dir, dir, settings)).resolves.toEqual([]);
+      await expect(resolveAgentPluginPaths(undefined, dir, dir, settings)).resolves.toBeUndefined();
+      await expect(resolveAgentPluginPaths(["nope"], dir, dir, settings)).rejects.toMatchObject({
+        code: "agent_plugins_unavailable",
+      });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it("resolves an Agent's Extensions in a workspace whose .agents/skills links back to itself", async () => {
+  it("resolves an Agent's plugins in a workspace whose .agents/skills links back to itself", async () => {
     // A sandbox guest can plant these; Pi's Skill walk follows them without a cycle guard. A
     // child process, so a walk that never finishes fails on the timeout instead of blocking.
     const cwd = mkdtempSync(join(tmpdir(), "oppi-agent-ext-cycle-"));
@@ -1377,10 +1303,10 @@ describe("builtin extension availability boundaries", () => {
       writeFileSync(extension, "export default function () {}\n");
       const script = [
         'import { SettingsManager } from "@earendil-works/pi-coding-agent";',
-        'import { resolveSelectedAgentExtensionPaths } from "./src/agent-extension-selection.ts";',
-        "const { CWD, AGENT_DIR, EXTENSION_ID } = process.env;",
-        "const paths = await resolveSelectedAgentExtensionPaths(",
-        "  [EXTENSION_ID], CWD, AGENT_DIR, SettingsManager.create(CWD, AGENT_DIR), [],",
+        'import { resolveAgentPluginPaths } from "./src/agent-plugin-selection.ts";',
+        "const { CWD, AGENT_DIR } = process.env;",
+        "const paths = await resolveAgentPluginPaths(",
+        '  ["picked"], CWD, AGENT_DIR, SettingsManager.create(CWD, AGENT_DIR),',
         ");",
         "console.log(JSON.stringify(paths));",
       ].join("\n");
@@ -1396,7 +1322,6 @@ describe("builtin extension availability boundaries", () => {
             ...process.env,
             CWD: cwd,
             AGENT_DIR: agentDir,
-            EXTENSION_ID: serverResourceId("extension", extension),
           },
         },
       );

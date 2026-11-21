@@ -12,20 +12,6 @@ enum AgentInstructionMode: String, Codable, CaseIterable, Sendable, Equatable {
     case replace
 }
 
-enum AgentNoToolsMode: String, Codable, CaseIterable, Sendable, Equatable {
-    case all
-    case builtin
-
-    var displayName: String {
-        switch self {
-        case .all:
-            return "No tools"
-        case .builtin:
-            return "No built-in tools"
-        }
-    }
-}
-
 struct AgentInstructions: Codable, Sendable, Equatable {
     var mode: AgentInstructionMode
     var text: String
@@ -36,39 +22,94 @@ struct AgentInstructions: Codable, Sendable, Equatable {
     }
 }
 
-struct AgentResourceFile: Codable, Sendable, Equatable, Identifiable {
-    var path: String
-    var content: String
-
-    var id: String { path }
+/// The built-in coding tools an Agent may use: `full` is a normal session's set,
+/// `readonly` keeps reading and searching. The server expands a tier into tool names.
+enum AgentCoreTier: String, Codable, CaseIterable, Sendable, Equatable {
+    case full
+    case readonly
 }
 
-struct AgentResources: Codable, Sendable, Equatable {
-    var agentsFiles: [AgentResourceFile]?
-    var noContextFiles: Bool?
-    /// Omitted inherits Pi discovery; an array is the Agent's exact Skill selection.
-    var skillPaths: [String]?
-    /// Omitted inherits Pi discovery; an array is the Agent's exact Extension selection.
-    var extensionIds: [String]?
+/// One MCP server's tools: every one it reports, or the exact names it may call.
+enum AgentMcpTools: Codable, Sendable, Equatable, Hashable {
+    case all
+    case tools([String])
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let value = try? container.decode(String.self), value == "all" {
+            self = .all
+            return
+        }
+        self = .tools(try container.decode([String].self))
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .all: try container.encode("all")
+        case .tools(let names): try container.encode(names)
+        }
+    }
+
+    var toolNames: [String]? {
+        guard case .tools(let names) = self else { return nil }
+        return names
+    }
+}
+
+/// What an Agent may do, not how Pi is wired to do it. Every field is optional and
+/// omitted means the server's default: a normal session's tools, all enabled plugins,
+/// every configured MCP server.
+struct AgentCapabilities: Codable, Sendable, Equatable {
+    var core: AgentCoreTier?
+    var ask: Bool?
+    var notify: Bool?
+    var subagent: Bool?
+    /// Plugin names. `[]` is none; omitted is every enabled plugin.
+    var plugins: [String]?
+    /// MCP servers by `mcp.json` name, and the tools each may call. `[:]` is none;
+    /// omitted is every configured server.
+    var mcp: [String: AgentMcpTools]?
 
     init(
-        agentsFiles: [AgentResourceFile]? = nil,
-        noContextFiles: Bool? = nil,
-        skillPaths: [String]? = nil,
-        extensionIds: [String]? = nil
+        core: AgentCoreTier? = nil,
+        ask: Bool? = nil,
+        notify: Bool? = nil,
+        subagent: Bool? = nil,
+        plugins: [String]? = nil,
+        mcp: [String: AgentMcpTools]? = nil
     ) {
-        self.agentsFiles = agentsFiles
-        self.noContextFiles = noContextFiles
-        self.skillPaths = skillPaths
-        self.extensionIds = extensionIds
+        self.core = core
+        self.ask = ask
+        self.notify = notify
+        self.subagent = subagent
+        self.plugins = plugins
+        self.mcp = mcp
     }
 
-    var isEmpty: Bool {
-        (agentsFiles?.isEmpty ?? true)
-            && noContextFiles != true
-            && skillPaths == nil
-            && extensionIds == nil
+    var editsFiles: Bool { core != .readonly }
+    var canAsk: Bool { ask ?? true }
+    var canNotify: Bool { notify ?? true }
+    var canDelegate: Bool { subagent ?? true }
+}
+
+/// What an Agent's session reads besides its own prompt.
+struct AgentContext: Codable, Sendable, Equatable {
+    /// Skill names: the folder that holds `SKILL.md`. Omitted is everything Pi discovers.
+    var skills: [String]?
+    /// The workspace's `AGENTS.md` and prompt. Default true.
+    var contextFiles: Bool?
+    /// `history://` and `agent://` reads. Default true.
+    var sessionHistory: Bool?
+
+    init(skills: [String]? = nil, contextFiles: Bool? = nil, sessionHistory: Bool? = nil) {
+        self.skills = skills
+        self.contextFiles = contextFiles
+        self.sessionHistory = sessionHistory
     }
+
+    var readsContextFiles: Bool { contextFiles ?? true }
+    var readsSessionHistory: Bool { sessionHistory ?? true }
 }
 
 struct AgentLaunchConstraints: Codable, Sendable, Equatable {
@@ -101,30 +142,14 @@ struct AgentLaunchConstraints: Codable, Sendable, Equatable {
 struct AgentSessionDefaults: Codable, Sendable, Equatable {
     var model: String?
     var thinkingLevel: ThinkingLevel?
-    var tools: [String]?
-    var excludeTools: [String]?
-    var noTools: AgentNoToolsMode?
 
-    init(
-        model: String? = nil,
-        thinkingLevel: ThinkingLevel? = nil,
-        tools: [String]? = nil,
-        excludeTools: [String]? = nil,
-        noTools: AgentNoToolsMode? = nil
-    ) {
+    init(model: String? = nil, thinkingLevel: ThinkingLevel? = nil) {
         self.model = model
         self.thinkingLevel = thinkingLevel
-        self.tools = tools
-        self.excludeTools = excludeTools
-        self.noTools = noTools
     }
 
     var isEmpty: Bool {
-        model?.isEmpty ?? true
-            && thinkingLevel == nil
-            && tools == nil
-            && excludeTools == nil
-            && noTools == nil
+        model?.isEmpty ?? true && thinkingLevel == nil
     }
 }
 
@@ -133,7 +158,8 @@ struct AgentDefinition: Codable, Sendable, Equatable {
     var icon: IconChoice
     var description: String?
     var instructions: AgentInstructions?
-    var resources: AgentResources?
+    var capabilities: AgentCapabilities?
+    var context: AgentContext?
     var sessionDefaults: AgentSessionDefaults?
     var launchConstraints: AgentLaunchConstraints?
 
@@ -142,7 +168,8 @@ struct AgentDefinition: Codable, Sendable, Equatable {
         icon: IconChoice = .defaultValue,
         description: String? = nil,
         instructions: AgentInstructions? = nil,
-        resources: AgentResources? = nil,
+        capabilities: AgentCapabilities? = nil,
+        context: AgentContext? = nil,
         sessionDefaults: AgentSessionDefaults? = nil,
         launchConstraints: AgentLaunchConstraints? = nil
     ) {
@@ -150,13 +177,14 @@ struct AgentDefinition: Codable, Sendable, Equatable {
         self.icon = icon
         self.description = description
         self.instructions = instructions
-        self.resources = resources
+        self.capabilities = capabilities
+        self.context = context
         self.sessionDefaults = sessionDefaults
         self.launchConstraints = launchConstraints
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, icon, description, instructions, resources, sessionDefaults, launchConstraints
+        case name, icon, description, instructions, capabilities, context, sessionDefaults, launchConstraints
     }
 
     init(from decoder: Decoder) throws {
@@ -165,7 +193,8 @@ struct AgentDefinition: Codable, Sendable, Equatable {
         icon = try container.decodeIfPresent(IconChoice.self, forKey: .icon) ?? .defaultValue
         description = try container.decodeIfPresent(String.self, forKey: .description)
         instructions = try container.decodeIfPresent(AgentInstructions.self, forKey: .instructions)
-        resources = try container.decodeIfPresent(AgentResources.self, forKey: .resources)
+        capabilities = try container.decodeIfPresent(AgentCapabilities.self, forKey: .capabilities)
+        context = try container.decodeIfPresent(AgentContext.self, forKey: .context)
         sessionDefaults = try container.decodeIfPresent(AgentSessionDefaults.self, forKey: .sessionDefaults)
         launchConstraints = try container.decodeIfPresent(AgentLaunchConstraints.self, forKey: .launchConstraints)
     }
@@ -176,7 +205,8 @@ struct AgentDefinition: Codable, Sendable, Equatable {
         try container.encode(icon, forKey: .icon)
         try container.encodeIfPresent(description, forKey: .description)
         try container.encodeIfPresent(instructions, forKey: .instructions)
-        try container.encodeIfPresent(resources, forKey: .resources)
+        try container.encodeIfPresent(capabilities, forKey: .capabilities)
+        try container.encodeIfPresent(context, forKey: .context)
         try container.encodeIfPresent(sessionDefaults, forKey: .sessionDefaults)
         try container.encodeIfPresent(launchConstraints, forKey: .launchConstraints)
     }

@@ -107,6 +107,16 @@ enum AgentsLoadStateTests {
         }
 
         /// Every match, in view order: a recycled cell can leave a hidden one beside the live one.
+        /// Every string a page draws: labels, text views, and accessibility labels.
+        fileprivate static func labelTexts(in view: UIView) -> [String] {
+            var texts: [String] = []
+            if let label = view as? UILabel, let text = label.text { texts.append(text) }
+            if let textView = view as? UITextView, let text = textView.text { texts.append(text) }
+            if let label = view.accessibilityLabel { texts.append(label) }
+            for subview in view.subviews { texts.append(contentsOf: labelTexts(in: subview)) }
+            return texts
+        }
+
         fileprivate static func buttons(_ identifier: String, in view: UIView) -> [UIButton] {
             var found: [UIButton] = []
             if let button = view as? UIButton, button.accessibilityIdentifier == identifier { found.append(button) }
@@ -189,77 +199,172 @@ enum AgentsLoadStateTests {
             #expect(pi.inputs(of: .file) == pi.inputs(of: .file))
         }
 
-        @Test("Agent detail resolves a linked Skill path to its name and collapses duplicate aliases")
-        func agentDetailResolvesLinkedAndDuplicateSkillNames() async throws {
-            let canonical = "/real/skills/notebook/SKILL.md"
-            let linked = "/home/.pi/agent/skills/notebook/SKILL.md"
-            let retired = "/retired/old/SKILL.md"
-            let provenance = ServerResourceProvenance(kind: .piAgent, label: "~/.pi/agent/skills")
-            let skillsCatalog = ServerSkillsCatalog(skills: [
-                ServerSkillSummary(
-                    id: "skill_notebook",
-                    name: "notebook",
-                    description: "Keep notes.",
-                    provenance: provenance,
-                    path: canonical,
-                    paths: [canonical, linked],
-                    selectionPath: linked,
-                    state: .enabled,
-                    loadError: nil,
-                    warnings: [],
-                    editable: true
-                ),
-            ])
+        /// An older server keeps the old Agent shape, so the app does not offer an editor whose
+        /// Save it would refuse: the page says to update the server and Edit stays disabled.
+        @Test("an older server's Agent page says to update the server, and Edit is disabled")
+        func olderServerShowsReadOnlyAgent() async throws {
+            AgentDetailSkillsURLProtocol.reset()
+            defer { AgentDetailSkillsURLProtocol.reset() }
+            AgentDetailSkillsURLProtocol.storedAgent = StoredAgentDefinition(
+                id: "legacy-agent",
+                name: "Legacy",
+                icon: .defaultValue,
+                description: nil,
+                status: .active,
+                version: 1,
+                definition: AgentDefinition(name: "Legacy", icon: .defaultValue),
+                createdAt: Date(timeIntervalSince1970: 1),
+                updatedAt: Date(timeIntervalSince1970: 1),
+                archivedAt: nil
+            )
+            let root = try await makeTestAppRoot(
+                readyServerId: "agent-detail-legacy-\(UUID().uuidString)",
+                apiClient: AgentDetailSkillsURLProtocol.makeClient()
+            )
+            // `/server/info` has arrived and advertises no `agentCapabilities`.
+            root.coordinator.activeConnection.setAgentCapabilitiesForTesting(false)
+            let screen = AgentDetailViewController(root: root, agentId: "legacy-agent") { _ in }
+            let window = try AgentListViewControllerTests.show(screen)
+            window.frame = CGRect(x: 0, y: 0, width: 390, height: 2600)
+            defer { AgentListViewControllerTests.hide(window) }
 
-            func loadSkillsValue(for skillPaths: [String]) async throws -> String? {
-                AgentDetailSkillsURLProtocol.reset()
-                defer { AgentDetailSkillsURLProtocol.reset() }
-                AgentDetailSkillsURLProtocol.storedAgent = StoredAgentDefinition(
-                    id: "linked-skills-agent",
-                    name: "Linked Skills Agent",
-                    icon: .defaultValue,
-                    description: nil,
-                    status: .active,
-                    version: 1,
-                    definition: AgentDefinition(
-                        name: "Linked Skills Agent",
-                        icon: .defaultValue,
-                        resources: AgentResources(skillPaths: skillPaths)
-                    ),
-                    createdAt: Date(timeIntervalSince1970: 1),
-                    updatedAt: Date(timeIntervalSince1970: 1),
-                    archivedAt: nil
-                )
-                AgentDetailSkillsURLProtocol.skillsCatalog = skillsCatalog
-
-                let root = try await makeTestAppRoot(
-                    readyServerId: "agent-detail-skills-\(UUID().uuidString)",
-                    apiClient: AgentDetailSkillsURLProtocol.makeClient()
-                )
-                let screen = AgentDetailViewController(root: root, agentId: "linked-skills-agent") { _ in }
-                let window = try AgentListViewControllerTests.show(screen)
-                window.frame = CGRect(x: 0, y: 0, width: 390, height: 2000)
-                defer { AgentListViewControllerTests.hide(window) }
-
-                var resolvedValue: String?
-                _ = await waitForMainActorCondition(timeout: .seconds(5)) {
-                    screen.view.layoutIfNeeded()
-                    let match = screen.collectionView.visibleCells
-                        .flatMap { $0.allAccessibilityElements() }
-                        .first { $0.accessibilityLabel == "Skills" }
-                    guard let value = match?.accessibilityValue,
-                          !value.contains(linked)
-                    else { return false }
-                    resolvedValue = value
-                    return true
-                }
-                return resolvedValue
+            // The sentence holds wherever the page draws it, visible or not.
+            var caption: String?
+            _ = await waitForMainActorCondition(timeout: .seconds(5)) {
+                screen.view.layoutIfNeeded()
+                caption = AgentListViewControllerTests.labelTexts(in: screen.view)
+                    .first { $0.hasPrefix("Update this server") }
+                return caption != nil
             }
+            #expect(
+                caption == "Update this server to see and edit this Agent’s tools, plugins, MCP servers, and context."
+            )
+            #expect(
+                AgentListViewControllerTests.labelTexts(in: screen.view).contains("Edit files") == false,
+                "no capability rows for a server that cannot store them"
+            )
+            let edit = try #require(
+                screen.navigationItem.rightBarButtonItems?
+                    .first { $0.accessibilityIdentifier == "agents.detail.edit" }
+            )
+            #expect(!edit.isEnabled, "an older server cannot save the v2 editor")
+        }
 
-            // A Skill selected through a linked folder shows its catalog name, not the raw path.
-            #expect(try await loadSkillsValue(for: [linked]) == "notebook")
-            // Duplicate aliases of one Skill collapse (never "notebook, notebook"), while unmatched paths stay.
-            #expect(try await loadSkillsValue(for: [canonical, linked, retired]) == "notebook, \(retired)")
+        @Test("a server that advertises the capability offers the editor")
+        func currentServerOffersTheEditor() async throws {
+            AgentDetailSkillsURLProtocol.reset()
+            defer { AgentDetailSkillsURLProtocol.reset() }
+            AgentDetailSkillsURLProtocol.storedAgent = StoredAgentDefinition(
+                id: "current-agent",
+                name: "Current",
+                icon: .defaultValue,
+                description: nil,
+                status: .active,
+                version: 1,
+                definition: AgentDefinition(
+                    name: "Current",
+                    icon: .defaultValue,
+                    capabilities: AgentCapabilities(core: .full, plugins: [], mcp: [:])
+                ),
+                createdAt: Date(timeIntervalSince1970: 1),
+                updatedAt: Date(timeIntervalSince1970: 1),
+                archivedAt: nil
+            )
+            let root = try await makeTestAppRoot(
+                readyServerId: "agent-detail-current-\(UUID().uuidString)",
+                apiClient: AgentDetailSkillsURLProtocol.makeClient()
+            )
+            root.coordinator.activeConnection.setAgentCapabilitiesForTesting(true)
+            let screen = AgentDetailViewController(root: root, agentId: "current-agent") { _ in }
+            let window = try AgentListViewControllerTests.show(screen)
+            window.frame = CGRect(x: 0, y: 0, width: 390, height: 2600)
+            defer { AgentListViewControllerTests.hide(window) }
+
+            let values = await waitForValues(["Edit files", "Plugins", "MCP Servers"], in: screen)
+            #expect(values["Edit files"] == "Yes")
+            #expect(values["Plugins"] == "None")
+            #expect(values["MCP Servers"] == "None")
+            let edit = try #require(
+                screen.navigationItem.rightBarButtonItems?
+                    .first { $0.accessibilityIdentifier == "agents.detail.edit" }
+            )
+            #expect(edit.isEnabled)
+        }
+
+        @Test("Agent detail shows the saved capabilities read-only, the same rows the editor writes")
+        func agentDetailShowsCapabilities() async throws {
+            AgentDetailSkillsURLProtocol.reset()
+            defer { AgentDetailSkillsURLProtocol.reset() }
+            AgentDetailSkillsURLProtocol.storedAgent = StoredAgentDefinition(
+                id: "nanny-agent",
+                name: "Nanny",
+                icon: .defaultValue,
+                description: nil,
+                status: .active,
+                version: 1,
+                definition: AgentDefinition(
+                    name: "Nanny",
+                    icon: .defaultValue,
+                    capabilities: AgentCapabilities(
+                        core: .readonly,
+                        ask: true,
+                        notify: false,
+                        subagent: false,
+                        plugins: ["notebook"],
+                        mcp: ["gmail": .tools(["search", "read"]), "coros": .all]
+                    ),
+                    context: AgentContext(skills: ["nanny"], contextFiles: false)
+                ),
+                createdAt: Date(timeIntervalSince1970: 1),
+                updatedAt: Date(timeIntervalSince1970: 1),
+                archivedAt: nil
+            )
+
+            let root = try await makeTestAppRoot(
+                readyServerId: "agent-detail-capabilities-\(UUID().uuidString)",
+                apiClient: AgentDetailSkillsURLProtocol.makeClient()
+            )
+            // `/server/info` advertises the v2 Agent shape here, as a current server does.
+            root.coordinator.activeConnection.setAgentCapabilitiesForTesting(true)
+            let screen = AgentDetailViewController(root: root, agentId: "nanny-agent") { _ in }
+            let window = try AgentListViewControllerTests.show(screen)
+            window.frame = CGRect(x: 0, y: 0, width: 390, height: 2000)
+            defer { AgentListViewControllerTests.hide(window) }
+
+            let values = await waitForValues(
+                ["Edit files", "Ask me", "Notify me", "Delegate", "Plugins", "MCP Servers",
+                 "Read AGENTS.md", "Read past sessions", "Skills"],
+                in: screen
+            )
+            #expect(values["Edit files"] == "No, reading and searching only")
+            #expect(values["Ask me"] == "Yes")
+            #expect(values["Notify me"] == "No")
+            #expect(values["Delegate"] == "No")
+            #expect(values["Plugins"] == "notebook")
+            #expect(values["MCP Servers"] == "coros: all tools, gmail: 2 tools")
+            #expect(values["Read AGENTS.md"] == "No")
+            #expect(values["Read past sessions"] == "Yes")
+            #expect(values["Skills"] == "nanny")
+        }
+
+        /// Each row's value, once the page has loaded and drawn the row.
+        private func waitForValues(
+            _ titles: [String],
+            in screen: AgentDetailViewController
+        ) async -> [String: String] {
+            var values: [String: String] = [:]
+            _ = await waitForMainActorCondition(timeout: .seconds(5)) {
+                screen.view.layoutIfNeeded()
+                let rows = screen.collectionView.visibleCells
+                    .flatMap { $0.allAccessibilityElements() }
+                for title in titles where values[title] == nil {
+                    if let value = rows.first(where: { $0.accessibilityLabel == title })?.accessibilityValue {
+                        values[title] = value
+                    }
+                }
+                return values.count == titles.count
+            }
+            return values
         }
 
         private func hasAlert(_ screen: UIViewController, _ window: UIWindow) -> Bool {
@@ -524,29 +629,20 @@ private final class AgentsURLProtocol: URLProtocol, @unchecked Sendable {
     }
 }
 
-/// Serves an Agent definition and Skill/Extension catalogs for `AgentDetailViewController`
-/// Skill-name tests without contending with `AgentsURLProtocol`.
+/// Serves an Agent definition for `AgentDetailViewController` capability tests without
+/// contending with `AgentsURLProtocol`.
 private final class AgentDetailSkillsURLProtocol: URLProtocol, @unchecked Sendable {
     static let host = "agent-detail-skills.test"
     private static let lock = NSLock()
     nonisolated(unsafe) private static var agentValue: StoredAgentDefinition?
-    nonisolated(unsafe) private static var skillsValue: ServerSkillsCatalog?
 
     static var storedAgent: StoredAgentDefinition? {
         get { lock.withLock { agentValue } }
         set { lock.withLock { agentValue = newValue } }
     }
 
-    static var skillsCatalog: ServerSkillsCatalog? {
-        get { lock.withLock { skillsValue } }
-        set { lock.withLock { skillsValue = newValue } }
-    }
-
     static func reset() {
-        lock.withLock {
-            agentValue = nil
-            skillsValue = nil
-        }
+        lock.withLock { agentValue = nil }
     }
 
     static func makeClient() -> APIClient {
@@ -570,9 +666,7 @@ private final class AgentDetailSkillsURLProtocol: URLProtocol, @unchecked Sendab
     override func startLoading() {
         let path = request.url?.path ?? ""
         let body: Data?
-        if path.hasSuffix("/server/resources/skills"), let catalog = Self.skillsCatalog {
-            body = try? JSONEncoder().encode(catalog)
-        } else if path.hasSuffix("/server/resources/extensions") {
+        if path.hasSuffix("/server/resources/extensions") {
             body = Data(#"{"extensions":[],"builtInTools":[],"optionalTools":[]}"#.utf8)
         } else if path.contains("/agents/"), let agent = Self.storedAgent {
             body = try? JSONEncoder().encode(["agent": agent])

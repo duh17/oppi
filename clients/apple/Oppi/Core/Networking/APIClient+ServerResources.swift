@@ -36,17 +36,6 @@ extension APIClient {
         try await get(url: serverResourceURL(pathSegments: ["extensions", id]), as: ServerExtensionDetail.self)
     }
 
-    /// Executes one explicitly selected user Extension only to inspect its Agent tools.
-    func inspectAgentExtensionTools(id: String) async throws -> ServerExtensionDetail {
-        try await get(
-            url: serverResourceURL(
-                pathSegments: ["extensions", id],
-                queryItems: [URLQueryItem(name: "agentTools", value: "true")]
-            ),
-            as: ServerExtensionDetail.self
-        )
-    }
-
     func setServerExtensionEnabled(id: String, enabled: Bool) async throws -> ServerExtensionSummary {
         try await put(
             url: serverResourceURL(pathSegments: ["extensions", id, "enabled"]),

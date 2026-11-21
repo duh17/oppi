@@ -497,6 +497,10 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         // occurrences expanded from each schedule's trigger.
         scheduleCalendar: { version: 1 },
         currentFiles: { version: 1 },
+        // Saved Agents state capabilities (tools, plugins, MCP servers, Skills, context) instead
+        // of Pi tool lists and extension IDs. An older app writes the old shape and an older
+        // server cannot read the new one, so both sides gate on this.
+        agentCapabilities: { version: 1 },
         workspaceFileEditing: {
           version: 1,
           maxBytes: MAX_WORKSPACE_FILE_EDIT_BYTES,

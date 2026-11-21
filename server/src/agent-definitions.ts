@@ -12,7 +12,12 @@ import {
 import { openDatabase, type SqliteDatabase } from "./sqlite-compat.js";
 import { runSessionStateDeadSchemaCleanup } from "./storage/session-state-cleanup-migration.js";
 import { isThinkingLevel } from "./thinking-levels.js";
-import type { AgentDefinition } from "./agent-launch-service.js";
+import { isAgentDefinitionV1, type AgentDefinition } from "./agent-definition.js";
+import {
+  migrateAgentDefinitionV1,
+  type AgentMigrationCatalogs,
+} from "./agent-definition-migration.js";
+import { migrateWithBackup } from "./storage/session-state-cleanup-migration.js";
 import { isRecord } from "./json-shape.js";
 
 export type AgentDefinitionStatus = "active" | "archived";
@@ -23,6 +28,8 @@ export interface StoredAgentDefinition {
   status: AgentDefinitionStatus;
   version: number;
   definition: AgentDefinition;
+  /** True when the row is still in the v1 shape: it lists, but it cannot launch. */
+  v1?: true;
   createdAt: number;
   updatedAt: number;
   archivedAt?: number;
@@ -101,7 +108,7 @@ interface AgentVersionRow {
 }
 
 const INSTRUCTION_MODES = new Set(["append", "replace"]);
-const NO_TOOLS_VALUES = new Set(["all", "builtin"]);
+const CORE_TIERS = new Set(["full", "readonly"]);
 const FORBIDDEN_AGENT_DEFINITION_KEYS = new Set([
   "target",
   "workspaceId",
@@ -116,26 +123,18 @@ const AGENT_DEFINITION_KEYS = new Set([
   "icon",
   "description",
   "instructions",
-  "resources",
   "sessionDefaults",
+  "capabilities",
+  "context",
   "launchConstraints",
 ]);
+/** Keys the v1 shape had. Naming one is a clear "this is v1" error, not a typo. */
+const AGENT_V1_DEFINITION_KEYS = new Set(["resources"]);
+const AGENT_V1_SESSION_DEFAULT_KEYS = new Set(["tools", "excludeTools", "noTools"]);
 const INSTRUCTION_KEYS = new Set(["mode", "text"]);
-const RESOURCE_KEYS = new Set([
-  "agentsFiles",
-  "noContextFiles",
-  "skillPaths",
-  "extensionIds",
-  "noSessionHistory",
-]);
-const AGENTS_FILE_KEYS = new Set(["path", "content"]);
-const SESSION_DEFAULT_KEYS = new Set([
-  "model",
-  "thinkingLevel",
-  "tools",
-  "excludeTools",
-  "noTools",
-]);
+const CAPABILITY_KEYS = new Set(["core", "ask", "notify", "subagent", "plugins", "mcp"]);
+const CONTEXT_KEYS = new Set(["skills", "contextFiles", "sessionHistory"]);
+const SESSION_DEFAULT_KEYS = new Set(["model", "thinkingLevel"]);
 const LAUNCH_CONSTRAINT_KEYS = new Set([
   "allowedWorkspaceIds",
   "requiredRuntime",
@@ -144,6 +143,8 @@ const LAUNCH_CONSTRAINT_KEYS = new Set([
 const MAX_UNVERSIONED_AGENT_UPDATE_ATTEMPTS = 3;
 export class AgentDefinitionStore {
   private readonly db: SqliteDatabase;
+  /** The data directory: the migration writes its pre-migration backup under `backups/`. */
+  private readonly dataDir: string;
 
   constructor(
     dataDir: string,
@@ -154,6 +155,7 @@ export class AgentDefinitionStore {
       mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     }
     const resolvedDataDir = resolve(dataDir);
+    this.dataDir = resolvedDataDir;
     const resolvedDbPath = resolve(dbPath ?? join(dataDir, "session-state.db"));
     this.db = openDatabase(resolvedDbPath);
     chmodSync(resolvedDbPath, 0o600);
@@ -365,8 +367,47 @@ export class AgentDefinitionStore {
     return rows.map(agentVersionFromRow);
   }
 
-  /** Rewrites historical icon values (and a removed resource field) in stored definitions. */
-  migrateStoredIconChoices(): void {
+  /** True while any stored row or version still holds the v1 shape. */
+  hasV1Definitions(): boolean {
+    const rows = this.db.prepare("SELECT definition_json FROM agent_definitions").all() as Array<{
+      definition_json: string;
+    }>;
+    if (rows.some((row) => isV1Json(row.definition_json))) return true;
+    const versions = this.db
+      .prepare("SELECT definition_json FROM agent_definition_versions")
+      .all() as Array<{ definition_json: string }>;
+    return versions.some((row) => isV1Json(row.definition_json));
+  }
+
+  /**
+   * The one-time rewrite of stored definitions into the v2 shape, plus the historical icon values
+   * it also carries. Runs once per data directory, over the rows and version history stored at
+   * that moment, inside one transaction: a resumed session reads the version it pinned, so history
+   * has to be readable too. A row that cannot be migrated is left alone and reports why; it then
+   * fails launch with `agent_definition_v2_required` instead of running v1 wiring.
+   */
+  migrateStoredDefinitions(catalogs: AgentMigrationCatalogs): {
+    migrated: number;
+    notes: Array<{ id: string; notes: string[] }>;
+    backupPath: string;
+  } {
+    // The rewrite runs under the same pre-migration backup as every other destructive session
+    // state migration: putting the old server back finds rows it can read, and an old server
+    // casts rows without validating them, so a v2 row without `resources` would read as "no
+    // restrictions". A throw below rolls the transaction back and the backup is dropped.
+    const { backupPath, result } = migrateWithBackup(
+      this.db,
+      this.dataDir,
+      "agent-definitions-v2",
+      () => this.rewriteStoredDefinitions(catalogs),
+    );
+    return { ...result, backupPath };
+  }
+
+  private rewriteStoredDefinitions(catalogs: AgentMigrationCatalogs): {
+    migrated: number;
+    notes: Array<{ id: string; notes: string[] }>;
+  } {
     const currentRows = this.db.prepare("SELECT * FROM agent_definitions").all() as AgentRow[];
     const versionRows = this.db
       .prepare("SELECT * FROM agent_definition_versions")
@@ -377,17 +418,62 @@ export class AgentDefinitionStore {
     const updateVersion = this.db.prepare(
       "UPDATE agent_definition_versions SET definition_json = ? WHERE id = ? AND version = ?",
     );
+    let migrated = 0;
+    const notes: Array<{ id: string; notes: string[] }> = [];
+
+    const rewrite = (rawJson: string): string => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(rawJson);
+      } catch {
+        return rawJson;
+      }
+      if (!isRecord(parsed)) return rawJson;
+      const result = migrateAgentDefinitionV1(parsed, catalogs);
+      if (result.notes.length > 0) notes.push({ id: "", notes: [...result.notes] });
+      if (result.definition === undefined) {
+        // Already v2: only its historical icon may still need rewriting.
+        const withIcon = { ...parsed, icon: migrateIconChoice(parsed.icon) };
+        return JSON.stringify(withIcon);
+      }
+      const withIcon: Record<string, unknown> = {
+        ...(result.definition as unknown as Record<string, unknown>),
+        icon: migrateIconChoice(result.definition.icon),
+      };
+      // Every migrated row must be something the store would accept from a client. One that is
+      // not stays in its old shape (and refuses to launch by name) instead of being written.
+      try {
+        validateAgentDefinition(withIcon);
+      } catch (error) {
+        notes.push({
+          id: "",
+          notes: [
+            `could not migrate this Agent, so it is untouched and cannot start: ${error instanceof Error ? error.message : String(error)}`,
+          ],
+        });
+        return rawJson;
+      }
+      migrated += 1;
+      return JSON.stringify(withIcon);
+    };
 
     this.db.transaction(() => {
       for (const row of currentRows) {
-        const migrated = migrateStoredDefinitionJson(row.definition_json);
-        if (migrated !== row.definition_json) updateCurrent.run(migrated, row.id);
+        const before = notes.length;
+        const rewritten = rewrite(row.definition_json);
+        const last = notes[notes.length - 1];
+        if (notes.length > before && last) last.id = row.id;
+        if (rewritten !== row.definition_json) updateCurrent.run(rewritten, row.id);
       }
       for (const row of versionRows) {
-        const migrated = migrateStoredDefinitionJson(row.definition_json);
-        if (migrated !== row.definition_json) updateVersion.run(migrated, row.id, row.version);
+        const before = notes.length;
+        const rewritten = rewrite(row.definition_json);
+        const last = notes[notes.length - 1];
+        if (notes.length > before && last) last.id = `${row.id}@v${row.version}`;
+        if (rewritten !== row.definition_json) updateVersion.run(rewritten, row.id, row.version);
       }
     })();
+    return { migrated, notes };
   }
 
   /** A Genmoji or image icon must name a stored asset of its own kind. */
@@ -483,6 +569,9 @@ function agentFromRow(row: AgentRow): StoredAgentDefinition {
     status: row.status,
     version: row.version,
     definition,
+    // A row the startup migration could not rewrite still lists and reads, but launching it would
+    // run v1 wiring the engines no longer have, so the launch route refuses it by name.
+    ...(isAgentDefinitionV1(definition) ? { v1: true as const } : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...(row.archived_at !== null ? { archivedAt: row.archived_at } : {}),
@@ -513,7 +602,8 @@ export function validateAgentDefinition(input: unknown): AgentDefinition {
   const icon = validateAgentIcon(input.icon);
   const description = validateString(input.description, "description");
   const instructions = validateInstructions(input.instructions);
-  const resources = validateResources(input.resources);
+  const capabilities = validateCapabilities(input.capabilities);
+  const context = validateContext(input.context);
   const sessionDefaults = validateSessionDefaults(input.sessionDefaults);
   const launchConstraints = validateLaunchConstraints(input.launchConstraints);
 
@@ -522,7 +612,8 @@ export function validateAgentDefinition(input: unknown): AgentDefinition {
     icon,
     ...(description !== undefined ? { description } : {}),
     ...(instructions !== undefined ? { instructions } : {}),
-    ...(resources !== undefined ? { resources } : {}),
+    ...(capabilities !== undefined ? { capabilities } : {}),
+    ...(context !== undefined ? { context } : {}),
     ...(sessionDefaults !== undefined ? { sessionDefaults } : {}),
     ...(launchConstraints !== undefined ? { launchConstraints } : {}),
   };
@@ -543,8 +634,11 @@ function mergeAgentDefinition(current: AgentDefinition, patch: unknown): AgentDe
   const merged = {
     ...current,
     ...patch,
-    ...(isRecord(patch.resources)
-      ? { resources: { ...(current.resources ?? {}), ...patch.resources } }
+    ...(isRecord(patch.capabilities)
+      ? { capabilities: { ...(current.capabilities ?? {}), ...patch.capabilities } }
+      : {}),
+    ...(isRecord(patch.context)
+      ? { context: { ...(current.context ?? {}), ...patch.context } }
       : {}),
     ...(isRecord(patch.sessionDefaults)
       ? { sessionDefaults: { ...(current.sessionDefaults ?? {}), ...patch.sessionDefaults } }
@@ -562,10 +656,12 @@ function mergeAgentDefinition(current: AgentDefinition, patch: unknown): AgentDe
   removeNullValue(merged, "icon");
   removeNullValue(merged, "description");
   removeNullValue(merged, "instructions");
-  removeNullValue(merged, "resources");
+  removeNullValue(merged, "capabilities");
+  removeNullValue(merged, "context");
   removeNullValue(merged, "sessionDefaults");
   removeNullValue(merged, "launchConstraints");
-  if (isRecord(merged.resources)) removeNullValues(merged.resources);
+  if (isRecord(merged.capabilities)) removeNullValues(merged.capabilities);
+  if (isRecord(merged.context)) removeNullValues(merged.context);
   if (isRecord(merged.sessionDefaults)) removeNullValues(merged.sessionDefaults);
   if (isRecord(merged.launchConstraints)) removeNullValues(merged.launchConstraints);
 
@@ -594,45 +690,85 @@ function validateInstructions(value: unknown): AgentDefinition["instructions"] |
   return { mode: mode as "append" | "replace", text };
 }
 
-function validateResources(value: unknown): AgentDefinition["resources"] | undefined {
+function validateCapabilities(value: unknown): AgentDefinition["capabilities"] | undefined {
   if (value === undefined) return undefined;
-  if (!isRecord(value)) throw new Error("resources must be an object");
-  assertAllowedKeys(value, RESOURCE_KEYS, "resources");
+  if (!isRecord(value)) throw new Error("capabilities must be an object");
+  assertAllowedKeys(value, CAPABILITY_KEYS, "capabilities");
+
+  const core = validateString(value.core, "capabilities.core");
+  if (core !== undefined && !CORE_TIERS.has(core)) {
+    throw new Error("capabilities.core must be full or readonly");
+  }
+  const ask = optionalBoolean(value.ask, "capabilities.ask");
+  const notify = optionalBoolean(value.notify, "capabilities.notify");
+  const subagent = optionalBoolean(value.subagent, "capabilities.subagent");
+  const plugins =
+    value.plugins === undefined
+      ? undefined
+      : validateStringArray(value.plugins, "capabilities.plugins");
+  const mcp = validateMcpSelection(value.mcp);
+
+  // A restricted Agent states what it may reach: "everything" is never implied by omission, which
+  // is the one property that made the old allow lists widen access by accident.
+  if (core === "readonly") {
+    if (plugins === undefined) {
+      throw new Error("capabilities.plugins is required when capabilities.core is readonly");
+    }
+    if (mcp === undefined) {
+      throw new Error("capabilities.mcp is required when capabilities.core is readonly");
+    }
+  }
+
   return {
-    ...(value.agentsFiles !== undefined
-      ? { agentsFiles: validateAgentsFiles(value.agentsFiles) }
-      : {}),
-    ...(value.noContextFiles !== undefined
-      ? { noContextFiles: validateBoolean(value.noContextFiles, "resources.noContextFiles") }
-      : {}),
-    ...(value.skillPaths !== undefined
-      ? { skillPaths: validateStringArray(value.skillPaths, "resources.skillPaths") }
-      : {}),
-    ...(value.extensionIds !== undefined
-      ? { extensionIds: validateStringArray(value.extensionIds, "resources.extensionIds") }
-      : {}),
-    ...(value.noSessionHistory !== undefined
-      ? {
-          noSessionHistory: validateBoolean(value.noSessionHistory, "resources.noSessionHistory"),
-        }
-      : {}),
+    ...(core !== undefined ? { core: core as "full" | "readonly" } : {}),
+    ...(ask !== undefined ? { ask } : {}),
+    ...(notify !== undefined ? { notify } : {}),
+    ...(subagent !== undefined ? { subagent } : {}),
+    ...(plugins !== undefined ? { plugins } : {}),
+    ...(mcp !== undefined ? { mcp } : {}),
   };
 }
 
-function validateAgentsFiles(value: unknown): Array<{ path: string; content: string }> {
-  if (!Array.isArray(value)) throw new Error("resources.agentsFiles must be an array");
-  return value.map((entry, index) => {
-    if (!isRecord(entry)) throw new Error(`resources.agentsFiles[${index}] must be an object`);
-    assertAllowedKeys(entry, AGENTS_FILE_KEYS, `resources.agentsFiles[${index}]`);
-    const path = requireString(entry.path, `resources.agentsFiles[${index}].path`);
-    if (path.startsWith("/") || path.includes("..")) {
-      throw new Error(`resources.agentsFiles[${index}].path must be a relative virtual path`);
+function validateMcpSelection(value: unknown): Record<string, "all" | string[]> | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error("capabilities.mcp must be an object of server names");
+  const selection: Record<string, "all" | string[]> = {};
+  for (const [name, tools] of Object.entries(value)) {
+    if (name.startsWith("mcp__")) {
+      throw new Error(
+        `capabilities.mcp names a tool pattern (${name}); name the server (${name.slice("mcp__".length).split("__")[0]}), not a tool pattern`,
+      );
     }
-    const content = requireString(entry.content, `resources.agentsFiles[${index}].content`, {
-      allowEmpty: true,
-    });
-    return { path, content };
-  });
+    if (!name.trim()) throw new Error("capabilities.mcp server names must not be empty");
+    if (tools === "all") {
+      selection[name] = "all";
+      continue;
+    }
+    if (!Array.isArray(tools)) {
+      throw new Error(`capabilities.mcp.${name} must be "all" or a list of tool names`);
+    }
+    const names = validateStringArray(tools, `capabilities.mcp.${name}`);
+    if (names.length === 0) {
+      throw new Error(`capabilities.mcp.${name} must be "all" or name at least one tool`);
+    }
+    selection[name] = names;
+  }
+  return selection;
+}
+
+function validateContext(value: unknown): AgentDefinition["context"] | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error("context must be an object");
+  assertAllowedKeys(value, CONTEXT_KEYS, "context");
+  const skills =
+    value.skills === undefined ? undefined : validateStringArray(value.skills, "context.skills");
+  const contextFiles = optionalBoolean(value.contextFiles, "context.contextFiles");
+  const sessionHistory = optionalBoolean(value.sessionHistory, "context.sessionHistory");
+  return {
+    ...(skills !== undefined ? { skills } : {}),
+    ...(contextFiles !== undefined ? { contextFiles } : {}),
+    ...(sessionHistory !== undefined ? { sessionHistory } : {}),
+  };
 }
 
 function validateSessionDefaults(value: unknown): AgentDefinition["sessionDefaults"] | undefined {
@@ -643,22 +779,11 @@ function validateSessionDefaults(value: unknown): AgentDefinition["sessionDefaul
   if (thinkingLevel !== undefined && !isThinkingLevel(thinkingLevel)) {
     throw new Error("sessionDefaults.thinkingLevel is invalid");
   }
-  const noTools = validateString(value.noTools, "sessionDefaults.noTools");
-  if (noTools !== undefined && !NO_TOOLS_VALUES.has(noTools)) {
-    throw new Error("sessionDefaults.noTools must be all or builtin");
-  }
   return {
     ...(value.model !== undefined
       ? { model: requireString(value.model, "sessionDefaults.model") }
       : {}),
     ...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
-    ...(value.tools !== undefined
-      ? { tools: validateStringArray(value.tools, "sessionDefaults.tools") }
-      : {}),
-    ...(value.excludeTools !== undefined
-      ? { excludeTools: validateStringArray(value.excludeTools, "sessionDefaults.excludeTools") }
-      : {}),
-    ...(noTools !== undefined ? { noTools: noTools as "all" | "builtin" } : {}),
   };
 }
 
@@ -706,23 +831,12 @@ function validateAgentIcon(value: unknown): AgentDefinition["icon"] {
   return validateIconChoice(value);
 }
 
-function migrateStoredDefinitionJson(rawJson: string): string {
-  let parsed: unknown;
+function isV1Json(rawJson: string): boolean {
   try {
-    parsed = JSON.parse(rawJson);
+    return isAgentDefinitionV1(JSON.parse(rawJson));
   } catch {
-    return rawJson;
+    return false;
   }
-  if (!isRecord(parsed)) return rawJson;
-  const migrated: Record<string, unknown> = {
-    ...parsed,
-    icon: migrateIconChoice(parsed.icon),
-  };
-  if (isRecord(migrated.resources) && "promptTemplateIds" in migrated.resources) {
-    const { promptTemplateIds: _removed, ...resources } = migrated.resources;
-    migrated.resources = resources;
-  }
-  return JSON.stringify(migrated);
 }
 
 function requireString(
@@ -764,6 +878,22 @@ function assertAllowedKeys(
   label: string,
 ): void {
   for (const key of Object.keys(value)) {
-    if (!allowed.has(key)) throw new Error(`${label} has unexpected field: ${key}`);
+    if (allowed.has(key)) continue;
+    if (label === "Agent definition" && AGENT_V1_DEFINITION_KEYS.has(key)) {
+      throw new Error(
+        `Agent definitions are v2: resources was replaced by capabilities and context; rewrite this Agent`,
+      );
+    }
+    if (label === "sessionDefaults" && AGENT_V1_SESSION_DEFAULT_KEYS.has(key)) {
+      throw new Error(
+        `Agent definitions are v2: sessionDefaults.${key} was replaced by capabilities; rewrite this Agent`,
+      );
+    }
+    throw new Error(`${label} has unexpected field: ${key}`);
   }
+}
+
+function optionalBoolean(value: unknown, label: string): boolean | undefined {
+  if (value === undefined) return undefined;
+  return validateBoolean(value, label);
 }

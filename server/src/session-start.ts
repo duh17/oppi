@@ -1,4 +1,5 @@
 import type { AgentDefinition } from "./agent-launch-service.js";
+import type { AgentBuiltinPluginFact } from "./agent-capabilities.js";
 import type { SessionBackendEvent } from "./pi-events.js";
 import { resolveSdkSessionCwdAsync, SdkBackend } from "./sdk-backend.js";
 import { isControlConversation } from "./control-session.js";
@@ -49,6 +50,11 @@ export interface SessionStartCoordinatorDeps {
   runtimeManager: WorkspaceRuntime;
   eventRingCapacity: number;
   getSkillPathResolver: () => ((skillNames: string[]) => Promise<string[]>) | null;
+  /**
+   * Oppi's own plugins and their tools, read from the server's catalog once and cached there. A
+   * read-only Agent may not use one it did not name, and both engines compile from this answer.
+   */
+  getBuiltinPluginFacts?: () => Promise<readonly AgentBuiltinPluginFact[] | null>;
   getNotifyPort: () => SessionNotifyPort | null;
   onPiEvent: (key: string, event: SessionBackendEvent) => void;
   /** A durable run's start or settle, which session status follows. */
@@ -177,6 +183,9 @@ export class SessionStartCoordinator {
                   session,
                   workspace,
                   agentDefinition,
+                  ...(this.deps.getBuiltinPluginFacts
+                    ? { getBuiltinPluginFacts: this.deps.getBuiltinPluginFacts }
+                    : {}),
                   onEvent: (event) => this.deps.onPiEvent(key, event),
                   onEnd: (reason) => this.deps.onSessionEnd(key, reason),
                   dataDir: this.deps.storage.getDataDir(),
@@ -307,6 +316,9 @@ export class SessionStartCoordinator {
       session,
       workspace,
       agentDefinition: this.resolveAgentDefinition(session),
+      ...(this.deps.getBuiltinPluginFacts
+        ? { getBuiltinPluginFacts: this.deps.getBuiltinPluginFacts }
+        : {}),
       dataDir: this.deps.storage.getDataDir(),
       persistBinding: () => this.deps.persistSessionNow(key, session),
       onEvent: (event) => this.deps.onPiEvent(key, event),

@@ -1,0 +1,447 @@
+{
+  "agent-1": {
+    "name": "Agent",
+    "icon": {
+      "kind": "default"
+    },
+    "instructions": {
+      "mode": "append",
+      "text": "Instructions."
+    },
+    "sessionDefaults": {
+      "model": "anthropic/claude-sonnet-5-5",
+      "thinkingLevel": "high"
+    },
+    "capabilities": {
+      "core": "readonly",
+      "ask": false,
+      "notify": false,
+      "subagent": false,
+      "plugins": [
+        "background-jobs"
+      ],
+      "mcp": {
+        "gmail": [
+          "search",
+          "read",
+          "labels",
+          "modify",
+          "archive",
+          "trash",
+          "spam"
+        ]
+      }
+    }
+  },
+  "agent-2": {
+    "name": "Agent",
+    "icon": {
+      "kind": "default"
+    },
+    "instructions": {
+      "mode": "replace",
+      "text": "Instructions."
+    },
+    "sessionDefaults": {
+      "model": "anthropic/claude-sonnet-5-5",
+      "thinkingLevel": "high"
+    },
+    "capabilities": {
+      "core": "readonly",
+      "ask": false,
+      "notify": false,
+      "subagent": false,
+      "plugins": [
+        "background-jobs"
+      ],
+      "mcp": {
+        "chrome-devtools": "all",
+        "xcode": "all"
+      }
+    },
+    "context": {
+      "skills": [
+        "qa"
+      ]
+    },
+    "launchConstraints": {
+      "requiredRuntime": "host"
+    }
+  },
+  "agent-3": {
+    "name": "Agent",
+    "icon": {
+      "kind": "default"
+    },
+    "instructions": {
+      "mode": "append",
+      "text": "Instructions."
+    },
+    "sessionDefaults": {
+      "model": "anthropic/claude-haiku-5-5",
+      "thinkingLevel": "low"
+    },
+    "capabilities": {
+      "core": "readonly",
+      "ask": false,
+      "subagent": false,
+      "plugins": [],
+      "mcp": {}
+    }
+  },
+  "agent-4": {
+    "name": "Agent",
+    "icon": {
+      "kind": "default"
+    },
+    "instructions": {
+      "mode": "replace",
+      "text": "Instructions."
+    },
+    "sessionDefaults": {
+      "model": "anthropic/claude-opus-5-5",
+      "thinkingLevel": "medium"
+    },
+    "capabilities": {
+      "core": "readonly",
+      "ask": false,
+      "notify": false,
+      "subagent": false,
+      "plugins": [
+        "digest-sources-v2"
+      ],
+      "mcp": {}
+    },
+    "context": {
+      "skills": [
+        "wex-feeds"
+      ],
+      "contextFiles": false
+    }
+  },
+  "agent-5": {
+    "name": "Agent",
+    "icon": {
+      "kind": "default"
+    },
+    "sessionDefaults": {
+      "model": "antigravity/gemini-4-neon",
+      "thinkingLevel": "medium"
+    },
+    "capabilities": {
+      "subagent": false
+    },
+    "context": {
+      "sessionHistory": false
+    },
+    "launchConstraints": {
+      "requiredEngine": "durable"
+    }
+  },
+  "agent-6": {
+    "name": "Agent",
+    "icon": {
+      "kind": "default"
+    },
+    "instructions": {
+      "mode": "replace",
+      "text": "Instructions."
+    },
+    "sessionDefaults": {
+      "model": "anthropic/claude-sonnet-5-5",
+      "thinkingLevel": "medium"
+    },
+    "capabilities": {
+      "ask": false,
+      "notify": false,
+      "subagent": false,
+      "plugins": [
+        "webtools"
+      ],
+      "mcp": {}
+    },
+    "context": {
+      "skills": [],
+      "contextFiles": false
+    },
+    "launchConstraints": {
+      "allowedWorkspaceIds": [
+        "w5"
+      ],
+      "requiredRuntime": "host"
+    }
+  },
+  "agent-7": {
+    "name": "Agent",
+    "icon": {
+      "kind": "default"
+    },
+    "instructions": {
+      "mode": "append",
+      "text": "Instructions."
+    },
+    "sessionDefaults": {
+      "model": "anthropic/claude-sonnet-5-5",
+      "thinkingLevel": "high"
+    },
+    "capabilities": {
+      "ask": false,
+      "notify": false,
+      "subagent": false,
+      "plugins": [
+        "background-jobs"
+      ],
+      "mcp": {
+        "kypu": "all",
+        "rea": "all",
+        "xcode": "all"
+      }
+    },
+    "context": {
+      "skills": [
+        "qa",
+        "testing"
+      ]
+    },
+    "launchConstraints": {
+      "requiredRuntime": "host"
+    }
+  },
+  "agent-8": {
+    "name": "Agent",
+    "icon": {
+      "kind": "default"
+    },
+    "instructions": {
+      "mode": "append",
+      "text": "Instructions."
+    },
+    "sessionDefaults": {
+      "model": "anthropic/claude-opus-5-5",
+      "thinkingLevel": "high"
+    },
+    "capabilities": {
+      "notify": false,
+      "plugins": [
+        "digest-sources-v2",
+        "webtools",
+        "youtube-transcribe"
+      ],
+      "mcp": {}
+    },
+    "context": {
+      "skills": [
+        "deep-research",
+        "explain",
+        "investment-research",
+        "weather",
+        "writing"
+      ],
+      "contextFiles": false
+    },
+    "launchConstraints": {
+      "allowedWorkspaceIds": [
+        "w7"
+      ],
+      "requiredRuntime": "sandbox"
+    }
+  },
+  "agent-9": {
+    "name": "Agent",
+    "icon": {
+      "kind": "default"
+    },
+    "sessionDefaults": {
+      "model": "anthropic/claude-opus-5-5",
+      "thinkingLevel": "high"
+    },
+    "capabilities": {
+      "plugins": [
+        "background-jobs",
+        "imagen",
+        "notebook",
+        "pi-antigravity",
+        "secret",
+        "webtools",
+        "youtube-transcribe"
+      ],
+      "mcp": {
+        "rea": "all",
+        "xcode": "all"
+      }
+    },
+    "launchConstraints": {
+      "allowedWorkspaceIds": [
+        "w2"
+      ]
+    }
+  },
+  "agent-10": {
+    "name": "Agent",
+    "icon": {
+      "kind": "default"
+    },
+    "instructions": {
+      "mode": "append",
+      "text": "Instructions."
+    },
+    "sessionDefaults": {
+      "model": "anthropic/claude-sonnet-5-5",
+      "thinkingLevel": "high"
+    },
+    "capabilities": {
+      "notify": false,
+      "plugins": [
+        "background-jobs",
+        "digest-sources-v2",
+        "imagen",
+        "notebook",
+        "secret",
+        "voice",
+        "webtools",
+        "youtube-transcribe"
+      ],
+      "mcp": {
+        "coros": [
+          "createScheduledWorkout",
+          "createTrainingPlan",
+          "downloadActivityFitFiles",
+          "getActivityDetail",
+          "queryActivityFitFileDownloadUrls",
+          "queryActivityLapData",
+          "queryAvgHeartRate",
+          "queryCustomActivityLapData",
+          "queryDailyHealthData",
+          "queryDevices",
+          "queryFitnessAssessmentOverview",
+          "queryHealthCheckTimeSeries",
+          "queryMenstruationCycles",
+          "queryRecoveryStatus",
+          "queryRestingHeartRate",
+          "queryScheduledWorkoutDetails",
+          "querySleepHrv",
+          "querySleepOverview",
+          "querySportRecords",
+          "queryStressLevel",
+          "queryStressTimeSeries",
+          "queryTrainingLoadAssessment",
+          "queryTrainingPlanDetails",
+          "queryTrainingPlanLibrary",
+          "queryTrainingSchedule",
+          "queryUserInfo",
+          "queryWorkoutDetails",
+          "queryWorkoutLibrary",
+          "scheduleWorkout",
+          "updateScheduledWorkout",
+          "updateTrainingPlan",
+          "uploadRouteFile"
+        ],
+        "gmail": "all"
+      }
+    },
+    "context": {
+      "skills": [
+        "chinese-writing",
+        "computer-use",
+        "finance-inbox",
+        "fruitstand",
+        "gmail",
+        "household-wealth-strategy",
+        "investment-research",
+        "notebook",
+        "transcribe",
+        "tts",
+        "weather",
+        "wex-feeds",
+        "wex-markets",
+        "writing"
+      ]
+    }
+  },
+  "agent-11": {
+    "name": "Agent",
+    "icon": {
+      "kind": "default"
+    },
+    "instructions": {
+      "mode": "append",
+      "text": "Instructions."
+    },
+    "sessionDefaults": {
+      "model": "anthropic/claude-opus-5-5",
+      "thinkingLevel": "high"
+    },
+    "capabilities": {
+      "core": "readonly",
+      "ask": false,
+      "notify": false,
+      "plugins": [],
+      "mcp": {}
+    },
+    "context": {
+      "contextFiles": false
+    },
+    "launchConstraints": {
+      "allowedWorkspaceIds": [
+        "w2"
+      ]
+    }
+  },
+  "agent-12": {
+    "name": "Agent",
+    "icon": {
+      "kind": "default"
+    },
+    "instructions": {
+      "mode": "append",
+      "text": "Instructions."
+    },
+    "sessionDefaults": {
+      "thinkingLevel": "low"
+    },
+    "capabilities": {
+      "plugins": [
+        "background-jobs",
+        "digest-sources-v2",
+        "imagen",
+        "notebook",
+        "secret",
+        "voice",
+        "webtools",
+        "youtube-transcribe"
+      ]
+    }
+  },
+  "agent-13": {
+    "name": "Agent",
+    "icon": {
+      "kind": "default"
+    },
+    "instructions": {
+      "mode": "append",
+      "text": "Instructions."
+    },
+    "sessionDefaults": {
+      "model": "anthropic/claude-opus-5-5",
+      "thinkingLevel": "high"
+    },
+    "capabilities": {
+      "core": "readonly",
+      "ask": false,
+      "notify": false,
+      "subagent": false,
+      "plugins": [
+        "background-jobs"
+      ],
+      "mcp": {}
+    },
+    "context": {
+      "skills": [
+        "testing"
+      ]
+    },
+    "launchConstraints": {
+      "requiredRuntime": "host"
+    }
+  }
+}

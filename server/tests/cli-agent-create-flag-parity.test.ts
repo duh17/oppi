@@ -54,11 +54,14 @@ describe("agent create/update editor-flag parity", () => {
       icon: "🧘",
       instructions: "Be careful",
       "instructions-mode": "replace",
+      core: "readonly",
+      plugins: "webtools, notebook",
+      mcp: "gmail, xcode",
       skills: "review, security",
-      extensions: "git, search",
+      "no-ask": "true",
+      "no-context-files": "true",
       "allowed-workspaces": "ws-1, ws-2",
       "required-runtime": "sandbox",
-      tools: "read, grep",
     });
 
     expect(captured.exitCode).toBe(0);
@@ -67,15 +70,17 @@ describe("agent create/update editor-flag parity", () => {
       description: "Reviews diffs",
       icon: { kind: "emoji", value: "🧘" },
       instructions: { mode: "replace", text: "Be careful" },
-      resources: {
-        skillPaths: ["review", "security"],
-        extensionIds: ["git", "search"],
+      capabilities: {
+        core: "readonly",
+        ask: false,
+        plugins: ["webtools", "notebook"],
+        mcp: { gmail: "all", xcode: "all" },
       },
+      context: { skills: ["review", "security"], contextFiles: false },
       launchConstraints: {
         allowedWorkspaceIds: ["ws-1", "ws-2"],
         requiredRuntime: "sandbox",
       },
-      sessionDefaults: { tools: ["read", "grep"] },
     });
   });
 
@@ -138,30 +143,45 @@ describe("agent create/update editor-flag parity", () => {
     expect(request).not.toHaveBeenCalled();
   });
 
-  it("treats empty --skills and --extensions CSV as exact none, not inherit", async () => {
-    await runAgent("create", [], { name: "Reviewer", skills: "", extensions: "  , " });
+  it("reads `none` as exact none, `all` as inherit, and refuses an empty value", async () => {
+    await runAgent("create", [], { name: "Reviewer", skills: "none", plugins: "none", mcp: "none" });
     expect(postedBody()).toEqual({
       name: "Reviewer",
-      resources: { skillPaths: [], extensionIds: [] },
+      capabilities: { plugins: [], mcp: {} },
+      context: { skills: [] },
     });
+    request.mockReset();
+    request.mockResolvedValue(created as never);
+    await runAgent("create", [], { name: "Reviewer", skills: "all", mcp: "all" });
+    expect(postedBody()).toEqual({ name: "Reviewer", capabilities: { mcp: null }, context: { skills: null } });
+    // An empty value reads as "everything" to whoever meant "nothing": it is refused instead.
+    request.mockClear();
+    const refused = await runAgent("create", [], { name: "Reviewer", skills: "" });
+    expect(refused.exitCode).toBe(1);
+    expect(JSON.parse(refused.stdout)).toMatchObject({
+      ok: false,
+      error: { message: expect.stringContaining("an empty value is neither none nor all") },
+    });
+    expect(request).not.toHaveBeenCalled();
   });
 
-  it("maps parseCliArgs empty --skills/--extensions values through cmdAgent to exact none", async () => {
+  it("maps parseCliArgs --skills none and --mcp none through cmdAgent to exact none", async () => {
     const parsed = parseCliArgs([
       "agent",
       "create",
       "--name",
       "Reviewer",
       "--skills",
-      "",
-      "--extensions",
-      "",
+      "none",
+      "--mcp",
+      "none",
     ]);
-    expect(parsed.flags).toMatchObject({ name: "Reviewer", skills: "", extensions: "" });
+    expect(parsed.flags).toMatchObject({ name: "Reviewer", skills: "none", mcp: "none" });
     await runAgent(parsed.positional[0] ?? "create", parsed.positional.slice(1), parsed.flags);
     expect(postedBody()).toEqual({
       name: "Reviewer",
-      resources: { skillPaths: [], extensionIds: [] },
+      capabilities: { mcp: {} },
+      context: { skills: [] },
     });
   });
 
@@ -238,14 +258,14 @@ describe("agent create/update editor-flag parity", () => {
   it("rejects nested flags when definition JSON already set the parent object to null", async () => {
     const resources = await runAgent("update", ["Reviewer"], {
       skills: "review",
-      "definition-json": JSON.stringify({ resources: null }),
+      "definition-json": JSON.stringify({ context: null }),
     });
     expect(resources.exitCode).toBe(1);
     expect(JSON.parse(resources.stdout)).toMatchObject({
       ok: false,
       error: {
         message:
-          "cannot overlay resources.skillPaths because resources is null in the definition JSON",
+          "cannot overlay context.skills because context is null in the definition JSON",
       },
     });
     expect(request).not.toHaveBeenCalled();
@@ -267,24 +287,18 @@ describe("agent create/update editor-flag parity", () => {
       skills: "new-skill",
       "required-runtime": "sandbox",
       "definition-json": JSON.stringify({
-        resources: {
-          skillPaths: ["old-skill"],
-          extensionIds: ["git"],
-          agentsFiles: [{ path: "AGENTS.md", content: "keep" }],
-        },
+        capabilities: { core: "full", plugins: ["webtools"] },
+        context: { skills: ["old-skill"], sessionHistory: false },
         launchConstraints: { allowedWorkspaceIds: ["ws-1"], requiredRuntime: "host" },
-        sessionDefaults: { model: "json-model", tools: ["write"] },
+        sessionDefaults: { model: "json-model" },
       }),
     });
 
     expect(patchedBody()).toEqual({
-      resources: {
-        skillPaths: ["new-skill"],
-        extensionIds: ["git"],
-        agentsFiles: [{ path: "AGENTS.md", content: "keep" }],
-      },
+      capabilities: { core: "full", plugins: ["webtools"] },
+      context: { skills: ["new-skill"], sessionHistory: false },
       launchConstraints: { allowedWorkspaceIds: ["ws-1"], requiredRuntime: "sandbox" },
-      sessionDefaults: { model: "json-model", tools: ["write"] },
+      sessionDefaults: { model: "json-model" },
     });
   });
 
@@ -319,7 +333,8 @@ describe("agent create/update editor-flag parity", () => {
       "clear-icon": "true",
       "clear-instructions": "true",
       "clear-skills": "true",
-      "clear-extensions": "true",
+      "clear-plugins": "true",
+      "clear-mcp": "true",
       "clear-allowed-workspaces": "true",
       "clear-required-runtime": "true",
     });
@@ -327,7 +342,8 @@ describe("agent create/update editor-flag parity", () => {
       description: null,
       icon: null,
       instructions: null,
-      resources: { skillPaths: null, extensionIds: null },
+      capabilities: { plugins: null, mcp: null },
+      context: { skills: null },
       launchConstraints: { allowedWorkspaceIds: null, requiredRuntime: null },
     });
 
@@ -350,7 +366,8 @@ describe("agent create/update editor-flag parity", () => {
     ["instructions-file", "clear-instructions"],
     ["instructions-mode", "clear-instructions"],
     ["skills", "clear-skills"],
-    ["extensions", "clear-extensions"],
+    ["plugins", "clear-plugins"],
+    ["mcp", "clear-mcp"],
     ["allowed-workspaces", "clear-allowed-workspaces"],
     ["required-runtime", "clear-required-runtime"],
   ] as const)("rejects combining --%s with --%s", async (valueFlag, clearFlag) => {
@@ -370,13 +387,13 @@ describe("agent create/update editor-flag parity", () => {
       "definition-json": JSON.stringify({
         name: "Inline Reviewer",
         description: "Inline create",
-        resources: { skillPaths: ["review"] },
+        context: { skills: ["review"] },
       }),
     });
     expect(postedBody()).toEqual({
       name: "Inline Reviewer",
       description: "Inline create",
-      resources: { skillPaths: ["review"] },
+      context: { skills: ["review"] },
     });
 
     request.mockResolvedValueOnce(updated as never);
@@ -406,7 +423,7 @@ describe("agent get human inspection", () => {
       expect(text).toContain("v2");
       expect(text).toContain("For the full definition, run `oppi agent get Sensei --json`.");
       expect(text).not.toContain("sessionDefaults");
-      expect(text).not.toContain("skillPaths");
+      expect(text).not.toContain("capabilities");
     } finally {
       log.mockRestore();
     }

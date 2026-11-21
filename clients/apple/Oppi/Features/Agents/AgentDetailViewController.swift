@@ -2,8 +2,8 @@ import UIKit
 
 /// A saved Agent: its icon as a large circle at the top of the page, which opens
 /// the icon picker, then its definition, system prompt, Pi session defaults,
-/// resources, launch constraints, and Run (schedule, start). Edit opens the native
-/// editor; the actions menu offers Archive; an active Agent's Start Session
+/// tools, context, launch constraints, and Run (schedule, start). Edit opens the
+/// native editor; the actions menu offers Archive; an active Agent's Start Session
 /// row (under Schedule Recurring Run) opens Quick Session with the Agent, and
 /// it carries the compact Oppi bar to describe a change. Start Session is a
 /// labeled row, not a bottom-bar compose glyph, so it does not read as a third
@@ -15,14 +15,13 @@ import UIKit
 /// its rows, its bar items, the composer, and the sheets it opens.
 @MainActor
 final class AgentDetailViewController: ListScreenController<AgentDetailViewController.Section, AgentDetailViewController.Item> {
-    enum Section: Hashable, Sendable { case hero, definition, status, prompt, defaults, resources, constraints, run }
+    enum Section: Hashable, Sendable { case hero, definition, status, prompt, defaults, tools, context, constraints, run }
     enum Item: Hashable, Sendable {
         case hero
         case value(title: String, value: String)
         case block(title: String, value: String)
         case resourceList(title: String, value: String)
         case prompt
-        case notice(text: String, systemImage: String, warning: Bool)
         case schedule
         case startSession
         case caption(String)
@@ -100,6 +99,8 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
 
     private var palette: ThemePalette { root.themeStore.activeThemeID.palette }
     private var connection: ServerConnection { root.windowConnectionOrStandIn }
+    /// Whether this server can save what the editor writes; an older one cannot.
+    private var editsAgentCapabilities: Bool { connection.editsAgentCapabilities }
     private var presenters: [RouterModalPresenter] {
         [nativeEditor, iconPicker, definitionReview, scheduleSheet]
     }
@@ -168,6 +169,12 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
         }
         archive.accessibilityIdentifier = "agents.detail.archive"
         actionsItem.menu = UIMenu(children: [archive])
+        // An older server cannot save what the editor writes, so Edit stays where it is and says
+        // why rather than opening a form whose Save would be refused.
+        editItem.isEnabled = editsAgentCapabilities
+        editItem.accessibilityValue = editsAgentCapabilities
+            ? nil
+            : "This server needs an update to edit its Agents"
         ListScreen.setBarItems(trailing: [actionsItem, editItem], leading: [], on: navigationItem)
     }
 
@@ -204,9 +211,18 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
         sections.append(ListSection(.defaults, header: "Pi Session Defaults", items: [
             .value(title: "Model", value: defaults?.model?.nilIfBlank ?? "Server default"),
             .value(title: "Thinking Level", value: defaults?.thinkingLevel?.rawValue ?? "Default"),
-        ] + toolDefaultItems(defaults)))
+        ]))
 
-        sections.append(ListSection(.resources, header: "Resources", items: resourceItems(definition.resources)))
+        if editsAgentCapabilities {
+            sections.append(ListSection(.tools, header: "Tools", items: capabilityItems(definition.capabilities)))
+            sections.append(ListSection(.context, header: "Context", items: contextItems(definition.context)))
+        } else {
+            // An older server stores Pi tool lists and Extension IDs, which this app cannot read:
+            // say so instead of showing capabilities that are not there.
+            sections.append(ListSection(.tools, header: "Tools", items: [
+                .caption("Update this server to see and edit this Agent’s tools, plugins, MCP servers, and context."),
+            ]))
+        }
 
         if let constraints = definition.launchConstraints {
             sections.append(ListSection(.constraints, header: "Launch Constraints", items: [
@@ -274,50 +290,62 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
                 AnyHashable(connection.workspaceStore.workspaces.isEmpty),
                 AnyHashable(connection.currentServerId),
             ])
-        // A notice or caption is a label; the kit's default draws it again.
+        // A caption is a label; the kit's default draws it again.
         default:
             return super.inputs(of: item)
         }
     }
 
-    private func toolDefaultItems(_ defaults: AgentSessionDefaults?) -> [Item] {
-        if defaults?.noTools == nil && defaults?.tools == nil && defaults?.excludeTools == nil {
-            return [.value(title: "Tools", value: "Default")]
-        }
-        var items: [Item] = []
-        if let noTools = defaults?.noTools {
-            items.append(.value(title: "Tools", value: noTools.displayName))
-        }
-        if let allowed = defaults?.tools {
-            items.append(.block(title: "Allowed Tools", value: allowed.isEmpty ? "None" : allowed.joined(separator: ", ")))
-        }
-        if let excluded = defaults?.excludeTools {
-            items.append(.block(title: "Excluded Tools", value: excluded.isEmpty ? "None" : excluded.joined(separator: ", ")))
-        }
-        return items
-    }
-
-    private func resourceItems(_ resources: AgentResources?) -> [Item] {
-        var items = [
-            resourceItem("Skills", values: resources?.skillPaths, displayValues: skillDisplayNames(resources?.skillPaths)),
-            resourceItem("Extensions", values: resources?.extensionIds, displayValues: extensionDisplayNames(resources?.extensionIds)),
+    /// The same rows the editor's Tools and Context sections show, read-only: what
+    /// this Agent may do, and what its sessions read.
+    private func capabilityItems(_ capabilities: AgentCapabilities?) -> [Item] {
+        let capabilities = capabilities ?? AgentCapabilities()
+        return [
+            .value(
+                title: "Edit files",
+                value: capabilities.editsFiles ? "Yes" : "No, reading and searching only"
+            ),
+            .value(title: "Ask me", value: Self.yesNo(capabilities.canAsk)),
+            .value(title: "Notify me", value: Self.yesNo(capabilities.canNotify)),
+            .value(title: "Delegate", value: Self.yesNo(capabilities.canDelegate)),
+            .resourceList(title: "Plugins", value: Self.pluginSummary(capabilities.plugins)),
+            .resourceList(title: "MCP Servers", value: Self.mcpSummary(capabilities.mcp)),
         ]
-        if resources?.noContextFiles == true {
-            items.append(.notice(text: "Context files disabled", systemImage: "doc.badge.gearshape", warning: false))
-        }
-        if let message = skillCatalogState.statusMessage(for: "Skills") {
-            items.append(.notice(text: message, systemImage: "exclamationmark.triangle", warning: true))
-        }
-        if let message = extensionCatalogState.statusMessage(for: "Extensions") {
-            items.append(.notice(text: message, systemImage: "exclamationmark.triangle", warning: true))
+    }
+
+    private func contextItems(_ context: AgentContext?) -> [Item] {
+        let context = context ?? AgentContext()
+        var items: [Item] = [
+            .value(title: "Read AGENTS.md", value: Self.yesNo(context.readsContextFiles)),
+            .value(title: "Read past sessions", value: Self.yesNo(context.readsSessionHistory)),
+        ]
+        if let skills = context.skills {
+            items.append(.resourceList(
+                title: "Skills",
+                value: skills.isEmpty ? "None" : skills.sorted().joined(separator: ", ")
+            ))
+        } else {
+            items.append(.value(title: "Skills", value: "All"))
         }
         return items
     }
 
-    private func resourceItem(_ title: String, values: [String]?, displayValues: [String]?) -> Item {
-        guard let values else { return .value(title: title, value: "Default discovery") }
-        guard !values.isEmpty else { return .value(title: title, value: "None") }
-        return .resourceList(title: title, value: (displayValues ?? values).joined(separator: ", "))
+    private static func yesNo(_ value: Bool) -> String { value ? "Yes" : "No" }
+
+    private static func pluginSummary(_ plugins: [String]?) -> String {
+        guard let plugins else { return "All" }
+        return plugins.isEmpty ? "None" : plugins.sorted().joined(separator: ", ")
+    }
+
+    private static func mcpSummary(_ mcp: [String: AgentMcpTools]?) -> String {
+        guard let mcp else { return "All" }
+        guard !mcp.isEmpty else { return "None" }
+        return mcp.keys.sorted().map { server -> String in
+            switch mcp[server] ?? .all {
+            case .all: "\(server): all tools"
+            case .tools(let names): "\(server): \(names.count) tools"
+            }
+        }.joined(separator: ", ")
     }
 
     /// The page's rows are the kit's theme cards, filled by
@@ -401,16 +429,6 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
                         color: palette.ui.blue
                     ),
                 ], spacing: 10, alignment: .leading)
-            }
-        case .notice(let text, let systemImage, let warning):
-            ListScreen.staticRow(cell)
-            cell.contentConfiguration = ControlViewContent(insets: rowInsets) {
-                ControlRowViews.symbolLabel(
-                    text,
-                    systemImage: systemImage,
-                    style: warning ? .caption1 : .subheadline,
-                    color: warning ? palette.orange : palette.fg
-                )
             }
         case .schedule:
             let enabled = !connection.workspaceStore.workspaces.isEmpty
@@ -573,7 +591,8 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
     private func definitionMarkdown(_ agent: StoredAgentDefinition) -> String {
         let definition = agent.definition
         let defaults = definition.sessionDefaults
-        let resources = definition.resources
+        let capabilities = definition.capabilities ?? AgentCapabilities()
+        let context = definition.context ?? AgentContext()
         let instructions: [String]
         if let instruction = definition.instructions {
             instructions = ["## \(Self.systemPromptTitle(instruction.mode))", "", instruction.text]
@@ -593,77 +612,29 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
             "",
             "- **Model:** \(defaults?.model?.nilIfBlank ?? "Server default")",
             "- **Thinking level:** \(defaults?.thinkingLevel?.rawValue ?? "Default")",
-            "- **Tools:** \(agentToolSummary(defaults))",
             "",
-            "## Resources",
+            "## Tools",
             "",
-            "- **Skills:** \(resourceSummary(resources?.skillPaths, displayValues: skillDisplayNames(resources?.skillPaths)))",
-            "- **Extensions:** \(resourceSummary(resources?.extensionIds, displayValues: extensionDisplayNames(resources?.extensionIds)))",
-            "- **Context files:** \(resources?.noContextFiles == true ? "Disabled" : "Default discovery")",
+            "- **Edit files:** \(capabilities.editsFiles ? "Yes" : "No, reading and searching only")",
+            "- **Ask me:** \(Self.yesNo(capabilities.canAsk))",
+            "- **Notify me:** \(Self.yesNo(capabilities.canNotify))",
+            "- **Delegate:** \(Self.yesNo(capabilities.canDelegate))",
+            "- **Plugins:** \(Self.pluginSummary(capabilities.plugins))",
+            "- **MCP Servers:** \(Self.mcpSummary(capabilities.mcp))",
+            "",
+            "## Context",
+            "",
+            "- **Read AGENTS.md:** \(Self.yesNo(context.readsContextFiles))",
+            "- **Read past sessions:** \(Self.yesNo(context.readsSessionHistory))",
+            "- **Skills:** \(context.skills.map { $0.isEmpty ? "None" : $0.sorted().joined(separator: ", ") } ?? "All")",
         ]
         return lines.joined(separator: "\n")
-    }
-
-    private func agentToolSummary(_ defaults: AgentSessionDefaults?) -> String {
-        if let noTools = defaults?.noTools { return noTools.displayName }
-        if let allowed = defaults?.tools {
-            return allowed.isEmpty ? "Allowed: None" : "Allowed: \(allowed.joined(separator: ", "))"
-        }
-        if let excluded = defaults?.excludeTools {
-            return excluded.isEmpty ? "Excluded: None" : "Excluded: \(excluded.joined(separator: ", "))"
-        }
-        return "Default"
-    }
-
-    private func resourceSummary(_ values: [String]?, displayValues: [String]? = nil) -> String {
-        guard let values else { return "Default discovery" }
-        guard !values.isEmpty else { return "None" }
-        return (displayValues ?? values).joined(separator: ", ")
     }
 
     private func allowedWorkspaceNames(_ ids: [String]?) -> String {
         guard let ids else { return "Any" }
         let workspaces = connection.workspaceStore.workspaces
         return ids.map { id in workspaces.first(where: { $0.id == id })?.name ?? id }.joined(separator: ", ")
-    }
-
-    private func skillDisplayNames(_ paths: [String]?) -> [String]? {
-        guard let paths, let serverId = connection.currentServerId else { return nil }
-        let catalog = connection.serverResourceStore.skills(forServer: serverId)
-        return ServerSkillSummary.resolveSelections(paths, in: catalog).map(\.displayName)
-    }
-
-    private func extensionDisplayNames(_ ids: [String]?) -> [String]? {
-        guard let ids, let serverId = connection.currentServerId else { return nil }
-        let catalog = connection.serverResourceStore.extensions(forServer: serverId)
-        return ids.map { id in catalog.first(where: { $0.id == id })?.name ?? id }
-    }
-
-    private var skillCatalogState: AgentResourceCatalogState {
-        let connection = connection
-        guard let serverId = connection.currentServerId else { return .unavailable }
-        let store = connection.serverResourceStore
-        let sync = store.syncState(for: .skills, serverId: serverId)
-        return AgentResourceCatalogState.resolve(
-            hasLoaded: store.hasLoadedSkills(forServer: serverId),
-            isSyncing: isLoading || sync.isSyncing,
-            lastSyncFailed: sync.lastSyncFailed,
-            hasRows: !store.skills(forServer: serverId).isEmpty
-        )
-    }
-
-    private var extensionCatalogState: AgentResourceCatalogState {
-        let connection = connection
-        guard let serverId = connection.currentServerId else { return .unavailable }
-        let store = connection.serverResourceStore
-        let sync = store.syncState(for: .extensions, serverId: serverId)
-        return AgentResourceCatalogState.resolve(
-            hasLoaded: store.hasLoadedExtensions(forServer: serverId),
-            isSyncing: isLoading || sync.isSyncing,
-            lastSyncFailed: sync.lastSyncFailed,
-            // An Agent selects Pi extensions only.
-            hasRows: store.extensions(forServer: serverId).contains(where: \.isPiExtension)
-        )
     }
 
     // MARK: - Actions

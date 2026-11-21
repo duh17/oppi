@@ -81,32 +81,4 @@ describe("durable project resources", () => {
     });
     expect(host.skills.map((skill) => skill.name)).toEqual(["linked-skill"]);
   });
-
-  it("a sandbox presents saved AGENTS files only inside the workspace, at guest paths, redacted", async () => {
-    const { hostCwd, agentDir, outside } = layout();
-    symlinkSync(outside, join(hostCwd, "linked"));
-    // A host file the VM refuses is never read from the host instead.
-    writeFileSync(join(hostCwd, "AGENTS.md"), "HOST_AGENTS_TEXT");
-    const content = `Build in ${hostCwd}/src; notes in ${homedir()}/notes.`;
-
-    const resources = await loadDurableProjectResources({
-      hostCwd,
-      agentDir,
-      sandbox: refusingEnv(),
-      projectTrusted: true,
-      resources: {
-        agentsFiles: [
-          { path: "docs/AGENTS.md", content },
-          { path: "linked/AGENTS.md", content: "ESCAPED" },
-        ],
-      },
-    });
-
-    expect(resources.contextFiles).toEqual([
-      {
-        path: `${GUEST}/docs/AGENTS.md`,
-        content: `Build in ${GUEST}/src; notes in /workspace/.host-home/notes.`,
-      },
-    ]);
-  });
 });

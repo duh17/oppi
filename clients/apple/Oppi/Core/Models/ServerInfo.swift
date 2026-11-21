@@ -124,6 +124,10 @@ struct ServerInfo: Codable, Sendable, Equatable {
         let dictationStream: CapabilityVersion?
         let appEventStream: CapabilityVersion?
         let extensionNativeUI: ExtensionNativeUICapability?
+        /// An Agent's definition states capabilities (tools, plugins, MCP servers, Skills,
+        /// context) instead of Pi tool lists and extension IDs. Missing means the server stores
+        /// the old shape, so the app shows an Agent read-only.
+        var agentCapabilities: CapabilityVersion? = nil
         /// Guarded `PUT /files/current?origin=workspace`. Missing means read-only.
         var workspaceFileEditing: WorkspaceFileEditingCapability? = nil
         /// Guarded `PUT /files/current?origin=skill` for editable Skills. Missing means read-only.

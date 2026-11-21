@@ -336,10 +336,10 @@ describe("agent schedule runner", () => {
     expect(store.getSchedule(schedule.id)?.status).toBe("active");
   });
 
-  it("names the unavailable Extension in the failed run error and the dispatch log", async () => {
+  it("names the refused launch in the failed run error and the dispatch log", async () => {
     const schedule = store.createSchedule(
       {
-        name: "Stale Extension digest",
+        name: "Wrong runtime digest",
         trigger: { type: "at", at: 1_000, timeZone: "UTC" },
         action: { ...action(), agentId: "agent-1" },
       },
@@ -350,8 +350,8 @@ describe("agent schedule runner", () => {
       version: 1,
       status: "active" as const,
       definition: {
-        name: "Stale Extension digest",
-        resources: { extensionIds: ["extension_stale_after_rename"] },
+        name: "Wrong runtime digest",
+        launchConstraints: { requiredRuntime: "sandbox" as const },
       },
     };
     // The runner binds its logger at import time. Pre-commit runs with OPPI_LOG_LEVEL=error,
@@ -386,11 +386,11 @@ describe("agent schedule runner", () => {
     expect(store.listRunSummaries(schedule.id)).toEqual([
       expect.objectContaining({
         status: "failed",
-        error: "agent_extensions_unavailable: extension_stale_after_rename",
+        error: "agent_workspace_incompatible",
       }),
     ]);
     expect(logged).toContain("agent_schedule_runner.dispatch.failed");
-    expect(logged).toContain("agent_extensions_unavailable: extension_stale_after_rename");
+    expect(logged).toContain("agent_workspace_incompatible");
   });
 
   it("does not broadcast a discarded scheduled launch shell", async () => {

@@ -211,6 +211,12 @@ final class ServerConnection {
               let capability = serverCapabilities?.internalUrlViews, capability.version >= 1 else { return false }
         return capability.schemes.contains(scheme)
     }
+    /// Whether this server stores an Agent's capabilities (v2). An older server keeps the old
+    /// shape, so the app shows its Agents read-only instead of sending a body it would refuse.
+    /// Until `/server/info` arrives nothing is known, and the editor stays as it was.
+    var editsAgentCapabilities: Bool {
+        serverCapabilities == nil || (serverCapabilities?.agentCapabilities?.version ?? 0) >= 1
+    }
     /// Whether this server offers `feature` (its switch in `/server/info`). Every feature reads on
     /// until capabilities load, so a pane restored at launch waits for them rather than closing.
     func offers(_ feature: ServerFeature) -> Bool {
@@ -2197,6 +2203,16 @@ final class ServerConnection {
 
     func prepareFocusedSessionStreamEndpointForTesting(sessionId: String, routeScope: SessionRouteScope) {
         prepareFocusedSessionStreamEndpoint(sessionId: sessionId, routeScope: routeScope)
+    }
+
+    /// Whether this server advertises the v2 Agent shape, for a test of the editor's gate.
+    func setAgentCapabilitiesForTesting(_ offered: Bool) {
+        var capabilities = serverCapabilities
+            ?? ServerInfo.Capabilities(sessionStream: nil, dictationStream: nil, appEventStream: nil, extensionNativeUI: nil)
+        capabilities.agentCapabilities = offered
+            ? ServerInfo.CapabilityVersion(version: 1)
+            : nil
+        serverCapabilities = capabilities
     }
 
     /// The internal URL schemes the viewer shows (`capabilities.internalUrlViews`), on whatever

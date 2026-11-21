@@ -40,11 +40,14 @@
     "clients/apple/Oppi/App/WorkspaceCreationIntake.swift": {
       "active connection read": 2
     },
+    "clients/apple/Oppi/Features/Agents/AgentCapabilityPages.swift": {
+      "toggleRow(": 1
+    },
     "clients/apple/Oppi/Features/Agents/AgentNativeEditDraft.swift": {
       "AppPreferences.*.set": 1
     },
     "clients/apple/Oppi/Features/Agents/AgentNativeEditViewController.swift": {
-      "toggleRow(": 1
+      "toggleRow(": 7
     },
     "clients/apple/Oppi/Features/Agents/AgentToolSelectionViewController.swift": {
       ".settingsToggle(": 1

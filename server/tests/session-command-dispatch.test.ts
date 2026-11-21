@@ -548,7 +548,7 @@ describe("session command dispatch and output boundaries", () => {
     });
   });
 
-  it("posts saved-Agent overrides for tools and thinking", async () => {
+  it("posts only a model override for a saved Agent: capabilities are the Agent's", async () => {
     request
       .mockResolvedValueOnce({ workspace: { id: "ws-1", name: "Oppi" } })
       .mockResolvedValueOnce({ session: { id: "child-1", workspaceId: "ws-1" } });
@@ -559,7 +559,6 @@ describe("session command dispatch and output boundaries", () => {
           agent: "reviewer",
           workspace: "ws-1",
           prompt: "Review this",
-          tools: "read",
           thinking: "high",
           json: "true",
         }),
@@ -571,10 +570,7 @@ describe("session command dispatch and output boundaries", () => {
       body: {
         prompt: { text: "Review this" },
         target: { workspaceId: "ws-1" },
-        overrides: {
-          tools: ["read"],
-          thinkingLevel: "high",
-        },
+        overrides: { thinkingLevel: "high" },
       },
     });
   });

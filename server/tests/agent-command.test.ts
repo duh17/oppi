@@ -163,7 +163,7 @@ describe("agent command", () => {
     expect(request).not.toHaveBeenCalled();
   });
 
-  it("stores sessionDefaults from first-class create flags and overlays definition JSON", async () => {
+  it("stores capabilities from first-class create flags and overlays definition JSON", async () => {
     request
       .mockResolvedValueOnce({
         models: [{ id: "openai/gpt-5.3-codex", name: "GPT-5.3 Codex", provider: "openai" }],
@@ -176,13 +176,13 @@ describe("agent command", () => {
         name: "Reviewer",
         model: "gpt-5.3-codex",
         thinking: "high",
-        tools: "read",
-        "exclude-tools": "bash",
-        "no-builtin-tools": "true",
-        "definition-json": JSON.stringify({
-          description: "From JSON",
-          sessionDefaults: { model: "json-model", tools: ["write"], thinkingLevel: "low" },
-        }),
+        core: "readonly",
+        plugins: "webtools,notebook",
+        mcp: "gmail,xcode",
+        skills: "qa",
+        "no-ask": "true",
+        "no-context-files": "true",
+        "definition-json": JSON.stringify({ description: "From JSON" }),
       }),
     );
 
@@ -191,18 +191,19 @@ describe("agent command", () => {
       body: {
         name: "Reviewer",
         description: "From JSON",
-        sessionDefaults: {
-          model: "openai/gpt-5.3-codex",
-          thinkingLevel: "high",
-          tools: ["read"],
-          excludeTools: ["bash"],
-          noTools: "builtin",
+        capabilities: {
+          core: "readonly",
+          ask: false,
+          plugins: ["webtools", "notebook"],
+          mcp: { gmail: "all", xcode: "all" },
         },
+        context: { skills: ["qa"], contextFiles: false },
+        sessionDefaults: { model: "openai/gpt-5.3-codex", thinkingLevel: "high" },
       },
     });
   });
 
-  it("overlays the same sessionDefaults flags on Agent update PATCH", async () => {
+  it("overlays the capability flags on Agent update PATCH", async () => {
     request
       .mockResolvedValueOnce({
         models: [{ id: "openai/gpt-5.3-codex", name: "GPT-5.3 Codex", provider: "openai" }],
@@ -214,11 +215,11 @@ describe("agent command", () => {
         json: "true",
         model: "gpt-5.3-codex:high",
         thinking: "low",
-        tools: "read",
-        "exclude-tools": "bash",
-        "no-tools": "true",
+        plugins: "all",
+        mcp: "none",
+        "no-subagent": "true",
         "definition-json": JSON.stringify({
-          sessionDefaults: { model: "json-model", tools: ["write"], noTools: "builtin" },
+          capabilities: { plugins: ["webtools"], mcp: { gmail: "all" }, notify: false },
         }),
       }),
     );
@@ -226,31 +227,28 @@ describe("agent command", () => {
     expect(request).toHaveBeenNthCalledWith(2, storage, "/agents/Reviewer", {
       method: "PATCH",
       body: {
-        sessionDefaults: {
-          model: "openai/gpt-5.3-codex",
-          thinkingLevel: "low",
-          tools: ["read"],
-          excludeTools: ["bash"],
-          noTools: "all",
-        },
+        capabilities: { plugins: null, mcp: {}, notify: false, subagent: false },
+        sessionDefaults: { model: "openai/gpt-5.3-codex", thinkingLevel: "low" },
       },
     });
   });
 
-  it("rejects combining --no-tools with --no-builtin-tools on Agent commands", async () => {
+  it("refuses a tool name list on an Agent command", async () => {
     const captured = await captureCliOutput(() =>
       cmdAgent(storage, "create", [], {
         json: "true",
         name: "Reviewer",
-        "no-tools": "true",
-        "no-builtin-tools": "true",
+        tools: "read",
       }),
     );
 
     expect(captured.exitCode).toBe(1);
     expect(JSON.parse(captured.stdout)).toMatchObject({
       ok: false,
-      error: { message: "--no-tools and --no-builtin-tools cannot be used together" },
+      error: {
+        message:
+          "--tools is not an Agent flag: an Agent states --core, --plugins, --mcp, and its ask/notify/subagent switches",
+      },
     });
     expect(request).not.toHaveBeenCalled();
   });

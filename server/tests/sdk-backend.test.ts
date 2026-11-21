@@ -569,62 +569,6 @@ describe("SdkBackend sandbox", () => {
     }
   });
 
-  it("drops any unavailable saved Agent allowlist entry", async () => {
-    const cwd = makeTempDir("oppi-sandbox-stale-agent-tool-");
-    const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
-    const execResult = { exitCode: 0, stdout: "", stdoutBuffer: Buffer.alloc(0), ok: true };
-    const vm = {
-      fs: {
-        access: vi.fn(async () => undefined),
-        mkdir: vi.fn(async () => undefined),
-        readFile: vi.fn(async () => Buffer.alloc(0)),
-        writeFile: vi.fn(async () => undefined),
-      },
-      exec: vi.fn(() =>
-        Object.assign(Promise.resolve(execResult), { output: async function* () {} }),
-      ),
-    };
-    const manager = { ensureWorkspaceVm: vi.fn(async () => vm) };
-    const sdkBackendType = SdkBackend as unknown as { _gondolinManager?: typeof manager };
-    const previousManager = sdkBackendType._gondolinManager;
-    sdkBackendType._gondolinManager = manager;
-    let backend: SdkBackend | undefined;
-
-    try {
-      const session = makeSession({
-        ephemeral: true,
-        launch: {
-          status: "launching",
-          requestedAt: 1,
-          tools: { allowed: ["read", "missing_tool"] },
-        },
-      });
-      backend = await SdkBackend.create({
-        session,
-        workspace: {
-          id: "w1",
-          name: "Sandbox stale Oppi",
-          runtime: "sandbox",
-          hostMount: cwd,
-          extensions: [],
-        } as Workspace,
-        agentDefinition: {
-          name: "Sandbox",
-          sessionDefaults: { tools: ["read", "missing_tool"] },
-        },
-        onEvent: vi.fn(),
-        onEnd: vi.fn(),
-      });
-      expect(backend.session.getToolDefinition("missing_tool")).toBeUndefined();
-      expect(session.warnings?.join(" ")).toContain("missing_tool");
-    } finally {
-      await backend?.dispose();
-      sdkBackendType._gondolinManager = previousManager;
-      qemuSpy.mockRestore();
-      rmSync(cwd, { recursive: true, force: true });
-    }
-  });
-
   it("lists sandbox guest paths with ls instead of probing the host", async () => {
     const cwd = makeTempDir("oppi-sandbox-ls-guest-");
     writeFileSync(join(cwd, "packet.md"), "ok\n");
@@ -674,10 +618,8 @@ describe("SdkBackend sandbox", () => {
           hostMount: cwd,
           extensions: [],
         } as Workspace,
-        agentDefinition: {
-          name: "Sandbox Lister",
-          sessionDefaults: { tools: ["ls", "find", "read", "bash"] },
-        },
+        // The launch's own policy carries the list; an Agent's capabilities never name tools.
+        agentDefinition: { name: "Sandbox Lister" },
         onEvent: vi.fn(),
         onEnd: vi.fn(),
       });
@@ -795,10 +737,7 @@ describe("SdkBackend sandbox", () => {
             hostMount: cwd,
             extensions: [],
           } as Workspace,
-          agentDefinition: {
-            name: "Sandbox Searcher",
-            sessionDefaults: { tools: ["read", "bash", "grep", "find"] },
-          },
+          agentDefinition: { name: "Sandbox Searcher" },
           onEvent: vi.fn(),
           onEnd: vi.fn(),
         });
@@ -888,10 +827,7 @@ describe("SdkBackend sandbox", () => {
             hostMount: cwd,
             extensions: [],
           } as Workspace,
-          agentDefinition: {
-            name: "Sandbox Searcher",
-            sessionDefaults: { tools: ["read", "bash", "grep", "find"] },
-          },
+          agentDefinition: { name: "Sandbox Searcher" },
           onEvent: vi.fn(),
           onEnd: vi.fn(),
         });
@@ -937,7 +873,7 @@ describe("SdkBackend sandbox", () => {
       }
     });
 
-    it("keeps allowlisted grep/find active as guest tools and drops other names", async () => {
+    it("keeps a workspace Tools list's grep and find active as guest tools", async () => {
       const cwd = makeTempDir("oppi-sandbox-guest-search-drop-");
       const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
       const { vm } = createGuestSearchVm();
@@ -946,14 +882,7 @@ describe("SdkBackend sandbox", () => {
       const previousManager = sdkBackendType._gondolinManager;
       sdkBackendType._gondolinManager = manager;
       let backend: SdkBackend | undefined;
-      const session = makeSession({
-        ephemeral: true,
-        launch: {
-          status: "launching",
-          requestedAt: 1,
-          tools: { allowed: ["read", "bash", "grep", "find", "computer"] },
-        },
-      });
+      const session = makeSession({ ephemeral: true });
 
       try {
         backend = await SdkBackend.create({
@@ -963,12 +892,11 @@ describe("SdkBackend sandbox", () => {
             name: "Sandbox Guest Search Drop",
             runtime: "sandbox",
             hostMount: cwd,
+            // A sandbox VM's tool policy lives on the workspace, not on an Agent.
+            tools: ["read", "bash", "grep", "find", "computer"],
             extensions: [],
           } as Workspace,
-          agentDefinition: {
-            name: "Sandbox Searcher",
-            sessionDefaults: { tools: ["read", "bash", "grep", "find", "computer"] },
-          },
+          agentDefinition: { name: "Sandbox Searcher" },
           onEvent: vi.fn(),
           onEnd: vi.fn(),
         });
@@ -979,9 +907,6 @@ describe("SdkBackend sandbox", () => {
         expect(backend.session.getToolDefinition("grep")?.description.toLowerCase()).toContain(
           "sandbox",
         );
-        expect(session.warnings?.[0]).toContain(
-          "Configured Agent tool is unavailable and was dropped from this session: computer",
-        );
       } finally {
         await backend?.dispose();
         sdkBackendType._gondolinManager = previousManager;
@@ -990,106 +915,7 @@ describe("SdkBackend sandbox", () => {
       }
     });
 
-    it("keeps a selected host-side extension tool on a sandbox launch allowlist", async () => {
-      const cwd = makeTempDir("oppi-sandbox-host-extension-tool-");
-      const agentDir = makeTempDir("oppi-sandbox-host-extension-agent-");
-      const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-      const extensionDir = join(agentDir, "extensions");
-      const selectedExtension = join(extensionDir, "other-tool.ts");
-      mkdirSync(extensionDir, { recursive: true });
-      writeFileSync(join(agentDir, "auth.json"), "{}");
-      writeFileSync(
-        selectedExtension,
-        "export default function (pi) { pi.registerTool({ name: 'other_tool', label: 'Other', description: 'Host-side extension tool', parameters: { type: 'object', properties: {} }, execute: async () => ({ content: [{ type: 'text', text: 'host-extension-ok' }] }) }); }",
-      );
-      process.env.PI_CODING_AGENT_DIR = agentDir;
-      const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
-      const { vm, execCalls } = createGuestSearchVm();
-      const manager = { ensureWorkspaceVm: vi.fn(async () => vm) };
-      const sdkBackendType = SdkBackend as unknown as { _gondolinManager?: typeof manager };
-      const previousManager = sdkBackendType._gondolinManager;
-      sdkBackendType._gondolinManager = manager;
-      let backend: SdkBackend | undefined;
-      const session = makeSession({
-        ephemeral: true,
-        launch: {
-          status: "launching",
-          requestedAt: 1,
-          tools: { allowed: ["read", "bash", "grep", "find", "other_tool", "computer"] },
-        },
-      });
-
-      try {
-        backend = await SdkBackend.create({
-          session,
-          workspace: {
-            id: "w1",
-            name: "Sandbox Host Extension Tool",
-            runtime: "sandbox",
-            hostMount: cwd,
-            extensions: [],
-          } as Workspace,
-          agentDefinition: {
-            name: "Sandbox Host Extension",
-            resources: {
-              skillPaths: [],
-              extensionIds: [serverResourceId("extension", selectedExtension)],
-            },
-            sessionDefaults: { tools: ["read", "bash", "grep", "find", "other_tool", "computer"] },
-          },
-          onEvent: vi.fn(),
-          onEnd: vi.fn(),
-        });
-
-        const active = backend.session.getActiveToolNames();
-        expect(active).toEqual(
-          expect.arrayContaining(["read", "bash", "grep", "find", "other_tool"]),
-        );
-        expect(active).not.toContain("computer");
-        expect(backend.session.getToolDefinition("grep")?.description.toLowerCase()).toContain(
-          "sandbox",
-        );
-        expect(backend.session.getToolDefinition("find")).toBeDefined();
-
-        const hostTool = backend.session.getToolDefinition("other_tool");
-        expect(hostTool).toBeDefined();
-        const hostResult = await hostTool!.execute(
-          "host-extension",
-          {},
-          undefined,
-          undefined,
-          {} as never,
-        );
-        expect(toolText(hostResult)).toContain("host-extension-ok");
-        expect(vm.exec).not.toHaveBeenCalled();
-
-        const guestRoot = "/workspace/sandbox-host-extension-tool";
-        const grep = backend.session.getToolDefinition("grep");
-        const grepResult = await grep!.execute(
-          "grep-guest",
-          { pattern: "guest-workspace-hit", path: guestRoot },
-          undefined,
-          undefined,
-          {} as never,
-        );
-        expect(toolText(grepResult)).toContain("guest-workspace-hit");
-        expect(JSON.stringify(execCalls)).not.toContain("/opt/homebrew/bin/rg");
-        expect(JSON.stringify(execCalls)).not.toContain("/opt/homebrew/bin/fd");
-        expect(session.warnings?.[0]).toContain(
-          "Configured Agent tool is unavailable and was dropped from this session: computer",
-        );
-      } finally {
-        await backend?.dispose();
-        sdkBackendType._gondolinManager = previousManager;
-        qemuSpy.mockRestore();
-        if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-        else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-        rmSync(cwd, { recursive: true, force: true });
-        rmSync(agentDir, { recursive: true, force: true });
-      }
-    });
-
-    it("keeps a selected host-side extension tool on a sandbox Agent-only allowlist", async () => {
+    it("keeps a workspace's opted-in host-side extension tool on a sandbox", async () => {
       const cwd = makeTempDir("oppi-sandbox-agent-host-extension-tool-");
       const agentDir = makeTempDir("oppi-sandbox-agent-host-extension-agent-");
       const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -1109,13 +935,7 @@ describe("SdkBackend sandbox", () => {
       const previousManager = sdkBackendType._gondolinManager;
       sdkBackendType._gondolinManager = manager;
       let backend: SdkBackend | undefined;
-      const session = makeSession({
-        ephemeral: true,
-        launch: {
-          status: "launching",
-          requestedAt: 1,
-        },
-      });
+      const session = makeSession({ ephemeral: true });
 
       try {
         backend = await SdkBackend.create({
@@ -1125,25 +945,18 @@ describe("SdkBackend sandbox", () => {
             name: "Sandbox Agent Host Extension Tool",
             runtime: "sandbox",
             hostMount: cwd,
+            // A sandbox loads a host-side extension only by opt-in, and the workspace states it.
+            sandboxConfig: {
+              hostExtensions: [serverResourceId("extension", selectedExtension)],
+            },
             extensions: [],
           } as Workspace,
-          agentDefinition: {
-            name: "Sandbox Agent Host Extension",
-            resources: {
-              skillPaths: [],
-              extensionIds: [serverResourceId("extension", selectedExtension)],
-            },
-            sessionDefaults: { tools: ["read", "bash", "grep", "find", "other_tool", "computer"] },
-          },
+          agentDefinition: { name: "Sandbox Agent Host Extension" },
           onEvent: vi.fn(),
           onEnd: vi.fn(),
         });
 
-        const active = backend.session.getActiveToolNames();
-        expect(active).toEqual(
-          expect.arrayContaining(["read", "bash", "grep", "find", "other_tool"]),
-        );
-        expect(active).not.toContain("computer");
+        expect(backend.session.getActiveToolNames()).toContain("other_tool");
         expect(backend.session.getToolDefinition("grep")?.description.toLowerCase()).toContain(
           "sandbox",
         );
@@ -1173,9 +986,8 @@ describe("SdkBackend sandbox", () => {
         expect(toolText(grepResult)).toContain("guest-workspace-hit");
         expect(JSON.stringify(execCalls)).not.toContain("/opt/homebrew/bin/rg");
         expect(JSON.stringify(execCalls)).not.toContain("/opt/homebrew/bin/fd");
-        expect(session.warnings?.[0]).toContain(
-          "Configured Agent tool is unavailable and was dropped from this session: computer",
-        );
+        // A workspace Tools list this narrow is a sandbox policy; nothing warns about it.
+        expect(session.warnings ?? []).toEqual([]);
       } finally {
         await backend?.dispose();
         sdkBackendType._gondolinManager = previousManager;
@@ -1221,10 +1033,8 @@ describe("SdkBackend sandbox", () => {
           } as Workspace,
           agentDefinition: {
             name: "Sandbox Workspace Only",
-            resources: {
-              skillPaths: [],
-              extensionIds: [serverResourceId("extension", selectedExtension)],
-            },
+            // The plugin the old row pinned by extension id; v2 names it.
+            capabilities: { plugins: ["other-tool"] },
           },
           onEvent: vi.fn(),
           onEnd: vi.fn(),
@@ -1810,41 +1620,6 @@ export default function (pi) {
     }
   });
 
-  it('keeps bash disabled when launch policy uses noTools: "builtin"', async () => {
-    const cwd = makeTempDir("oppi-no-builtin-tools-");
-    const agentDir = makeTempDir("oppi-no-builtin-tools-agent-");
-    writeFileSync(join(agentDir, "auth.json"), "{}");
-    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-    process.env.PI_CODING_AGENT_DIR = agentDir;
-    const backend = await SdkBackend.create({
-      session: makeSession({
-        launch: {
-          status: "launching",
-          requestedAt: 1,
-          tools: { noTools: "builtin" },
-        },
-      }),
-      workspace: {
-        id: "w1",
-        name: "No Built-in Tools Test",
-        runtime: "host",
-        hostMount: cwd,
-      } as Workspace,
-      onEvent: vi.fn(),
-      onEnd: vi.fn(),
-    });
-
-    try {
-      expect(backend.session.getActiveToolNames()).not.toContain("bash");
-    } finally {
-      await backend.dispose();
-      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-      rmSync(agentDir, { recursive: true, force: true });
-      rmSync(cwd, { recursive: true, force: true });
-    }
-  });
-
   it("loads project extensions through Pi settings discovery instead of workspace allowlists", async () => {
     const cwd = makeTempDir("oppi-project-extension-");
     mkdirSync(join(cwd, ".pi", "extensions"), { recursive: true });
@@ -1958,31 +1733,30 @@ export default function (pi) {
 });
 
 describe("SdkBackend saved Agent definitions", () => {
-  it("injects saved Agent instructions, virtual context files, skill paths, and tool defaults into the runtime", async () => {
+  it("presents an Agent's instructions, named Skills, and context toggle in the runtime", async () => {
     const cwd = makeTempDir("oppi-agent-definition-runtime-");
-    const skillDir = join(cwd, "agent-skills", "agent-review");
+    const skillDir = join(cwd, ".pi", "skills", "agent-review");
     mkdirSync(skillDir, { recursive: true });
     writeFileSync(
       join(skillDir, "SKILL.md"),
       [
         "---",
         "name: agent-review",
-        "description: Review saved Agent skill path loading.",
+        "description: A Skill the Agent names.",
         "---",
-        "Review saved Agent skill path loading.",
+        "Review saved Agent skill loading.",
       ].join("\n"),
+    );
+    mkdirSync(join(cwd, ".pi", "skills", "other"), { recursive: true });
+    writeFileSync(
+      join(cwd, ".pi", "skills", "other", "SKILL.md"),
+      ["---", "name: other", "description: Not selected.", "---", "Other."].join("\n"),
     );
     const agentDefinition: AgentDefinition = {
       name: "Runtime Agent",
       instructions: { mode: "append", text: "Always answer with OPPI_AGENT_RUNTIME_OK." },
-      resources: {
-        agentsFiles: [{ path: "AGENTS.saved.md", content: "Saved context code: CTX-42" }],
-        noContextFiles: true,
-        skillPaths: ["agent-skills"],
-      },
-      sessionDefaults: {
-        noTools: "all",
-      },
+      context: { skills: ["agent-review"], contextFiles: false },
+      capabilities: { core: "readonly", plugins: [], mcp: {} },
     };
 
     const backend = await SdkBackend.create({
@@ -2008,16 +1782,82 @@ describe("SdkBackend saved Agent definitions", () => {
       expect(resourceLoader.getAppendSystemPrompt()).toContain(
         "Always answer with OPPI_AGENT_RUNTIME_OK.",
       );
-      expect(resourceLoader.getAgentsFiles().agentsFiles).toEqual([
-        { path: "AGENTS.saved.md", content: "Saved context code: CTX-42" },
-      ]);
-      expect(resourceLoader.getSkills().skills.map((skill) => skill.name)).toContain(
+      // `contextFiles: false` is the one switch either engine reads for AGENTS.md.
+      expect(resourceLoader.getAgentsFiles().agentsFiles).toEqual([]);
+      // Skills are names: the named one is presented, the other is not.
+      expect(resourceLoader.getSkills().skills.map((skill) => skill.name)).toEqual([
         "agent-review",
-      );
-      expect(backend.session.getActiveToolNames()).toEqual([]);
+      ]);
+      const active = backend.session.getActiveToolNames();
+      expect(active).not.toContain("write");
+      expect(active).not.toContain("edit");
     } finally {
       await backend.dispose();
       rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("presents a named Skill that Pi's own settings disable", async () => {
+    const cwd = makeTempDir("oppi-agent-disabled-skill-cwd-");
+    const agentDir = makeTempDir("oppi-agent-disabled-skill-agent-");
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    writeFileSync(join(agentDir, "auth.json"), "{}");
+    const skillDir = join(agentDir, "skills", "fruitstand");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      ["---", "name: fruitstand", "description: Turned off in Pi settings.", "---", "Fruit."].join(
+        "\n",
+      ),
+    );
+    // The live shape of a disabled Skill: its folder is discovered, its SKILL.md is filtered out.
+    writeFileSync(
+      join(agentDir, "settings.json"),
+      JSON.stringify({ skills: ["~/.pi/agent/skills", "-skills/fruitstand/SKILL.md"] }),
+    );
+
+    // Pi's own discovery drops it before any override could keep it, which is the whole problem.
+    const settingsManager = PiSdk.SettingsManager.create(cwd, agentDir);
+    const packageManager = new PiSdk.DefaultPackageManager({ cwd, agentDir, settingsManager });
+    const discovered = await packageManager.resolve(async () => "skip");
+    expect(discovered.skills.find((entry) => entry.path.includes("fruitstand"))?.enabled).toBe(
+      false,
+    );
+
+    let backend: SdkBackend | undefined;
+    try {
+      backend = await SdkBackend.create({
+        session: makeSession({
+          launch: { status: "launching", requestedAt: 1, agentId: "agent-1" },
+        }),
+        workspace: {
+          id: "w1",
+          name: "Disabled Skill Test",
+          runtime: "host",
+          hostMount: cwd,
+        } as Workspace,
+        agentDefinition: {
+          name: "Fruit Agent",
+          capabilities: { core: "readonly", plugins: [], mcp: {} },
+          context: { skills: ["fruitstand"] },
+        },
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+      });
+      const resourceLoader = (
+        backend as unknown as {
+          runtime: { services: { resourceLoader: PiSdk.ResourceLoader } };
+        }
+      ).runtime.services.resourceLoader;
+      // Naming it wins over the setting: the Agent asked for this Skill by name.
+      expect(resourceLoader.getSkills().skills.map((skill) => skill.name)).toEqual(["fruitstand"]);
+    } finally {
+      await backend?.dispose();
+      rmSync(cwd, { recursive: true, force: true });
+      rmSync(agentDir, { recursive: true, force: true });
+      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
     }
   });
 });

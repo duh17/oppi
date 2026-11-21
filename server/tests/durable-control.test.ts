@@ -1400,6 +1400,53 @@ describe("confirm card text", () => {
       '**Tools:** `["read","grep"]` → (removed: every tool allowed)',
     );
 
+    // An Agent states what it may reach, so a removed or emptied entry there widens it, and the
+    // card says so in the same words rather than leaving it as "removed".
+    const agentCurrent = {
+      agent: {
+        id: "a1",
+        name: "Nanny",
+        definition: {
+          name: "Nanny",
+          capabilities: {
+            core: "readonly",
+            ask: true,
+            mcp: { gmail: "all" },
+            plugins: ["notebook"],
+          },
+          context: { skills: ["nanny"] },
+        },
+      },
+    };
+    const widened = cardOf({
+      method: "PATCH",
+      path: "/agents/a1",
+      body: {
+        capabilities: { core: "full", mcp: {}, plugins: [] },
+        context: { skills: [] },
+      },
+      current: agentCurrent,
+      names: { a1: "Nanny" },
+    });
+    expect(widened.message).toContain("(no MCP server)");
+    expect(widened.message).toContain("(no plugin)");
+    expect(widened.message).toContain("(no Skill)");
+    const lifted = cardOf({
+      method: "PATCH",
+      path: "/agents/a1",
+      body: {
+        capabilities: { core: null, ask: null, mcp: null, plugins: null },
+        context: { skills: null },
+      },
+      current: agentCurrent,
+      names: { a1: "Nanny" },
+    });
+    expect(lifted.message).toContain("(removed: every MCP server)");
+    expect(lifted.message).toContain("(removed: every plugin)");
+    expect(lifted.message).toContain("(removed: every Skill Pi discovers)");
+    expect(lifted.message).toContain("(removed: the full tool set)");
+    expect(lifted.message).not.toContain("(removed)");
+
     // An env key can carry text no screen shows: it is marked and counted.
     const smuggled = cardOf({
       method: "PUT",

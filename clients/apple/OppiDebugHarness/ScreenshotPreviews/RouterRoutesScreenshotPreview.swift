@@ -343,8 +343,10 @@ private enum RouterRoutesFixtures {
         definition: AgentDefinition(
             name: "Design Reviewer",
             icon: .defaultValue,
+            // No Skill list, so the editor's Skills page starts from none.
+            context: AgentContext(skills: []),
             // A model, so the editor's Model row draws its provider's mark.
-            sessionDefaults: AgentSessionDefaults(model: "anthropic/claude-sonnet-5", tools: ["read"]),
+            sessionDefaults: AgentSessionDefaults(model: "anthropic/claude-sonnet-5"),
             // An exact workspace list, so the editor shows Allowed Workspaces.
             launchConstraints: AgentLaunchConstraints(
                 allowedWorkspaceIds: [oppiWorkspaceId, sandboxWorkspaceId]
@@ -354,6 +356,16 @@ private enum RouterRoutesFixtures {
         updatedAt: Date(timeIntervalSince1970: 1),
         archivedAt: nil
     )
+
+    /// One Skill, so the editor's Skills page has a row to choose.
+    static let skills: [ServerSkillSummary] = [
+        ServerSkillSummary(
+            id: "release", name: "release", description: "Review release readiness.",
+            provenance: .init(kind: .piAgent, label: "~/.pi/agent/skills"),
+            path: "/Users/preview/.pi/agent/skills/release/SKILL.md",
+            state: .enabled, loadError: nil, warnings: [], editable: true
+        ),
+    ]
 
     static let scheduleSummary = AgentScheduleSummary(
         id: "schedule-router-routes",
@@ -406,11 +418,17 @@ private enum RouterRoutesFixtures {
 }
 
 /// Answers the editors' saves with the fixtures and records what they sent:
-/// the agent's tool policy and the schedule's time zone.
+/// the agent's Skills and the schedule's time zone.
 private final class RouterRoutesURLProtocol: URLProtocol {
     private struct AgentBody: Encodable { let agent: StoredAgentDefinition }
     private struct ScheduleBody: Encodable { let schedule: AgentScheduleSummary }
     private struct AgentsBody: Encodable { let agents: [AgentDefinitionSummary] }
+    private struct SkillsBody: Encodable { let skills: [ServerSkillSummary] }
+    private struct ExtensionsBody: Encodable {
+        let extensions: [ServerExtensionSummary]
+        let builtInTools: [ServerToolSummary]
+        let optionalTools: [ServerToolSummary]
+    }
 
     override class func canInit(with request: URLRequest) -> Bool {
         request.url?.host == "router-routes.oppi"
@@ -426,10 +444,14 @@ private final class RouterRoutesURLProtocol: URLProtocol {
         let response: Data?
         switch (request.httpMethod, path) {
         case ("PATCH", "/agents/\(RouterRoutesFixtures.agent.id)"):
-            let defaults = sent?["sessionDefaults"] as? [String: Any]
-            let tools = (defaults?["tools"] as? [String])?.joined(separator: ",") ?? "inherit"
-            Self.record("agent tools=\(tools)")
+            let context = sent?["context"] as? [String: Any]
+            let skills = (context?["skills"] as? [String])?.joined(separator: ",") ?? "inherit"
+            Self.record("agent skills=\(skills)")
             response = try? JSONEncoder().encode(AgentBody(agent: RouterRoutesFixtures.agent))
+        case ("GET", "/server/resources/skills"):
+            response = try? JSONEncoder().encode(SkillsBody(skills: RouterRoutesFixtures.skills))
+        case ("GET", "/server/resources/extensions"):
+            response = try? JSONEncoder().encode(ExtensionsBody(extensions: [], builtInTools: [], optionalTools: []))
         case ("PATCH", "/schedules/\(RouterRoutesFixtures.scheduleSummary.id)"):
             let trigger = sent?["trigger"] as? [String: Any]
             Self.record("schedule timeZone=\(trigger?["timeZone"] as? String ?? "none")")

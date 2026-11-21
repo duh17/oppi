@@ -60,31 +60,36 @@ final class RouterRoutesUITests: XCTestCase, PreviewUITestCase {
         let editAgent = app.navigationBars["Edit Agent"]
         XCTAssertTrue(editAgent.waitUntilExists(timeout: 5), "Edit Agent did not present")
         attachScreenshot("full-screen-edit-agent")
-        let toolsRow = app.buttons["agent.nativeEdit.tools"]
-        XCTAssertTrue(text(of: toolsRow).contains("1 selected"), "Fixture agent starts with one tool: \(text(of: toolsRow))")
+        let skillsRow = app.buttons["agent.nativeEdit.skills"]
+        var swipes = 0
+        while !(skillsRow.exists && skillsRow.isHittable), swipes < 6 {
+            app.swipeUp()
+            swipes += 1
+        }
+        XCTAssertTrue(text(of: skillsRow).contains("None"), "Fixture agent starts with no Skill: \(text(of: skillsRow))")
         assertRunning()
 
-        toolsRow.tap()
-        let tools = app.navigationBars["Agent Tools"]
-        XCTAssertTrue(tools.waitUntilExists(timeout: 5), "Tools was not pushed inside the modal")
-        attachScreenshot("in-modal-push-tools")
-        app.buttons["agent.nativeEdit.toolMode"].tap()
-        let piDefaults = app.buttons["Pi defaults"].firstMatch
-        XCTAssertTrue(piDefaults.waitUntilExists(timeout: 5), "Tool selection menu did not open")
-        piDefaults.tap()
+        skillsRow.tap()
+        let skills = app.navigationBars["Skills"]
+        XCTAssertTrue(skills.waitUntilExists(timeout: 5), "Skills was not pushed inside the modal")
+        attachScreenshot("in-modal-push-skills")
+        let release = app.buttons["agent.nativeEdit.skill.release"]
+        XCTAssertTrue(release.waitUntilExists(timeout: 5), "The fixture server's Skills did not load")
+        attachScreenshot("in-modal-push-skill-page")
+        release.tap()
         assertRunning()
 
         app.buttons["BackButton"].tap()
-        XCTAssertTrue(tools.waitUntilGone(timeout: 5), "Back must pop Tools")
+        XCTAssertTrue(skills.waitUntilGone(timeout: 5), "Back must pop Skills")
         XCTAssertTrue(
-            waitFor(text(of: toolsRow).contains("Pi defaults")),
-            "The pushed page's choice must show on the editor: \(text(of: toolsRow))"
+            waitFor(text(of: skillsRow).contains("1 selected")),
+            "The pushed page's choice must show on the editor: \(text(of: skillsRow))"
         )
 
         app.buttons["agent.nativeEdit.save"].tap()
         XCTAssertTrue(editAgent.waitUntilGone(timeout: 5), "Save must close the full-screen modal")
         let lastSave = app.staticTexts["routerRoutes.lastSave"]
-        XCTAssertTrue(waitFor(lastSave.label == "agent tools=inherit"), "The save must reach the stub server: \(lastSave.label)")
+        XCTAssertTrue(waitFor(lastSave.label == "agent skills=release"), "The save must reach the stub server: \(lastSave.label)")
         hold()
         XCTAssertEqual(app.staticTexts["routerRoutes.dismissedModals"].label, "Dismissed 1")
         assertRunning()

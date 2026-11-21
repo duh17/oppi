@@ -33,45 +33,6 @@ extension APIClient {
         try await post("/agents", body: definition, as: AgentResponse.self).agent
     }
 
-    func updateAgent(
-        agentId: String,
-        definition: AgentDefinition,
-        previouslyHadLaunchConstraints: Bool = false
-    ) async throws -> StoredAgentDefinition {
-        struct UpdateBody: Encodable {
-            let definition: AgentDefinition
-            let includesLaunchConstraints: Bool
-
-            enum CodingKeys: String, CodingKey {
-                case name, icon, description, instructions, resources, sessionDefaults, launchConstraints
-            }
-
-            func encode(to encoder: Encoder) throws {
-                var c = encoder.container(keyedBy: CodingKeys.self)
-                try c.encode(definition.name, forKey: .name)
-                try c.encode(definition.icon, forKey: .icon)
-                try c.encodeNullable(definition.description, forKey: .description)
-                try c.encodeNullable(definition.instructions, forKey: .instructions)
-                try c.encodeNullable(definition.resources, forKey: .resources)
-                try c.encodeNullable(definition.sessionDefaults, forKey: .sessionDefaults)
-                if includesLaunchConstraints {
-                    try c.encodeNullable(definition.launchConstraints, forKey: .launchConstraints)
-                }
-            }
-        }
-
-        let encodedAgentId = try percentEncodePathSegment(agentId)
-        return try await patch(
-            "/agents/\(encodedAgentId)",
-            body: UpdateBody(
-                definition: definition,
-                includesLaunchConstraints: definition.launchConstraints != nil
-                    || previouslyHadLaunchConstraints
-            ),
-            as: AgentResponse.self
-        ).agent
-    }
-
     /// CAS patch so a model-star tap cannot overwrite a concurrent Agent edit.
     func setAgentDefaultModel(
         agentId: String,
@@ -150,15 +111,12 @@ extension APIClient {
         name: String,
         description: String?,
         instructions: AgentInstructions?,
+        capabilities: AgentCapabilities?,
+        context: AgentContext?,
         model: String?,
         thinkingLevel: ThinkingLevel?,
-        skillPaths: [String]?,
-        extensionIds: [String]?,
         launchConstraints: AgentLaunchConstraints? = nil,
         previouslyHadLaunchConstraints: Bool = false,
-        tools: [String]? = nil,
-        excludeTools: [String]? = nil,
-        noTools: AgentNoToolsMode? = nil,
         expectedVersion: Int? = nil
     ) async throws -> StoredAgentDefinition {
         let encodedAgentId = try percentEncodePathSegment(agentId)
@@ -169,15 +127,9 @@ extension APIClient {
                 name: name,
                 description: description,
                 instructions: instructions,
-                resources: .init(skillPaths: skillPaths, extensionIds: extensionIds),
-                sessionDefaults: .init(
-                    model: model,
-                    thinkingLevel: thinkingLevel,
-                    includesToolPolicy: true,
-                    tools: tools,
-                    excludeTools: excludeTools,
-                    noTools: noTools
-                ),
+                capabilities: capabilities,
+                context: context,
+                sessionDefaults: .init(model: model, thinkingLevel: thinkingLevel),
                 launchConstraints: launchConstraints,
                 includesLaunchConstraints: launchConstraints != nil
                     || previouslyHadLaunchConstraints
@@ -383,51 +335,61 @@ extension APIClient {
 }
 
 private struct NativeAgentUpdateBody: Encodable {
-    struct Resources: Encodable {
-        let skillPaths: [String]?
-        let extensionIds: [String]?
+    /// Capabilities go key by key: omitted means the server's default, so going back
+    /// to every plugin or every MCP server sends an explicit null to clear the list.
+    struct Capabilities: Encodable {
+        let capabilities: AgentCapabilities
 
         enum CodingKeys: String, CodingKey {
-            case skillPaths, promptTemplateIds, extensionIds
+            case core, ask, notify, subagent, plugins, mcp
         }
 
         func encode(to encoder: Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
-            try container.encodeNullable(skillPaths, forKey: .skillPaths)
-            // Clear assignments written by older app/server versions.
-            try container.encodeNil(forKey: .promptTemplateIds)
-            try container.encodeNullable(extensionIds, forKey: .extensionIds)
+            try container.encodeNullable(capabilities.core, forKey: .core)
+            try container.encodeNullable(capabilities.ask, forKey: .ask)
+            try container.encodeNullable(capabilities.notify, forKey: .notify)
+            try container.encodeNullable(capabilities.subagent, forKey: .subagent)
+            try container.encodeNullable(capabilities.plugins, forKey: .plugins)
+            try container.encodeNullable(capabilities.mcp, forKey: .mcp)
+        }
+    }
+
+    struct Context: Encodable {
+        let context: AgentContext
+
+        enum CodingKeys: String, CodingKey {
+            case skills, contextFiles, sessionHistory
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encodeNullable(context.skills, forKey: .skills)
+            try container.encodeNullable(context.contextFiles, forKey: .contextFiles)
+            try container.encodeNullable(context.sessionHistory, forKey: .sessionHistory)
         }
     }
 
     struct SessionDefaults: Encodable {
         let model: String?
         let thinkingLevel: ThinkingLevel?
-        let includesToolPolicy: Bool
-        let tools: [String]?
-        let excludeTools: [String]?
-        let noTools: AgentNoToolsMode?
 
         enum CodingKeys: String, CodingKey {
-            case model, thinkingLevel, tools, excludeTools, noTools
+            case model, thinkingLevel
         }
 
         func encode(to encoder: Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
             try container.encodeNullable(model, forKey: .model)
             try container.encodeNullable(thinkingLevel, forKey: .thinkingLevel)
-            if includesToolPolicy {
-                try container.encodeNullable(tools, forKey: .tools)
-                try container.encodeNullable(excludeTools, forKey: .excludeTools)
-                try container.encodeNullable(noTools, forKey: .noTools)
-            }
         }
     }
 
     let name: String
     let description: String?
     let instructions: AgentInstructions?
-    let resources: Resources?
+    let capabilities: AgentCapabilities?
+    let context: AgentContext?
     let sessionDefaults: SessionDefaults
     let launchConstraints: AgentLaunchConstraints?
     let includesLaunchConstraints: Bool
@@ -450,7 +412,7 @@ private struct NativeAgentUpdateBody: Encodable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case name, description, instructions, resources, sessionDefaults, launchConstraints
+        case name, description, instructions, capabilities, context, sessionDefaults, launchConstraints
     }
 
     func encode(to encoder: Encoder) throws {
@@ -458,7 +420,8 @@ private struct NativeAgentUpdateBody: Encodable {
         try container.encode(name, forKey: .name)
         try container.encodeNullable(description, forKey: .description)
         try container.encodeNullable(instructions, forKey: .instructions)
-        try container.encodeIfPresent(resources, forKey: .resources)
+        try container.encodeNullable(capabilities.map(Capabilities.init), forKey: .capabilities)
+        try container.encodeNullable(context.map(Context.init), forKey: .context)
         try container.encode(sessionDefaults, forKey: .sessionDefaults)
         if includesLaunchConstraints {
             try container.encodeNullable(launchConstraints.map(LaunchConstraints.init), forKey: .launchConstraints)

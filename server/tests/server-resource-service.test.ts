@@ -13,7 +13,11 @@ import { basename, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ServerResourceService } from "../src/server-resource-service.js";
+import {
+  ServerResourceService,
+  withAgentSelectable,
+  type ServerExtensionSummary,
+} from "../src/server-resource-service.js";
 import { canonicalServerResourcePath } from "../src/server-resource-id.js";
 import { readSkillFileSnapshot } from "../src/skill-files.js";
 
@@ -873,5 +877,41 @@ describe("ServerResourceService mutations and skill details", () => {
     expect(extension?.id).toMatch(/^extension_[a-f0-9]{64}$/);
     expect(skill?.id.slice("skill_".length)).not.toBe(extension?.id.slice("extension_".length));
     expect(basename(skill?.path ?? "")).toMatch(/same-name|SKILL\.md/);
+  });
+});
+
+describe("which rows a saved Agent may name", () => {
+  const row = (overrides: Partial<ServerExtensionSummary>): ServerExtensionSummary =>
+    ({
+      id: "extension_secret",
+      name: "secret",
+      source: "user",
+      kinds: ["pi-extension"],
+      state: "on",
+      enabled: true,
+      tools: [],
+      hooks: [],
+      runsIn: [],
+      warnings: [],
+      contributedTools: ["secret_run", "secret_list"],
+      ...overrides,
+    }) as ServerExtensionSummary;
+
+  it("offers an owner package even when its plugin summary is not attached", () => {
+    // The live `secret` row is only a Pi extension: `plugin` is null, and its tools are what it
+    // contributes. It is a plugin an Agent may name.
+    const marked = withAgentSelectable(row({ plugin: undefined }));
+    expect(marked.agentSelectable).toBe(true);
+  });
+
+  it("leaves a toggle's package to its switch", () => {
+    for (const name of ["ask", "subagents"]) {
+      expect(withAgentSelectable(row({ name })).agentSelectable).toBeUndefined();
+    }
+  });
+
+  it("never offers a built-in or a row without tools", () => {
+    expect(withAgentSelectable(row({ source: "built-in" })).agentSelectable).toBeUndefined();
+    expect(withAgentSelectable(row({ contributedTools: [] })).agentSelectable).toBeUndefined();
   });
 });

@@ -66,7 +66,7 @@ describeVm("Gondolin attack surface", { timeout: 120_000 }, () => {
   let vm: GondolinVm;
   const vmRead = async (path: string) => Buffer.from(await vm.fs.readFile(path)).toString("utf8");
   /** One durable sandbox session's resources, discovered through its own env on the VM. */
-  const sessionResources = async (resources?: { skillPaths?: string[] }) => {
+  const sessionResources = async (resources?: { skills?: string[] }) => {
     const sessionVm = await manager.ensureWorkspaceVm(workspace, hostDir);
     return loadDurableProjectResources({
       hostCwd: hostDir,
@@ -182,7 +182,7 @@ describeVm("Gondolin attack surface", { timeout: 120_000 }, () => {
   it("a second session on the live VM sees its saved Agent's .pi/skills selection", async () => {
     // The first session booted the VM; this one only attaches to it.
     expect(await manager.ensureWorkspaceVm(workspace, hostDir)).toBe(vm);
-    const resources = await sessionResources({ skillPaths: [".pi/skills/secret-skill"] });
+    const resources = await sessionResources({ skills: ["secret-skill"] });
     expect(resources.skills.map((skill) => skill.name)).toEqual(["secret-skill"]);
     expect(renderSkills(resources.skills, ["read"])).toContain(
       `<location>${SECRET_SKILL_GUEST}/SKILL.md</location>`,
@@ -204,12 +204,11 @@ describeVm("Gondolin attack surface", { timeout: 120_000 }, () => {
     expect(text).not.toContain("WORKSPACE_ENV_SECRET");
   });
 
-  it("SAFE: a selected Skill outside the workspace fails agent_skills_unavailable", async () => {
-    for (const skillPath of [outsideSkillDir, "../outside-skill", ".agents/skills/x"]) {
-      await expect(sessionResources({ skillPaths: [skillPath] }), skillPath).rejects.toMatchObject({
-        code: "agent_skills_unavailable",
-      });
-    }
+  it("SAFE: a Skill name the VM cannot present is simply absent", async () => {
+    // An Agent names Skills, never paths, so it cannot point at a file the VM hides; the names
+    // that resolve are presented and the rest are reported by the caller's warning.
+    const resources = await sessionResources({ skills: ["outside-skill", "secret-skill"] });
+    expect(resources.skills.map((skill) => skill.name)).toEqual(["secret-skill"]);
   });
 
   it("SAFE: a workspace AGENTS.md symlinked to .env reads as missing through the VM", async () => {
@@ -405,7 +404,7 @@ describeVm("Classic sandbox Skills through the workspace VM", { timeout: 120_000
       `---\nname: ${name}\ndescription: ${name} description.\n---\n${body}`,
     );
   };
-  const classicSession = async (resources?: { skillPaths: string[] }): Promise<SdkBackend> => {
+  const classicSession = async (resources?: { skills: string[] }): Promise<SdkBackend> => {
     const backend = await SdkBackend.create({
       session: {
         id: `classic-skills-${backends.length}`,
@@ -423,7 +422,8 @@ describeVm("Classic sandbox Skills through the workspace VM", { timeout: 120_000
         ? {
             agentDefinition: {
               name: "Selected Skills",
-              resources: { ...resources, extensionIds: [] },
+              capabilities: { plugins: [], mcp: {} },
+              context: { skills: resources.skills },
             },
           }
         : {}),
@@ -499,12 +499,12 @@ describeVm("Classic sandbox Skills through the workspace VM", { timeout: 120_000
       expect(input.action === "transform" && input.text, command).toContain(body);
     }
 
-    // A saved Agent selection presents only the selected Skill; one the VM cannot serve fails.
-    const selected = await classicSession({ skillPaths: [".pi/skills/linked-skill"] });
+    // A saved Agent selection presents only the Skills it names; a name the VM cannot serve is
+    // simply missing (the launch warning says so), never a host path read.
+    const selected = await classicSession({ skills: ["linked-skill"] });
     expect(skillNames(selected)).toEqual(["linked-skill"]);
-    await expect(
-      classicSession({ skillPaths: [join(agentDir, "skills", "global-skill")] }),
-    ).rejects.toMatchObject({ code: "agent_skills_unavailable" });
+    const missing = await classicSession({ skills: ["global-skill"] });
+    expect(skillNames(missing)).toEqual([]);
   });
 
   it("SAFE: /skill: does not put a SKILL.md symlink to a shadowed file into the prompt", async () => {

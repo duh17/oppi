@@ -419,10 +419,7 @@ final class QuickSessionModel {
         let current = updated.sessionDefaults
         updated.sessionDefaults = AgentSessionDefaults(
             model: modelId,
-            thinkingLevel: current?.thinkingLevel,
-            tools: current?.tools,
-            excludeTools: current?.excludeTools,
-            noTools: current?.noTools
+            thinkingLevel: current?.thinkingLevel
         )
         availableAgents[index] = updated
     }

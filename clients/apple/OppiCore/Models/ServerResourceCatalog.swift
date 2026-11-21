@@ -94,74 +94,6 @@ struct ServerSkillSummary: Codable, Sendable, Equatable, Identifiable {
         self.warnings = warnings
         self.editable = editable
     }
-
-    /// Preferred path to save for a new selection of this Skill, falling back to `path` for
-    /// older servers that do not send `selectionPath`.
-    var preferredSelectionPath: String? { selectionPath ?? path }
-
-    /// Every path a saved Agent selection may hold for this Skill, canonical `path` first,
-    /// without duplicates. One Skill can be selected through more than one path, so a
-    /// selection is recognised by any of them, never by `path` alone.
-    var selectionPaths: [String] {
-        var seen: Set<String> = []
-        var unique: [String] = []
-        for candidate in [path].compactMap({ $0 }) + (paths ?? []) + [selectionPath].compactMap({ $0 })
-        where seen.insert(candidate).inserted {
-            unique.append(candidate)
-        }
-        return unique
-    }
-
-    /// One saved Agent Skill path resolved against the server's catalog: either a discovered
-    /// Skill (collapsed to one saved path even when several aliases were stored) or an
-    /// unmatched path kept as-is.
-    enum ResolvedSelection: Equatable, Sendable {
-        case skill(ServerSkillSummary, savedPath: String)
-        case unmatched(String)
-
-        /// The saved path to keep for this selection: for a matched Skill, its preferred
-        /// selection path when present among the saved forms, else the first saved form;
-        /// for an unmatched path, the path as-is.
-        var savedPath: String {
-            switch self {
-            case .skill(_, let path): path
-            case .unmatched(let path): path
-            }
-        }
-
-        var displayName: String {
-            switch self {
-            case .skill(let skill, _): skill.name
-            case .unmatched(let path): path
-            }
-        }
-    }
-
-    /// Collapses saved Skill paths to one entry per matched catalog Skill in first-seen order.
-    /// When multiple saved paths match the same Skill, keeps the Skill's preferred selection
-    /// path if present among them, else the first saved path. Unmatched paths are kept as-is.
-    static func resolveSelections<S: Sequence>(
-        _ paths: S,
-        in catalog: [ServerSkillSummary]
-    ) -> [ResolvedSelection] where S.Element == String {
-        var indexBySkillId: [String: Int] = [:]
-        var resolved: [ResolvedSelection] = []
-        for path in paths {
-            guard let skill = catalog.first(where: { $0.selectionPaths.contains(path) }) else {
-                resolved.append(.unmatched(path))
-                continue
-            }
-            if let existingIndex = indexBySkillId[skill.id] {
-                if path == skill.preferredSelectionPath {
-                    resolved[existingIndex] = .skill(skill, savedPath: path)
-                }
-            } else {
-                indexBySkillId[skill.id] = resolved.count
-                resolved.append(.skill(skill, savedPath: path))
-            }
-        }
-        return resolved
-    }
 }
 
 struct ServerSkillDetail: Codable, Sendable, Equatable {
@@ -246,6 +178,9 @@ struct ServerExtensionSummary: Codable, Sendable, Equatable, Identifiable {
     let source: ServerExtensionSource?
     /// The row's plugin, when it is one.
     let plugin: ServerPluginSummary?
+    /// Whether a saved Agent may name this row as a plugin: the server's rule, so the editor
+    /// offers exactly the plugins a launch can resolve. Nil from a server that predates v2.
+    let agentSelectable: Bool?
 
     init(
         id: String,
@@ -263,7 +198,8 @@ struct ServerExtensionSummary: Codable, Sendable, Equatable, Identifiable {
         contributedToolDetails: [ServerToolSummary]? = nil,
         kinds: [ServerExtensionRowKind]? = nil,
         source: ServerExtensionSource? = nil,
-        plugin: ServerPluginSummary? = nil
+        plugin: ServerPluginSummary? = nil,
+        agentSelectable: Bool? = nil
     ) {
         self.id = id
         self.name = name
@@ -281,6 +217,7 @@ struct ServerExtensionSummary: Codable, Sendable, Equatable, Identifiable {
         self.kinds = kinds
         self.source = source
         self.plugin = plugin
+        self.agentSelectable = agentSelectable
     }
 }
 

@@ -7,8 +7,22 @@ import {
   type ProjectTrustEventResult,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { serverResourceId } from "./server-resource-id.js";
+import { realpathSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
+import { BUILTIN_EXTENSION_PATH_PREFIX } from "./host-mcp-extensions.js";
 import type { ProjectTrustState } from "./types.js";
+
+/**
+ * Real path when it exists (symlinks followed), else the lexical path: two spellings of one
+ * extension file must match, or an Agent's selected trust handler would not run.
+ */
+function canonicalPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolvePath(path);
+  }
+}
 
 /**
  * The decision `resolveManagedProjectTrust` would reach for `cwd` without asking: Pi's saved
@@ -87,23 +101,27 @@ export async function resolveManagedProjectTrust(
   settingsManager: SettingsManager,
   context: ProjectTrustContext,
   onError: (extensionPath: string, error: unknown) => void,
-  selectedExtensionIds?: readonly string[],
+  /** The Agent's resolved plugin paths: a project-trust handler of a user plugin runs first. */
+  selectedExtensionPaths?: readonly string[],
 ): Promise<boolean> {
   // Resolve exact selections while untrusted: selected project extensions cannot
   // participate before trust, and excluded user factories must not execute.
   let selectedPaths: string[] | undefined;
-  if (selectedExtensionIds !== undefined) {
+  if (selectedExtensionPaths !== undefined) {
     settingsManager.setProjectTrusted(false);
     await settingsManager.reload();
     const resolved = await new DefaultPackageManager({ cwd, agentDir, settingsManager }).resolve(
       async () => "skip",
     );
-    const selected = new Set(selectedExtensionIds);
+    const selected = new Set(
+      selectedExtensionPaths
+        .filter((path) => !path.startsWith(BUILTIN_EXTENSION_PATH_PREFIX))
+        .map(canonicalPath),
+    );
     selectedPaths = resolved.extensions
       .filter(
         (resource) =>
-          resource.metadata.scope === "user" &&
-          selected.has(serverResourceId("extension", resource.path)),
+          resource.metadata.scope === "user" && selected.has(canonicalPath(resource.path)),
       )
       .map((resource) => resource.path);
   }

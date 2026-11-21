@@ -20,13 +20,20 @@ import type {
   SubagentWorktreeRequest,
 } from "./durable-extension-api.js";
 import { childDelegationGrant } from "./agent-launch-service.js";
+import type { AgentDefinition, AgentMcpServerFact } from "./agent-definition.js";
 import {
   OppiAgentDoc,
   resolveDurableAgent,
   retargetInstructions,
   type SavedAgent,
 } from "./durable-agent.js";
+import {
+  compileAgentCapabilities,
+  type AgentBuiltinPluginFact,
+  type CompiledAgentCapabilities,
+} from "./agent-capabilities.js";
 import { DurableRuntime, type DurableHarness, type SessionHost } from "./durable-harness.js";
+import { mcpServerFacts } from "./durable-mcp.js";
 import { durableStoreId } from "./session-runtime-capabilities.js";
 import { DURABLE_THREAD_KEY_PREFIX } from "./reserved-launch-keys.js";
 import { mintSessionId } from "./id.js";
@@ -56,6 +63,12 @@ import {
 
 export interface DurableThreadsDeps {
   runtime: DurableHarness;
+  /**
+   * Oppi's built-in plugin tools, for the child compile: a bound child's policy is the document
+   * written at spawn, so a read-only Agent spawned as a subagent needs the same answer its parent
+   * had. Absent (tests) adds no exclusions.
+   */
+  getBuiltinPluginFacts?: () => Promise<readonly AgentBuiltinPluginFact[] | null>;
   storage: Pick<
     Storage,
     | "findSessionByDurableConversation"
@@ -81,6 +94,27 @@ export interface DurableThreadsDeps {
   onCreated(session: Session): void;
   /** A Session's server-durable transcript (`history://`); null for any other engine. */
   trace(sessionId: string): Promise<TraceEvent[] | null>;
+}
+
+/**
+ * A bound child's plan: the same compiler as its parent, with the same inventory of Oppi's
+ * plugins. A child's policy is the document written at spawn, so a read-only Agent spawned as a
+ * subagent keeps the exclusions its parent had, rather than the built-ins arriving by omission.
+ */
+export function compileChildCapabilities(input: {
+  definition: AgentDefinition;
+  runtime: "host" | "sandbox";
+  mcpServers: readonly AgentMcpServerFact[];
+  builtinFacts: readonly AgentBuiltinPluginFact[] | null | undefined;
+}): CompiledAgentCapabilities {
+  return compileAgentCapabilities({
+    definition: input.definition,
+    engine: "durable",
+    runtime: input.runtime,
+    mcpServers: input.mcpServers,
+    ...(input.builtinFacts ? { builtinPlugins: input.builtinFacts } : {}),
+    ...(input.builtinFacts === null ? { builtinPluginsUnknown: true } : {}),
+  });
 }
 
 /**
@@ -266,6 +300,25 @@ export class DurableThreads {
       request.model ?? saved?.definition.sessionDefaults?.model,
       request.thinking,
     );
+    // A child that launches a saved Agent gets that Agent's plan, compiled here. Only the MCP
+    // user scope is read: the child's own attach compiles again with the real project trust and
+    // prunes servers by name, so this answer decides the tool policy and plugin selection only.
+    const compiled =
+      saved === undefined
+        ? undefined
+        : compileChildCapabilities({
+            definition: saved.definition,
+            runtime,
+            mcpServers: await mcpServerFacts({
+              agentDir: getAgentDir(),
+              cwd: workspace.hostMount,
+              projectTrusted: false,
+              dataDir: this.deps.storage.getDataDir(),
+            }),
+            builtinFacts: this.deps.getBuiltinPluginFacts
+              ? await this.deps.getBuiltinPluginFacts()
+              : undefined,
+          });
     const { change, doc } = resolveDurableAgent({
       ...(saved ? { saved } : {}),
       ...choice,
@@ -279,7 +332,7 @@ export class DurableThreads {
         ? { hostExtensionIds: workspace.sandboxConfig?.hostExtensions ?? [] }
         : {}),
       agentOptsIn: false,
-      classic: this.deps.runtime.classicExtensions,
+      ...(compiled ? { compiled } : {}),
       enabled: (name) => this.deps.runtime.isExtensionEnabled(name),
       // A child gets the Pi Tools setting's tools its parent offers.
       piTools: new Set(agent.tools.map((tool) => tool.name)),

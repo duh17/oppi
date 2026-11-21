@@ -283,47 +283,22 @@ describe("AgentLaunchService", () => {
     expect(listSessions()).toHaveLength(0);
   });
 
-  it("discards empty shells before runtime start when an Extension selection is unavailable", async () => {
+  it("reports a workspace the Agent's constraints refuse, and keeps no shell", async () => {
     const { service, startSession, listSessions, deleteSession } = makeService();
 
     const result = await service.launch({
       agent: {
-        name: "Missing Extension",
-        resources: { extensionIds: ["missing-extension-id"] },
+        name: "Sandbox only",
+        launchConstraints: { requiredRuntime: "sandbox" },
       },
       target: { workspace: makeWorkspace({ hostMount: process.cwd() }) },
-      prompt: "Run with the selected Extension",
+      prompt: "Run where it cannot",
     });
 
     expect(result).toMatchObject({
       kind: "created",
       discarded: true,
-      failure: { code: "agent_extensions_unavailable" },
-    });
-    expect(startSession).not.toHaveBeenCalled();
-    expect(deleteSession).toHaveBeenCalledWith(result.session.id);
-    expect(listSessions()).toHaveLength(0);
-  });
-
-  it("reports a non-directory workspace during Extension preflight", async () => {
-    const { service, startSession, listSessions, deleteSession } = makeService();
-
-    const result = await service.launch({
-      agent: {
-        name: "Invalid Workspace",
-        resources: { extensionIds: ["missing-extension-id"] },
-      },
-      target: { workspace: makeWorkspace({ hostMount: `${process.cwd()}/package.json` }) },
-      prompt: "Run with the selected Extension",
-    });
-
-    expect(result).toMatchObject({
-      kind: "created",
-      discarded: true,
-      failure: {
-        code: "agent_workspace_unavailable",
-        details: { workspaceError: expect.stringContaining("not an accessible directory") },
-      },
+      failure: { code: "agent_workspace_incompatible" },
     });
     expect(startSession).not.toHaveBeenCalled();
     expect(deleteSession).toHaveBeenCalledWith(result.session.id);
@@ -341,9 +316,9 @@ describe("AgentLaunchService", () => {
       runtimeSession.piSessionFiles = [runtimeSession.piSessionFile];
       listSessions()[0] = runtimeSession;
       throw new AgentConfigurationError(
-        "agent_extensions_unavailable",
-        { unavailableExtensions: ["extension_missing"] },
-        "Selected Agent Extension is unavailable: extension_missing",
+        "agent_plugins_unavailable",
+        { unavailablePlugins: ["webtools"] },
+        "Selected Agent plugin is unavailable: webtools",
       );
     });
 
@@ -356,7 +331,7 @@ describe("AgentLaunchService", () => {
 
     expect(result).toMatchObject({
       kind: "created",
-      failure: { code: "agent_extensions_unavailable" },
+      failure: { code: "agent_plugins_unavailable" },
     });
     expect(result.discarded).toBeUndefined();
     expect(deleteSession).not.toHaveBeenCalled();

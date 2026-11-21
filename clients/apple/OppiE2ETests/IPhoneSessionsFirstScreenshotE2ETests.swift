@@ -483,19 +483,18 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         XCTAssertEqual(promptMode.value as? String, "Replace")
         XCTAssertTrue(app.buttons["agent.nativeEdit.model"].exists, "Model picker did not appear")
         XCTAssertTrue(app.buttons["agent.nativeEdit.thinking"].exists, "Thinking picker did not appear")
-        tap(app.buttons["agent.nativeEdit.tools"], named: "Agent tools")
-        XCTAssertTrue(app.navigationBars["Agent Tools"].waitForExistence(timeout: 10))
-        tap(app.buttons["agent.nativeEdit.toolMode"], named: "tool selection mode")
-        tap(app.buttons["Choose tools"], named: "exact tool selection")
-        let grepTool = app.buttons["agent.nativeEdit.tool.grep"]
-        for _ in 0..<3 where !grepTool.exists {
+        // The Tools section: a capability switch, off then back on, so the editor's
+        // Save proves the capabilities it holds reach the server.
+        let askMe = app.switches["agent.nativeEdit.askMe"]
+        for _ in 0..<3 where !askMe.exists {
             app.swipeUp()
         }
-        XCTAssertTrue(grepTool.waitForExistence(timeout: 5), "All Pi built-in tools were not listed")
-        tap(grepTool, named: "Grep tool")
-        try saveLabScreenshot(name: "iphone-native-agent-tool-picker-e2e")
-        tap(app.navigationBars["Agent Tools"].buttons.firstMatch, named: "Agent tools back")
-        XCTAssertTrue(app.navigationBars["Edit Agent"].waitForExistence(timeout: 5))
+        XCTAssertTrue(askMe.waitForExistence(timeout: 5), "The editor has no Tools section")
+        tap(askMe, named: "Ask me switch")
+        XCTAssertEqual(askMe.value as? String, "0", "Ask me turned off")
+        try saveLabScreenshot(name: "iphone-native-agent-tools-e2e")
+        tap(askMe, named: "Ask me switch")
+        XCTAssertEqual(askMe.value as? String, "1", "Ask me back on")
 
         tap(app.buttons["agent.nativeEdit.thinking"], named: "Agent thinking picker")
         tap(app.buttons["Max"], named: "Max Agent thinking")
@@ -512,8 +511,13 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         XCTAssertEqual(instructions["mode"] as? String, "replace")
         XCTAssertEqual(instructions["text"] as? String, "Use only native instructions.")
         XCTAssertEqual(defaults["thinkingLevel"] as? String, "max")
-        let tools = try XCTUnwrap(defaults["tools"] as? [String])
-        XCTAssertEqual(tools, ["bash", "edit", "grep", "read", "write"])
+        let capabilities = try XCTUnwrap(definition["capabilities"] as? [String: Any])
+        XCTAssertEqual(capabilities["ask"] as? Bool, true)
+        XCTAssertEqual(capabilities["notify"] as? Bool, true)
+        XCTAssertEqual(capabilities["subagent"] as? Bool, true)
+        XCTAssertNil(capabilities["core"], "Edit files on is the default: no tier is stored")
+        XCTAssertNil(capabilities["plugins"], "No plugin list means every enabled plugin")
+        XCTAssertNil(capabilities["mcp"], "No MCP map means every configured server")
 
         // The saved definition and its chosen tools make the detail taller than the
         // screen, so Start Session sits below the fold until the list scrolls.

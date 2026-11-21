@@ -3,19 +3,20 @@ import UIKit
 /// Edit Agent: a saved Agent's definition, plus this device's chat style for
 /// its sessions. A draft form on the settings base: its edits live in
 /// `AgentNativeEditDraft`, Save sends them and Cancel drops them. Presented in
-/// a navigation controller; the pages that choose tools, Skills, Extensions,
+/// a navigation controller; the pages that choose plugins, MCP servers, Skills,
 /// and workspaces are pushed above it and edit the same draft, and the model
 /// picker is a sheet over it.
 final class AgentNativeEditViewController: ListScreenController<
     AgentNativeEditViewController.Section, AgentNativeEditViewController.Item
 > {
-    enum Section: Hashable, Sendable { case identity, prompt, defaults, chat, resources, constraints, error }
+    enum Section: Hashable, Sendable { case identity, prompt, defaults, chat, tools, context, constraints, error }
     enum Item: Hashable, Sendable {
         case name, description
         case customPrompt, promptMode, prompt
-        case model, useServerModel, thinking, tools
+        case model, useServerModel, thinking
         case chatStyle
-        case skillMode, skills, extensionMode, extensions, loadingResources, skillStatus, extensionStatus
+        case editFiles, askMe, notifyMe, delegate, plugins, mcpServers, skills
+        case contextFiles, sessionHistory
         case runtime, engine, workspaceMode, workspaces
         case error
     }
@@ -24,8 +25,6 @@ final class AgentNativeEditViewController: ListScreenController<
     private let apiClient: APIClient?
     private let onSaved: (StoredAgentDefinition) -> Void
     private var loadTask: Task<Void, Never>?
-    private var extensionToolTask: Task<Void, Never>?
-    private var extensionToolRefreshKey: String?
 
     nonisolated(unsafe) private var chatStyleObserver: NSObjectProtocol?
 
@@ -111,7 +110,11 @@ final class AgentNativeEditViewController: ListScreenController<
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.chatStyleDidChange() }
         }
-        loadTask = Task { [draft, apiClient] in await draft.refreshResources(apiClient: apiClient) }
+        loadTask = Task { [draft, apiClient] in
+            async let resources: Void = draft.refreshResources(apiClient: apiClient)
+            async let servers: Void = draft.refreshMcpServers(apiClient: apiClient)
+            _ = await (resources, servers)
+        }
     }
 
     private func chatStyleDidChange() { setNeedsUpdateProperties() }
@@ -120,7 +123,6 @@ final class AgentNativeEditViewController: ListScreenController<
         super.viewDidDisappear(animated)
         if isBeingDismissed || navigationController?.isBeingDismissed == true || isMovingFromParent {
             loadTask?.cancel()
-            extensionToolTask?.cancel()
         }
     }
 
@@ -135,15 +137,6 @@ final class AgentNativeEditViewController: ListScreenController<
         cancelItem.isEnabled = !isSaving
         collectionView.isUserInteractionEnabled = !isSaving
         isModalInPresentation = isSaving
-
-        let key = draft.extensionToolRefreshKey
-        if key != extensionToolRefreshKey {
-            extensionToolRefreshKey = key
-            extensionToolTask?.cancel()
-            extensionToolTask = Task { [draft, apiClient] in
-                await draft.refreshSelectedExtensionToolDetails(apiClient: apiClient)
-            }
-        }
     }
 
     private func save() {
@@ -159,14 +152,6 @@ final class AgentNativeEditViewController: ListScreenController<
     // MARK: - Sections
 
     override func sections() -> [ListSection<Section, Item>] {
-        var resources: [Item] = [.skillMode]
-        if draft.skillSelectionMode == .exact { resources.append(.skills) }
-        resources.append(.extensionMode)
-        if draft.extensionSelectionMode == .exact { resources.append(.extensions) }
-        if draft.isLoadingResources { resources.append(.loadingResources) }
-        if draft.skillCatalogState.statusMessage(for: "Skills") != nil { resources.append(.skillStatus) }
-        if draft.extensionCatalogState.statusMessage(for: "Extensions") != nil { resources.append(.extensionStatus) }
-
         var sections: [ListSection<Section, Item>] = [
             .init(.identity, header: "Identity", items: [.name, .description]),
             .init(
@@ -178,7 +163,7 @@ final class AgentNativeEditViewController: ListScreenController<
             .init(
                 .defaults,
                 header: "Pi Session Defaults",
-                items: [.model] + (draft.model.isEmpty ? [] : [.useServerModel]) + [.thinking, .tools]
+                items: [.model] + (draft.model.isEmpty ? [] : [.useServerModel]) + [.thinking]
             ),
             // The chat style is this device's own, so the section says it.
             .init(
@@ -189,10 +174,16 @@ final class AgentNativeEditViewController: ListScreenController<
                 items: [.chatStyle]
             ),
             .init(
-                .resources,
-                header: "Resources",
-                footer: "Inherit follows normal Pi discovery. Exact selection can be empty to give this Agent no Skills or optional Extensions. Exact selections explicitly override server discovery, including resources currently Disabled or Off, for this Agent only.",
-                items: resources
+                .tools,
+                header: "Tools",
+                footer: toolsFooter,
+                items: [.editFiles, .askMe, .notifyMe, .delegate, .plugins, .mcpServers, .skills]
+            ),
+            .init(
+                .context,
+                header: "Context",
+                footer: "What this Agent's sessions read besides its own prompt. Read AGENTS.md adds the workspace's own instructions; Read past sessions lets it look up earlier sessions on this server.",
+                items: [.contextFiles, .sessionHistory]
             ),
             .init(
                 .constraints,
@@ -214,11 +205,17 @@ final class AgentNativeEditViewController: ListScreenController<
             : "Uses these instructions instead of the server's default system prompt."
     }
 
+    private var toolsFooter: String {
+        draft.editsFiles
+            ? "Edit files gives this Agent Pi's coding tools. Ask me, Notify me, and Delegate decide whether it can ask you a question, send a push when it is done, and start child sessions."
+            : "Without Edit files this Agent reads and searches only, and it names the plugins and MCP servers it may use (both start at None). Ask me, Notify me, and Delegate decide whether it can ask you a question, send a push when it is done, and start child sessions."
+    }
+
     /// The draft values a row is drawn from. A pass reconfigures only the rows
     /// whose inputs changed, because reconfiguring a pop-up row rebuilds its
     /// button and dismisses the menu it has open, and UIKit runs a pass for the
-    /// menu itself and for a change to any other row (resources finishing
-    /// their load, for one).
+    /// menu itself and for a change to any other row (a pushed page returning,
+    /// for one).
     override func inputs(of item: Item) -> AnyHashable {
         switch item {
         case .name: AnyHashable(draft.name)
@@ -229,15 +226,16 @@ final class AgentNativeEditViewController: ListScreenController<
         case .model: AnyHashable(draft.model)
         case .useServerModel: AnyHashable(0)
         case .thinking: AnyHashable(draft.thinkingLevel)
-        case .tools: AnyHashable([AnyHashable(draft.toolSelectionMode), AnyHashable(draft.selectedToolNames)])
         case .chatStyle: AnyHashable([AnyHashable(draft.chatStyle), AnyHashable(AppPreferences.ChatDisplay.style)])
-        case .skillMode: AnyHashable(draft.skillSelectionMode)
-        case .skills: AnyHashable(draft.resolvedSkillPaths.count)
-        case .extensionMode: AnyHashable(draft.extensionSelectionMode)
-        case .extensions: AnyHashable(draft.selectedExtensionIds)
-        case .loadingResources: AnyHashable(0)
-        case .skillStatus: AnyHashable(String(describing: draft.skillCatalogState))
-        case .extensionStatus: AnyHashable(String(describing: draft.extensionCatalogState))
+        case .editFiles: AnyHashable(draft.editsFiles)
+        case .askMe: AnyHashable(draft.canAsk)
+        case .notifyMe: AnyHashable(draft.canNotify)
+        case .delegate: AnyHashable(draft.canDelegate)
+        case .plugins: AnyHashable(draft.pluginsSummary)
+        case .mcpServers: AnyHashable(draft.mcpSummary)
+        case .skills: AnyHashable(draft.skillsSummary)
+        case .contextFiles: AnyHashable(draft.contextFiles)
+        case .sessionHistory: AnyHashable(draft.sessionHistory)
         case .runtime: AnyHashable(draft.requiredRuntime)
         case .engine: AnyHashable(draft.requiredEngine)
         case .workspaceMode: AnyHashable(draft.workspaceConstraintMode)
@@ -256,27 +254,64 @@ final class AgentNativeEditViewController: ListScreenController<
         switch item {
         case .name, .description, .prompt:
             collectionView.dequeueConfiguredReusableCell(using: textViewRow, for: indexPath, item: item)
-        case .model, .tools, .skills, .extensions, .workspaces:
+        case .model, .plugins, .mcpServers, .skills, .workspaces:
             collectionView.dequeueConfiguredReusableCell(using: indexRow, for: indexPath, item: item)
         case .useServerModel:
             collectionView.dequeueConfiguredReusableCell(using: actionRow, for: indexPath, item: item)
-        case .promptMode, .thinking, .chatStyle, .skillMode, .extensionMode, .runtime, .engine, .workspaceMode:
+        case .promptMode, .thinking, .chatStyle, .runtime, .engine, .workspaceMode:
             collectionView.dequeueConfiguredReusableCell(using: menuRow, for: indexPath, item: item)
-        case .loadingResources, .skillStatus, .extensionStatus, .error:
+        case .error:
             collectionView.dequeueConfiguredReusableCell(using: stateRow, for: indexPath, item: item)
-        case .customPrompt:
+        case .customPrompt, .editFiles, .askMe, .notifyMe, .delegate, .contextFiles, .sessionHistory:
             super.dequeue(item, at: indexPath)
         }
     }
 
     override func configure(_ cell: UICollectionViewListCell, item: Item) {
-        guard item == .customPrompt else { return }
-        toggleRow(
-            cell,
-            title: "Custom system prompt",
-            isOn: draft.usesCustomInstructions,
-            identifier: "agent.nativeEdit.customPrompt"
-        ) { [weak self] in self?.draft.usesCustomInstructions = $0 }
+        switch item {
+        case .customPrompt:
+            toggleRow(
+                cell,
+                title: "Custom system prompt",
+                isOn: draft.usesCustomInstructions,
+                identifier: "agent.nativeEdit.customPrompt"
+            ) { [weak self] in self?.draft.usesCustomInstructions = $0 }
+        case .editFiles:
+            toggleRow(
+                cell,
+                title: "Edit files",
+                isOn: draft.editsFiles,
+                identifier: "agent.nativeEdit.editFiles"
+            ) { [weak self] in self?.draft.setEditsFiles($0) }
+        case .askMe:
+            toggleRow(cell, title: "Ask me", isOn: draft.canAsk, identifier: "agent.nativeEdit.askMe") { [weak self] in
+                self?.draft.canAsk = $0
+            }
+        case .notifyMe:
+            toggleRow(cell, title: "Notify me", isOn: draft.canNotify, identifier: "agent.nativeEdit.notifyMe") { [weak self] in
+                self?.draft.canNotify = $0
+            }
+        case .delegate:
+            toggleRow(cell, title: "Delegate", isOn: draft.canDelegate, identifier: "agent.nativeEdit.delegate") { [weak self] in
+                self?.draft.canDelegate = $0
+            }
+        case .contextFiles:
+            toggleRow(
+                cell,
+                title: "Read AGENTS.md",
+                isOn: draft.contextFiles,
+                identifier: "agent.nativeEdit.contextFiles"
+            ) { [weak self] in self?.draft.contextFiles = $0 }
+        case .sessionHistory:
+            toggleRow(
+                cell,
+                title: "Read past sessions",
+                isOn: draft.sessionHistory,
+                identifier: "agent.nativeEdit.sessionHistory"
+            ) { [weak self] in self?.draft.sessionHistory = $0 }
+        default:
+            break
+        }
     }
 
     private func configureTextView(_ cell: SettingsTextViewRowCell, item: Item) {
@@ -334,26 +369,29 @@ final class AgentNativeEditViewController: ListScreenController<
             ) { [weak self] in
                 self?.presentModelPicker()
             }
-        case .tools:
-            cell.configure(title: "Tools", image: nil, value: draft.toolSelectionSummary, identifier: "agent.nativeEdit.tools") { [weak self] in
+        case .plugins:
+            cell.configure(
+                title: "Plugins", image: nil, value: draft.pluginsSummary,
+                identifier: "agent.nativeEdit.plugins"
+            ) { [weak self] in
                 guard let self else { return }
-                Router.push(AgentToolSelectionViewController(selection: .agent(draft)), from: self)
+                Router.push(AgentCapabilityPages.plugins(draft: draft), from: self)
+            }
+        case .mcpServers:
+            cell.configure(
+                title: "MCP Servers", image: nil, value: draft.mcpSummary,
+                identifier: "agent.nativeEdit.mcpServers"
+            ) { [weak self] in
+                guard let self else { return }
+                Router.push(AgentCapabilityPages.mcpServers(draft: draft), from: self)
             }
         case .skills:
             cell.configure(
-                title: "Selected Skills", image: nil,
-                value: Self.selectionCount(draft.resolvedSkillPaths.count), identifier: "agent.nativeEdit.skills"
+                title: "Skills", image: nil, value: draft.skillsSummary,
+                identifier: "agent.nativeEdit.skills"
             ) { [weak self] in
                 guard let self else { return }
-                Router.push(AgentResourceSelectionViewController(kind: .skills, draft: draft), from: self)
-            }
-        case .extensions:
-            cell.configure(
-                title: "Selected Extensions", image: nil,
-                value: Self.selectionCount(draft.selectedExtensionIds.count), identifier: "agent.nativeEdit.extensions"
-            ) { [weak self] in
-                guard let self else { return }
-                Router.push(AgentResourceSelectionViewController(kind: .extensions, draft: draft), from: self)
+                Router.push(AgentCapabilityPages.skills(draft: draft), from: self)
             }
         case .workspaces:
             cell.configure(
@@ -423,24 +461,6 @@ final class AgentNativeEditViewController: ListScreenController<
                         }
                     }
                 }
-            )
-        case .skillMode:
-            let mode = draft.skillSelectionMode
-            let options = modeOptions(mode) { [weak self] in self?.draft.skillSelectionMode = $0 }
-            cell.configure(
-                title: "Skills",
-                identifier: "agent.nativeEdit.skillMode",
-                value: mode.title,
-                menu: { options }
-            )
-        case .extensionMode:
-            let mode = draft.extensionSelectionMode
-            let options = modeOptions(mode) { [weak self] in self?.draft.extensionSelectionMode = $0 }
-            cell.configure(
-                title: "Extensions",
-                identifier: "agent.nativeEdit.extensionMode",
-                value: mode.title,
-                menu: { options }
             )
         case .runtime:
             let runtime = draft.requiredRuntime
@@ -512,26 +532,9 @@ final class AgentNativeEditViewController: ListScreenController<
         engine?.rawValue.capitalized ?? "Any engine"
     }
 
-    private func modeOptions(
-        _ mode: AgentResourceSelectionMode,
-        onSelect: @escaping (AgentResourceSelectionMode) -> Void
-    ) -> [SettingsMenuOption] {
-        AgentResourceSelectionMode.allCases.map { option in
-            SettingsMenuOption(title: option.title, selected: option == mode) { onSelect(option) }
-        }
-    }
-
     private func configureState(_ cell: SettingsStateRowCell, item: Item) {
-        switch item {
-        case .loadingResources:
-            cell.configure(.loading("Refreshing discovered resources\u{2026}"))
-        case .skillStatus:
-            cell.configure(.failure(draft.skillCatalogState.statusMessage(for: "Skills") ?? "", retry: nil))
-        case .extensionStatus:
-            cell.configure(.failure(draft.extensionCatalogState.statusMessage(for: "Extensions") ?? "", retry: nil))
-        default:
-            cell.configure(.failure(draft.error ?? "", retry: nil), identifier: "agent.nativeEdit.error")
-        }
+        guard item == .error else { return }
+        cell.configure(.failure(draft.error ?? "", retry: nil), identifier: "agent.nativeEdit.error")
     }
 
     private static func selectionCount(_ count: Int) -> String {

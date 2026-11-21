@@ -9,6 +9,7 @@ import {
   toolAllowed,
   type DurableToolNarrowing,
 } from "../src/durable-agent.js";
+import type { CompiledAgentCapabilities } from "../src/agent-capabilities.js";
 import { DurableMcp } from "../src/durable-mcp.js";
 import { McpToolCache, mcpToolCachePath } from "../src/mcp-tool-cache.js";
 import { bindOppiHost } from "../src/durable-extension-api.js";
@@ -125,18 +126,14 @@ describe("durable tool policy, as Pi's createAgentSession", () => {
     ]);
   });
 
-  it("gives a saved Agent with an exact Extension selection codemode only with builtin:codemode", () => {
-    const launch = (extensionIds: string[]) =>
+  it("gives a read-only Agent codemode only through an admitted MCP server", () => {
+    const launch = (compiled: CompiledAgentCapabilities) =>
       resolveDurableAgent({
-        saved: {
-          id: "agent-1",
-          version: 1,
-          definition: { name: "Exact", resources: { extensionIds } },
-        },
-        runtime: "sandbox",
+        saved: { id: "agent-1", version: 1, definition: { name: "Exact" } },
+        compiled,
+        runtime: "host",
         base: [CodingTools, DurableAsk, Codemode],
         loaded: [],
-        classic: { bundled: new Set(), names: new Map() },
         enabled: () => true,
         piTools: EVERY_PI_TOOL,
         codemode: Codemode,
@@ -146,13 +143,38 @@ describe("durable tool policy, as Pi's createAgentSession", () => {
         notify: defineExtension({ name: "oppi.notify" }),
         notifies: false,
       });
-    const selected = launch(["builtin:codemode"]);
-    expect(selected.change.tools.map((tool) => tool.name)).toContain("codemode");
-    expect(selected.doc.extensions).toEqual({ packages: [], mcp: false, codemode: true });
-    const without = launch(["builtin:mcp"]);
+    const withServer = launch({
+      core: "readonly",
+      excluded: ["write", "edit"],
+      discovery: ["codemode"],
+      plugins: [],
+      mcp: { enabled: true, servers: ["gmail"] },
+      contextFiles: true,
+      sessionHistory: true,
+      ask: true,
+      notify: true,
+      subagent: true,
+      warnings: [],
+    });
+    expect(withServer.change.tools.map((tool) => tool.name)).toContain("codemode");
+    expect(withServer.doc.extensions).toEqual({ packages: [], mcp: true, codemode: true });
+
+    const without = launch({
+      core: "readonly",
+      excluded: ["write", "edit", "codemode"],
+      discovery: [],
+      plugins: [],
+      mcp: { enabled: false, servers: [] },
+      contextFiles: true,
+      sessionHistory: true,
+      ask: true,
+      notify: true,
+      subagent: true,
+      warnings: [],
+    });
     expect(without.change.extensions.map((extension) => extension.name)).not.toContain("codemode");
     expect(without.change.tools.map((tool) => tool.name)).not.toContain("codemode");
-    expect(without.doc.extensions).toEqual({ packages: [], mcp: true, codemode: false });
+    expect(without.doc.extensions).toEqual({ packages: [], mcp: false, codemode: false });
   });
 
   it("narrows a spawn's tools and never widens them past the parent's", () => {
@@ -253,40 +275,45 @@ describe("durable tool policy, as Pi's createAgentSession", () => {
     expect(toolAllowed(doc.tools, "mcp_echo_run", EVERY_PI_TOOL)).toBe(true);
   });
 
-  it("gives a sandbox a host-only package only by an Agent's selection or the workspace's opt-in", () => {
+  it("gives a sandbox a host-only package only by an Agent's plugin selection or the workspace's opt-in", () => {
     const hostTool = { name: "host_only" } as unknown as ToolRegistration;
     const pkg = defineExtension({ name: "host-pkg", tools: [hostTool] });
-    const extensionId = "host-pkg.ext";
     const packagesOf = (
       runtime: "host" | "sandbox",
-      extensionIds?: string[],
+      plugins?: string[],
       hostExtensionIds?: string[],
       agentOptsIn = true,
     ) =>
       resolveDurableAgent({
-        saved: {
-          id: "agent-1",
-          version: 1,
-          definition: {
-            name: "Agent",
-            ...(extensionIds ? { resources: { extensionIds } } : {}),
-          },
+        saved: { id: "agent-1", version: 1, definition: { name: "Agent" } },
+        compiled: {
+          core: "full",
+          excluded: [],
+          discovery: [],
+          mcp: { enabled: true },
+          ...(plugins === undefined ? {} : { plugins }),
+          contextFiles: true,
+          sessionHistory: true,
+          ask: true,
+          notify: true,
+          subagent: true,
+          warnings: [],
         },
         runtime,
         base: [CodingTools],
         loaded: [
           {
+            name: "host-pkg",
             extension: pkg,
             // Host only: it acts on the host, outside any VM.
             runtimes: ["host"],
             root: "/tmp/pkg",
             entry: "/tmp/pkg/server.ts",
-            extensionIds: [extensionId],
+            extensionIds: ["host-pkg.ext"],
           } as never,
         ],
         ...(hostExtensionIds ? { hostExtensionIds } : {}),
         agentOptsIn,
-        classic: { bundled: new Set(), names: new Map() },
         enabled: () => true,
         piTools: EVERY_PI_TOOL,
         codemode: Codemode,
@@ -300,13 +327,14 @@ describe("durable tool policy, as Pi's createAgentSession", () => {
     expect(packagesOf("host")).toContain("host_only");
     expect(packagesOf("sandbox")).not.toContain("host_only");
     expect(packagesOf("sandbox", undefined, ["other.ext"])).not.toContain("host_only");
-    expect(packagesOf("sandbox", undefined, [extensionId])).toContain("host_only");
-    expect(packagesOf("sandbox", [extensionId])).toContain("host_only");
+    // The workspace names the package's classic extension ID; the Agent names the plugin.
+    expect(packagesOf("sandbox", undefined, ["host-pkg.ext"])).toContain("host_only");
+    expect(packagesOf("sandbox", ["host-pkg"])).toContain("host_only");
     // An Agent a sandbox's model picked (`subagent spawn`) needs the workspace's opt-in.
-    expect(packagesOf("sandbox", [extensionId], [], false)).not.toContain("host_only");
-    expect(packagesOf("sandbox", [extensionId], [extensionId], false)).toContain("host_only");
-    // An exact selection is exact: the workspace's opt-in does not add to it.
-    expect(packagesOf("sandbox", [], [extensionId])).not.toContain("host_only");
+    expect(packagesOf("sandbox", ["host-pkg"], [], false)).not.toContain("host_only");
+    expect(packagesOf("sandbox", ["host-pkg"], ["host-pkg.ext"], false)).toContain("host_only");
+    // A named plugin list is exact: the workspace's opt-in does not add a package to it.
+    expect(packagesOf("sandbox", [], ["host-pkg.ext"])).not.toContain("host_only");
   });
 
   it("caps a narrowed child at its parent's Pi tools, so an attach with the Pi Tools setting cannot add one back", () => {

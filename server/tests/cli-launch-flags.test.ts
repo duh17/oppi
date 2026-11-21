@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   applySessionDefaultFlags,
+  parseAgentSelectionFlag,
   parseCsvList,
   resolveNoToolsFlag,
   resolveThinkingFromFlags,
@@ -82,5 +83,19 @@ describe("resolveModelFlagForCli thinking suffix", () => {
       canonicalId: "openai/gpt-5.3-codex",
       thinkingLevel: "high",
     });
+  });
+});
+
+describe("an Agent's plugin, Skill, and server flags", () => {
+  it("reads none as nothing and all as everything", () => {
+    expect(parseAgentSelectionFlag("none")).toEqual([]);
+    expect(parseAgentSelectionFlag("all")).toBeNull();
+    expect(parseAgentSelectionFlag("notebook, secret")).toEqual(["notebook", "secret"]);
+  });
+
+  it("refuses an empty value, which used to mean every one", () => {
+    // `--mcp ""` read as null (everything) while the help promised "none": a widening typo.
+    expect(() => parseAgentSelectionFlag("")).toThrow("an empty value is neither none nor all");
+    expect(() => parseAgentSelectionFlag("   ")).toThrow("an empty value");
   });
 });

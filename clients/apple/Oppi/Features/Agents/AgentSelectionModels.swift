@@ -1,25 +1,17 @@
 import Foundation
 
-// The vocabulary of the Agent editor's selection pages and Pi's Tools page.
+// The vocabulary of the Agent editor's pages and Pi's Tools page.
 
 enum AgentToolSelectionMode: String, CaseIterable {
     case inherit
     case exact
-    case existingPolicy
 
     var title: String {
         switch self {
         case .inherit: "Pi defaults"
         case .exact: "Choose tools"
-        case .existingPolicy: "Existing policy"
         }
     }
-}
-
-struct AgentExtensionToolGroup: Identifiable {
-    let id: String
-    let name: String
-    let tools: [ServerToolSummary]
 }
 
 enum AgentResourceCatalogState: Equatable {
@@ -45,13 +37,6 @@ enum AgentResourceCatalogState: Equatable {
         return hasRows ? .content : .empty
     }
 
-    static func isExactSelectionSaveAllowed(
-        initialSelectionWasInherited: Bool,
-        catalogState: Self
-    ) -> Bool {
-        !initialSelectionWasInherited || [.empty, .content, .cachedOffline].contains(catalogState)
-    }
-
     func statusMessage(for resourceName: String) -> String? {
         switch self {
         case .unavailable:
@@ -61,7 +46,7 @@ enum AgentResourceCatalogState: Equatable {
         case .neverLoaded:
             return "The \(resourceName) catalog has not loaded yet."
         case .failed:
-            return "Could not load the \(resourceName.lowercased()) catalog. Existing selections are kept."
+            return "Could not load the \(resourceName.lowercased()) catalog."
         case .cachedOffline:
             return "Showing cached \(resourceName.lowercased()) settings. Pull to retry."
         case .empty, .content:

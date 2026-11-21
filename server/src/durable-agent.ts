@@ -6,10 +6,10 @@ import {
   type ToolRegistration,
 } from "@earendil-works/pi-durable";
 
-import type { AgentDefinition } from "./agent-launch-service.js";
+import type { AgentDefinition } from "./agent-definition.js";
+import type { CompiledAgentCapabilities } from "./agent-capabilities.js";
 import type { LoadedPlugin } from "./plugin-host.js";
 import { DURABLE_MCP_EXTENSION_PREFIX } from "./durable-mcp.js";
-import { BUILTIN_EXTENSION_PATH_PREFIX } from "./host-mcp-extensions.js";
 import { PI_BUILTIN_TOOL_NAMES, PI_DEFAULT_TOOL_NAMES } from "./pi-global-config.js";
 import type { ThinkingLevel } from "./thinking-levels.js";
 import type { Session } from "./types.js";
@@ -17,11 +17,12 @@ import { LIVE_VOICE_EXTENSION } from "../plugins/live-voice/contract.js";
 
 type DurableToolPolicy = NonNullable<NonNullable<Session["launch"]>["tools"]>;
 
-/** The AGENTS files and Skills a saved Agent selects; Pi discovery when unset. */
+/** The Skills and context an Agent selected, as its conversation stores them. */
 export type DurableAgentResources = {
-  skillPaths?: string[];
-  agentsFiles?: Array<{ path: string; content: string }>;
-  noContextFiles?: boolean;
+  /** Skill names, the folder of each `SKILL.md`; unset means Pi discovery. */
+  skills?: string[];
+  /** False turns AGENTS.md and the workspace prompt off. */
+  contextFiles?: boolean;
 };
 
 /**
@@ -44,16 +45,18 @@ export type OppiAgentState = {
   grant: boolean;
   /** Selected AGENTS files and Skills for the project-context sections. */
   resources?: DurableAgentResources;
-  /** False when the Agent's instructions replace the prompt: no `project_context` section. */
-  projectContext?: false;
+  /**
+   * True when the Agent's instructions replace the base prompt, so Oppi's appends stand in for
+   * Pi's discovered `APPEND_SYSTEM.md`. AGENTS.md is `resources.contextFiles`, never this.
+   */
+  replacePrompt?: true;
   /** False when the Agent turns off `history://` and `agent://` reads (`resources.noSessionHistory`). */
   sessionHistory?: false;
   /**
-   * An exact Extension selection: owner plugins' extensions by name, MCP and codemode or not,
-   * and the names of selected Extensions the session runs without (no durable version), for its
-   * warning.
+   * The plugins this Agent selected by name, whether it reaches MCP at all, and whether it is
+   * offered codemode (a read-only Agent gets it only through an admitted server).
    */
-  extensions?: { packages: string[]; mcp: boolean; codemode: boolean; skipped?: string[] };
+  extensions?: { packages: string[]; mcp: boolean; codemode: boolean };
   /** The tool policy, also applied to tools added when the session attaches again. */
   tools?: DurableToolPolicy;
 };
@@ -145,23 +148,12 @@ export function toolAllowed(
   return !PI_TOOLS_SETTING_NAMES.has(name) || piTools.has(name);
 }
 
-/** What Oppi knows of the classic Extensions a saved Agent selects by ID. */
-export interface ClassicExtensionIndex {
-  /** IDs of classic Extensions whose durable version Oppi bundles, so every session has it. */
-  readonly bundled: ReadonlySet<string>;
-  /** A readable name per ID, for the warning about Extensions a session runs without. */
-  readonly names: ReadonlyMap<string, string>;
-}
-
-const MCP_EXTENSION_ID = `${BUILTIN_EXTENSION_PATH_PREFIX}mcp`;
-const CODEMODE_EXTENSION_ID = `${BUILTIN_EXTENSION_PATH_PREFIX}codemode`;
-const TOOL_SEARCH_EXTENSION_ID = `${BUILTIN_EXTENSION_PATH_PREFIX}tool-search`;
-
 /**
  * Whether a session of `runtime` may select the owner plugin `loaded`: it declares the runtime
- * (`runtimes`), or the session is a sandbox one that opted into it (`optedIn`, Extension IDs of
- * a saved Agent's selection or the workspace's `sandboxConfig.hostExtensions`). A plugin that
- * does not declare `sandbox` acts on the host, past the VM, so a sandbox gets it only by opt-in.
+ * (`runtimes`), or the session is a sandbox one that opted into it — by plugin name (an Agent's
+ * own `plugins` selection) or by the classic extension ID a workspace lists in
+ * `sandboxConfig.hostExtensions`. A plugin that does not declare `sandbox` acts on the host, past
+ * the VM, so a sandbox gets it only by opt-in.
  */
 export function pluginAllowedIn(
   loaded: LoadedPlugin,
@@ -169,53 +161,10 @@ export function pluginAllowedIn(
   optedIn: readonly string[],
 ): boolean {
   if (loaded.runtimes.includes(runtime)) return true;
-  return runtime === "sandbox" && loaded.extensionIds.some((id) => optedIn.includes(id));
-}
-
-/**
- * The durable extensions a saved Agent's exact Extension selection names. `builtin:mcp` is the
- * session's own MCP extension, which brings durable's `tool_search` (it searches MCP tools, so
- * `builtin:tool-search` needs `builtin:mcp`), and `builtin:codemode` is pi-durable's codemode, as
- * in classic. An ID whose durable version Oppi bundles is in every session already. Any other ID
- * must belong to a Pi package whose plugin is loaded, enabled, and allowed in this runtime
- * (`pluginAllowedIn`, with `optedIn` as a sandbox's opt-in). The rest are `skipped` by name: the
- * session starts without them and warns.
- */
-export function resolveDurableExtensionSelection(
-  extensionIds: readonly string[],
-  loaded: readonly LoadedPlugin[],
-  classic: ClassicExtensionIndex,
-  runtime: "host" | "sandbox",
-  enabled: (name: string) => boolean,
-  optedIn: readonly string[],
-): { packages: LoadedPlugin[]; mcp: boolean; codemode: boolean; skipped: string[] } {
-  const ids = new Set(extensionIds);
-  const mcp = ids.has(MCP_EXTENSION_ID);
-  const codemode = ids.has(CODEMODE_EXTENSION_ID);
-  const packages: LoadedPlugin[] = [];
-  // By name: two IDs of one package are one skipped Extension.
-  const skipped = new Set<string>();
-  for (const id of ids) {
-    if (
-      id === MCP_EXTENSION_ID ||
-      id === CODEMODE_EXTENSION_ID ||
-      (id === TOOL_SEARCH_EXTENSION_ID && mcp)
-    )
-      continue;
-    if (classic.bundled.has(id)) continue;
-    const found = loaded.find((candidate) => candidate.extensionIds.includes(id));
-    if (found && pluginAllowedIn(found, runtime, optedIn) && enabled(found.extension.name)) {
-      if (!packages.includes(found)) packages.push(found);
-      continue;
-    }
-    skipped.add(
-      classic.names.get(id) ??
-        (id.startsWith(BUILTIN_EXTENSION_PATH_PREFIX)
-          ? id.slice(BUILTIN_EXTENSION_PATH_PREFIX.length)
-          : id),
-    );
-  }
-  return { packages, mcp, codemode, skipped: [...skipped] };
+  return (
+    runtime === "sandbox" &&
+    (optedIn.includes(loaded.name) || loaded.extensionIds.some((id) => optedIn.includes(id)))
+  );
 }
 
 /**
@@ -318,12 +267,13 @@ interface DurableAgentInput {
   /** A sandbox workspace's `sandboxConfig.hostExtensions`: host-only plugins it opted into. */
   hostExtensionIds?: readonly string[];
   /**
-   * Whether the saved Agent's exact selection also opts a sandbox into the host-only plugins it
-   * names: an owner's launch does. A sandbox parent's `subagent spawn` does not, because the
+   * Whether the saved Agent's own plugin selection also opts a sandbox into the host-only plugins
+   * it names: an owner's launch does. A sandbox parent's `subagent spawn` does not, because the
    * sandbox's model picked the Agent; only `hostExtensionIds` admit them for its child.
    */
   agentOptsIn?: boolean;
-  classic: ClassicExtensionIndex;
+  /** What the Agent may do here, from `compileAgentCapabilities`. */
+  compiled?: CompiledAgentCapabilities;
   /** Whether the server enables the durable extension of this name (`isExtensionEnabled`). */
   enabled: (name: string) => boolean;
   /**
@@ -331,7 +281,7 @@ interface DurableAgentInput {
    * top-level session, the parent's tools for a child.
    */
   piTools: ReadonlySet<string>;
-  /** pi-durable's `codemode`; an exact Extension selection keeps it only with `builtin:codemode`. */
+  /** pi-durable's `codemode`; a read-only Agent gets it only through an admitted MCP server. */
   codemode: Extension;
   /** Oppi's extension that offers `subagent`. */
   sessions: Extension;
@@ -352,21 +302,16 @@ interface DurableAgentInput {
  * conversation's `oppi.agent` document. A top-level launch commits it when it creates its
  * conversation; `subagent spawn` commits it with the child conversation.
  *
- * | AgentDefinition                         | AgentChange / document                          |
- * | `sessionDefaults.model`, `thinkingLevel` | `model`, `thinkingLevel` (explicit ones win)     |
- * | `sessionDefaults.tools/excludeTools/noTools` | `tools`, and `oppi.agent.tools`             |
- * | `resources.extensionIds`                | `extensions`, and `oppi.agent.extensions`        |
- * | `resources.skillPaths/agentsFiles/noContextFiles` | `oppi.agent.resources`                 |
- * | `instructions`                          | `instructions`; replace sets `projectContext: false` |
- * | `name`, `icon`, `description`, id, version | `oppi.agent.agent`                            |
+ * The Agent itself is already compiled (`compileAgentCapabilities`): this function selects the
+ * extensions the plan names, applies its tool policy, and records what the conversation runs as.
  */
 export function resolveDurableAgent(input: DurableAgentInput): {
   change: DurableAgentChange;
   doc: OppiAgentState;
 } {
-  const { saved, runtime, loaded } = input;
+  const { saved, runtime, loaded, compiled } = input;
   const definition = saved?.definition;
-  const packageNames = new Set(loaded.map((entry) => entry.extension.name));
+  const pluginNames = new Set(loaded.filter((entry) => entry.extension).map((entry) => entry.name));
   const kept = input.base.filter(
     (extension) =>
       !extension.name.startsWith(DURABLE_MCP_EXTENSION_PREFIX) &&
@@ -374,31 +319,27 @@ export function resolveDurableAgent(input: DurableAgentInput): {
       extension.name !== input.notify?.name &&
       // A call belongs to the session it attached to; a child spawned during one has no voice.
       extension.name !== LIVE_VOICE_EXTENSION &&
-      // A saved Agent picks its own packages; a copy keeps the parent's.
-      !(saved && packageNames.has(extension.name)),
+      // A saved Agent picks its own plugins; a copy keeps the parent's.
+      !(saved && pluginNames.has(extension.name)),
   );
-  const extensionIds = definition?.resources?.extensionIds;
-  const selection =
-    extensionIds === undefined
-      ? undefined
-      : resolveDurableExtensionSelection(
-          extensionIds,
-          loaded,
-          input.classic,
-          runtime,
-          input.enabled,
-          [...(input.hostExtensionIds ?? []), ...(input.agentOptsIn ? extensionIds : [])],
-        );
-  // An exact selection without `builtin:codemode` has no codemode, as a classic one loads none.
+  // A read-only Agent keeps codemode only when an admitted MCP server is reached through it.
   const base =
-    selection && !selection.codemode
+    compiled?.core === "readonly" && !compiled.discovery.includes("codemode")
       ? kept.filter((extension) => extension.name !== input.codemode.name)
       : kept;
+  const optedIn = [
+    ...(input.hostExtensionIds ?? []),
+    ...(input.agentOptsIn && compiled?.plugins ? compiled.plugins : []),
+  ];
   const packages = !saved
     ? []
-    : (
-        selection?.packages ??
-        loaded.filter((entry) => pluginAllowedIn(entry, runtime, input.hostExtensionIds ?? []))
+    : (compiled?.plugins === undefined
+        ? loaded.filter((entry) => pluginAllowedIn(entry, runtime, optedIn))
+        : loaded.filter(
+            (entry) =>
+              compiled.plugins?.includes(entry.name) === true &&
+              pluginAllowedIn(entry, runtime, optedIn),
+          )
       ).map((entry) => entry.extension);
   // A disabled extension leaves every selection, a child's copy of its parent's included.
   const extensions = [
@@ -410,7 +351,7 @@ export function resolveDurableAgent(input: DurableAgentInput): {
 
   const policy: DurableToolPolicy | undefined =
     input.policy ??
-    (saved ? savedPolicy(definition?.sessionDefaults) : undefined) ??
+    (compiled && saved ? compiledPolicy(compiled) : undefined) ??
     input.inherited?.tools;
   const resolved: ToolRegistration[] = extensions
     .flatMap((extension) => extension.tools ?? [])
@@ -444,7 +385,6 @@ export function resolveDurableAgent(input: DurableAgentInput): {
       : {}),
   };
 
-  const resources = definition?.resources ? agentResources(definition.resources) : undefined;
   const doc: OppiAgentState = saved
     ? {
         agent: {
@@ -456,25 +396,32 @@ export function resolveDurableAgent(input: DurableAgentInput): {
         },
         spawn: input.spawn,
         grant: input.grant,
-        ...(resources ? { resources } : {}),
-        ...(saved.definition.instructions?.mode === "replace"
-          ? { projectContext: false as const }
-          : {}),
-        // Sticky: a sealed parent's child stays sealed whatever Agent it launches as.
-        ...(saved.definition.resources?.noSessionHistory === true ||
-        input.inherited?.sessionHistory === false
-          ? { sessionHistory: false as const }
-          : {}),
-        ...(selection
+        ...(compiled && (compiled.skills !== undefined || !compiled.contextFiles)
           ? {
-              extensions: {
-                packages: selection.packages.map((entry) => entry.extension.name),
-                mcp: selection.mcp,
-                codemode: selection.codemode,
-                ...(selection.skipped.length ? { skipped: selection.skipped } : {}),
+              resources: {
+                ...(compiled.skills !== undefined ? { skills: [...compiled.skills] } : {}),
+                ...(compiled.contextFiles ? {} : { contextFiles: false }),
               },
             }
           : {}),
+        ...(saved.definition.instructions?.mode === "replace"
+          ? { replacePrompt: true as const }
+          : {}),
+        // Sticky: a sealed parent's child stays sealed whatever Agent it launches as.
+        ...(compiled?.sessionHistory === false || input.inherited?.sessionHistory === false
+          ? { sessionHistory: false as const }
+          : {}),
+        ...(compiled?.plugins === undefined
+          ? {}
+          : {
+              extensions: {
+                // The packages this session actually selected: a host-only plugin a sandbox did
+                // not opt into must not reach the document, or the next attach would load it.
+                packages: packages.map((extension) => extension.name),
+                mcp: compiled.mcp.enabled,
+                codemode: compiled.core === "full" || compiled.discovery.includes("codemode"),
+              },
+            }),
         ...(toolPolicy ? { tools: toolPolicy } : {}),
       }
     : {
@@ -487,24 +434,7 @@ export function resolveDurableAgent(input: DurableAgentInput): {
   return { change, doc };
 }
 
-function savedPolicy(defaults: AgentDefinition["sessionDefaults"]): DurableToolPolicy | undefined {
-  if (!defaults?.tools && !defaults?.excludeTools && !defaults?.noTools) return undefined;
-  return {
-    ...(defaults.tools ? { allowed: defaults.tools } : {}),
-    ...(defaults.excludeTools ? { excluded: defaults.excludeTools } : {}),
-    ...(defaults.noTools ? { noTools: defaults.noTools } : {}),
-  };
-}
-
-function agentResources(
-  resources: NonNullable<AgentDefinition["resources"]>,
-): DurableAgentResources | undefined {
-  const { skillPaths, agentsFiles, noContextFiles } = resources;
-  if (skillPaths === undefined && agentsFiles === undefined && noContextFiles === undefined)
-    return undefined;
-  return {
-    ...(skillPaths !== undefined ? { skillPaths } : {}),
-    ...(agentsFiles !== undefined ? { agentsFiles } : {}),
-    ...(noContextFiles !== undefined ? { noContextFiles } : {}),
-  };
+/** The tool policy a compiled plan asks for: exclusions only, so the Pi Tools setting stays in force. */
+function compiledPolicy(compiled: CompiledAgentCapabilities): DurableToolPolicy | undefined {
+  return compiled.excluded.length ? { excluded: [...compiled.excluded] } : undefined;
 }

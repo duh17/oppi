@@ -1,23 +1,37 @@
 import Foundation
 import Observation
 
-enum AgentResourceSelectionMode: String, CaseIterable {
+/// Whether a value follows the server's default or is an exact list.
+enum AgentSelectionMode: String, CaseIterable {
     case inherit
     case exact
-
-    var title: String {
-        switch self {
-        case .inherit: "Inherit Pi settings"
-        case .exact: "Exact selection"
-        }
-    }
 }
 
-/// What Edit Agent edits: the draft Save sends and Cancel drops. The screen
-/// and the selection pages it pushes read and change this one observable
-/// model, so a change on a pushed page shows on the editor.
+/// One row of an Agent's capability page: a plugin, an MCP server, a server's tool,
+/// or a Skill. `name` is what the definition stores.
+struct AgentCapabilityChoice: Identifiable, Equatable {
+    let name: String
+    let title: String
+    let subtitle: String?
+    /// A row that cannot be chosen (a plugin whose last load failed).
+    var isAvailable = true
+    /// The row opens a page of its own (an MCP server and its tools).
+    var opensPage = false
+    var status: String?
+
+    var id: String { name }
+}
+
+/// What Edit Agent edits: the draft Save sends and Cancel drops. The screen and
+/// the capability pages it pushes read and change this one observable model, so a
+/// change on a pushed page shows on the editor.
 @MainActor @Observable
 final class AgentNativeEditDraft {
+    /// The scope an Agent's MCP servers live in: `capabilities.mcp` names servers from
+    /// `mcp.json`, which the global scope holds. A project's own servers are named the
+    /// same way, and one this scope does not list keeps its row so it can be turned off.
+    static let mcpScopeId = "global"
+
     let agent: StoredAgentDefinition
     let connection: ServerConnection
     /// The server the Agent is saved on, for the pages' scope sentences.
@@ -33,28 +47,58 @@ final class AgentNativeEditDraft {
     /// This device's chat style for the Agent's sessions; nil follows
     /// Settings → Chat → Style. Never sent to the server.
     var chatStyle: AppPreferences.ChatDisplay.Style?
-    var toolSelectionMode: AgentToolSelectionMode
-    var selectedToolNames: Set<String>
-    var skillSelectionMode: AgentResourceSelectionMode
-    var selectedSkillPaths: Set<String>
-    var extensionSelectionMode: AgentResourceSelectionMode
-    var selectedExtensionIds: Set<String>
-    var workspaceConstraintMode: AgentResourceSelectionMode
+
+    /// Edit files: a normal session's tools. Off is a read-only Agent: reading and
+    /// searching, and whatever plugins and MCP servers it names here.
+    var editsFiles: Bool
+    var canAsk: Bool
+    var canNotify: Bool
+    var canDelegate: Bool
+    /// An omitted list is every plugin or every configured MCP server; a list is those.
+    var pluginsAll: Bool
+    var selectedPlugins: Set<String>
+    var mcpAll: Bool
+    /// A server's tools: `.all`, or the exact names. A server with no tools is not reached,
+    /// so it has no entry here.
+    var mcpSelection: [String: AgentMcpTools]
+    /// Skills by name (a Skill's folder). Omitted follows Pi discovery.
+    var skillsAll: Bool
+    var selectedSkills: Set<String>
+    var contextFiles: Bool
+    var sessionHistory: Bool
+
+    var workspaceConstraintMode: AgentSelectionMode
     var selectedAllowedWorkspaceIds: Set<String>
     var requiredRuntime: WorkspaceRuntime?
     var requiredEngine: SessionEngine?
-    var extensionToolDetailsById: [String: ServerExtensionDetail] = [:]
-    var isLoadingExtensionTools = false
+
+    /// One MCP server as this editor lists it, with the workspace whose `.pi/mcp.json` names it
+    /// (nil for the global scope). A project server is still an Agent's to choose, and a row that
+    /// pretended otherwise would invite deleting a server the Agent needs.
+    struct ListedMcpServer: Identifiable {
+        let server: McpServerSummary
+        let workspaceName: String?
+
+        var id: String { server.name }
+        var name: String { server.name }
+    }
+
+    /// Every MCP server this server configures: the global scope's and each workspace's own,
+    /// loaded with the editor's catalogs.
+    var mcpServers: [ListedMcpServer] = []
+    var isLoadingMcpServers = false
+    var mcpCatalogError: String?
     var isLoadingResources = false
     var isSaving = false
     var error: String?
-    @ObservationIgnored private var extensionToolInspectionIds: Set<String> = []
 
     init(agent: StoredAgentDefinition, connection: ServerConnection, serverName: String) {
         self.agent = agent
         self.connection = connection
         self.serverName = serverName
         let definition = agent.definition
+        let capabilities = definition.capabilities
+        let context = definition.context
         let defaults = definition.sessionDefaults
         name = definition.name
         description = definition.description ?? ""
@@ -66,18 +110,18 @@ final class AgentNativeEditDraft {
         chatStyle = connection.currentServerId.flatMap {
             AppPreferences.ChatDisplay.agentStyle(serverId: $0, agentId: agent.id)
         }
-        toolSelectionMode = if defaults?.tools != nil {
-            .exact
-        } else if defaults?.excludeTools != nil || defaults?.noTools != nil {
-            .existingPolicy
-        } else {
-            .inherit
-        }
-        selectedToolNames = Set(defaults?.tools ?? [])
-        skillSelectionMode = definition.resources?.skillPaths == nil ? .inherit : .exact
-        selectedSkillPaths = Set(definition.resources?.skillPaths ?? [])
-        extensionSelectionMode = definition.resources?.extensionIds == nil ? .inherit : .exact
-        selectedExtensionIds = Set(definition.resources?.extensionIds ?? [])
+        editsFiles = capabilities?.editsFiles ?? true
+        canAsk = capabilities?.canAsk ?? true
+        canNotify = capabilities?.canNotify ?? true
+        canDelegate = capabilities?.canDelegate ?? true
+        pluginsAll = capabilities?.plugins == nil
+        selectedPlugins = Set(capabilities?.plugins ?? [])
+        mcpAll = capabilities?.mcp == nil
+        mcpSelection = capabilities?.mcp ?? [:]
+        skillsAll = context?.skills == nil
+        selectedSkills = Set(context?.skills ?? [])
+        contextFiles = context?.readsContextFiles ?? true
+        sessionHistory = context?.readsSessionHistory ?? true
         workspaceConstraintMode = definition.launchConstraints?.allowedWorkspaceIds == nil ? .inherit : .exact
         selectedAllowedWorkspaceIds = Set(definition.launchConstraints?.allowedWorkspaceIds ?? [])
         requiredRuntime = definition.launchConstraints?.requiredRuntime
@@ -90,9 +134,7 @@ final class AgentNativeEditDraft {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && (!usesCustomInstructions
                 || !instructionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            && canSaveResourceSelections
             && canSaveLaunchConstraints
-            && canSaveToolSelection
             && !isSaving
     }
 
@@ -105,112 +147,217 @@ final class AgentNativeEditDraft {
         }
     }
 
-    private var canSaveResourceSelections: Bool {
-        let skillsAllowed = skillSelectionMode != .exact
-            || AgentResourceCatalogState.isExactSelectionSaveAllowed(
-                initialSelectionWasInherited: agent.definition.resources?.skillPaths == nil,
-                catalogState: skillCatalogState
-            )
-        let extensionsAllowed = extensionSelectionMode != .exact
-            || AgentResourceCatalogState.isExactSelectionSaveAllowed(
-                initialSelectionWasInherited: agent.definition.resources?.extensionIds == nil,
-                catalogState: extensionCatalogState
-            )
-        return skillsAllowed && extensionsAllowed
+    // MARK: Capabilities
+
+    /// A read-only Agent names what it may reach: it never widens by omission, so
+    /// turning Edit files off clears both lists.
+    func setEditsFiles(_ edits: Bool) {
+        editsFiles = edits
+        guard !edits else { return }
+        pluginsAll = false
+        selectedPlugins = []
+        mcpAll = false
+        mcpSelection = [:]
     }
 
-    private var canSaveToolSelection: Bool {
-        guard toolSelectionMode == .exact else { return true }
-        return agent.definition.sessionDefaults?.tools != nil || !availableBuiltInTools.isEmpty
+    /// `false` starts from nothing: an explicit list names what the Agent may use.
+    func setPluginsAll(_ all: Bool) {
+        pluginsAll = all
+        if !all { selectedPlugins = [] }
+    }
+
+    func selectPlugin(_ name: String, _ selected: Bool) {
+        if selected { selectedPlugins.insert(name) } else { selectedPlugins.remove(name) }
+    }
+
+    func setMcpAll(_ all: Bool) {
+        mcpAll = all
+        if !all { mcpSelection = [:] }
+    }
+
+    func selectMcpServer(_ name: String, _ selected: Bool) {
+        mcpSelection[name] = selected ? mcpSelection[name] ?? .all : nil
+    }
+
+    /// A server's tools, when it is reached at all; nil when it has no entry.
+    func mcpTools(_ server: String) -> AgentMcpTools? { mcpSelection[server] }
+
+    func setMcpTools(_ server: String, _ tools: AgentMcpTools) {
+        // The server refuses a tool list with no names; a server with no tools is not reached.
+        mcpSelection[server] = tools == .tools([]) ? nil : tools
+    }
+
+    func setSkillsAll(_ all: Bool) {
+        skillsAll = all
+        if !all { selectedSkills = [] }
+    }
+
+    func selectSkill(_ name: String, _ selected: Bool) {
+        if selected { selectedSkills.insert(name) } else { selectedSkills.remove(name) }
+    }
+
+    var resolvedCapabilities: AgentCapabilities {
+        AgentCapabilities(
+            core: editsFiles ? nil : .readonly,
+            ask: canAsk,
+            notify: canNotify,
+            subagent: canDelegate,
+            plugins: pluginsAll ? nil : selectedPlugins.sorted(),
+            mcp: mcpAll ? nil : Dictionary(uniqueKeysWithValues: mcpSelection.keys.sorted().map {
+                ($0, mcpSelection[$0] ?? .all)
+            })
+        )
+    }
+
+    var resolvedContext: AgentContext {
+        AgentContext(
+            skills: skillsAll ? nil : selectedSkills.sorted(),
+            contextFiles: contextFiles,
+            sessionHistory: sessionHistory
+        )
     }
 
     // MARK: Catalogs
 
     var workspaces: [Workspace] { connection.workspaceStore.workspaces }
 
-    var availableBuiltInTools: [ServerToolSummary] {
-        guard let serverId = connection.currentServerId else { return [] }
-        return connection.serverResourceStore.builtInTools(forServer: serverId)
-    }
-
-    /// Saved Skill paths collapsed to one path per matched catalog Skill (keeping the
-    /// Skill's preferred selection path if present, else the first saved form in stored
-    /// order), with unmatched paths kept as-is.
-    var resolvedSkillPaths: [String] {
-        var seen: Set<String> = []
-        var ordered: [String] = []
-        for path in agent.definition.resources?.skillPaths ?? []
-        where selectedSkillPaths.contains(path) && seen.insert(path).inserted {
-            ordered.append(path)
-        }
-        ordered.append(contentsOf: selectedSkillPaths.filter { !seen.contains($0) }.sorted())
-        return ServerSkillSummary.resolveSelections(ordered, in: availableSkills)
-            .map(\.savedPath)
-            .sorted()
-    }
-
     var availableSkills: [ServerSkillSummary] {
         guard let serverId = connection.currentServerId else { return [] }
         return connection.serverResourceStore.skills(forServer: serverId)
     }
 
-    /// The Pi extensions an Agent can select: a row that is only a plugin loads in durable
-    /// sessions, never through an Agent's classic selection.
-    var availableExtensions: [ServerExtensionSummary] {
+    /// The plugins an Agent may name, in name order: the server marks them (`agentSelectable`),
+    /// so a built-in plugin, a toggle's package, or a row with no tools is never offered, and a
+    /// name the server does not offer shows as "Not on this server" instead. A row without a
+    /// plugin summary is still a plugin (the live `secret` row is one): its tools are what it
+    /// contributes. A plugin is selected by the name its installed extension has, which is the
+    /// name a session selects it by.
+    var availablePlugins: [ServerExtensionSummary] {
         guard let serverId = connection.currentServerId else { return [] }
-        return connection.serverResourceStore.extensions(forServer: serverId).filter(\.isPiExtension)
+        return connection.serverResourceStore.extensions(forServer: serverId)
+            .filter { $0.agentSelectable == true }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
-    var effectiveExtensionToolGroups: [AgentExtensionToolGroup] {
-        let effectiveExtensions = availableExtensions.filter { resource in
-            switch extensionSelectionMode {
-            case .inherit:
-                resource.state == .on
-            case .exact:
-                selectedExtensionIds.contains(resource.id)
-            }
-        }
-        return effectiveExtensions.compactMap { resource in
-            let details = extensionToolDetailsById[resource.id]
-            let tools = details?.contributedToolDetails
-                ?? resource.contributedToolDetails
-                ?? (details?.contributedTools ?? resource.contributedTools ?? []).map {
-                    ServerToolSummary(name: $0)
-                }
-            guard !tools.isEmpty else { return nil }
-            return AgentExtensionToolGroup(id: resource.id, name: resource.name, tools: tools)
-        }
+    /// The tools a plugin row offers, whether or not its plugin summary is attached.
+    private func pluginTools(_ plugin: ServerExtensionSummary) -> [String] {
+        plugin.plugin?.tools ?? plugin.contributedTools ?? []
     }
 
-    var unavailableSelectedToolNames: [String] {
-        let known = Set(availableBuiltInTools.map(\.name) + effectiveExtensionToolGroups.flatMap { $0.tools.map(\.name) })
-        return selectedToolNames.subtracting(known).sorted()
+    private func pluginName(_ plugin: ServerExtensionSummary) -> String {
+        plugin.plugin?.extensionName ?? plugin.name
     }
 
-    var effectiveDefaultToolNames: Set<String> {
-        let defaults = agent.definition.sessionDefaults
-        var names = Set(availableBuiltInTools.filter { $0.defaultEnabled == true }.map(\.name))
-        names.formUnion(effectiveExtensionToolGroups.flatMap { $0.tools.map(\.name) })
-        names.subtract(defaults?.excludeTools ?? [])
-        if defaults?.noTools == .all {
-            names.removeAll()
-        } else if defaults?.noTools == .builtin {
-            names.subtract(availableBuiltInTools.map(\.name))
+    var pluginChoices: [AgentCapabilityChoice] {
+        var choices = availablePlugins.map { plugin in
+            let tools = pluginTools(plugin)
+            return AgentCapabilityChoice(
+                name: pluginName(plugin),
+                title: plugin.name,
+                subtitle: tools.isEmpty
+                    ? nil
+                    : tools.prefix(3).joined(separator: ", ") + (tools.count > 3 ? ", …" : ""),
+                isAvailable: plugin.state != .error,
+                status: plugin.state == .error ? (plugin.loadError ?? "Cannot load") : nil
+            )
         }
-        return names
+        choices += unlisted(selectedPlugins, listed: choices.map(\.name)) { name in
+            AgentCapabilityChoice(name: name, title: name, subtitle: nil, isAvailable: false,
+                                  status: "Not on this server")
+        }
+        return choices
     }
 
-    var existingToolPolicySummary: String? {
-        let defaults = agent.definition.sessionDefaults
-        guard defaults?.tools == nil,
-              defaults?.excludeTools != nil || defaults?.noTools != nil else { return nil }
-        if let noTools = defaults?.noTools {
-            return noTools.displayName
+    /// A server's tools as chosen here: none, all of them, or some of them.
+    private func mcpToolsSummary(_ listed: ListedMcpServer) -> String {
+        let tools = listed.server.tools.count
+        let summary: String
+        switch mcpSelection[listed.name] {
+        case .all: summary = String(localized: "All tools")
+        case .tools(let names): summary = "\(names.count) of \(tools) tools"
+        case .none: summary = "\(tools) tools"
         }
-        if let excluded = defaults?.excludeTools, !excluded.isEmpty {
-            return "Excludes \(excluded.joined(separator: ", "))"
+        guard let workspaceName = listed.workspaceName else { return summary }
+        return "\(summary) \u{00B7} \(workspaceName) project"
+    }
+
+    var mcpServerChoices: [AgentCapabilityChoice] {
+        var choices = mcpServers.map { listed in
+            AgentCapabilityChoice(
+                name: listed.name,
+                title: listed.name,
+                subtitle: mcpToolsSummary(listed),
+                isAvailable: true,
+                opensPage: true,
+                status: listed.server.enabled
+                    ? (listed.server.error == nil ? nil : listed.server.error)
+                    : "Off on this server"
+            )
         }
-        return "Existing advanced policy"
+        choices += unlisted(mcpSelection.keys, listed: choices.map(\.name)) { name in
+            AgentCapabilityChoice(name: name, title: name, subtitle: nil, isAvailable: false,
+                                  opensPage: true, status: "Not on this server")
+        }
+        return choices
+    }
+
+    /// One MCP server's tools: what its last listing reported, and any saved name it
+    /// no longer reports so it can be turned off.
+    func mcpToolChoices(_ server: String) -> [AgentCapabilityChoice] {
+        let listed = mcpServers.first { $0.name == server }?.server.tools ?? []
+        var choices = listed.map { name in
+            AgentCapabilityChoice(name: name, title: name, subtitle: nil)
+        }
+        let saved = mcpSelection[server]?.toolNames ?? []
+        choices += unlisted(saved, listed: listed) { name in
+            AgentCapabilityChoice(name: name, title: name, subtitle: nil, isAvailable: false,
+                                  status: "Not on this server")
+        }
+        return choices
+    }
+
+    var skillChoices: [AgentCapabilityChoice] {
+        var choices = availableSkills.map { skill in
+            AgentCapabilityChoice(
+                name: skill.name,
+                title: skill.name,
+                subtitle: skill.description,
+                isAvailable: skill.state != .error,
+                status: skill.state == .error ? (skill.loadError ?? "Cannot load") : nil
+            )
+        }
+        choices += unlisted(selectedSkills, listed: choices.map(\.name)) { name in
+            AgentCapabilityChoice(name: name, title: name, subtitle: nil, isAvailable: false,
+                                  status: "Not on this server")
+        }
+        return choices
+    }
+
+    /// Chosen names the catalog no longer lists, in name order: each keeps a row so a
+    /// stale choice can be turned off.
+    private func unlisted(
+        _ selected: some Sequence<String>,
+        listed: [String],
+        make: (String) -> AgentCapabilityChoice
+    ) -> [AgentCapabilityChoice] {
+        let known = Set(listed)
+        return Set(selected).filter { !known.contains($0) }.sorted().map(make)
+    }
+
+    // MARK: Summaries
+
+    var modelDisplayName: String {
+        guard let model = model.managementNilIfBlank else { return "Server default" }
+        return SessionFormatting.shortModelName(model) ?? model
+    }
+
+    var pluginsSummary: String { selectionSummary(all: pluginsAll, selected: selectedPlugins.count) }
+    var mcpSummary: String { selectionSummary(all: mcpAll, selected: mcpSelection.count) }
+    var skillsSummary: String { selectionSummary(all: skillsAll, selected: selectedSkills.count) }
+
+    private func selectionSummary(all: Bool, selected: Int) -> String {
+        if all { return String(localized: "All") }
+        return selected == 0 ? String(localized: "None") : "\(selected) selected"
     }
 
     var skillCatalogState: AgentResourceCatalogState {
@@ -225,7 +372,7 @@ final class AgentNativeEditDraft {
         )
     }
 
-    var extensionCatalogState: AgentResourceCatalogState {
+    var pluginCatalogState: AgentResourceCatalogState {
         guard let serverId = connection.currentServerId else { return .unavailable }
         let store = connection.serverResourceStore
         let sync = store.syncState(for: .extensions, serverId: serverId)
@@ -233,34 +380,14 @@ final class AgentNativeEditDraft {
             hasLoaded: store.hasLoadedExtensions(forServer: serverId),
             isSyncing: isLoadingResources || sync.isSyncing,
             lastSyncFailed: sync.lastSyncFailed,
-            hasRows: !availableExtensions.isEmpty
+            hasRows: !availablePlugins.isEmpty
         )
     }
 
-    // MARK: Summaries
-
-    var modelDisplayName: String {
-        guard let model = model.managementNilIfBlank else { return "Server default" }
-        return SessionFormatting.shortModelName(model) ?? model
-    }
-
-    var toolSelectionSummary: String {
-        switch toolSelectionMode {
-        case .inherit:
-            return "Pi defaults"
-        case .exact:
-            return selectedToolNames.isEmpty ? "None" : "\(selectedToolNames.count) selected"
-        case .existingPolicy:
-            return "Existing policy"
-        }
-    }
-
-    /// Changes when the selected extensions or the catalog do, which is when
-    /// the screen re-inspects selected extensions for their tools.
-    var extensionToolRefreshKey: String {
-        let catalogIds = availableExtensions.map(\.id).sorted().joined(separator: ",")
-        let selectedIds = selectedExtensionIds.sorted().joined(separator: ",")
-        return "\(extensionSelectionMode.rawValue):\(selectedIds):\(catalogIds)"
+    var mcpCatalogStatus: String? {
+        if isLoadingMcpServers { return String(localized: "Loading MCP servers…") }
+        guard mcpCatalogError != nil, mcpServers.isEmpty else { return nil }
+        return String(localized: "Could not load this server's MCP servers.")
     }
 
     // MARK: Loading
@@ -272,31 +399,33 @@ final class AgentNativeEditDraft {
         await connection.serverResourceStore.load(serverId: serverId, api: apiClient)
     }
 
-    func refreshSelectedExtensionToolDetails(apiClient: APIClient?) async {
-        guard extensionSelectionMode == .exact, let apiClient else { return }
-        let resources = availableExtensions.filter {
-            selectedExtensionIds.contains($0.id)
-                && $0.contributedToolDetails == nil
-                && $0.contributedTools == nil
-                && extensionToolDetailsById[$0.id] == nil
-                && !extensionToolInspectionIds.contains($0.id)
-        }
-        guard !resources.isEmpty else { return }
-
-        isLoadingExtensionTools = true
-        defer { isLoadingExtensionTools = false }
-        for resource in resources {
-            guard !Task.isCancelled else { return }
-            guard extensionToolDetailsById[resource.id] == nil,
-                  extensionToolInspectionIds.insert(resource.id).inserted else { continue }
-            defer { extensionToolInspectionIds.remove(resource.id) }
+    func refreshMcpServers(apiClient: APIClient?) async {
+        guard let apiClient else { return }
+        isLoadingMcpServers = true
+        defer { isLoadingMcpServers = false }
+        var listed: [ListedMcpServer] = []
+        var failure: String?
+        // The global scope, then each workspace's own `.pi/mcp.json`: a project server an Agent
+        // names is a server it may reach, so the picker lists it too.
+        let scopes: [(id: String, workspaceName: String?)] = [Self.mcpScopeId].map { ($0, nil) }
+            + workspaces.map { ($0.id, $0.name) }
+        for scope in scopes {
             do {
-                extensionToolDetailsById[resource.id] = try await apiClient.inspectAgentExtensionTools(id: resource.id)
+                let response = try await apiClient.listMcpServers(scopeId: scope.id)
+                listed += response.scope.servers.map {
+                    ListedMcpServer(server: $0, workspaceName: scope.workspaceName)
+                }
             } catch {
-                // Keep the resource selection intact. The tool screen presents
-                // saved unknown names as unavailable rather than dropping them.
+                failure = error.localizedDescription
             }
         }
+        // One server configured in several scopes is one choice: the first listing (global) keeps
+        // its tool list, and a project one labels it.
+        var byName: [String: ListedMcpServer] = [:]
+        for entry in listed where byName[entry.name] == nil { byName[entry.name] = entry }
+        mcpServers = byName.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        // The rows it already has stay: a saved server is still turned off from here.
+        mcpCatalogError = failure
     }
 
     // MARK: Saving
@@ -311,17 +440,6 @@ final class AgentNativeEditDraft {
         isSaving = true
         defer { isSaving = false }
 
-        let originalDefaults = agent.definition.sessionDefaults
-        let toolPolicy: (tools: [String]?, excluded: [String]?, noTools: AgentNoToolsMode?)
-        switch toolSelectionMode {
-        case .inherit:
-            toolPolicy = (nil, nil, nil)
-        case .exact:
-            toolPolicy = (selectedToolNames.sorted(), nil, nil)
-        case .existingPolicy:
-            toolPolicy = (originalDefaults?.tools, originalDefaults?.excludeTools, originalDefaults?.noTools)
-        }
-
         do {
             let updated = try await apiClient.updateAgentNative(
                 agentId: agent.id,
@@ -330,15 +448,12 @@ final class AgentNativeEditDraft {
                 instructions: usesCustomInstructions
                     ? AgentInstructions(mode: instructionMode, text: instructionText)
                     : nil,
+                capabilities: resolvedCapabilities,
+                context: resolvedContext,
                 model: model.managementNilIfBlank,
                 thinkingLevel: thinkingLevel,
-                skillPaths: skillSelectionMode == .inherit ? nil : resolvedSkillPaths,
-                extensionIds: extensionSelectionMode == .inherit ? nil : selectedExtensionIds.sorted(),
                 launchConstraints: resolvedLaunchConstraints,
                 previouslyHadLaunchConstraints: agent.definition.launchConstraints != nil,
-                tools: toolPolicy.tools,
-                excludeTools: toolPolicy.excluded,
-                noTools: toolPolicy.noTools,
                 // The version this form opened: a prompt edited in the editor
                 // meanwhile is a conflict, not a silent overwrite.
                 expectedVersion: agent.version

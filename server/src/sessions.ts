@@ -90,6 +90,7 @@ import type { DurableExtensionReport, DurableHarness, SessionHost } from "./dura
 import type { PluginCatalog } from "./plugin-host.js";
 import { loadedScreens, type ScreenHost } from "./plugin-screens.js";
 import { loadDurableHarness } from "./session-durable-harness.js";
+import type { AgentBuiltinPluginFact } from "./agent-capabilities.js";
 import { createDurableSearchSource } from "./durable-search-source.js";
 import {
   durableSessionConversations,
@@ -129,6 +130,8 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
 
   /** Injected by the server to resolve skill names to host directory paths. */
   skillPathResolver: ((skillNames: string[]) => Promise<string[]>) | null = null;
+  /** Injected by the server: Oppi's own plugins and their tools, for read-only Agents. */
+  builtinPluginFacts: (() => Promise<readonly AgentBuiltinPluginFact[] | null>) | null = null;
 
   /** Injected by the server: who is offered the agent `notify` tool, and its send. */
   notifyPort: SessionNotifyPort | null = null;
@@ -190,6 +193,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
             this.withIncomingWork(sessionId, workspace, submit),
           onCreated: (session) => this.emit("session_created", session),
           trace: (sessionId) => this.getServerDurableTrace(sessionId, "context"),
+          ...(this.builtinPluginFacts ? { getBuiltinPluginFacts: this.builtinPluginFacts } : {}),
         },
         surfacesFor: (sessionId) => this.surfacesFor(sessionId),
         activeSession: (sessionId) => this.getActiveSession(sessionId),
@@ -217,6 +221,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       stopTimers,
       getContextWindowResolver: () => this.contextWindowResolver,
       getSkillPathResolver: () => this.skillPathResolver,
+      ...(this.builtinPluginFacts ? { getBuiltinPluginFacts: this.builtinPluginFacts } : {}),
       getNotifyPort: () => this.notifyPort,
       getLayoutFiles: () => this.layoutFiles,
       emitSessionEvent: (payload) => this.emit("session_event", payload),

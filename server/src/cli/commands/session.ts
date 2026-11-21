@@ -591,11 +591,17 @@ async function createSession(
     return;
   }
   const toolPolicy = resolveToolPolicyFromFlags(flags);
+  const savedAgent = savedAgentReference(flags.agent);
+  // A saved Agent states its own capabilities; a tool flag here used to be dropped silently.
+  if (savedAgent && Object.keys(toolPolicy).length > 0) {
+    throw new Error(
+      "--tools, --exclude-tools and --no-tools cannot change a saved Agent's tools: they are part of its definition. Edit the Agent, or start a plain session without --agent.",
+    );
+  }
   const workspaceId = await resolveWorkspaceIdForCli(storage, workspaceRef);
   const prompt = attributeManagedSessionMessage(promptText, parentSessionId);
   const resolvedModel = await resolveModelFlagForCli(storage, flags.model);
   const thinking = resolveThinkingFromFlags(flags, resolvedModel?.thinkingLevel);
-  const savedAgent = savedAgentReference(flags.agent);
   const allowNestedDelegation = flags["allow-nested-delegation"] === "true";
   if (flags["auto-stop"] !== undefined && flags["no-auto-stop"] !== undefined) {
     throw new Error("Conflicting flags: --auto-stop and --no-auto-stop");
@@ -616,12 +622,12 @@ async function createSession(
               ...(flags.worktree ? { worktreeId: flags.worktree } : {}),
             },
             ...(flags.name ? { sessionName: flags.name } : {}),
-            ...(resolvedModel || thinking || hasToolPolicy(toolPolicy)
+            // A saved Agent's capabilities are its own; only the model is a launch choice.
+            ...(resolvedModel || thinking
               ? {
                   overrides: {
                     ...(resolvedModel ? { model: resolvedModel.canonicalId } : {}),
                     ...(thinking ? { thinkingLevel: thinking } : {}),
-                    ...toolPolicy,
                   },
                 }
               : {}),
@@ -826,14 +832,4 @@ function controllingTerminalStream(jsonOutput: boolean): ProgramStatusStream | u
   if (process.stderr.isTTY) return process.stderr;
   if (!jsonOutput && process.stdout.isTTY) return process.stdout;
   return undefined;
-}
-
-function hasToolPolicy(policy: {
-  tools?: string[];
-  excludeTools?: string[];
-  noTools?: "all" | "builtin";
-}): boolean {
-  return (
-    policy.tools !== undefined || policy.excludeTools !== undefined || policy.noTools !== undefined
-  );
 }

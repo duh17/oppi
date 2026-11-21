@@ -51,7 +51,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { createLogger } from "./logger.js";
 import { recordMcpConnect } from "./mcp-connect-metrics.js";
-import type { McpServerSnapshot, McpToolCache } from "./mcp-tool-cache.js";
+import { McpToolCache, mcpToolCachePath, type McpServerSnapshot } from "./mcp-tool-cache.js";
 import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import {
   loadPiMcpInternals,
@@ -62,6 +62,7 @@ import {
   type ToolSearchDocument,
 } from "./pi-mcp-internals.js";
 import { CODEMODE_TOOL_NAME } from "@earendil-works/pi-durable/codemode";
+import type { AgentMcpServerFact } from "./agent-definition.js";
 import type { SandboxMcpOptions } from "./sandbox-mcp.js";
 import type { Session } from "./types.js";
 
@@ -116,6 +117,12 @@ export interface DurableMcpOptions {
   projectTrusted: boolean;
   /** A sandbox workspace's servers, transports, and log; host Pi defaults when absent. */
   sandbox?: SandboxMcpOptions;
+  /**
+   * The servers this session may reach, by `mcp.json` name; undefined admits every configured
+   * server. A server not admitted is dropped before it connects or declares a codemode
+   * namespace, so a blocked server cannot appear in the MCP section or the codemode prompt.
+   */
+  servers?: readonly string[];
   policy: ToolPolicy | undefined;
   /** The Pi Tools setting's tools (`piDefaultTools`), which can turn `tool_search` on. */
   piTools: ReadonlySet<string>;
@@ -125,6 +132,45 @@ export interface DurableMcpOptions {
   install: (extension: Extension) => void;
   uninstall: (extension: Extension) => void;
   metrics?: ServerTelemetry;
+}
+
+/**
+ * The MCP facts a capability compile needs: which servers this launch would load, how each is
+ * exposed, and the tool names its last-known list reports. One loader for both engines, so a
+ * server is admitted (or excluded) by the same name on either side.
+ */
+export async function mcpServerFacts(input: {
+  agentDir: string;
+  cwd: string;
+  projectTrusted: boolean;
+  /** A sandbox's servers: its owner's picks, as that sandbox loads them. */
+  sandbox?: SandboxMcpOptions;
+  dataDir?: string;
+  /** `host`, or one sandbox workspace: which cached tool lists this session may read. */
+  toolScope?: string;
+}): Promise<AgentMcpServerFact[]> {
+  const internals = await loadPiMcpInternals();
+  const loaded = input.sandbox
+    ? // The sandbox loader reads only `ctx.cwd` of Pi's extension context.
+      input.sandbox.loadConfig({ cwd: input.cwd } as never)
+    : internals.loadMcpConfig({
+        agentDir: input.agentDir,
+        cwd: input.cwd,
+        projectTrusted: input.projectTrusted,
+      });
+  const cache = input.dataDir
+    ? new McpToolCache(mcpToolCachePath(input.dataDir), input.toolScope ?? "host")
+    : undefined;
+  const cached = cache?.load();
+  return loaded.servers.map((entry) => {
+    const snapshot = cache && cached ? cached.get(cache.key(entry)) : undefined;
+    return {
+      name: entry.name,
+      enabled: entry.config.enabled !== false,
+      exposures: [exposureOf(entry), ...Object.values(entry.config.toolExposure ?? {})],
+      tools: (snapshot?.tools ?? []).map((tool) => tool.name),
+    };
+  });
 }
 
 function exposureOf(entry: McpServerEntry): McpExposure {
@@ -362,7 +408,14 @@ export class DurableMcp {
           cwd: options.cwd,
           projectTrusted: options.projectTrusted,
         });
-    const entries = loaded.servers.filter((entry) => entry.config.enabled !== false);
+    const admitted = options.servers
+      ? new Set(options.servers.map((name) => internals.mcpNamespace(name)))
+      : undefined;
+    const entries = loaded.servers.filter(
+      (entry) =>
+        entry.config.enabled !== false &&
+        (admitted === undefined || admitted.has(internals.mcpNamespace(entry.name))),
+    );
     if (!entries.length && !loaded.errors.length) return undefined;
     const mcp = new DurableMcp(
       internals,

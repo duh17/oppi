@@ -1712,10 +1712,9 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "Agent definitions are target-agnostic; workspace/worktree/cwd are launch inputs, not stored Agent fields.",
-      "AgentDefinition top-level keys: name, icon, description, instructions, resources, sessionDefaults, launchConstraints. Anything else is rejected.",
+      "AgentDefinition top-level keys: name, icon, description, instructions, capabilities, context, sessionDefaults, launchConstraints. Anything else is rejected.",
       "Launch-only keys are forbidden in definitions: target, workspaceId, worktreeId, cwd, schedule, attachments, images.",
-      "resources.extensionIds and resources.skillPaths are exact selections; omitting them inherits normal Pi discovery.",
-      "sessionDefaults.tools is an allowlist of real tool names that must exist at launch; stale names are dropped from the session with a warning instead of failing the launch.",
+      "capabilities states what the Agent may do: core full|readonly, ask/notify/subagent, plugins by name, and mcp servers with all or some of their tools. context names Skills and the two context toggles. Omit a list to follow every plugin, server or Skill; an empty list means none.",
       "Use 'oppi session create --agent <agent> --workspace <workspace> --prompt <text>' to launch a saved Agent.",
     ],
     examples: [
@@ -1755,7 +1754,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Create saved Agent",
     summary: "Create a saved Agent from first-class flags and optional file or inline JSON.",
     usage:
-      "oppi agent create [--name <name>] [--description <text>] [--icon <text> | --icon-image <file>] [--instructions <text> | --instructions-file <file>] [--instructions-mode <append|replace>] [--skills <csv>] [--extensions <csv>] [--allowed-workspaces <csv>] [--required-runtime <host|sandbox>] [--required-engine durable] [--definition <file> | --definition-json <json-object>] [--model <model[:thinking]>] [--thinking <level>] [--tools <csv>] [--exclude-tools <csv>] [--no-tools] [--no-builtin-tools] [--idempotency-key <key>] [--json]",
+      "oppi agent create [--name <name>] [--description <text>] [--icon <text> | --icon-image <file>] [--instructions <text> | --instructions-file <file>] [--instructions-mode <append|replace>] [--core <full|readonly>] [--ask | --no-ask] [--notify | --no-notify] [--subagent | --no-subagent] [--plugins <all|csv>] [--mcp <all|none|csv>] [--skills <all|csv>] [--context-files | --no-context-files] [--session-history | --no-session-history] [--allowed-workspaces <csv>] [--required-runtime <host|sandbox>] [--required-engine durable] [--definition <file> | --definition-json <json-object>] [--model <model[:thinking]>] [--thinking <level>] [--idempotency-key <key>] [--json]",
     flags: [
       {
         name: "--name",
@@ -1790,14 +1789,44 @@ const HELP_TOPICS: HelpTopic[] = [
         summary: "writes instructions.mode; defaults to append when creating from text or file",
       },
       {
-        name: "--skills",
-        value: "<csv>",
-        summary: "writes resources.skillPaths (skill paths); empty CSV is none []",
+        name: "--core",
+        value: "<full|readonly>",
+        summary: "writes capabilities.core; full is a normal session, readonly cannot write files",
       },
       {
-        name: "--extensions",
-        value: "<csv>",
-        summary: "writes resources.extensionIds (extension IDs); empty CSV is none []",
+        name: "--ask",
+        summary: "writes capabilities.ask=true; --no-ask turns questions to the person off",
+      },
+      {
+        name: "--notify",
+        summary: "writes capabilities.notify=true; --no-notify stops result pushes",
+      },
+      {
+        name: "--subagent",
+        summary: "writes capabilities.subagent=true; --no-subagent stops child sessions",
+      },
+      {
+        name: "--plugins",
+        value: "<all|csv>",
+        summary: "writes capabilities.plugins (plugin names); all or an empty value clears it",
+      },
+      {
+        name: "--mcp",
+        value: "<all|none|csv>",
+        summary: "writes capabilities.mcp (whole MCP servers by name); all clears it",
+      },
+      {
+        name: "--skills",
+        value: "<all|csv>",
+        summary: "writes context.skills (Skill names); all or an empty value clears it",
+      },
+      {
+        name: "--context-files",
+        summary: "writes context.contextFiles=true; --no-context-files stops AGENTS.md",
+      },
+      {
+        name: "--session-history",
+        summary: "writes context.sessionHistory=true; --no-session-history seals the Agent",
       },
       {
         name: "--allowed-workspaces",
@@ -1831,28 +1860,6 @@ const HELP_TOPICS: HelpTopic[] = [
         summary: `writes sessionDefaults.thinkingLevel: ${THINKING_LEVELS.join(", ")}; wins over --model :thinking`,
       },
       {
-        name: "--tools",
-        aliases: ["-t"],
-        value: "<csv>",
-        summary: "writes sessionDefaults.tools; overlays definition JSON",
-      },
-      {
-        name: "--exclude-tools",
-        aliases: ["-xt"],
-        value: "<csv>",
-        summary: "writes sessionDefaults.excludeTools; overlays definition JSON",
-      },
-      {
-        name: "--no-tools",
-        aliases: ["-nt"],
-        summary: "writes sessionDefaults.noTools=all",
-      },
-      {
-        name: "--no-builtin-tools",
-        aliases: ["-nbt"],
-        summary: "writes sessionDefaults.noTools=builtin",
-      },
-      {
         name: "--idempotency-key",
         value: "<key>",
         summary: "make retries create at most one Agent; a replay returns the existing Agent",
@@ -1862,17 +1869,18 @@ const HELP_TOPICS: HelpTopic[] = [
     notes: [
       "With --idempotency-key, replaying the same create request returns the Agent the key already created and creates nothing. Reusing the key with a different definition fails with code AGENT_IDEMPOTENCY_CONFLICT.",
       "Choose at most one of --definition or --definition-json; --name or definition.name is required. JSON is bulk/round-trip; first-class flags cover native-editor fields.",
-      "--model, --thinking, --tools, --exclude-tools, --no-tools, and --no-builtin-tools write sessionDefaults and overlay the same keys from --definition / --definition-json. --thinking wins over a --model :thinking suffix.",
-      "Allowed AgentDefinition keys: name, icon, description, instructions, resources, sessionDefaults, launchConstraints.",
+      "--model and --thinking write sessionDefaults and overlay the same keys from --definition / --definition-json; --thinking wins over a --model :thinking suffix.",
+      "Allowed AgentDefinition keys: name, icon, description, instructions, sessionDefaults, capabilities, context, launchConstraints.",
       "Forbidden launch-only keys: target, workspaceId, worktreeId, cwd, schedule, attachments, images.",
-      "--skills <skill-path> writes resources.skillPaths (skill paths); --extensions extension_<id> writes resources.extensionIds (extension IDs; builtin:mcp, builtin:codemode, and builtin:tool-search select Pi built-ins in managed host sessions; sandbox sessions accept builtin:mcp and builtin:tool-search but not builtin:codemode). Empty CSV is none []; omit them to inherit Pi discovery.",
+      "An Agent states capabilities, never Pi wiring: --core full|readonly, the ask/notify/subagent switches, --plugins by name, and --mcp by server name. Omit --plugins or --mcp for every enabled plugin or every configured server; pass none for no plugins or no servers. A readonly Agent must state both (with --core readonly, pass --plugins none, or the names, and --mcp none, or the servers).",
+      "--skills takes Skill names (a Skill's folder name), not paths: omit it for Pi discovery, pass all to clear a selection. --no-context-files stops the workspace AGENTS.md and prompt from reaching the session; --no-session-history stops history:// and agent:// reads.",
       "--allowed-workspaces writes launchConstraints.allowedWorkspaceIds (workspace IDs) and must not be empty; omit it for any workspace. --required-runtime writes launchConstraints.requiredRuntime.",
       "--required-engine durable writes launchConstraints.requiredEngine: every launch of the Agent (session create, Quick Session, schedules, subagents) runs durable; an omitted --engine becomes durable, --engine classic is refused, and launches fail while durable sessions are off on the server.",
       "Explicit flags override corresponding JSON keys without dropping sibling nested fields. Instructions replace as a whole.",
       "--instructions and --instructions-file are mutually exclusive. --instructions-mode is append or replace and defaults to append when creating from text or file; it requires --instructions, --instructions-file, or instructions.text in the definition JSON.",
       '--icon is default, one Unicode emoji, or an SF Symbol name. --icon-image <file> reads a PNG, APNG, GIF, or WebP of at most 1 MiB from this host, stores it in the server\'s icon store (POST /icon-assets, which checks the bytes), and sets {"kind":"image","assetId":"ia_…"}; a relative path is from the current directory, and ~/ is expanded. --icon and --icon-image are mutually exclusive. A Genmoji has no flag: after POST /icon-assets stores its HEIC, set {"kind":"genmoji","assetId":"ia_…","contentDescription":"…"} in definition JSON.',
       'A symbol icon can carry an animation in definition JSON: {"kind":"symbol","name":"sparkles","effect":"bounce"}, where effect is bounce, pulse, breathe, wiggle, or rotate. The app plays it only on the Agent\'s page and in the icon picker.',
-      "sessionDefaults.tools must list real tool names available at launch; unavailable names are dropped with a session warning, not a launch failure. excludeTools stays a denylist and noTools stays 'all' | 'builtin'.",
+      'There is no tool list: what a session has comes from its tier, its plugins, and its MCP servers. A tool subset of one MCP server is written in definition JSON (capabilities.mcp: {"gmail": ["search", "read"]}).',
     ],
     examples: [
       {
@@ -1894,7 +1902,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Update saved Agent",
     summary: "Patch a saved Agent from first-class flags and optional file or inline JSON.",
     usage:
-      "oppi agent update <agent> [--name <name>] [--description <text>] [--clear-description] [--icon <text> | --icon-image <file>] [--clear-icon] [--instructions <text> | --instructions-file <file>] [--instructions-mode <append|replace>] [--clear-instructions] [--skills <csv>] [--clear-skills] [--extensions <csv>] [--clear-extensions] [--allowed-workspaces <csv>] [--clear-allowed-workspaces] [--required-runtime <host|sandbox>] [--clear-required-runtime] [--required-engine durable] [--clear-required-engine] [--definition <file> | --definition-json <json-object>] [--model <model[:thinking]>] [--thinking <level>] [--tools <csv>] [--exclude-tools <csv>] [--no-tools] [--no-builtin-tools] [--expected-version <version>] [--json]",
+      "oppi agent update <agent> [--name <name>] [--description <text>] [--clear-description] [--icon <text> | --icon-image <file>] [--clear-icon] [--instructions <text> | --instructions-file <file>] [--instructions-mode <append|replace>] [--clear-instructions] [--core <full|readonly>] [--ask | --no-ask] [--notify | --no-notify] [--subagent | --no-subagent] [--plugins <all|csv>] [--clear-plugins] [--mcp <all|none|csv>] [--clear-mcp] [--skills <all|csv>] [--clear-skills] [--context-files | --no-context-files] [--session-history | --no-session-history] [--allowed-workspaces <csv>] [--clear-allowed-workspaces] [--required-runtime <host|sandbox>] [--clear-required-runtime] [--required-engine durable] [--clear-required-engine] [--definition <file> | --definition-json <json-object>] [--model <model[:thinking]>] [--thinking <level>] [--expected-version <version>] [--json]",
     arguments: [{ name: "<agent>", summary: "agent id or unique name" }],
     flags: [
       {
@@ -1936,22 +1944,50 @@ const HELP_TOPICS: HelpTopic[] = [
       },
       { name: "--clear-instructions", summary: "sets instructions null" },
       {
+        name: "--core",
+        value: "<full|readonly>",
+        summary: "overlays capabilities.core; readonly cannot write files",
+      },
+      { name: "--ask", summary: "sets capabilities.ask true; --no-ask sets it false" },
+      { name: "--notify", summary: "sets capabilities.notify true; --no-notify sets it false" },
+      {
+        name: "--subagent",
+        summary: "sets capabilities.subagent true; --no-subagent sets it false",
+      },
+      {
+        name: "--plugins",
+        value: "<all|csv>",
+        summary: "overlays capabilities.plugins (plugin names); all clears the selection",
+      },
+      {
+        name: "--clear-plugins",
+        summary: "sets capabilities.plugins null (every enabled plugin)",
+      },
+      {
+        name: "--mcp",
+        value: "<all|none|csv>",
+        summary: "overlays capabilities.mcp (whole MCP servers by name); all clears it",
+      },
+      {
+        name: "--clear-mcp",
+        summary: "sets capabilities.mcp null (every configured server)",
+      },
+      {
         name: "--skills",
-        value: "<csv>",
-        summary: "overlays resources.skillPaths (skill paths); empty CSV is none []",
+        value: "<all|csv>",
+        summary: "overlays context.skills (Skill names)",
       },
       {
         name: "--clear-skills",
-        summary: "sets resources.skillPaths null (inherit)",
+        summary: "sets context.skills null (Pi discovery)",
       },
       {
-        name: "--extensions",
-        value: "<csv>",
-        summary: "overlays resources.extensionIds (extension IDs); empty CSV is none []",
+        name: "--context-files",
+        summary: "sets context.contextFiles true; --no-context-files sets it false",
       },
       {
-        name: "--clear-extensions",
-        summary: "sets resources.extensionIds null (inherit)",
+        name: "--session-history",
+        summary: "sets context.sessionHistory true; --no-session-history sets it false",
       },
       {
         name: "--allowed-workspaces",
@@ -2002,28 +2038,6 @@ const HELP_TOPICS: HelpTopic[] = [
         summary: `overlays sessionDefaults.thinkingLevel: ${THINKING_LEVELS.join(", ")}; wins over --model :thinking`,
       },
       {
-        name: "--tools",
-        aliases: ["-t"],
-        value: "<csv>",
-        summary: "overlays sessionDefaults.tools",
-      },
-      {
-        name: "--exclude-tools",
-        aliases: ["-xt"],
-        value: "<csv>",
-        summary: "overlays sessionDefaults.excludeTools",
-      },
-      {
-        name: "--no-tools",
-        aliases: ["-nt"],
-        summary: "overlays sessionDefaults.noTools=all",
-      },
-      {
-        name: "--no-builtin-tools",
-        aliases: ["-nbt"],
-        summary: "overlays sessionDefaults.noTools=builtin",
-      },
-      {
         name: "--expected-version",
         value: "<version>",
         summary: "reject with conflict unless the Agent still has this version",
@@ -2033,11 +2047,10 @@ const HELP_TOPICS: HelpTopic[] = [
     notes: [
       "Choose at most one of --definition or --definition-json; first-class flags can patch without JSON. JSON is bulk/round-trip.",
       "Forbidden launch-only keys: target, workspaceId, worktreeId, cwd, schedule, attachments, images.",
-      "Update is a PATCH: omitted fields keep their stored values; nested resources, sessionDefaults, and launchConstraints merge key by key; JSON null clears a field or nested key.",
+      "Update is a PATCH: omitted fields keep their stored values; nested capabilities, context, sessionDefaults, and launchConstraints merge key by key; JSON null clears a field or nested key.",
       "Run 'oppi agent get <agent>' first, then patch only the changed fields; --expected-version with the reviewed version returns a conflict instead of overwriting newer changes.",
-      "sessionDefaults.tools is an allowlist of real tool names; a stale name is dropped from launched sessions with a warning, so patch it to the current tool names instead of leaving leftovers.",
-      "--model, --thinking, --tools, --exclude-tools, --no-tools, and --no-builtin-tools overlay the same sessionDefaults keys from --definition / --definition-json. --thinking wins over a --model :thinking suffix.",
-      "--skills overlays resources.skillPaths (skill paths); --extensions overlays resources.extensionIds (extension IDs). Empty CSV is none []; --clear-skills / --clear-extensions set null so omit them to inherit Pi discovery.",
+      "--model and --thinking overlay the same sessionDefaults keys from --definition / --definition-json; --thinking wins over a --model :thinking suffix.",
+      "--core, --plugins, --skills, --mcp overlay capabilities/context; --plugins/--skills/--mcp take a CSV, 'none' for [], or 'all' to follow everything again, and an empty value is refused; the matching --clear-* sets null.",
       "--allowed-workspaces overlays launchConstraints.allowedWorkspaceIds (workspace IDs) and must not be empty; --clear-allowed-workspaces sets null (any). --required-runtime overlays launchConstraints.requiredRuntime; --clear-required-runtime sets null (either). --required-engine durable overlays launchConstraints.requiredEngine, so every launch runs durable and --engine classic is refused; --clear-required-engine sets null (either engine).",
       "Explicit flags override corresponding JSON keys without dropping sibling nested fields. Instructions replace as a whole. --name overlays definition.name.",
       "--instructions and --instructions-file are mutually exclusive. --instructions-mode requires --instructions, --instructions-file, or instructions.text in the definition JSON rather than dropping stored text.",
@@ -2052,10 +2065,10 @@ const HELP_TOPICS: HelpTopic[] = [
       { command: "oppi agent update Reviewer --definition ./agent-update.json --json" },
       { command: "oppi agent update Reviewer --icon-image ./fox.gif --json" },
       {
-        command: `oppi agent update Reviewer --definition-json '{"sessionDefaults":{"tools":["read","grep","oppi"]}}' --expected-version 3 --json`,
+        command: `oppi agent update Reviewer --core readonly --plugins none --mcp none --expected-version 3 --json`,
       },
       {
-        command: `oppi agent update Reviewer --definition-json '{"sessionDefaults":{"tools":null}}' --json`,
+        command: `oppi agent update Reviewer --definition-json '{"capabilities":{"mcp":{"gmail":["search","read"]}}}' --json`,
       },
     ],
   },
@@ -2154,7 +2167,7 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "Pass @- to --prompt to read the first prompt from stdin.",
-      "--engine durable starts a server durable session. The server rejects it unless experimental.serverDurable is on. With --agent the saved Agent becomes the durable session's agent; it starts without the Agent Extensions that have no plugin (builtin:codemode among them) and warns, naming them. An --agent whose launchConstraints.requiredEngine is durable starts durable without --engine and refuses --engine classic. Every other create stays classic.",
+      "--engine durable starts a server durable session. The server rejects it unless experimental.serverDurable is on. With --agent the saved Agent becomes the durable session's agent; a plugin the Agent names that has no durable version is skipped with a warning naming it. An --agent whose launchConstraints.requiredEngine is durable starts durable without --engine and refuses --engine classic. Every other create stays classic.",
       "When a managed session is the caller, create prefixes the prompt with `This is a message from session <caller-id>:` so the child can inspect that source session. Do not type the prefix yourself.",
       "JSON output is compact and returns the launch id as data.session_id.",
       "Managed sessions can create only direct children by default. A root may pass --allow-nested-delegation to authorize a child to spawn its own children; the grant then propagates down the subtree, so explicitly requested grandchild sessions work without re-authorizing at every level.",
@@ -2166,7 +2179,7 @@ const HELP_TOPICS: HelpTopic[] = [
       "With --idempotency-key, retrying the same create request must resolve to the same auto-stop value or the server reports a conflict.",
       "--model accepts exact provider/model IDs or fuzzy text like sonnet; it resolves against /models, which is filtered by Pi enabledModels.",
       "--model also accepts an optional :thinking suffix such as sonnet:high. --thinking wins if both are present.",
-      "Without --agent, --tools, --exclude-tools, --no-tools, and --no-builtin-tools write inline sessionDefaults. With --agent, the same flags go to saved-Agent overrides.",
+      "Without --agent, --tools, --exclude-tools, --no-tools, and --no-builtin-tools write the session's own tool policy. With --agent they are refused: a saved Agent states its own capabilities.",
       "CLI session targets accept a unique Session.id prefix, for example 11111111. JSON, HTTP, and oppi://session/ links still use the full UUID, for example 11111111-1111-4111-8111-111111111111.",
     ],
     examples: [

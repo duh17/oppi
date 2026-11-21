@@ -1,0 +1,1097 @@
+{
+  "extensions": [
+    [
+      "extension_48d81e96d2a6b52fbe98b043efdcb18df5d5a440f4ce82c2cdae09127386a495",
+      {
+        "name": "agent-commit-trailer",
+        "enabled": true,
+        "tools": []
+      }
+    ],
+    [
+      "extension_9d99e443b3b7b597330b7bfc99a71e3de84c278157079d99997061782d8769b1",
+      {
+        "name": "anthropic-omp",
+        "enabled": true,
+        "tools": []
+      }
+    ],
+    [
+      "extension_de0efcf538942c1f9d09262c9d7ed1f67e7d64773583f4f9c04b0eb574931873",
+      {
+        "name": "ask",
+        "enabled": true,
+        "tools": [
+          "ask"
+        ]
+      }
+    ],
+    [
+      "extension_aa5ee0e95069766d2b6ea083496f7b99d7fb96b5678ba5009a7b3228b408f946",
+      {
+        "name": "background-jobs",
+        "enabled": true,
+        "tools": [
+          "background_job",
+          "bash"
+        ]
+      }
+    ],
+    [
+      "extension_41b282749c70a603a4585583a6e3546a8bead8f02ee4e28b735ebf132a1b3ca6",
+      {
+        "name": "claude-agent",
+        "enabled": true,
+        "tools": []
+      }
+    ],
+    [
+      "extension_547ca0df4a006770716e40970b5f05503e0430740f807696dfc12a58d615d94e",
+      {
+        "name": "digest-sources-v2",
+        "enabled": true,
+        "tools": [
+          "hacker_news",
+          "x_read"
+        ]
+      }
+    ],
+    [
+      "extension_27fcb156f03b52da667862260dcc3506b0832e716c28622a3c90a9ed9b776cdf",
+      {
+        "name": "faster-resume",
+        "enabled": true,
+        "tools": []
+      }
+    ],
+    [
+      "extension_d1052c7f0476a9ba9ec01e1c72eca2e6cbb13d840d139ca03753f0544c396f7e",
+      {
+        "name": "herdr-agent-state",
+        "enabled": true,
+        "tools": []
+      }
+    ],
+    [
+      "extension_a31ac2dfd43b9ad749664f92fbf48be59a4b35c8d665b772a259402439f762dd",
+      {
+        "name": "herdr-file-open",
+        "enabled": true,
+        "tools": []
+      }
+    ],
+    [
+      "extension_87a18e833ef51c0c56cead2b450b721afcfb112c60b878d5bb06921b2d9b6494",
+      {
+        "name": "imagen",
+        "enabled": true,
+        "tools": [
+          "imagen_cloud",
+          "imagen_local"
+        ]
+      }
+    ],
+    [
+      "extension_f39788de15401b8740311bb069032d9cdc02327b297b47b83bcce7db837eb5aa",
+      {
+        "name": "notebook",
+        "enabled": true,
+        "tools": [
+          "notebook_todo"
+        ]
+      }
+    ],
+    [
+      "extension_6faef376fab7f1ce54eb84d93732e5bb5885445fb1b3bb14ebc083883da26d79",
+      {
+        "name": "openai-compaction",
+        "enabled": true,
+        "tools": []
+      }
+    ],
+    [
+      "extension_eb8368474c1578f0946e0517ccea6b9d965dc5e507d3f3b339d6d8a79f8d10b4",
+      {
+        "name": "oppi-mirror",
+        "enabled": true,
+        "tools": []
+      }
+    ],
+    [
+      "extension_27e661ff0e0d742d934ac41ccddb3267f775d2d9d937aba4ce0dbcd431a21f9c",
+      {
+        "name": "permission-gate",
+        "enabled": false,
+        "tools": []
+      }
+    ],
+    [
+      "extension_df24f3f9cd052124eb3171142259fd5fd2d3b43570dc7c4dd48836972fe9b296",
+      {
+        "name": "pi-antigravity",
+        "enabled": true,
+        "tools": [
+          "antigravity_generate_image"
+        ]
+      }
+    ],
+    [
+      "extension_9ac8ef96b2c60795ce1ebd83487b7a341bd88ca37f88b68856dc56981283784a",
+      {
+        "name": "pi-autoresearch",
+        "enabled": false,
+        "tools": []
+      }
+    ],
+    [
+      "extension_55000062cfb2580069a7a8869344a36fb098b70d01a7188614baea52f29c65af",
+      {
+        "name": "read-image-vlm",
+        "enabled": false,
+        "tools": []
+      }
+    ],
+    [
+      "extension_ad29d41b5ef2c70e05b636880fb389a3e73d571a1c00a0acf3362e35f85e50ad",
+      {
+        "name": "secret",
+        "enabled": true,
+        "tools": [
+          "secret_forget",
+          "secret_list",
+          "secret_prompt",
+          "secret_run",
+          "secret_write"
+        ]
+      }
+    ],
+    [
+      "extension_b38e6449756f35f21b19620c7186839dbefb26c4eda4f54e6136f2a2bc844a1c",
+      {
+        "name": "status-bar",
+        "enabled": true,
+        "tools": []
+      }
+    ],
+    [
+      "extension_d930a9b2da300d208ae78133007f6f37ef81e858cb4cd6f285fb7076863f7450",
+      {
+        "name": "subagents",
+        "enabled": true,
+        "tools": [
+          "subagent"
+        ]
+      }
+    ],
+    [
+      "extension_6cf268263e1a66f43e36c4fcb439c031fbcc0db7595279b04b32a26118d52165",
+      {
+        "name": "todos",
+        "enabled": false,
+        "tools": []
+      }
+    ],
+    [
+      "extension_c1a1f2044987b2b454947f70e025864b14181f23213e601cdc0c8089848fd92c",
+      {
+        "name": "webtools",
+        "enabled": true,
+        "tools": [
+          "web_fetch",
+          "web_search"
+        ]
+      }
+    ],
+    [
+      "extension_3d7d8107e31ae63453f53f45ec764e0dd8e5e1b457f861297a0a190d24ad7b66",
+      {
+        "name": "work-mode",
+        "enabled": true,
+        "tools": []
+      }
+    ],
+    [
+      "extension_1923fbc9fa4d08f51818153a2ca479f6b7b0f3a3e9eadd5acccc36ddb4f48724",
+      {
+        "name": "working-message",
+        "enabled": true,
+        "tools": []
+      }
+    ],
+    [
+      "extension_dd4154ec138031b323df29a9ee9c693453ac7a931b4801c77c30ca75aaeaecdb",
+      {
+        "name": "youtube-transcribe",
+        "enabled": true,
+        "tools": [
+          "research_youtube_transcribe"
+        ]
+      }
+    ],
+    [
+      "extension_1d26947ed36538cb53ca9b6cbe6eaa8d005017298c4da292cf8885c6a73b275a",
+      {
+        "name": "ask",
+        "enabled": true,
+        "tools": [
+          "ask"
+        ]
+      }
+    ],
+    [
+      "extension_8007cdc5efd9cf1535e05b44854fe665c9de124bec344dab0c9d377814ab9d47",
+      {
+        "name": "auto-name",
+        "enabled": true,
+        "tools": []
+      }
+    ],
+    [
+      "extension_914bb599274b2e949ea549e49c68b3af95dcdf2ff39e68c7fa3e660114a0a484",
+      {
+        "name": "background-jobs",
+        "enabled": true,
+        "tools": [
+          "background_job",
+          "bash"
+        ]
+      }
+    ],
+    [
+      "extension_4962748eda02e82068ad32c15cb4bcf0eec8555c69427b5ea1d0907a6135b1bf",
+      {
+        "name": "oppi-cached-compaction",
+        "enabled": false,
+        "tools": []
+      }
+    ],
+    [
+      "extension_d1a357bbca21edcac8902915485e89cc2d29268bd63aa5c7b542b791c786b8c0",
+      {
+        "name": "oppi-control",
+        "enabled": true,
+        "tools": [
+          "agents_archive",
+          "agents_create",
+          "agents_get",
+          "agents_list",
+          "agents_update",
+          "oppi",
+          "schedules_create",
+          "schedules_get",
+          "schedules_list",
+          "schedules_run",
+          "schedules_update",
+          "sessions_create",
+          "sessions_response",
+          "sessions_send",
+          "sessions_wait",
+          "workspaces_get",
+          "workspaces_list"
+        ]
+      }
+    ],
+    [
+      "extension_d03d99fc6b2a2168827d5bba235a3c2fe430a01a698a0fe32ec775a539853bdc",
+      {
+        "name": "oppi-example-board",
+        "enabled": false,
+        "tools": [
+          "example_board_add"
+        ]
+      }
+    ],
+    [
+      "extension_04372a040752c142c192c7fbb5e1d13d4753e8b3478b234cded99958e4586f7c",
+      {
+        "name": "oppi-example-bookmarks",
+        "enabled": false,
+        "tools": [
+          "example_bookmark_add",
+          "example_bookmark_list"
+        ]
+      }
+    ],
+    [
+      "extension_7d78d578c0832d284bb03e6554b284159b1d0dd9900be34e82b27615ce1744cf",
+      {
+        "name": "oppi-example-release-notes",
+        "enabled": false,
+        "tools": [
+          "example_release_notes"
+        ]
+      }
+    ],
+    [
+      "extension_c99d7533c7e24113c003fb451c011680c6ba0443d1cc48c2d39ae4080c90c234",
+      {
+        "name": "oppi-example-shelf",
+        "enabled": false,
+        "tools": []
+      }
+    ],
+    [
+      "extension_779acc97c65723311182a2bb40ca1a076b9c64745df1405db503f0eef99711a5",
+      {
+        "name": "oppi-file-tools",
+        "enabled": true,
+        "tools": [
+          "find",
+          "grep",
+          "ls"
+        ]
+      }
+    ],
+    [
+      "extension_96e10ce18d3b664eab28ab13a1cfa0b0a6467b54610a0c7071ef0a08c682bf9a",
+      {
+        "name": "oppi-godot",
+        "enabled": true,
+        "tools": [
+          "godot_capture",
+          "godot_export",
+          "godot_input",
+          "godot_logs",
+          "godot_reload",
+          "godot_status"
+        ]
+      }
+    ],
+    [
+      "extension_400a0ad4cd885920135c9f295e61d631c3850adb96da3554450d11c592c8393b",
+      {
+        "name": "oppi-live-voice",
+        "enabled": true,
+        "tools": [
+          "speak"
+        ]
+      }
+    ],
+    [
+      "extension_6af3292b9e42a52203fe6264231c2cdbbc1631bb001ce86810e31276679a92d4",
+      {
+        "name": "oppi-notify",
+        "enabled": true,
+        "tools": [
+          "notify"
+        ]
+      }
+    ],
+    [
+      "extension_1b7cfdacead28bf0305e0c96d87d8512e40c02dac2f9d52ee586f51949a4cadf",
+      {
+        "name": "oppi-project-context",
+        "enabled": true,
+        "tools": []
+      }
+    ],
+    [
+      "extension_345ca797381a5beaaccdb69ee85864f5690be591c37eb9d17b4482c9f9d00d95",
+      {
+        "name": "oppi-sql-explorer",
+        "enabled": true,
+        "tools": [
+          "sqlite_query",
+          "sqlite_schema"
+        ]
+      }
+    ],
+    [
+      "extension_375ed8c2f851f8f5bb6c25bcf71f1793ab955fa5681c0d8667dece2e758a20b1",
+      {
+        "name": "oppi-working-words",
+        "enabled": true,
+        "tools": []
+      }
+    ],
+    [
+      "extension_84c14309b82ee0ab358c4702cbde49d8cdc15babf8abbd7287f344fc7646b43c",
+      {
+        "name": "subagents",
+        "enabled": true,
+        "tools": [
+          "subagent"
+        ]
+      }
+    ],
+    [
+      "extension_0cb92fbefbbc656f1161b88f6960f5188a42a2df695123cb3cfb72b444245ff9",
+      {
+        "name": "voice",
+        "enabled": true,
+        "tools": [
+          "voice_create",
+          "voice_list",
+          "voice_set_default",
+          "voice_speak"
+        ]
+      }
+    ]
+  ],
+  "pluginByTool": [
+    [
+      "ask",
+      "ask"
+    ],
+    [
+      "background_job",
+      "background-jobs"
+    ],
+    [
+      "hacker_news",
+      "digest-sources-v2"
+    ],
+    [
+      "x_read",
+      "digest-sources-v2"
+    ],
+    [
+      "imagen_cloud",
+      "imagen"
+    ],
+    [
+      "imagen_local",
+      "imagen"
+    ],
+    [
+      "notebook_todo",
+      "notebook"
+    ],
+    [
+      "antigravity_generate_image",
+      "pi-antigravity"
+    ],
+    [
+      "secret_forget",
+      "secret"
+    ],
+    [
+      "secret_list",
+      "secret"
+    ],
+    [
+      "secret_prompt",
+      "secret"
+    ],
+    [
+      "secret_run",
+      "secret"
+    ],
+    [
+      "secret_write",
+      "secret"
+    ],
+    [
+      "subagent",
+      "subagents"
+    ],
+    [
+      "voice_create",
+      "voice"
+    ],
+    [
+      "voice_list",
+      "voice"
+    ],
+    [
+      "voice_set_default",
+      "voice"
+    ],
+    [
+      "voice_speak",
+      "voice"
+    ],
+    [
+      "web_fetch",
+      "webtools"
+    ],
+    [
+      "web_search",
+      "webtools"
+    ],
+    [
+      "research_youtube_transcribe",
+      "youtube-transcribe"
+    ]
+  ],
+  "plugins": [
+    [
+      "ask",
+      [
+        "ask"
+      ]
+    ],
+    [
+      "background-jobs",
+      [
+        "background_job",
+        "bash"
+      ]
+    ],
+    [
+      "digest-sources-v2",
+      [
+        "hacker_news",
+        "x_read"
+      ]
+    ],
+    [
+      "imagen",
+      [
+        "imagen_cloud",
+        "imagen_local"
+      ]
+    ],
+    [
+      "notebook",
+      [
+        "notebook_todo"
+      ]
+    ],
+    [
+      "pi-antigravity",
+      [
+        "antigravity_generate_image"
+      ]
+    ],
+    [
+      "secret",
+      [
+        "secret_forget",
+        "secret_list",
+        "secret_prompt",
+        "secret_run",
+        "secret_write"
+      ]
+    ],
+    [
+      "subagents",
+      [
+        "subagent"
+      ]
+    ],
+    [
+      "voice",
+      [
+        "voice_create",
+        "voice_list",
+        "voice_set_default",
+        "voice_speak"
+      ]
+    ],
+    [
+      "webtools",
+      [
+        "web_fetch",
+        "web_search"
+      ]
+    ],
+    [
+      "youtube-transcribe",
+      [
+        "research_youtube_transcribe"
+      ]
+    ]
+  ],
+  "userMcpServers": [
+    "blender",
+    "chrome-devtools",
+    "cloudflare-api",
+    "gmail",
+    "rea",
+    "strava",
+    "superlogical",
+    "tldraw"
+  ],
+  "workspaceMcpServers": [
+    [
+      "w1",
+      [
+        "cloudflare-surunner"
+      ]
+    ],
+    [
+      "w2",
+      [
+        "aws",
+        "cloudflare-api",
+        "xcode"
+      ]
+    ],
+    [
+      "w3",
+      [
+        "coros",
+        "kypu",
+        "xcode"
+      ]
+    ],
+    [
+      "w4",
+      [
+        "coros",
+        "gmail"
+      ]
+    ],
+    [
+      "w5",
+      []
+    ],
+    [
+      "w6",
+      []
+    ],
+    [
+      "w7",
+      []
+    ],
+    [
+      "w8",
+      [
+        "coros",
+        "strava"
+      ]
+    ],
+    [
+      "w9",
+      []
+    ]
+  ],
+  "mcpServerTools": [
+    [
+      "chrome-devtools",
+      [
+        "click",
+        "close_page",
+        "drag",
+        "emulate",
+        "evaluate_script",
+        "fill",
+        "fill_form",
+        "get_console_message",
+        "get_css_styles",
+        "get_network_request",
+        "handle_dialog",
+        "hover",
+        "lighthouse_audit",
+        "list_console_messages",
+        "list_network_requests",
+        "list_pages",
+        "navigate_page",
+        "new_page",
+        "performance_analyze_insight",
+        "performance_start_trace",
+        "performance_stop_trace",
+        "press_key",
+        "resize_page",
+        "screencast_start",
+        "screencast_stop",
+        "select_page",
+        "set_logpoints",
+        "take_heapsnapshot",
+        "take_screenshot",
+        "take_snapshot",
+        "type_text",
+        "upload_file",
+        "wait_for"
+      ]
+    ],
+    [
+      "rea",
+      [
+        "address_name",
+        "address_to_file_offset",
+        "analyze_function",
+        "analyze_javascript_application",
+        "analyze_swift_types",
+        "analyze_web_bundle",
+        "annotate_native_function",
+        "batch_decompile",
+        "binary_overview",
+        "binary_session",
+        "build_call_path",
+        "build_reconstruction_obligation_ledger",
+        "capture_adb_screen",
+        "capture_browser_scenario",
+        "capture_electron_scenario",
+        "capture_native_ui_scenario",
+        "capture_process_scenario",
+        "capture_web_screenshot",
+        "close_binary",
+        "collect_adb_bugreport",
+        "comment",
+        "compare_application_versions",
+        "compare_artifacts",
+        "compare_bundles",
+        "compare_functions",
+        "compare_javascript_export_shapes",
+        "compare_managed_members",
+        "compare_process_captures",
+        "compare_source_to_bundle",
+        "compare_web_captures",
+        "compare_web_screenshots",
+        "correlate_static_and_runtime",
+        "current_address",
+        "current_document",
+        "current_procedure",
+        "decode_android_resources",
+        "decode_interface_builder",
+        "decompile_jeb_item",
+        "demangle_swift",
+        "discover_webmcp_tools",
+        "evaluate_reconstruction_coverage",
+        "export_evidence_bundle",
+        "export_web_scripts",
+        "extract_artifact",
+        "extract_firmware",
+        "find_changed_behavior",
+        "find_xrefs_to_name",
+        "get_call_graph",
+        "get_evidence_bundle",
+        "get_navigation_context",
+        "get_objc_classes",
+        "get_objc_protocols",
+        "goto_address",
+        "import_evidence_bundle",
+        "import_managed_reconstruction",
+        "inline_comment",
+        "inspect_adb_client",
+        "inspect_adb_device",
+        "inspect_adb_display",
+        "inspect_adb_package",
+        "inspect_adb_window",
+        "inspect_address_context",
+        "inspect_analysis_view",
+        "inspect_android_class",
+        "inspect_android_method",
+        "inspect_android_package",
+        "inspect_apktool_client",
+        "inspect_artifact",
+        "inspect_asset_catalog",
+        "inspect_binary_layout",
+        "inspect_electron_page",
+        "inspect_evm_interface",
+        "inspect_firmware_regions",
+        "inspect_jeb_client",
+        "inspect_keyed_archive",
+        "inspect_macho",
+        "inspect_managed_artifact",
+        "inspect_managed_members",
+        "inspect_managed_native_boundaries",
+        "inspect_native_api",
+        "inspect_native_data_type",
+        "inspect_native_dispatch_metadata",
+        "inspect_native_instruction",
+        "inspect_native_load_image",
+        "inspect_pe_resources",
+        "inspect_plist",
+        "inspect_recorded_crash",
+        "inspect_signature",
+        "inspect_web_event_listeners",
+        "inspect_web_network_capture",
+        "inspect_web_page",
+        "install_adb_package",
+        "list_adb_devices",
+        "list_adb_directory",
+        "list_adb_features",
+        "list_adb_packages",
+        "list_adb_processes",
+        "list_adb_services",
+        "list_architectures",
+        "list_bookmarks",
+        "list_browser_targets",
+        "list_documents",
+        "list_electron_targets",
+        "list_javascript_runtime_targets",
+        "list_jeb_units",
+        "list_names",
+        "list_procedures",
+        "list_segments",
+        "list_strings",
+        "list_unknowns",
+        "next_address",
+        "observe_javascript_runtime",
+        "observe_native_calls",
+        "observe_native_ui",
+        "observe_web_execution",
+        "observe_web_session",
+        "open_binary",
+        "open_jeb_project",
+        "prev_address",
+        "procedure_address",
+        "procedure_assembly",
+        "procedure_callees",
+        "procedure_callers",
+        "procedure_info",
+        "procedure_pseudo_code",
+        "procedure_references",
+        "project_android_application_graph",
+        "project_apple_application_graph",
+        "project_managed_application_graph",
+        "pull_adb_file",
+        "pull_adb_package",
+        "push_adb_file",
+        "read_adb_logcat",
+        "read_adb_setting",
+        "read_bytes",
+        "read_function_instructions",
+        "reconcile_javascript_runtime",
+        "record_unknown",
+        "recover_javascript_sources",
+        "resolve_adb_packages",
+        "resolve_containing_procedure",
+        "resolve_native_call_targets",
+        "search_android_classes",
+        "search_procedures",
+        "search_strings",
+        "set_address_name",
+        "set_addresses_names",
+        "set_bookmark",
+        "set_comment",
+        "set_inline_comment",
+        "start_adb_activity",
+        "start_adb_app",
+        "stop_adb_app",
+        "trace_android_references",
+        "trace_application_feature",
+        "trace_call_path",
+        "trace_dylib_resolution",
+        "trace_feature",
+        "trace_javascript_semantics",
+        "trace_native_ui_action",
+        "trace_native_values",
+        "trace_web_module_imports",
+        "trace_web_source_location",
+        "uninstall_adb_package",
+        "unset_bookmark",
+        "update_unknown",
+        "verify_managed_native_boundaries",
+        "verify_reconstruction",
+        "verify_unknown_resolution",
+        "xrefs"
+      ]
+    ],
+    [
+      "cloudflare-api",
+      [
+        "docs",
+        "execute",
+        "search",
+        "whoami"
+      ]
+    ],
+    [
+      "strava",
+      [
+        "eligibility",
+        "get_active_streak",
+        "get_activity_performance",
+        "get_activity_streams",
+        "get_athlete_best_efforts",
+        "get_athlete_profile",
+        "get_athlete_zones",
+        "get_club_info",
+        "get_gear",
+        "get_strength_workout_details",
+        "get_training_plan",
+        "health",
+        "list_activities",
+        "search_activities"
+      ]
+    ],
+    [
+      "superlogical",
+      [
+        "get_attachment",
+        "get_feedback",
+        "list_activity",
+        "list_changelog",
+        "list_docs",
+        "list_feedback",
+        "read_changelog",
+        "read_doc",
+        "search_changelog",
+        "search_docs",
+        "search_feedback"
+      ]
+    ],
+    [
+      "gmail",
+      [
+        "account",
+        "archive",
+        "draft",
+        "labels",
+        "modify",
+        "read",
+        "save_attachments",
+        "search",
+        "send",
+        "spam",
+        "thread",
+        "trash"
+      ]
+    ],
+    [
+      "tldraw",
+      [
+        "create_doc",
+        "exec",
+        "readme",
+        "screenshot",
+        "search",
+        "status",
+        "stop_snippet"
+      ]
+    ],
+    [
+      "blender",
+      [
+        "disable_telemetry",
+        "execute_blender_code",
+        "generate_3d",
+        "generate_gaussian_world",
+        "get_addon_status",
+        "get_scene_info",
+        "import_asset",
+        "look",
+        "record_trajectory_feedback",
+        "search_assets"
+      ]
+    ],
+    [
+      "cloudflare-surunner",
+      [
+        "docs",
+        "execute",
+        "search",
+        "whoami"
+      ]
+    ],
+    [
+      "xcode",
+      [
+        "AddEntitlement",
+        "AddInfoPlist",
+        "BuildProject",
+        "DeviceInteractionEndSession",
+        "DeviceInteractionInstallAndRun",
+        "DeviceInteractionStartSession",
+        "DeviceInteractionStartWorkspaceSession",
+        "DeviceInteractionSynthesize",
+        "DocumentationSearch",
+        "GetBuildLog",
+        "GetConsoleOutput",
+        "GetCrashIssueLogs",
+        "GetFieldPerformanceIssueLogs",
+        "GetFileCompilerFlags",
+        "GetTargetBuildSettings",
+        "GetTestList",
+        "GetTopCrashIssues",
+        "GetTopFieldPerformanceIssues",
+        "InvokeDebuggerCommand",
+        "LocalizationPlanner",
+        "RenderPreview",
+        "RunAllTests",
+        "RunCodeSnippet",
+        "RunProject",
+        "RunSomeTests",
+        "StopProject",
+        "StringCatalogContext",
+        "StringCatalogEdit",
+        "StringCatalogRead",
+        "UpdateFileCompilerFlags",
+        "UpdateTargetBuildSetting",
+        "XcodeCloseWorkspace",
+        "XcodeGlob",
+        "XcodeGrep",
+        "XcodeLS",
+        "XcodeListRunDestinations",
+        "XcodeListSchemes",
+        "XcodeListTargets",
+        "XcodeListTemplates",
+        "XcodeListTestPlans",
+        "XcodeListWorkspaces",
+        "XcodeMV",
+        "XcodeMakeDir",
+        "XcodeNewProject",
+        "XcodeNewTarget",
+        "XcodeOpenWorkspace",
+        "XcodeRM",
+        "XcodeRead",
+        "XcodeRefreshCodeIssuesInFile",
+        "XcodeSwitchRunDestination",
+        "XcodeSwitchScheme",
+        "XcodeSwitchTestPlan",
+        "XcodeUpdate",
+        "XcodeWrite"
+      ]
+    ],
+    [
+      "aws",
+      [
+        "aws___get_presigned_url",
+        "aws___get_regional_availability",
+        "aws___get_tasks",
+        "aws___list_regions",
+        "aws___read_documentation",
+        "aws___retrieve_skill",
+        "aws___run_script",
+        "aws___search_documentation"
+      ]
+    ],
+    [
+      "coros",
+      [
+        "createScheduledWorkout",
+        "createSingleWorkout",
+        "createTrainingPlan",
+        "downloadActivityFitFiles",
+        "getActivityDetail",
+        "queryActivityFitFileDownloadUrls",
+        "queryActivityLapData",
+        "queryAvgHeartRate",
+        "queryCustomActivityLapData",
+        "queryDailyHealthData",
+        "queryDevices",
+        "queryFitnessAssessmentOverview",
+        "queryHealthCheckTimeSeries",
+        "queryMenstruationCycles",
+        "queryRecoveryStatus",
+        "queryRestingHeartRate",
+        "queryScheduledWorkoutDetails",
+        "querySleepHrv",
+        "querySleepOverview",
+        "querySportRecords",
+        "queryStressLevel",
+        "queryStressTimeSeries",
+        "queryTrainingLoadAssessment",
+        "queryTrainingPlanDetails",
+        "queryTrainingPlanLibrary",
+        "queryTrainingSchedule",
+        "queryUserInfo",
+        "queryWorkoutDetails",
+        "queryWorkoutLibrary",
+        "scheduleWorkout",
+        "updateScheduledWorkout",
+        "updateTrainingPlan",
+        "updateWorkoutDetails",
+        "uploadRouteFile"
+      ]
+    ],
+    [
+      "kypu",
+      [
+        "athlete",
+        "get_activity",
+        "get_plan",
+        "list_goals",
+        "list_plans",
+        "search",
+        "today_workouts",
+        "workout",
+        "workout_library"
+      ]
+    ]
+  ]
+}

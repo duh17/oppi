@@ -32,8 +32,8 @@ export class AgentConfigurationError extends Error {
  */
 export function describeAgentConfigurationFailure(failure: AgentConfigurationFailure): string {
   const missing =
-    failure.code === "agent_extensions_unavailable"
-      ? failure.details.unavailableExtensions
+    failure.code === "agent_plugins_unavailable"
+      ? failure.details.unavailablePlugins
       : failure.code === "agent_skills_unavailable"
         ? failure.details.unavailableSkills
         : undefined;
@@ -60,10 +60,14 @@ export function actionableAgentConfigurationMessage(
     case "agent_workspace_unavailable":
       return `${prefix} because the selected workspace or worktree is unavailable: ${failure.details.workspaceError ?? "the target could not be resolved"}. Choose another workspace or repair the selected worktree, then start again.`;
     case "agent_tools_unavailable":
-      return `${prefix} because these configured tools are unavailable: ${(failure.details.missingTools ?? []).join(", ")}. Edit ${context.agentName} → Resources → Extensions and select Extensions that provide these tools, or remove them from Allowed Tools. Then start again.`;
-    case "agent_extensions_unavailable":
-      return `${prefix} because selected Extensions are unavailable: ${(failure.details.unavailableExtensions ?? []).join(", ")}. Edit ${context.agentName} → Resources → Extensions and replace or remove the unavailable selections. Then start again.`;
+      return `${prefix} because these configured tools are unavailable: ${(failure.details.missingTools ?? []).join(", ")}. Edit ${context.agentName} → Tools and select the plugin that provides them, or turn Edit files back on. Then start again.`;
+    case "agent_plugins_unavailable":
+      return `${prefix} because selected plugins are unavailable: ${(failure.details.unavailablePlugins ?? []).join(", ")}. Edit ${context.agentName} → Tools → Plugins and replace or remove the unavailable selections. Then start again.`;
     case "agent_skills_unavailable":
-      return `${prefix} because selected Skills are unavailable: ${(failure.details.unavailableSkills ?? []).join(", ")}. Edit ${context.agentName} → Resources → Skills and replace or remove the unavailable selections. Then start again.`;
+      return `${prefix} because selected Skills are unavailable: ${(failure.details.unavailableSkills ?? []).join(", ")}. Edit ${context.agentName} → Tools → Skills and replace or remove the unavailable selections. Then start again.`;
+    case "agent_definition_v2_required":
+      return `${prefix} because this Agent is still stored in the old format (tool lists and Extension IDs). Update the server so it can finish migrating saved Agents, then start again.`;
+    case "agent_builtin_plugins_unavailable":
+      return `${prefix} because Oppi could not read the plugins it offers, which this read-only Agent needs to keep tools it did not name out of its session. Start it again in a moment; if it keeps failing, run it with full access or check the server's plugins.`;
   }
 }

@@ -20,14 +20,16 @@ describe("saved Agent resource definitions", () => {
     }
   });
 
-  it("preserves inherit versus exact-empty resource selection", () => {
-    expect(validateAgentDefinition({ name: "Inherited" }).resources).toBeUndefined();
-    expect(
-      validateAgentDefinition({
-        name: "No optional resources",
-        resources: { skillPaths: [], extensionIds: [] },
-      }).resources,
-    ).toEqual({ skillPaths: [], extensionIds: [] });
+  it("preserves inherit versus exact-empty capability selection", () => {
+    expect(validateAgentDefinition({ name: "Inherited" }).capabilities).toBeUndefined();
+    expect(validateAgentDefinition({ name: "Inherited" }).context).toBeUndefined();
+    const exact = validateAgentDefinition({
+      name: "No plugins, no servers, no Skills",
+      capabilities: { plugins: [], mcp: {} },
+      context: { skills: [] },
+    });
+    expect(exact.capabilities).toEqual({ plugins: [], mcp: {} });
+    expect(exact.context).toEqual({ skills: [] });
   });
 
   it("preserves portable launch constraints", () => {
@@ -52,16 +54,16 @@ describe("saved Agent resource definitions", () => {
     expect(() => validateAgentDefinition({ name: "Invalid", launchConstraints })).toThrow(message);
   });
 
-  it("rejects prompt templates because they are interactive composer shortcuts", () => {
+  it("rejects a v1 tool list, naming what replaced it", () => {
     expect(() =>
       validateAgentDefinition({
-        name: "Invalid templates",
-        resources: { promptTemplateIds: ["review"] },
+        name: "Invalid tools",
+        sessionDefaults: { excludeTools: ["gmail"] },
       }),
-    ).toThrow("resources has unexpected field: promptTemplateIds");
+    ).toThrow("Agent definitions are v2: sessionDefaults.excludeTools was replaced by");
   });
 
-  it("removes historical prompt template assignments when loading saved definitions", () => {
+  it("rewrites a stored v1 definition and its history", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-resource-migration-"));
     const databasePath = join(dataDir, "session-state.db");
     let store = new AgentDefinitionStore(dataDir);
@@ -89,15 +91,21 @@ describe("saved Agent resource definitions", () => {
       db.close();
 
       store = new AgentDefinitionStore(dataDir);
-      store.migrateStoredIconChoices();
-      const expectedResources = {
-        skillPaths: [],
-        extensionIds: [],
-      };
-      expect(store.getAgent(agent.id)?.definition.resources).toEqual(expectedResources);
-      expect(store.getAgentVersion(agent.id, agent.version)?.definition.resources).toEqual(
-        expectedResources,
-      );
+      expect(store.hasV1Definitions()).toBe(true);
+      store.migrateStoredDefinitions({
+        extensions: new Map(),
+        pluginByTool: new Map(),
+        plugins: new Map(),
+        userMcpServers: [],
+        workspaceMcpServers: new Map(),
+        mcpServerTools: new Map(),
+      });
+      expect(store.hasV1Definitions()).toBe(false);
+      // An empty Skill list means no Skills, which v2 states the same way.
+      expect(store.getAgent(agent.id)?.definition.context).toEqual({ skills: [] });
+      expect(store.getAgentVersion(agent.id, agent.version)?.definition.context).toEqual({
+        skills: [],
+      });
     } finally {
       store.close();
       rmSync(dataDir, { recursive: true, force: true });

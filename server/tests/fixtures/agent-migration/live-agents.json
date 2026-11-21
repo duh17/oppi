@@ -1,0 +1,538 @@
+[
+  {
+    "key": "agent-1",
+    "version": 3,
+    "definition": {
+      "name": "Agent",
+      "icon": {
+        "kind": "default"
+      },
+      "instructions": {
+        "mode": "append",
+        "text": "Instructions."
+      },
+      "sessionDefaults": {
+        "model": "anthropic/claude-sonnet-5-5",
+        "thinkingLevel": "high",
+        "tools": [
+          "read",
+          "bash",
+          "background_job",
+          "mcp__gmail__search",
+          "mcp__gmail__read",
+          "mcp__gmail__labels",
+          "mcp__gmail__modify",
+          "mcp__gmail__archive",
+          "mcp__gmail__trash",
+          "mcp__gmail__spam",
+          "codemode"
+        ]
+      },
+      "resources": {}
+    }
+  },
+  {
+    "key": "agent-2",
+    "version": 15,
+    "definition": {
+      "name": "Agent",
+      "icon": {
+        "kind": "default"
+      },
+      "instructions": {
+        "mode": "replace",
+        "text": "Instructions."
+      },
+      "sessionDefaults": {
+        "model": "anthropic/claude-sonnet-5-5",
+        "thinkingLevel": "high",
+        "tools": [
+          "bash",
+          "find",
+          "grep",
+          "ls",
+          "read",
+          "background_job",
+          "codemode",
+          "mcp__xcode__*",
+          "mcp__chrome_devtools__*"
+        ]
+      },
+      "resources": {
+        "noContextFiles": false,
+        "extensionIds": [
+          "extension_aa5ee0e95069766d2b6ea083496f7b99d7fb96b5678ba5009a7b3228b408f946",
+          "builtin:mcp",
+          "builtin:codemode"
+        ],
+        "skillPaths": [
+          "/home/agent/.pi/agent/skills/qa/SKILL.md"
+        ]
+      },
+      "launchConstraints": {
+        "requiredRuntime": "host"
+      }
+    }
+  },
+  {
+    "key": "agent-3",
+    "version": 1,
+    "definition": {
+      "name": "Agent",
+      "icon": {
+        "kind": "default"
+      },
+      "instructions": {
+        "mode": "append",
+        "text": "Instructions."
+      },
+      "sessionDefaults": {
+        "model": "anthropic/claude-haiku-5-5",
+        "thinkingLevel": "low",
+        "tools": [
+          "read",
+          "bash",
+          "notify"
+        ]
+      }
+    }
+  },
+  {
+    "key": "agent-4",
+    "version": 18,
+    "definition": {
+      "name": "Agent",
+      "icon": {
+        "kind": "default"
+      },
+      "instructions": {
+        "mode": "replace",
+        "text": "Instructions."
+      },
+      "sessionDefaults": {
+        "model": "anthropic/claude-opus-5-5",
+        "thinkingLevel": "medium",
+        "tools": [
+          "bash",
+          "hacker_news",
+          "x_read"
+        ]
+      },
+      "resources": {
+        "noContextFiles": true,
+        "extensionIds": [
+          "extension_547ca0df4a006770716e40970b5f05503e0430740f807696dfc12a58d615d94e"
+        ],
+        "skillPaths": [
+          "/home/agent/workspace/webtools/skills/wex-feeds/SKILL.md"
+        ]
+      }
+    }
+  },
+  {
+    "key": "agent-5",
+    "version": 7,
+    "definition": {
+      "name": "Agent",
+      "icon": {
+        "kind": "default"
+      },
+      "sessionDefaults": {
+        "model": "antigravity/gemini-4-neon",
+        "thinkingLevel": "medium",
+        "excludeTools": [
+          "subagent"
+        ]
+      },
+      "resources": {
+        "noSessionHistory": true
+      },
+      "launchConstraints": {
+        "requiredEngine": "durable"
+      }
+    }
+  },
+  {
+    "key": "agent-6",
+    "version": 8,
+    "definition": {
+      "name": "Agent",
+      "icon": {
+        "kind": "default"
+      },
+      "instructions": {
+        "mode": "replace",
+        "text": "Instructions."
+      },
+      "sessionDefaults": {
+        "model": "anthropic/claude-sonnet-5-5",
+        "thinkingLevel": "medium",
+        "tools": [
+          "bash",
+          "codemode",
+          "edit",
+          "find",
+          "grep",
+          "ls",
+          "read",
+          "web_fetch",
+          "web_search",
+          "write"
+        ]
+      },
+      "resources": {
+        "noContextFiles": true,
+        "extensionIds": [
+          "extension_c1a1f2044987b2b454947f70e025864b14181f23213e601cdc0c8089848fd92c",
+          "builtin:codemode"
+        ],
+        "skillPaths": []
+      },
+      "launchConstraints": {
+        "allowedWorkspaceIds": [
+          "w5"
+        ],
+        "requiredRuntime": "host"
+      }
+    }
+  },
+  {
+    "key": "agent-7",
+    "version": 17,
+    "definition": {
+      "name": "Agent",
+      "icon": {
+        "kind": "default"
+      },
+      "instructions": {
+        "mode": "append",
+        "text": "Instructions."
+      },
+      "sessionDefaults": {
+        "model": "anthropic/claude-sonnet-5-5",
+        "thinkingLevel": "high",
+        "excludeTools": [
+          "ask",
+          "subagent",
+          "notify",
+          "mcp__gmail__*",
+          "mcp__strava__*",
+          "mcp__coros__*",
+          "mcp__aws__*",
+          "mcp__cloudflare_api__*",
+          "mcp__cloudflare_surunner__*",
+          "mcp__chrome_devtools__*",
+          "mcp__blender__*",
+          "mcp__tldraw__*",
+          "mcp__superlogical__*"
+        ]
+      },
+      "resources": {
+        "noContextFiles": false,
+        "extensionIds": [
+          "extension_aa5ee0e95069766d2b6ea083496f7b99d7fb96b5678ba5009a7b3228b408f946",
+          "builtin:mcp",
+          "builtin:codemode"
+        ],
+        "skillPaths": [
+          "/home/agent/.pi/agent/skills/qa/SKILL.md",
+          "/home/agent/.pi/agent/skills/testing/SKILL.md"
+        ]
+      },
+      "launchConstraints": {
+        "requiredRuntime": "host"
+      }
+    }
+  },
+  {
+    "key": "agent-8",
+    "version": 26,
+    "definition": {
+      "name": "Agent",
+      "icon": {
+        "kind": "default"
+      },
+      "instructions": {
+        "mode": "append",
+        "text": "Instructions."
+      },
+      "sessionDefaults": {
+        "model": "anthropic/claude-opus-5-5",
+        "thinkingLevel": "high",
+        "tools": [
+          "ask",
+          "bash",
+          "edit",
+          "find",
+          "grep",
+          "ls",
+          "read",
+          "research_youtube_transcribe",
+          "subagent",
+          "web_fetch",
+          "web_search",
+          "write",
+          "x_read"
+        ]
+      },
+      "resources": {
+        "noContextFiles": true,
+        "extensionIds": [
+          "extension_c1a1f2044987b2b454947f70e025864b14181f23213e601cdc0c8089848fd92c",
+          "extension_dd4154ec138031b323df29a9ee9c693453ac7a931b4801c77c30ca75aaeaecdb",
+          "extension_de0efcf538942c1f9d09262c9d7ed1f67e7d64773583f4f9c04b0eb574931873",
+          "extension_d930a9b2da300d208ae78133007f6f37ef81e858cb4cd6f285fb7076863f7450",
+          "extension_547ca0df4a006770716e40970b5f05503e0430740f807696dfc12a58d615d94e"
+        ],
+        "skillPaths": [
+          "/home/agent/workspace/deep-research/.pi/skills/deep-research/SKILL.md",
+          "/home/agent/workspace/deep-research/.pi/skills/investment-research/SKILL.md",
+          "/home/agent/workspace/deep-research/.pi/skills/explain/SKILL.md",
+          "/home/agent/workspace/deep-research/.pi/skills/weather/SKILL.md",
+          "/home/agent/workspace/deep-research/.pi/skills/writing/SKILL.md"
+        ]
+      },
+      "launchConstraints": {
+        "allowedWorkspaceIds": [
+          "w7"
+        ],
+        "requiredRuntime": "sandbox"
+      }
+    }
+  },
+  {
+    "key": "agent-9",
+    "version": 4,
+    "definition": {
+      "name": "Agent",
+      "icon": {
+        "kind": "default"
+      },
+      "sessionDefaults": {
+        "model": "anthropic/claude-opus-5-5",
+        "thinkingLevel": "high",
+        "excludeTools": [
+          "goal_update",
+          "goal_status",
+          "oppi_install",
+          "oppi_server_restart",
+          "oppi_live_debug",
+          "voice_speak",
+          "voice_list",
+          "voice_set_default",
+          "voice_create",
+          "x_read",
+          "hacker_news",
+          "mcp__gmail__*",
+          "mcp__strava__*",
+          "mcp__coros__*",
+          "mcp__aws__*",
+          "mcp__cloudflare_api__*",
+          "mcp__cloudflare_surunner__*",
+          "mcp__chrome_devtools__*",
+          "mcp__blender__*",
+          "mcp__tldraw__*",
+          "mcp__superlogical__*"
+        ]
+      },
+      "launchConstraints": {
+        "allowedWorkspaceIds": [
+          "w2"
+        ]
+      }
+    }
+  },
+  {
+    "key": "agent-10",
+    "version": 29,
+    "definition": {
+      "name": "Agent",
+      "icon": {
+        "kind": "default"
+      },
+      "instructions": {
+        "mode": "append",
+        "text": "Instructions."
+      },
+      "sessionDefaults": {
+        "model": "anthropic/claude-sonnet-5-5",
+        "thinkingLevel": "high",
+        "tools": [
+          "ask",
+          "background_job",
+          "bash",
+          "codemode",
+          "edit",
+          "hacker_news",
+          "imagen_cloud",
+          "imagen_local",
+          "notebook_todo",
+          "read",
+          "research_youtube_transcribe",
+          "secret_forget",
+          "secret_list",
+          "secret_prompt",
+          "secret_run",
+          "secret_write",
+          "subagent",
+          "tool_search",
+          "voice_create",
+          "voice_list",
+          "voice_set_default",
+          "voice_speak",
+          "web_fetch",
+          "web_search",
+          "write",
+          "x_read",
+          "mcp__gmail__*",
+          "mcp__coros__*"
+        ],
+        "excludeTools": [
+          "mcp__coros__createSingleWorkout",
+          "mcp__coros__updateWorkoutDetails"
+        ]
+      },
+      "resources": {
+        "skillPaths": [
+          "/home/agent/.pi/agent/skills/fruitstand/SKILL.md",
+          "/home/agent/.pi/agent/skills/gmail/SKILL.md",
+          "/home/agent/.pi/agent/skills/weather/SKILL.md",
+          "/home/agent/.pi/agent/skills/wex-markets/SKILL.md",
+          "/home/agent/.pi/agent/skills/finance-inbox/SKILL.md",
+          "/home/agent/.pi/agent/skills/investment-research/SKILL.md",
+          "/home/agent/.pi/agent/skills/wex-feeds/SKILL.md",
+          "/home/agent/.pi/agent/skills/chinese-writing/SKILL.md",
+          "/home/agent/.pi/agent/skills/writing/SKILL.md",
+          "/home/agent/.pi/agent/skills/notebook/SKILL.md",
+          "/home/agent/.pi/agent/skills/computer-use/SKILL.md",
+          "/home/agent/.pi/agent/skills/household-wealth-strategy/SKILL.md",
+          "/home/agent/.pi/agent/skills/tts/SKILL.md",
+          "/home/agent/.pi/agent/skills/transcribe/SKILL.md"
+        ]
+      }
+    }
+  },
+  {
+    "key": "agent-11",
+    "version": 23,
+    "definition": {
+      "name": "Agent",
+      "icon": {
+        "kind": "default"
+      },
+      "instructions": {
+        "mode": "append",
+        "text": "Instructions."
+      },
+      "sessionDefaults": {
+        "model": "anthropic/claude-opus-5-5",
+        "thinkingLevel": "high",
+        "tools": [
+          "read",
+          "bash",
+          "grep",
+          "find",
+          "ls",
+          "subagent"
+        ],
+        "excludeTools": [
+          "write",
+          "edit",
+          "mcp__*",
+          "list_mcp_resources",
+          "list_mcp_resource_templates",
+          "read_mcp_resource"
+        ]
+      },
+      "resources": {
+        "noContextFiles": true
+      },
+      "launchConstraints": {
+        "allowedWorkspaceIds": [
+          "w2"
+        ]
+      }
+    }
+  },
+  {
+    "key": "agent-12",
+    "version": 10,
+    "definition": {
+      "name": "Agent",
+      "icon": {
+        "kind": "default"
+      },
+      "instructions": {
+        "mode": "append",
+        "text": "Instructions."
+      },
+      "resources": {
+        "extensionIds": [
+          "extension_48d81e96d2a6b52fbe98b043efdcb18df5d5a440f4ce82c2cdae09127386a495",
+          "extension_9d99e443b3b7b597330b7bfc99a71e3de84c278157079d99997061782d8769b1",
+          "extension_de0efcf538942c1f9d09262c9d7ed1f67e7d64773583f4f9c04b0eb574931873",
+          "extension_aa5ee0e95069766d2b6ea083496f7b99d7fb96b5678ba5009a7b3228b408f946",
+          "extension_547ca0df4a006770716e40970b5f05503e0430740f807696dfc12a58d615d94e",
+          "extension_27fcb156f03b52da667862260dcc3506b0832e716c28622a3c90a9ed9b776cdf",
+          "extension_d1052c7f0476a9ba9ec01e1c72eca2e6cbb13d840d139ca03753f0544c396f7e",
+          "extension_a31ac2dfd43b9ad749664f92fbf48be59a4b35c8d665b772a259402439f762dd",
+          "extension_87a18e833ef51c0c56cead2b450b721afcfb112c60b878d5bb06921b2d9b6494",
+          "extension_eb8368474c1578f0946e0517ccea6b9d965dc5e507d3f3b339d6d8a79f8d10b4",
+          "extension_ad29d41b5ef2c70e05b636880fb389a3e73d571a1c00a0acf3362e35f85e50ad",
+          "extension_b38e6449756f35f21b19620c7186839dbefb26c4eda4f54e6136f2a2bc844a1c",
+          "extension_d930a9b2da300d208ae78133007f6f37ef81e858cb4cd6f285fb7076863f7450",
+          "extension_c1a1f2044987b2b454947f70e025864b14181f23213e601cdc0c8089848fd92c",
+          "extension_3d7d8107e31ae63453f53f45ec764e0dd8e5e1b457f861297a0a190d24ad7b66",
+          "extension_1923fbc9fa4d08f51818153a2ca479f6b7b0f3a3e9eadd5acccc36ddb4f48724",
+          "extension_dd4154ec138031b323df29a9ee9c693453ac7a931b4801c77c30ca75aaeaecdb",
+          "extension_f39788de15401b8740311bb069032d9cdc02327b297b47b83bcce7db837eb5aa",
+          "extension_0cb92fbefbbc656f1161b88f6960f5188a42a2df695123cb3cfb72b444245ff9",
+          "builtin:mcp",
+          "builtin:codemode",
+          "builtin:tool-search"
+        ]
+      },
+      "sessionDefaults": {
+        "thinkingLevel": "low"
+      }
+    }
+  },
+  {
+    "key": "agent-13",
+    "version": 17,
+    "definition": {
+      "name": "Agent",
+      "icon": {
+        "kind": "default"
+      },
+      "instructions": {
+        "mode": "append",
+        "text": "Instructions."
+      },
+      "sessionDefaults": {
+        "model": "anthropic/claude-opus-5-5",
+        "thinkingLevel": "high",
+        "tools": [
+          "bash",
+          "find",
+          "grep",
+          "ls",
+          "read",
+          "background_job"
+        ]
+      },
+      "resources": {
+        "noContextFiles": false,
+        "extensionIds": [
+          "extension_aa5ee0e95069766d2b6ea083496f7b99d7fb96b5678ba5009a7b3228b408f946"
+        ],
+        "skillPaths": [
+          "/home/agent/.pi/agent/skills/testing/SKILL.md"
+        ]
+      },
+      "launchConstraints": {
+        "requiredRuntime": "host"
+      }
+    }
+  }
+]

@@ -160,36 +160,6 @@ struct AgentScheduleAPIClientTests {
         #expect(agent.createdAt == Date(timeIntervalSince1970: 1))
     }
 
-    @Test func agentUpdateSendsNullsForClearedOptionalFields() async throws {
-        let client = makeClient()
-        defer { cleanup() }
-
-        TestURLProtocol.handler = { request in
-            #expect(request.httpMethod == "PATCH")
-            #expect(request.url?.path == "/agents/agent-1")
-            let json = try JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: Any]
-            #expect(json?["name"] as? String == "Reviewer")
-            let icon = json?["icon"] as? [String: Any]
-            #expect(icon?["kind"] as? String == "default")
-            #expect(json?["description"] is NSNull)
-            #expect(json?["instructions"] is NSNull)
-            #expect(json?["resources"] is NSNull)
-            #expect(json?["sessionDefaults"] is NSNull)
-            #expect(json?["launchConstraints"] == nil)
-            return mockResponse(json: """
-            {"agent":{"id":"agent-1","name":"Reviewer","status":"active","version":2,"definition":{"name":"Reviewer"},"createdAt":1000,"updatedAt":2000}}
-            """)
-        }
-
-        let agent = try await client.updateAgent(
-            agentId: "agent-1",
-            definition: AgentDefinition(name: "Reviewer")
-        )
-
-        #expect(agent.version == 2)
-        #expect(agent.definition.description == nil)
-    }
-
     @Test func agentUpdateSendsReplacePromptModelAndThinkingDefaults() async throws {
         let client = makeClient()
         defer { cleanup() }
@@ -199,7 +169,7 @@ struct AgentScheduleAPIClientTests {
             #expect(request.url?.path == "/agents/agent-1")
             let data = requestBodyData(request)
             let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-            #expect(Set(json.keys) == ["name", "description", "instructions", "resources", "sessionDefaults"])
+            #expect(Set(json.keys) == ["name", "description", "instructions", "capabilities", "context", "sessionDefaults"])
             let definition = try JSONDecoder().decode(AgentDefinition.self, from: data)
             #expect(definition.instructions?.mode == .replace)
             #expect(definition.instructions?.text == "Use only these instructions.")
@@ -218,54 +188,88 @@ struct AgentScheduleAPIClientTests {
                 mode: .replace,
                 text: "Use only these instructions."
             ),
+            capabilities: AgentCapabilities(core: .full, ask: true, notify: true, subagent: true),
+            context: AgentContext(contextFiles: true, sessionHistory: false),
             model: "openai/gpt-5.6",
-            thinkingLevel: .max,
-            skillPaths: nil,
-            extensionIds: nil
+            thinkingLevel: .max
         )
 
         #expect(updated.definition.instructions?.mode == .replace)
         #expect(updated.definition.sessionDefaults?.thinkingLevel == .max)
     }
 
-    @Test func nativeAgentUpdatePreservesInheritVersusExactEmptyResources() async throws {
+    /// A read-only Agent states the plugins and MCP servers it may use; going back to every one
+    /// of them is an explicit null, which the server's key-by-key PATCH drops.
+    @Test func nativeAgentUpdateNamesReadOnlyCapabilitiesAndClearsThemBackToAll() async throws {
         let client = makeClient()
         defer { cleanup() }
 
+        var requestCount = 0
         TestURLProtocol.handler = { request in
-            #expect(request.httpMethod == "PATCH")
-            #expect(request.url?.path == "/agents/agent-1")
+            requestCount += 1
             let json = try #require(
                 JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: Any]
             )
-            let resources = try #require(json["resources"] as? [String: Any])
-            #expect(resources["skillPaths"] is NSNull)
-            #expect((resources["extensionIds"] as? [String])?.isEmpty == true)
-            #expect(resources["promptTemplateIds"] is NSNull)
-            let defaults = try #require(json["sessionDefaults"] as? [String: Any])
-            #expect((defaults["tools"] as? [String])?.isEmpty == true)
-            #expect(defaults["excludeTools"] is NSNull)
-            #expect(defaults["noTools"] is NSNull)
+            let capabilities = try #require(json["capabilities"] as? [String: Any])
+            let context = try #require(json["context"] as? [String: Any])
+            switch requestCount {
+            case 1:
+                #expect(capabilities["core"] as? String == "readonly")
+                #expect(capabilities["ask"] as? Bool == false)
+                #expect(capabilities["notify"] as? Bool == true)
+                #expect(capabilities["subagent"] as? Bool == false)
+                #expect((capabilities["plugins"] as? [String])?.isEmpty == true)
+                #expect((capabilities["mcp"] as? [String: Any])?.isEmpty == true)
+                #expect((context["skills"] as? [String])?.isEmpty == true)
+                #expect(context["contextFiles"] as? Bool == false)
+                #expect(context["sessionHistory"] as? Bool == true)
+            default:
+                #expect(capabilities["core"] is NSNull)
+                #expect(capabilities["plugins"] is NSNull)
+                #expect(capabilities["mcp"] is NSNull)
+                #expect(context["skills"] is NSNull)
+            }
+            let definition = requestCount == 1
+                ? #"{"name":"Reviewer","capabilities":{"core":"readonly","ask":false,"subagent":false,"plugins":[],"mcp":{}},"context":{"skills":[],"contextFiles":false}}"#
+                : #"{"name":"Reviewer"}"#
             return mockResponse(json: """
-            {"agent":{"id":"agent-1","name":"Reviewer","status":"active","version":4,"definition":{"name":"Reviewer","resources":{"extensionIds":[]}},"createdAt":1000,"updatedAt":4000}}
+            {"agent":{"id":"agent-1","name":"Reviewer","status":"active","version":\(requestCount + 1),"definition":\(definition),"createdAt":1000,"updatedAt":4000}}
             """)
         }
 
-        let updated = try await client.updateAgentNative(
+        let named = try await client.updateAgentNative(
             agentId: "agent-1",
             name: "Reviewer",
             description: nil,
             instructions: nil,
+            capabilities: AgentCapabilities(
+                core: .readonly, ask: false, notify: true, subagent: false, plugins: [], mcp: [:]
+            ),
+            context: AgentContext(skills: [], contextFiles: false, sessionHistory: true),
             model: nil,
-            thinkingLevel: nil,
-            skillPaths: nil,
-            extensionIds: [],
-            tools: []
+            thinkingLevel: nil
         )
+        #expect(named.definition.capabilities?.core == .readonly)
+        #expect(named.definition.capabilities?.plugins?.isEmpty == true)
+        #expect(named.definition.capabilities?.mcp?.isEmpty == true)
+        #expect(named.definition.context?.skills?.isEmpty == true)
+        #expect(named.definition.context?.readsContextFiles == false)
 
-        #expect(updated.definition.resources?.skillPaths == nil)
-        #expect(updated.definition.resources?.extensionIds?.isEmpty == true)
-        #expect(updated.definition.resources?.isEmpty == false)
+        let followed = try await client.updateAgentNative(
+            agentId: "agent-1",
+            name: "Reviewer",
+            description: nil,
+            instructions: nil,
+            capabilities: AgentCapabilities(ask: true, notify: true, subagent: true),
+            context: AgentContext(),
+            model: nil,
+            thinkingLevel: nil
+        )
+        #expect(followed.definition.capabilities?.core == nil)
+        #expect(followed.definition.capabilities?.plugins == nil)
+        #expect(followed.definition.capabilities?.mcp == nil)
+        #expect(followed.definition.context?.skills == nil)
+        #expect(requestCount == 2)
     }
 
     @Test func nativeAgentUpdateAddsAndClearsLaunchConstraintsExplicitly() async throws {
@@ -302,10 +306,10 @@ struct AgentScheduleAPIClientTests {
             name: "Research Scout",
             description: nil,
             instructions: nil,
+            capabilities: nil,
+            context: nil,
             model: nil,
             thinkingLevel: nil,
-            skillPaths: nil,
-            extensionIds: nil,
             launchConstraints: AgentLaunchConstraints(
                 allowedWorkspaceIds: ["research"],
                 requiredRuntime: .sandbox,
@@ -317,10 +321,10 @@ struct AgentScheduleAPIClientTests {
             name: "Research Scout",
             description: nil,
             instructions: nil,
+            capabilities: nil,
+            context: nil,
             model: nil,
             thinkingLevel: nil,
-            skillPaths: nil,
-            extensionIds: nil,
             launchConstraints: AgentLaunchConstraints(requiredRuntime: .sandbox),
             previouslyHadLaunchConstraints: true
         )
@@ -329,10 +333,10 @@ struct AgentScheduleAPIClientTests {
             name: "Research Scout",
             description: nil,
             instructions: nil,
+            capabilities: nil,
+            context: nil,
             model: nil,
             thinkingLevel: nil,
-            skillPaths: nil,
-            extensionIds: nil,
             launchConstraints: nil,
             previouslyHadLaunchConstraints: true
         )
@@ -790,18 +794,6 @@ struct AgentScheduleAPIClientTests {
             lastSyncFailed: false,
             hasRows: true
         ) == .content)
-        #expect(AgentResourceCatalogState.isExactSelectionSaveAllowed(
-            initialSelectionWasInherited: true,
-            catalogState: .failed
-        ) == false)
-        #expect(AgentResourceCatalogState.isExactSelectionSaveAllowed(
-            initialSelectionWasInherited: true,
-            catalogState: .empty
-        ))
-        #expect(AgentResourceCatalogState.isExactSelectionSaveAllowed(
-            initialSelectionWasInherited: false,
-            catalogState: .failed
-        ))
     }
 }
 

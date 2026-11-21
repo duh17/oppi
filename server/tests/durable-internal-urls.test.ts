@@ -178,11 +178,18 @@ describe("internal URLs through the durable read tool", () => {
   }, 30_000);
 
   it("refuses history:// and agent:// to a saved Agent with noSessionHistory, from read and codemode alike", async () => {
+    // Codemode is derived from an admitted server's exposure, so state one to get it.
+    writeFileSync(
+      join(process.env.PI_CODING_AGENT_DIR!, "mcp.json"),
+      JSON.stringify({
+        mcpServers: { notes: { command: process.execPath, args: ["-e", "process.exit(0)"] } },
+      }),
+    );
     const f = await fixture([]);
     const agent = f.storage.getAgentDefinitionStore().createAgent({
       name: "Sealed",
-      resources: { noSessionHistory: true },
-      sessionDefaults: { tools: ["read", "codemode"] },
+      context: { sessionHistory: false },
+      capabilities: { plugins: [], mcp: { notes: "all" } },
     });
     const sealed = f.create("Sealed", f.workspace.id);
     sealed.launch = {
@@ -254,7 +261,7 @@ describe("internal URLs through the durable read tool", () => {
     const agents = f.storage.getAgentDefinitionStore();
     const sealedAgent = agents.createAgent({
       name: "Sealed",
-      resources: { noSessionHistory: true },
+      context: { sessionHistory: false },
     });
     const open = agents.createAgent({ name: "Open" });
     const parent = f.create("Sealed", f.workspace.id);

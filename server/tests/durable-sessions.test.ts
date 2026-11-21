@@ -3176,7 +3176,8 @@ describe("durable-native threads", () => {
     const reviewer = agents.createAgent({
       name: "Reviewer",
       instructions: { mode: "replace", text: "REVIEWER_PROMPT" },
-      sessionDefaults: { model: "faux/faux-2", thinkingLevel: "high", tools: ["read", "ask"] },
+      sessionDefaults: { model: "faux/faux-2", thinkingLevel: "high" },
+      capabilities: { core: "readonly", plugins: [], mcp: {} },
     });
     agents.createAgent({
       name: "Fenced",
@@ -3205,28 +3206,31 @@ describe("durable-native threads", () => {
     expect(stored).toMatchObject({
       model: { provider: "faux", modelId: "faux-2" },
       thinkingLevel: "high",
-      tools: ["read", "ask"],
     });
+    // The read-only tier's tools, plus the `ask` toggle; never a writer.
+    expect(stored?.tools).toEqual(expect.arrayContaining(["read", "ask"]));
+    expect(stored?.tools).not.toContain("write");
+    expect(stored?.tools).not.toContain("edit");
     expect(stored?.instructions?.startsWith("REVIEWER_PROMPT\n\nWorking directory: ")).toBe(true);
-    expect(await harness.snapshot(OppiAgentDoc, childConversation, context)).toEqual({
+    expect(await harness.snapshot(OppiAgentDoc, childConversation, context)).toMatchObject({
       agent: { id: reviewer.id, version: 1, name: "Reviewer", icon: { kind: "default" } },
       spawn: false,
       grant: false,
-      projectContext: false,
-      tools: { allowed: ["read", "ask"] },
+      replacePrompt: true,
     });
-    // The parent reads the project's AGENTS.md; the replaced prompt drops that section.
+    // Both read the project's AGENTS.md: prompt text is not a context switch, only
+    // `context.contextFiles` is (the reviewer's replaced prompt no longer hides it).
     expect(
       (await harness.snapshot(ProjectContextDoc, parentConversation, context))?.projectContext,
     ).toContain("PROJECT_RULES_MARKER");
     expect(
       (await harness.snapshot(ProjectContextDoc, childConversation, context))?.projectContext,
-    ).toBeUndefined();
+    ).toContain("PROJECT_RULES_MARKER");
+    // A launch records the model; its capabilities compile in the session, not on the row.
     expect(child.launch).toMatchObject({
       agentId: reviewer.id,
       agentVersion: 1,
       model: "faux/faux-2",
-      tools: { allowed: ["read", "ask"] },
     });
 
     const fenced = await call("Fence it");
@@ -3678,7 +3682,9 @@ describe("durable engine on create requests", () => {
     const agent = agents.createAgent({
       name: "Scout",
       instructions: { mode: "append", text: "SCOUT_RULES" },
-      sessionDefaults: { model: "faux/faux-2", excludeTools: ["bash"] },
+      sessionDefaults: { model: "faux/faux-2" },
+      // A read-only Agent: the compiled policy (no write/edit) is what reaches the session.
+      capabilities: { core: "readonly", plugins: [], mcp: {} },
     });
     const created = await route(f, "POST", `/agents/${agent.id}/sessions`, {
       prompt: { text: "Scout around" },
@@ -3696,13 +3702,15 @@ describe("durable engine on create requests", () => {
     const stored = await harness.snapshot(AgentDoc, conversation, context);
     expect(stored?.model).toEqual({ provider: "faux", modelId: "faux-2" });
     expect(stored?.tools).toContain("subagent");
-    expect(stored?.tools).not.toContain("bash");
+    expect(stored?.tools).toContain("bash");
+    expect(stored?.tools).not.toContain("write");
+    expect(stored?.tools).not.toContain("edit");
     expect(stored?.instructions).toMatch(/^You are an expert coding assistant[^]*SCOUT_RULES$/);
     expect(await harness.snapshot(OppiAgentDoc, conversation, context)).toMatchObject({
       agent: { id: agent.id, version: 1, name: "Scout" },
       spawn: true,
       grant: false,
-      tools: { excluded: ["bash"] },
+      tools: { excluded: expect.arrayContaining(["write", "edit"]) },
     });
     const meta = JSON.parse(
       readFileSync(join(durableStoreDir(f.dir, sessionId), "meta.json"), "utf8"),
@@ -3727,18 +3735,17 @@ describe("durable engine on create requests", () => {
     expect((await f.manager.reloadDurableExtensions())?.skipped).toEqual([
       expect.objectContaining({ entry: realpathSync(twin), plugin: "ask" }),
     ]);
+    // An Agent names servers, not Pi built-ins: MCP comes with the servers it admits, and a name
+    // that cannot load is a statement about plugins, never a silent skip.
+    writeFileSync(
+      join(agentDir, "mcp.json"),
+      JSON.stringify({
+        mcpServers: { notes: { command: process.execPath, args: ["-e", "process.exit(0)"] } },
+      }),
+    );
     const plugged = agents.createAgent({
       name: "Plugged",
-      resources: {
-        extensionIds: [
-          serverResourceId("extension", join(twin, "index.ts")),
-          serverResourceId("extension", classicOnly),
-          "extension_missing",
-          "builtin:mcp",
-          "builtin:tool-search",
-          "builtin:codemode",
-        ],
-      },
+      capabilities: { plugins: [], mcp: { notes: "all" } },
     });
     const started = await route(f, "POST", `/agents/${plugged.id}/sessions`, {
       prompt: { text: "Plugged in" },
@@ -3755,20 +3762,12 @@ describe("durable engine on create requests", () => {
     );
     expect(
       (await pluggedHarness.snapshot(OppiAgentDoc, pluggedConversation, context))?.extensions,
-    ).toEqual({
-      packages: [],
-      mcp: true,
-      codemode: true,
-      skipped: ["commit-trailer", "extension_missing"],
-    });
-    // The session row says what it runs without, once, also after another attach.
-    const warnings = [
-      "Selected Agent Extensions are not loaded in this durable session (no durable version, or turned off with oppi extensions disable): commit-trailer, extension_missing. Edit the Agent's selected Extensions, or start it Classic, to use them.",
-    ];
-    expect(f.storage.getSession(pluggedId)?.warnings).toEqual(warnings);
+    ).toEqual({ packages: [], mcp: true, codemode: true });
+    // Nothing is skipped, so the row carries no launch warning to keep across attaches.
+    expect(f.storage.getSession(pluggedId)?.warnings ?? []).toEqual([]);
     await f.manager.stopSession(pluggedId);
     await f.manager.startSession(pluggedId, f.workspace);
-    expect(f.storage.getSession(pluggedId)?.warnings).toEqual(warnings);
+    expect(f.storage.getSession(pluggedId)?.warnings ?? []).toEqual([]);
   });
 
   it.each([true, false])(
@@ -3845,7 +3844,7 @@ describe("durable engine on create requests", () => {
     expect(stored?.instructions?.startsWith("NIGHTLY_PROMPT\n\nWorking directory: ")).toBe(true);
     expect(await harness.snapshot(OppiAgentDoc, conversation, context)).toMatchObject({
       agent: { id: agent.id, version: 1, name: "Nightly" },
-      projectContext: false,
+      replacePrompt: true,
     });
     expect(f.storage.getSession(result.sessionId)?.launch).toMatchObject({
       source: "schedule",

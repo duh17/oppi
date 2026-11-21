@@ -8,10 +8,10 @@ import { createLocalApiCommandContext } from "../command-support.js";
 import { readDefinitionInput } from "../definition-input.js";
 import { iconChoiceFromFlag, iconChoiceFromImageFile } from "../icon-flag.js";
 import {
-  applySessionDefaultFlags,
+  applyAgentModelFlags,
   hasAgentDefinitionFlags,
+  parseAgentSelectionFlag,
   parseCsvList,
-  resolveNoToolsFlag,
 } from "../launch-flags.js";
 import { resolveModelFlagForCli } from "../model-resolution.js";
 import {
@@ -93,9 +93,9 @@ export async function cmdAgent(
     }
 
     if (mode === "create") {
-      resolveNoToolsFlag(flags);
+      assertNoToolPolicyFlags(flags);
       const definition = applyAgentFieldFlags(
-        applySessionDefaultFlags(
+        applyAgentModelFlags(
           readDefinitionInput(flags),
           flags,
           await resolveModelFlagForCli(storage, flags.model),
@@ -129,10 +129,10 @@ export async function cmdAgent(
     if (mode === "update") {
       const reference = positional[0]?.trim();
       if (!reference) throw new Error("agent id or name is required");
-      resolveNoToolsFlag(flags);
+      assertNoToolPolicyFlags(flags);
       const expectedVersion = parseExpectedAgentVersionFlag(flags);
       const definition = applyAgentFieldFlags(
-        applySessionDefaultFlags(
+        applyAgentModelFlags(
           readDefinitionInput(flags, {
             required: !hasAgentDefinitionFlags(flags),
             update: true,
@@ -250,12 +250,23 @@ const AGENT_VALUE_CLEAR_TWINS: Array<{ values: string[]; clear: string }> = [
     values: ["instructions", "instructions-file", "instructions-mode"],
     clear: "clear-instructions",
   },
+  { values: ["plugins"], clear: "clear-plugins" },
+  { values: ["mcp"], clear: "clear-mcp" },
   { values: ["skills"], clear: "clear-skills" },
-  { values: ["extensions"], clear: "clear-extensions" },
   { values: ["allowed-workspaces"], clear: "clear-allowed-workspaces" },
   { values: ["required-runtime"], clear: "clear-required-runtime" },
   { values: ["required-engine"], clear: "clear-required-engine" },
 ];
+
+/** A tool name list is not a saved Agent's business: capabilities are. */
+function assertNoToolPolicyFlags(flags: Record<string, string>): void {
+  for (const name of ["tools", "exclude-tools", "no-tools", "no-builtin-tools"]) {
+    if (!hasFlag(flags, name)) continue;
+    throw new Error(
+      `--${name} is not an Agent flag: an Agent states --core, --plugins, --mcp, and its ask/notify/subagent switches`,
+    );
+  }
+}
 
 function hasFlag(flags: Record<string, string>, name: string): boolean {
   return Object.hasOwn(flags, name);
@@ -286,7 +297,7 @@ function applyAgentFieldFlags(
   if (hasFlag(flags, "icon")) next.icon = iconChoiceFromFlag(flags.icon ?? "");
   if (hasFlag(flags, "clear-icon")) next.icon = null;
   applyInstructionFlags(next, flags);
-  applyResourceFlags(next, flags);
+  applyCapabilityFlags(next, flags);
   applyLaunchConstraintFlags(next, flags);
   return next;
 }
@@ -357,21 +368,61 @@ function instructionModeFromDefinition(
   return mode === "append" || mode === "replace" ? mode : undefined;
 }
 
-function applyResourceFlags(
+/**
+ * The capability and context flags. A selection flag takes `all` (every plugin/server/Skill, which
+ * is what omission means), `none` (an empty selection), or a comma-separated list of names.
+ * `--mcp` names whole servers: an Agent's tool subset is `--definition-json`'s business.
+ */
+function applyCapabilityFlags(
   definition: Record<string, unknown>,
   flags: Record<string, string>,
 ): void {
+  if (hasFlag(flags, "core")) {
+    const core = flags.core;
+    if (core !== "full" && core !== "readonly") {
+      throw new Error("--core must be full or readonly");
+    }
+    overlayNested(definition, "capabilities", "core", core);
+  }
+  for (const toggle of ["ask", "notify", "subagent"] as const) {
+    const on = hasFlag(flags, toggle);
+    const off = hasFlag(flags, `no-${toggle}`);
+    if (on && off) throw new Error(`--${toggle} and --no-${toggle} cannot be used together`);
+    if (on) overlayNested(definition, "capabilities", toggle, true);
+    if (off) overlayNested(definition, "capabilities", toggle, false);
+  }
+  if (hasFlag(flags, "plugins")) {
+    overlayNested(
+      definition,
+      "capabilities",
+      "plugins",
+      parseAgentSelectionFlag(flags.plugins ?? ""),
+    );
+  }
+  if (hasFlag(flags, "clear-plugins")) overlayNested(definition, "capabilities", "plugins", null);
+  if (hasFlag(flags, "mcp")) {
+    const selected = parseAgentSelectionFlag(flags.mcp ?? "");
+    overlayNested(
+      definition,
+      "capabilities",
+      "mcp",
+      selected === null ? null : Object.fromEntries(selected.map((name) => [name, "all"])),
+    );
+  }
+  if (hasFlag(flags, "clear-mcp")) overlayNested(definition, "capabilities", "mcp", null);
   if (hasFlag(flags, "skills")) {
-    overlayNested(definition, "resources", "skillPaths", parseCsvList(flags.skills ?? ""));
+    overlayNested(definition, "context", "skills", parseAgentSelectionFlag(flags.skills ?? ""));
   }
-  if (hasFlag(flags, "clear-skills")) {
-    overlayNested(definition, "resources", "skillPaths", null);
-  }
-  if (hasFlag(flags, "extensions")) {
-    overlayNested(definition, "resources", "extensionIds", parseCsvList(flags.extensions ?? ""));
-  }
-  if (hasFlag(flags, "clear-extensions")) {
-    overlayNested(definition, "resources", "extensionIds", null);
+  if (hasFlag(flags, "clear-skills")) overlayNested(definition, "context", "skills", null);
+  for (const [on, off, key] of [
+    ["context-files", "no-context-files", "contextFiles"],
+    ["session-history", "no-session-history", "sessionHistory"],
+  ] as const) {
+    if (hasFlag(flags, on) && hasFlag(flags, off)) {
+      throw new Error(`--${on} and --${off} cannot be used together`);
+    }
+    if (hasFlag(flags, on)) overlayNested(definition, "context", key, true);
+    if (hasFlag(flags, off)) overlayNested(definition, "context", key, false);
   }
 }
 

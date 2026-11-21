@@ -358,6 +358,103 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
         assertCompactOppiBar(page: "schedule-detail")
     }
 
+    /// The editor's one Tools section: each row opens its own page, an MCP server's own
+    /// page narrows its tools, and Save writes the capabilities the fixture Agent had.
+    /// Its screenshots are the review's for the capability pages.
+    /// A choice row's value opens with its state ("Selected, 7 of 12 tools").
+    private func isSelected(_ element: XCUIElement) -> Bool {
+        (element.value as? String)?.hasPrefix("Selected") == true
+    }
+
+    func testAgentCapabilitiesEditor() {
+        launch(page: "agents")
+        let row = app.buttons["agents.row.agent-nanny"]
+        XCTAssertTrue(row.waitUntilExists(timeout: 10), "Agents list did not load")
+        row.tap()
+        let edit = app.buttons["agents.detail.edit"]
+        XCTAssertTrue(edit.waitUntilExists(timeout: 10), "Agent detail did not load")
+        let toolsHeader = app.staticTexts["Tools"]
+        scrollIntoView(toolsHeader)
+        XCTAssertTrue(
+            toolsHeader.waitUntilExists(timeout: 10),
+            "The detail page shows the Agent's capabilities read-only"
+        )
+        attachScreenshot("agent-detail-capabilities")
+        assertRunning()
+        tapBarButton(edit)
+        XCTAssertTrue(app.navigationBars["Edit Agent"].waitUntilExists(timeout: 10), "The editor did not open")
+
+        let editFiles = app.switches["agent.nativeEdit.editFiles"]
+        scrollIntoView(editFiles)
+        XCTAssertTrue(editFiles.waitUntilExists(timeout: 10), "The editor has no Tools section")
+        XCTAssertEqual(editFiles.value as? String, "1", "the fixture Agent edits files")
+        let pluginsRow = app.buttons["agent.nativeEdit.plugins"]
+        scrollIntoView(pluginsRow)
+        XCTAssertEqual(pluginsRow.value as? String, "1 selected")
+        let mcpRow = app.buttons["agent.nativeEdit.mcpServers"]
+        scrollIntoView(mcpRow)
+        XCTAssertEqual(mcpRow.value as? String, "2 selected")
+        let skillsRow = app.buttons["agent.nativeEdit.skills"]
+        scrollIntoView(skillsRow)
+        XCTAssertEqual(skillsRow.value as? String, "2 selected")
+        attachScreenshot("agent-editor-tools")
+
+        // Plugins: a list, because the fixture Agent names one.
+        tapScrolledIntoView(app.buttons["agent.nativeEdit.plugins"])
+        let pluginAll = app.switches["agent.nativeEdit.pluginAll"]
+        XCTAssertTrue(pluginAll.waitUntilExists(timeout: 10), "Plugins did not open")
+        XCTAssertEqual(pluginAll.value as? String, "0")
+        XCTAssertTrue(isSelected(app.buttons["agent.nativeEdit.plugin.notebook"]), "the Agent names notebook")
+        let webtools = app.buttons["agent.nativeEdit.plugin.webtools"]
+        scrollIntoView(webtools)
+        XCTAssertFalse(isSelected(webtools))
+        attachScreenshot("agent-editor-plugins")
+        app.buttons.matching(identifier: "BackButton").firstMatch.tap()
+
+        // MCP servers: two of the four the fixture server has, and the disclosure on a
+        // server opens its own tools page.
+        tapScrolledIntoView(app.buttons["agent.nativeEdit.mcpServers"])
+        let gmail = app.buttons["agent.nativeEdit.mcp.gmail"]
+        XCTAssertTrue(gmail.waitUntilExists(timeout: 10), "MCP servers did not open")
+        XCTAssertTrue(isSelected(gmail))
+        attachScreenshot("agent-editor-mcp")
+        let disclosure = app.buttons["agent.nativeEdit.mcp.gmail.disclosure"]
+        XCTAssertTrue(disclosure.waitUntilExists(timeout: 5), "A server's tools are one control away")
+        disclosure.tap()
+        let toolAll = app.switches["agent.nativeEdit.mcpToolAll"]
+        XCTAssertTrue(toolAll.waitUntilExists(timeout: 10), "The server's tools did not open")
+        XCTAssertEqual(toolAll.value as? String, "0", "the fixture Agent chose seven of its twelve tools")
+        let readEmail = app.buttons["agent.nativeEdit.mcpTool.read_email"]
+        scrollIntoView(readEmail)
+        XCTAssertTrue(isSelected(readEmail))
+        let sendEmail = app.buttons["agent.nativeEdit.mcpTool.send_email"]
+        scrollIntoView(sendEmail)
+        XCTAssertFalse(isSelected(sendEmail))
+        attachScreenshot("agent-editor-mcp-tools")
+        app.buttons.matching(identifier: "BackButton").firstMatch.tap()
+        XCTAssertTrue(gmail.waitUntilExists(timeout: 10))
+        let strava = app.buttons["agent.nativeEdit.mcp.strava"]
+        scrollIntoView(strava)
+        XCTAssertFalse(isSelected(strava), "a server the Agent does not name is off")
+        app.buttons.matching(identifier: "BackButton").firstMatch.tap()
+
+        // Skills: by name.
+        tapScrolledIntoView(app.buttons["agent.nativeEdit.skills"])
+        XCTAssertTrue(app.buttons["agent.nativeEdit.skill.household"].waitUntilExists(timeout: 10), "Skills did not open")
+        attachScreenshot("agent-editor-skills")
+        app.buttons.matching(identifier: "BackButton").firstMatch.tap()
+
+        // A save writes the definition this form holds.
+        let save = app.buttons["agent.nativeEdit.save"]
+        tapBarButton(save)
+        XCTAssertTrue(app.navigationBars["Edit Agent"].waitUntilGone(timeout: 10), "Save closes the editor")
+        XCTAssertTrue(
+            waitFor(lastWrite.contains("PATCH /agents/agent-nanny"), timeout: 10),
+            "Save must reach the server: \(lastWrite)"
+        )
+        assertRunning()
+    }
+
     /// An Agent's prompt opens in our editor from the reader's pencil; typing
     /// writes nothing with Auto-Save off, Done asks, and Save writes through the
     /// Agent with the mode the record already had and returns to the definition
@@ -776,6 +873,15 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
         let start = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         let bottom = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.98))
         start.press(forDuration: 0.1, thenDragTo: bottom, withVelocity: .fast, thenHoldForDuration: 0)
+    }
+
+    /// Brings a row below the fold on screen without tapping it.
+    private func scrollIntoView(_ element: XCUIElement, swipes: Int = 5) {
+        var count = 0
+        while !(element.exists && element.isHittable), count < swipes {
+            app.swipeUp()
+            count += 1
+        }
     }
 
     /// The Duo's shorter outer display can start a row below the fold.

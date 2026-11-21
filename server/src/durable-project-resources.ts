@@ -1,5 +1,4 @@
-import { realpathSync } from "node:fs";
-import { basename, dirname, join, posix, resolve } from "node:path";
+import { posix } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
   DefaultResourceLoader,
@@ -11,20 +10,13 @@ import {
   type Skill,
 } from "@earendil-works/pi-coding-agent";
 import type { FileInfo } from "@earendil-works/pi-durable/env";
-import { AgentConfigurationError } from "./agent-launch-errors.js";
 import type { DurableAgentResources } from "./durable-agent.js";
 import type { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import { SANDBOX_CONTEXT_FILE_NAMES, SANDBOX_RESOURCE_MAX_BYTES } from "./gondolin-ops.js";
 import { createLogger } from "./logger.js";
-import { isPathWithinRoot } from "./path-utils.js";
-import {
-  assertSelectedAgentResourcesAvailable,
-  assertSelectedAgentSkillsLoaded,
-  assertSelectedAgentSkillsOutsideUntrustedProject,
-  hostWorkspacePathToGuest,
-  normalizeSelectedAgentSkillPaths,
-  redactHostEnvironment,
-} from "./sdk-backend.js";
+import { selectAgentSkills } from "./agent-capabilities.js";
+import { resolveAgentSkillPaths } from "./agent-plugin-selection.js";
+import { redactHostEnvironment } from "./sdk-backend.js";
 
 type ContextFile = { path: string; content: string };
 
@@ -39,6 +31,8 @@ export interface DurableProjectResources {
    * the session's own view (`expandSkillCommand`), never through a second host path.
    */
   readonly skills: readonly Skill[];
+  /** Skills the Agent names that this session could not read: it runs without them, and says so. */
+  readonly missingSkills?: readonly string[];
 }
 
 /**
@@ -60,41 +54,37 @@ export async function loadDurableProjectResources(options: {
   projectTrusted: boolean;
   /** The saved Agent's selection, from the session's `oppi.agent` document. */
   resources?: DurableAgentResources;
-  /** False when the Agent's instructions replace the prompt: no context files at all. */
-  projectContext?: boolean;
 }): Promise<DurableProjectResources> {
   if (options.sandbox) return loadSandboxProjectResources({ ...options, env: options.sandbox });
   const { hostCwd, agentDir, resources, projectTrusted } = options;
-  const selectedSkillPaths = normalizeSelectedAgentSkillPaths(resources?.skillPaths, hostCwd);
-  if (!projectTrusted)
-    assertSelectedAgentSkillsOutsideUntrustedProject(selectedSkillPaths, hostCwd);
-  assertSelectedAgentResourcesAvailable(selectedSkillPaths, undefined);
+  const settingsManager = SettingsManager.create(hostCwd, agentDir, { projectTrusted });
+  // An Agent's named Skills, resolved to Pi's own paths: including the Skills Pi's settings
+  // disable, which its enabled discovery drops before an override could keep them.
+  const namedSkills = await resolveAgentSkillPaths(
+    resources?.skills,
+    hostCwd,
+    agentDir,
+    settingsManager,
+  );
   const loader = new DefaultResourceLoader({
     cwd: hostCwd,
     agentDir,
-    settingsManager: SettingsManager.create(hostCwd, agentDir, { projectTrusted }),
+    settingsManager,
     noExtensions: true,
     noPromptTemplates: true,
     noThemes: true,
     systemPrompt: "",
     appendSystemPrompt: [],
-    ...(selectedSkillPaths !== undefined
-      ? { noSkills: true, additionalSkillPaths: selectedSkillPaths }
-      : {}),
-    ...(resources?.noContextFiles ? { noContextFiles: true } : {}),
-    skillsOverride: (base) => {
-      assertSelectedAgentSkillsLoaded(selectedSkillPaths, base);
-      return base;
-    },
-    // Saved files are virtual paths relative to the workspace.
-    agentsFilesOverride: (base) => ({
-      agentsFiles: [...base.agentsFiles, ...(resources?.agentsFiles ?? [])],
-    }),
+    ...(resources && resources.contextFiles === false ? { noContextFiles: true } : {}),
+    // A named selection replaces discovery: no host path is stored, and a Skill that moved is
+    // simply missing.
+    ...(namedSkills ? { noSkills: true, additionalSkillPaths: namedSkills.paths } : {}),
   });
   await loader.reload();
   return {
-    contextFiles: options.projectContext === false ? [] : loader.getAgentsFiles().agentsFiles,
+    contextFiles: loader.getAgentsFiles().agentsFiles,
     skills: loader.getSkills().skills,
+    ...(namedSkills?.missing.length ? { missingSkills: namedSkills.missing } : {}),
   };
 }
 
@@ -102,75 +92,28 @@ async function loadSandboxProjectResources(options: {
   hostCwd: string;
   env: GondolinExecutionEnv;
   resources?: DurableAgentResources;
-  projectContext?: boolean;
 }): Promise<DurableProjectResources> {
   const { hostCwd, env, resources } = options;
-  const guestCwd = env.workspaceRoot;
-  const { skills, unavailable } = await loadSandboxSkills(env, hostCwd, resources?.skillPaths);
-  if (unavailable) throw unavailable;
-  if (options.projectContext === false) return { contextFiles: [], skills };
-  // Saved files are virtual paths relative to the workspace: kept only inside it, at guest
-  // paths, redacted. Their text is the definition's, not a file's.
-  const workspaceRoot = realPath(hostCwd);
-  const savedAgentFiles = (resources?.agentsFiles ?? []).flatMap((file) => {
-    const hostPath = resolve(hostCwd, file.path);
-    const path = isPathWithinRoot(realPath(hostPath), workspaceRoot)
-      ? hostWorkspacePathToGuest(hostCwd, guestCwd, hostPath)
-      : null;
-    return path ? [{ path, content: redactHostEnvironment(file.content, hostCwd, guestCwd) }] : [];
-  });
-  const discoveredFiles = resources?.noContextFiles ? [] : await readGuestContextFile(env, hostCwd);
-  return { contextFiles: [...discoveredFiles, ...savedAgentFiles], skills };
+  const discovered = await loadSandboxSkills(env);
+  const selected =
+    resources?.skills === undefined ? undefined : selectAgentSkills(discovered, resources.skills);
+  const skills = selected?.skills ?? discovered;
+  const discoveredFiles =
+    resources?.contextFiles === false ? [] : await readGuestContextFile(env, hostCwd);
+  return {
+    contextFiles: discoveredFiles,
+    skills,
+    ...(selected?.missing.length ? { missingSkills: selected.missing } : {}),
+  };
 }
 
 /**
  * A sandbox session's Skills, discovered only through its workspace VM (`findSandboxSkills`),
- * at guest paths. Durable and classic sandbox sessions both present this list.
- *
- * A saved Agent's selection (`skillPaths`, host paths) maps lexically into the guest and must
- * name a Skill this VM presents; anything else (outside the workspace, or not a mounted or
- * `.agents/skills` Skill) is `unavailable`, an `agent_skills_unavailable` error the caller
- * raises rather than presenting a Skill the VM cannot read. `skills` keeps the selected ones.
+ * at guest paths. Durable and classic sandbox sessions both present this list; an Agent that
+ * names Skills filters it by name (`selectAgentSkills`).
  */
-export async function loadSandboxSkills(
-  env: GondolinExecutionEnv,
-  hostCwd: string,
-  skillPaths: string[] | undefined,
-): Promise<{ skills: Skill[]; unavailable?: AgentConfigurationError }> {
-  const guestCwd = env.workspaceRoot;
-  const discovered = await findSandboxSkills(env);
-  const selection = normalizeSelectedAgentSkillPaths(skillPaths, hostCwd)?.map((hostPath) => ({
-    hostPath,
-    guestPath: hostWorkspacePathToGuest(hostCwd, guestCwd, hostPath),
-  }));
-  if (selection === undefined) return { skills: discovered };
-  const skills = discovered.filter((skill) =>
-    selection.some(({ guestPath }) => guestPath !== null && selects(guestPath, skill)),
-  );
-  const unavailable = selection
-    .filter(
-      ({ guestPath }) =>
-        guestPath === null || !discovered.some((skill) => selects(guestPath, skill)),
-    )
-    .map(({ hostPath }) => hostPath);
-  if (unavailable.length === 0) return { skills };
-  return {
-    skills,
-    unavailable: new AgentConfigurationError(
-      "agent_skills_unavailable",
-      { unavailableSkills: unavailable },
-      `Selected Agent Skill is not available in the sandbox workspace: ${unavailable.join(", ")}`,
-    ),
-  };
-}
-
-/** `assertSelectedAgentSkillsLoaded`'s match: the path is the Skill, holds it, or is in it. */
-function selects(selectedPath: string, skill: Skill): boolean {
-  return (
-    isPathWithinRoot(skill.filePath, selectedPath) ||
-    isPathWithinRoot(skill.baseDir, selectedPath) ||
-    isPathWithinRoot(selectedPath, skill.baseDir)
-  );
+export async function loadSandboxSkills(env: GondolinExecutionEnv): Promise<Skill[]> {
+  return findSandboxSkills(env);
 }
 
 /**
@@ -312,17 +255,6 @@ async function readGuestResource(
     return undefined;
   }
   return read.value.text;
-}
-
-/** The path with every symlink in its longest existing prefix followed. */
-function realPath(path: string): string {
-  const resolved = resolve(path);
-  try {
-    return realpathSync(resolved);
-  } catch {
-    const parent = dirname(resolved);
-    return parent === resolved ? resolved : join(realPath(parent), basename(resolved));
-  }
 }
 
 /** Pi's `project_context` section body. */

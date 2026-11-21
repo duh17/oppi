@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import {
+  AgentConfigurationError,
   actionableAgentConfigurationMessage,
   describeAgentConfigurationFailure,
 } from "../agent-launch-errors.js";
@@ -156,6 +157,20 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       helpers.error(res, 404, "Agent not found");
       return true;
     }
+    if (agent.v1) {
+      const failure = new AgentConfigurationError(
+        "agent_definition_v2_required",
+        {},
+        `Agent ${agent.name} is still stored in the old format`,
+      ).toFailure();
+      const message = actionableAgentConfigurationMessage(failure, {
+        agentName: agent.name,
+        workspaceName: agent.definition.name,
+      });
+      log.warn("agent.launch.v1_definition", { agentId: agent.id, agentVersion: agent.version });
+      helpers.json(res, { error: message, code: failure.code }, 422);
+      return true;
+    }
 
     try {
       const body = await helpers.parseBody<CreateAgentSessionRequest>(req);
@@ -165,6 +180,11 @@ export function createAgentRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       );
       if (delegationFieldError) {
         helpers.error(res, 400, delegationFieldError);
+        return true;
+      }
+      const overrideFieldError = invalidOverrides(body.overrides);
+      if (overrideFieldError) {
+        helpers.error(res, 400, overrideFieldError);
         return true;
       }
       const reservedKey = reservedLaunchKeyError(body.idempotencyKey);
@@ -482,12 +502,13 @@ interface CreateAgentSessionRequest {
     workspaceId?: string;
     worktreeId?: string;
   };
+  /**
+   * Presentation and model choices only. Capabilities are the Agent's: a launch that could
+   * change them would make the saved definition a suggestion.
+   */
   overrides?: {
     model?: string;
     thinkingLevel?: string;
-    tools?: string[];
-    excludeTools?: string[];
-    noTools?: "all" | "builtin";
   };
   parentSessionId?: string;
   allowNestedDelegation?: boolean;
@@ -612,6 +633,28 @@ function invalidDelegationFields(
   return undefined;
 }
 
+/** What a launch may change: presentation and model only. */
+const LAUNCH_OVERRIDE_KEYS = new Set(["model", "thinkingLevel"]);
+
+/** v1 could narrow a launch's tools here; v2 capabilities are the Agent's, so saying so is a 400. */
+const CAPABILITY_OVERRIDE_KEYS = new Set(["tools", "excludeTools", "noTools"]);
+
+/**
+ * A launch never widens or narrows what the Agent may do: that is the saved definition's, and a
+ * silently ignored override is worse than a refusal, because the caller believes it applied.
+ */
+function invalidOverrides(overrides: unknown): string | undefined {
+  if (overrides === undefined) return undefined;
+  if (!isRecord(overrides)) return "overrides must be an object";
+  for (const key of Object.keys(overrides)) {
+    if (CAPABILITY_OVERRIDE_KEYS.has(key)) {
+      return `overrides.${key} cannot change a saved Agent's tools: they are part of its definition. Edit the Agent, or start a plain session with --tools.`;
+    }
+    if (!LAUNCH_OVERRIDE_KEYS.has(key)) return `overrides.${key} is not a launch override`;
+  }
+  return undefined;
+}
+
 function applyOverrides(
   agent: AgentDefinition,
   overrides: CreateAgentSessionRequest["overrides"],
@@ -624,9 +667,6 @@ function applyOverrides(
       ...(agent.sessionDefaults ?? {}),
       ...("model" in overrides ? { model: overrides.model } : {}),
       ...("thinkingLevel" in overrides ? { thinkingLevel: overrides.thinkingLevel } : {}),
-      ...("tools" in overrides ? { tools: overrides.tools } : {}),
-      ...("excludeTools" in overrides ? { excludeTools: overrides.excludeTools } : {}),
-      ...("noTools" in overrides ? { noTools: overrides.noTools } : {}),
     },
   };
   return validateAgentDefinition(merged);

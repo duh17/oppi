@@ -50,6 +50,18 @@ final class SettingsSweepPreviewController: PreviewRootController {
             state: .enabled, loadError: nil, warnings: [], editable: true
         ),
         ServerSkillSummary(
+            id: "household", name: "household", description: "Chores, repairs, and the people who do them.",
+            provenance: .init(kind: .piAgent, label: "~/.pi/agent/skills"),
+            path: "/Users/preview/.pi/agent/skills/household/SKILL.md",
+            state: .enabled, loadError: nil, warnings: [], editable: true
+        ),
+        ServerSkillSummary(
+            id: "school-calendar", name: "school-calendar", description: "Pickups, holidays, and permission slips.",
+            provenance: .init(kind: .piAgent, label: "~/.pi/agent/skills"),
+            path: "/Users/preview/.pi/agent/skills/school-calendar/SKILL.md",
+            state: .enabled, loadError: nil, warnings: [], editable: true
+        ),
+        ServerSkillSummary(
             id: "deep-research", name: "deep-research", description: "Source-backed, multi-step web research.",
             provenance: .init(kind: .userSettings, label: "Pi user settings"), path: nil,
             state: .disabled, loadError: nil, warnings: [], editable: false
@@ -86,7 +98,31 @@ final class SettingsSweepPreviewController: PreviewRootController {
         // Built-in plugins: one the runtime needs, and an optional one turned off.
         builtInPlugin(id: "oppi-control", required: true, enabled: true, tools: ["oppi_control"]),
         builtInPlugin(id: "oppi-sql-explorer", required: false, enabled: false, tools: ["sql_query"]),
+        // An Agent's own: the plugins it may name, with the tools each brings.
+        ownerPlugin("notebook", description: "Keeps the household's running notes.", tools: ["notebook_todo"]),
+        ownerPlugin("webtools", description: "Searches the web and reads pages.", tools: ["web_search", "web_fetch"]),
+        ownerPlugin("voice", description: "Speaks out loud on this Mac.", tools: ["voice_speak", "voice_list"]),
+        ownerPlugin("subagents", description: "Starts helper sessions.", tools: ["subagent"], enabled: false),
     ]
+
+    private static func ownerPlugin(
+        _ name: String,
+        description: String,
+        tools: [String],
+        enabled: Bool = true
+    ) -> ServerExtensionSummary {
+        ServerExtensionSummary(
+            id: "plugin-\(name)", name: name, description: description, kind: .directory,
+            provenance: .init(kind: .piAgent, label: "~/.pi/agent/plugins"),
+            path: "/Users/preview/.pi/agent/plugins/\(name)", state: enabled ? .on : .off,
+            loadError: nil, warnings: [], isRemovable: false, kinds: [.plugin], source: .owner,
+            plugin: ServerPluginSummary(
+                extensionName: name, required: false, enabled: enabled, runtimes: ["host", "sandbox"],
+                tools: tools, hooks: [], sections: [], wraps: [], tasks: [], loadError: nil, kept: false
+            ),
+            agentSelectable: true
+        )
+    }
 
     private static func builtInPlugin(id: String, required: Bool, enabled: Bool, tools: [String]) -> ServerExtensionSummary {
         ServerExtensionSummary(
@@ -147,6 +183,39 @@ final class SettingsSweepPreviewController: PreviewRootController {
                 ServerPromptSection(name: "oppi-control", perConversation: true),
             ]
         )
+    }
+
+    /// The server's merge of a capabilities patch: every sent key replaces its own, and a
+    /// key sent as null goes back to the default. Nonisolated: the fixture's URL protocol
+    /// answers on a loading thread, not the main actor.
+    nonisolated private static func mergedCapabilities(
+        _ current: AgentCapabilities?,
+        _ patch: [String: Any]
+    ) -> AgentCapabilities {
+        var merged = current ?? AgentCapabilities()
+        if let core = patch["core"] as? String {
+            merged.core = AgentCoreTier(rawValue: core)
+        } else if patch.keys.contains("core") {
+            merged.core = nil
+        }
+        if let ask = patch["ask"] as? Bool { merged.ask = ask } else if patch.keys.contains("ask") { merged.ask = nil }
+        if let notify = patch["notify"] as? Bool { merged.notify = notify } else if patch.keys.contains("notify") { merged.notify = nil }
+        if let subagent = patch["subagent"] as? Bool { merged.subagent = subagent } else if patch.keys.contains("subagent") { merged.subagent = nil }
+        if let plugins = patch["plugins"] as? [String] {
+            merged.plugins = plugins
+        } else if patch.keys.contains("plugins") {
+            merged.plugins = nil
+        }
+        if let mcp = patch["mcp"] as? [String: Any] {
+            merged.mcp = mcp.compactMapValues { value in
+                if let text = value as? String, text == "all" { return .all }
+                if let names = value as? [String] { return .tools(names) }
+                return nil
+            }
+        } else if patch.keys.contains("mcp") {
+            merged.mcp = nil
+        }
+        return merged
     }
 
     private static func catalogExtensions(page: String) -> [ServerExtensionSummary] {
@@ -586,6 +655,61 @@ final class SettingsSweepPreviewController: PreviewRootController {
         createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1), archivedAt: nil
     )
 
+    /// A realistic restricted Agent: one MCP server narrowed to the tools it needs,
+    /// another it may use whole, two Skills, and no notification.
+    private static let nanny = StoredAgentDefinition(
+        id: "agent-nanny", name: "Nanny", icon: .emoji("🧸"), description: "Household chores and the family calendar.",
+        status: .active, version: 4,
+        definition: AgentDefinition(
+            name: "Nanny",
+            icon: .emoji("🧸"),
+            instructions: AgentInstructions(text: "Keep the household running: chores, school, and repairs."),
+            capabilities: AgentCapabilities(
+                ask: true, notify: false, subagent: false,
+                plugins: ["notebook"],
+                mcp: [
+                    "gmail": .tools([
+                        "search_emails", "read_email", "list_threads", "read_thread", "list_labels",
+                        "create_draft", "list_attachments",
+                    ]),
+                    "coros": .all,
+                ]
+            ),
+            context: AgentContext(skills: ["household", "school-calendar"], sessionHistory: false),
+            sessionDefaults: AgentSessionDefaults(model: "anthropic/claude-sonnet-5", thinkingLevel: .medium)
+        ),
+        createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1), archivedAt: nil
+    )
+
+    /// The global MCP servers an Agent may name, one narrowed by the fixture Agent.
+    private static let mcpScope = McpScopeSnapshot(
+        id: "global", title: "Global", kind: "global", projectTrust: nil,
+        servers: [
+            mcpServer("gmail", tools: [
+                "search_emails", "read_email", "list_labels", "create_draft", "send_email",
+                "archive_email", "trash_email", "mark_spam", "list_threads", "read_thread",
+                "list_attachments", "download_attachment",
+            ]),
+            mcpServer("coros", tools: ["listWorkouts", "getWorkout", "getSleep", "getDailyMetrics"]),
+            mcpServer("xcode", tools: ["build", "test", "open"]),
+            mcpServer("strava", tools: ["list_activities", "get_activity"], enabled: false),
+        ],
+        inherited: nil,
+        errors: []
+    )
+
+    private static func mcpServer(
+        _ name: String,
+        tools: [String],
+        enabled: Bool = true
+    ) -> McpServerSummary {
+        McpServerSummary(
+            name: name, transport: "stdio", config: McpServerConfig(command: name), enabled: enabled,
+            exposure: .codemode, state: "connected", tools: tools, toolExposure: nil, error: nil,
+            supportsOAuth: false
+        )
+    }
+
     private static let schedule = AgentSchedule(
         id: "schedule-nightly", name: "Nightly digest", status: .active,
         trigger: .every(intervalMs: 3_600_000, timeZone: "America/Los_Angeles"),
@@ -614,6 +738,11 @@ final class SettingsSweepPreviewController: PreviewRootController {
             id: agent.id, name: agent.name, icon: agent.icon, description: agent.description,
             status: agent.status, version: agent.version, createdAt: agent.createdAt,
             updatedAt: agent.updatedAt, archivedAt: nil
+        )
+        let nannySummary = AgentDefinitionSummary(
+            id: nanny.id, name: nanny.name, icon: nanny.icon, description: nanny.description,
+            status: nanny.status, version: nanny.version, createdAt: nanny.createdAt,
+            updatedAt: nanny.updatedAt, archivedAt: nil
         )
         let scheduleSummary = AgentScheduleSummary(
             id: schedule.id, name: schedule.name, status: .active, trigger: schedule.trigger,
@@ -666,7 +795,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
             // A Skill file is a host read; the fixture answers every one.
             "/files/current": Data("# Release\n\nReview release readiness.".utf8),
             // `skill-file-edit`: the server edits Skill files, read through the Skill.
-            "/server/info": Data(#"{"name":"mac-studio","version":"1.0","uptime":1,"os":"darwin","arch":"arm64","hostname":"mac-studio","nodeVersion":"22","piVersion":"1","configVersion":1,"capabilities":{"currentFiles":{"version":1},"workspaceFileEditing":{"version":1,"maxBytes":1048576},"skillFileEditing":{"version":1,"maxBytes":1048576},"piFileEditing":{"version":1,"maxBytes":1048576}},"stats":{"workspaceCount":0,"activeSessionCount":0,"totalSessionCount":0,"skillCount":1,"modelCount":0}}"#.utf8),
+            "/server/info": Data(#"{"name":"mac-studio","version":"1.0","uptime":1,"os":"darwin","arch":"arm64","hostname":"mac-studio","nodeVersion":"22","piVersion":"1","configVersion":1,"capabilities":{"currentFiles":{"version":1},"agentCapabilities":{"version":1},"workspaceFileEditing":{"version":1,"maxBytes":1048576},"skillFileEditing":{"version":1,"maxBytes":1048576},"piFileEditing":{"version":1,"maxBytes":1048576}},"stats":{"workspaceCount":0,"activeSessionCount":0,"totalSessionCount":0,"skillCount":1,"modelCount":0}}"#.utf8),
             "PUT /files/current": Data(#"{"etag":"\"sha256-\#(String(repeating: "b", count: 64))\"","size":1,"mtimeMs":1}"#.utf8),
             "/server/resources/skills": json(ServerSkillsCatalog(skills: skills)),
             "PUT /server/resources/skills/release/enabled": json({ () -> ServerSkillSummary in
@@ -688,7 +817,8 @@ final class SettingsSweepPreviewController: PreviewRootController {
                 contributedCommands: ["/workflow"]
             )),
             "/server/resources/extensions/oppi-control": json(controlDetail),
-            "/agents": json(Agents(agents: [agentSummary])),
+            "/agents": json(Agents(agents: [agentSummary, nannySummary])),
+            "/mcp/scopes/global/servers": json(McpServersResponse(scope: mcpScope, activeSignIn: nil)),
             "/icon-assets/\(agentIconAssetId)": agentIconFetchFails ? Data() : agentIconGIF ?? Data(),
             "/schedules/\(schedule.id)/runs": Data(#"{"runs":[]}"#.utf8),
         ]
@@ -698,14 +828,16 @@ final class SettingsSweepPreviewController: PreviewRootController {
         // capture looks for.
         final class Records: @unchecked Sendable {
             var agent: StoredAgentDefinition
+            var nanny: StoredAgentDefinition
             var schedule: AgentSchedule
 
-            init(agent: StoredAgentDefinition, schedule: AgentSchedule) {
+            init(agent: StoredAgentDefinition, nanny: StoredAgentDefinition, schedule: AgentSchedule) {
                 self.agent = agent
+                self.nanny = nanny
                 self.schedule = schedule
             }
         }
-        let records = Records(agent: agent, schedule: schedule)
+        let records = Records(agent: agent, nanny: nanny, schedule: schedule)
         // The list reloads after a pause, so it shows the status the pause stored.
         func currentScheduleSummary() -> AgentScheduleSummary {
             var current = scheduleSummary
@@ -714,6 +846,33 @@ final class SettingsSweepPreviewController: PreviewRootController {
         }
         SettingsSweepFixtureURLProtocol.recordHandler = { method, path, body in
             let object = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
+            if path == "/agents/\(nanny.id)" {
+                switch method {
+                case "GET":
+                    return json(AgentBody(agent: records.nanny))
+                case "PATCH":
+                    var saved = records.nanny
+                    if let capabilities = object["capabilities"] as? [String: Any] {
+                        saved.definition.capabilities = Self.mergedCapabilities(saved.definition.capabilities, capabilities)
+                    }
+                    if let context = object["context"] as? [String: Any] {
+                        var merged = saved.definition.context ?? AgentContext()
+                        if let skills = context["skills"] as? [String] {
+                            merged.skills = skills
+                        } else if context.keys.contains("skills") {
+                            merged.skills = nil
+                        }
+                        if let contextFiles = context["contextFiles"] as? Bool { merged.contextFiles = contextFiles }
+                        if let history = context["sessionHistory"] as? Bool { merged.sessionHistory = history }
+                        saved.definition.context = merged
+                    }
+                    saved.version = records.nanny.version + 1
+                    records.nanny = saved
+                    return json(AgentBody(agent: saved))
+                default:
+                    return nil
+                }
+            }
             if path == "/agents/\(agent.id)" {
                 switch method {
                 case "GET":

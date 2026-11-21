@@ -1,9 +1,5 @@
-import { getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
-import { existsSync, statSync } from "node:fs";
-
-import { resolveSelectedAgentExtensionPaths } from "./agent-extension-selection.js";
-import { availableMcpBuiltinNames } from "./host-mcp-extensions.js";
 import { mintSessionId } from "./id.js";
+import type { AgentDefinition } from "./agent-definition.js";
 import { AgentConfigurationError, type AgentConfigurationFailure } from "./agent-launch-errors.js";
 import {
   isRequiredModelUnavailableError,
@@ -12,44 +8,10 @@ import {
 import { applyLifecycle } from "./session-lifecycle-state.js";
 import { resolveInitialChatModel } from "./session-model-selection.js";
 import type { Storage } from "./storage.js";
-import type { ThinkingLevel } from "./thinking-levels.js";
-import type { ChatAttachmentRef, IconChoice, Session, SessionEngine, Workspace } from "./types.js";
-import { resolveSdkSessionCwdAsync } from "./sdk-backend.js";
+import type { ChatAttachmentRef, Session, SessionEngine, Workspace } from "./types.js";
 
 export type { ThinkingLevel } from "./thinking-levels.js";
-
-export interface AgentDefinition {
-  name: string;
-  icon?: IconChoice;
-  description?: string;
-  instructions?: {
-    mode: "append" | "replace";
-    text: string;
-  };
-  resources?: {
-    agentsFiles?: Array<{ path: string; content: string }>;
-    noContextFiles?: boolean;
-    /** Omitted inherits Pi discovery; an array is the Agent's exact Skill selection. */
-    skillPaths?: string[];
-    /** Omitted inherits Pi discovery; an array is the Agent's exact Extension selection. */
-    extensionIds?: string[];
-    /** True turns off `history://` and `agent://` reads for the Agent's sessions and their children. */
-    noSessionHistory?: boolean;
-  };
-  sessionDefaults?: {
-    model?: string;
-    thinkingLevel?: ThinkingLevel;
-    tools?: string[];
-    excludeTools?: string[];
-    noTools?: "all" | "builtin";
-  };
-  launchConstraints?: {
-    allowedWorkspaceIds?: string[];
-    requiredRuntime?: "host" | "sandbox";
-    /** Every launch runs on this engine: an omitted engine becomes it, another is refused. */
-    requiredEngine?: "durable";
-  };
-}
+export type { AgentDefinition };
 
 export interface AgentLaunchTarget {
   workspace: Workspace;
@@ -58,6 +20,11 @@ export interface AgentLaunchTarget {
 
 export interface AgentLaunchRequest {
   agent: AgentDefinition;
+  /**
+   * An inline tool policy for a plain session (`POST /workspaces/:id/sessions`). A saved Agent
+   * never sets one: its capabilities compile into the session at start.
+   */
+  toolPolicy?: NonNullable<NonNullable<Session["launch"]>["tools"]>;
   agentId?: string;
   agentVersion?: number;
   parentSessionId?: string;
@@ -297,17 +264,6 @@ export class AgentLaunchService {
       return this.failNewLaunch(session, createdSession, targetFailure);
     }
 
-    try {
-      // Validate before create-only acceptance so Quick Session cannot leave an
-      // idle shell that only fails later on resume/start.
-      await this.assertSelectedExtensionsAvailable(request, session);
-    } catch (error: unknown) {
-      if (error instanceof AgentConfigurationError) {
-        return this.failNewLaunch(session, createdSession, error.toFailure());
-      }
-      throw error;
-    }
-
     const prompt = request.prompt?.trim();
     if (!prompt) {
       this.markLaunchComplete(session, "not_sent");
@@ -435,11 +391,8 @@ export class AgentLaunchService {
       model: modelSelection.model,
       modelPolicy,
       thinkingLevel: defaults.thinkingLevel,
-      tools: {
-        ...(defaults.tools ? { allowed: defaults.tools } : {}),
-        ...(defaults.excludeTools ? { excluded: defaults.excludeTools } : {}),
-        ...(defaults.noTools ? { noTools: defaults.noTools } : {}),
-      },
+      // A saved Agent's policy is compiled at start; a plain session may state one inline.
+      ...(request.toolPolicy ? { tools: request.toolPolicy } : {}),
       status: "launching",
       requestedAt: now,
       ...(idempotencyKey
@@ -472,7 +425,7 @@ export class AgentLaunchService {
       targetWorkspaceId: request.target.workspace.id,
       targetWorkspaceName: request.target.workspace.name,
       ...(constraints.allowedWorkspaceIds
-        ? { allowedWorkspaceIds: constraints.allowedWorkspaceIds }
+        ? { allowedWorkspaceIds: [...constraints.allowedWorkspaceIds] }
         : {}),
       ...(constraints.requiredRuntime ? { requiredRuntime: constraints.requiredRuntime } : {}),
       actualRuntime,
@@ -623,53 +576,6 @@ export class AgentLaunchService {
     return this.deps.storage.deleteSession(session.id) === true;
   }
 
-  /**
-   * Resolve selected Extensions using the same host/worktree cwd policy as
-   * SdkBackend before the launch shell can be announced.
-   */
-  private async assertSelectedExtensionsAvailable(
-    request: AgentLaunchRequest,
-    session: Session,
-  ): Promise<void> {
-    const extensionIds = request.agent.resources?.extensionIds;
-    // A durable session runs plugins, not classic extension factories, and starts
-    // without the selected Extensions that have none (`resolveDurableExtensionSelection`).
-    if (extensionIds === undefined || extensionIds.length === 0 || request.engine === "durable")
-      return;
-
-    let hostCwd: string;
-    try {
-      hostCwd = await resolveSdkSessionCwdAsync(request.target.workspace, session, {
-        dataDir: this.deps.storage.getDataDir(),
-      });
-      if (!existsSync(hostCwd) || !statSync(hostCwd).isDirectory()) {
-        throw new Error(`Workspace path is not an accessible directory: ${hostCwd}`);
-      }
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new AgentConfigurationError(
-        "agent_workspace_unavailable",
-        { workspaceError: message },
-        message,
-      );
-    }
-    const agentDir = getAgentDir();
-    // Availability-only preflight: resolve without executing factories or installing
-    // missing packages. Start separately resolves trust and rejects unavailable
-    // project selections before loading them (fail-closed, possibly after preflight).
-    const settingsManager = SettingsManager.create(hostCwd, agentDir);
-    await resolveSelectedAgentExtensionPaths(
-      extensionIds,
-      hostCwd,
-      agentDir,
-      settingsManager,
-      availableMcpBuiltinNames({
-        managed: true,
-        sandbox: request.target.workspace.runtime === "sandbox",
-      }),
-    );
-  }
-
   private markLaunchComplete(
     session: Session,
     promptDispatch: PromptDispatchStatus,
@@ -805,7 +711,6 @@ export class AgentLaunchService {
     }
 
     try {
-      await this.assertSelectedExtensionsAvailable(request, recovered);
       await this.deps.sessions.startSession(recovered.id, request.target.workspace);
       await this.deps.sessions.sendPrompt(recovered.id, prompt, {
         ...(request.attachments ? { attachments: request.attachments } : {}),
