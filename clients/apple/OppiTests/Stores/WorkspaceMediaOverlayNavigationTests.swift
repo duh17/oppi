@@ -175,7 +175,7 @@ struct WorkspaceMediaOverlayNavigationTests {
         #expect(navigation.mainPaneRoute.shellRoutes(split: true) == [.inbox, .session(session)])
 
         navigation.beginMediaOverlay(activeServerId: "server-b")
-        navigation.mainPaneRoute = MainPaneRoute(place: .sessions(workspace))
+        navigation.mainPaneRoute = PaneStack(place: .sessions(workspace))
 
         let restoreServer = navigation.endMediaOverlay(currentServerId: "server-a")
         #expect(restoreServer == "server-b")

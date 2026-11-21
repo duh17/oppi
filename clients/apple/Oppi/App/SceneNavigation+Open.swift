@@ -3,8 +3,8 @@ import Foundation
 // The one way to show something in the window's main pane. Every sidebar row,
 // list row, button, link, notification and key that shows a place, a chat or
 // a page calls `SceneNavigation.open(_:from:)`, and
-// `MainPaneRoute.placement(of:from:split:)` is the one table that says where
-// it goes. Content that can open in a pane beside (`SidePanePlacement`) comes here
+// `PaneStack.placement(of:from:split:)` is the one table that says where it
+// goes. Content that can open in a pane beside (`SidePanePlacement`) comes here
 // only when it opens in the main pane.
 
 /// What an open shows in the main pane.
@@ -107,7 +107,7 @@ extension NavigationPlace {
 
 extension SceneNavigation {
     /// Shows `destination` in the main pane where
-    /// `MainPaneRoute.placement(of:from:split:)` puts it, once its scoped lock
+    /// `PaneStack.placement(of:from:split:)` puts it, once its scoped lock
     /// allows: a locked destination asks for device authentication and opens
     /// after success; cancel leaves the window as it was. The destination's screen gates again, which covers an unlock that
     /// expires under an open screen. Anything but an outside open is the
@@ -127,17 +127,17 @@ extension SceneNavigation {
         let placement = mainPaneRoute.placement(of: destination, from: origin, split: workspaceNavigationPresentation == .split)
         switch placement {
         case .root(let place):
-            mainPaneRoute = MainPaneRoute(place: place)
+            mainPaneRoute = PaneStack(place: place)
         case .onPlace(let place):
-            mainPaneRoute = MainPaneRoute(place: place, stack: [screen].compactMap { $0 })
+            mainPaneRoute = PaneStack(place: place, stack: [screen].compactMap { $0 })
         case .push:
             if let screen { mainPaneRoute.stack.append(screen) }
         case .replacingServerPages:
             var route = mainPaneRoute
             while Self.hostSwitcherDestination(from: route.stack.last) != nil { route.stack.removeLast() }
             // A server page at the root (Usage, kept from the split shell) goes too.
-            if route.stack.isEmpty, Self.hostSwitcherDestination(from: route.place.screen) != nil {
-                route.place = .allSessions
+            if route.stack.isEmpty, Self.hostSwitcherDestination(from: route.place?.screen) != nil {
+                route.place = NavigationPlace.allSessions
             }
             route.stack += [screen].compactMap { $0 }
             mainPaneRoute = route
@@ -147,7 +147,7 @@ extension SceneNavigation {
     }
 }
 
-extension MainPaneRoute {
+extension PaneStack {
     /// The rule, read from this route and the window's shell alone. A place
     /// replaces the main pane's stack in both shells, whatever opens it: the
     /// sidebar, the drawer, a link or a key (the compact stack keeps All
@@ -157,6 +157,9 @@ extension MainPaneRoute {
     /// Settings sits on its workspace's list. The host switcher's jobs
     /// replace each other.
     func placement(of destination: NavigationDestination, from origin: MainPaneOrigin, split: Bool) -> MainPanePlacement {
+        // A leaf rooted at its content has no place, and the main leaf's is All
+        // Sessions when it has none: both read as the window's list.
+        let place = place ?? .allSessions
         switch destination {
         case .place(let place):
             return .root(place)

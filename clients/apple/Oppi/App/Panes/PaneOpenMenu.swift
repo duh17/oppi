@@ -387,7 +387,7 @@ extension PaneHostController {
             syncSplitLeaves()
         case .pane(let id):
             guard choices.targets.contains(where: { $0.id == id }) else { return }
-            if id == panes.routedLeafID {
+            if id == panes.mainLeafID {
                 // The routed leaf is the shell's stack: the item opens there.
                 root.navigation.open(content.mainPaneDestination(coordinator: root.coordinator))
                 focus(cell: id)

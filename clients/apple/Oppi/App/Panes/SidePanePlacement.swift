@@ -125,11 +125,11 @@ enum SidePanePlacement: Equatable {
 
     /// The pane content from `origin` opens beside: nil when it opens in the
     /// main pane without trying beside.
-    static func source(of origin: SidePaneOrigin, focused: PaneID, mainPane: PaneID) -> PaneID? {
+    static func source(of origin: SidePaneOrigin, focused: PaneID, mainLeaf: PaneID) -> PaneID? {
         switch origin {
         case .pane(let id): id
         case .focusedPane: focused
-        case .external: mainPane
+        case .external: mainLeaf
         case .mainPane: nil
         }
     }
@@ -147,7 +147,7 @@ enum SidePanePlacement: Equatable {
     ///   - side: the New Panes setting for `kind`.
     ///   - cells: the window's cells (`ScenePanes.cellLayout`).
     ///   - source: the cell the content was opened from.
-    ///   - routedLeaf: the main pane, which holds the chat.
+    ///   - mainLeaf: the pane that holds the chat.
     ///   - isPortrait: the window is taller than wide.
     ///   - fits: whether a new pane at an edge of a pane keeps every pane
     ///     shown now on screen.
@@ -158,14 +158,14 @@ enum SidePanePlacement: Equatable {
         canAddPane: Bool,
         cells: PaneLayout,
         source: PaneID,
-        routedLeaf: PaneID,
+        mainLeaf: PaneID,
         isPortrait: Bool,
         shown: (PaneLeaf) -> Shown,
         fits: (PaneID, PaneEdge) -> Bool
     ) -> Self {
         guard isWide, cells.leaf(source) != nil else { return .mainPane }
         let candidates = cells.leaves.filter { leaf in
-            leaf.id != source && leaf.id != routedLeaf && cells.collapsed[leaf.id] == nil
+            leaf.id != source && leaf.id != mainLeaf && cells.collapsed[leaf.id] == nil
         }
         func recency(_ leaf: PaneLeaf) -> Int { cells.recency.firstIndex(of: leaf.id) ?? .max }
         let reusable: [Shown] = kind.replacesItsKind ? [.kind(kind), .launcher] : [.launcher]
@@ -175,8 +175,8 @@ enum SidePanePlacement: Equatable {
             }
         }
         guard canAddPane else { return .mainPane }
-        let open = cells.leaves.filter { $0.id != routedLeaf && cells.collapsed[$0.id] == nil }
-        let target = source == routedLeaf ? open.min(by: { recency($0) < recency($1) })?.id ?? source : source
+        let open = cells.leaves.filter { $0.id != mainLeaf && cells.collapsed[$0.id] == nil }
+        let target = source == mainLeaf ? open.min(by: { recency($0) < recency($1) })?.id ?? source : source
         let edges = edges(side, isPortrait: isPortrait)
         return .split(target, edges.first { fits(target, $0) } ?? edges[0])
     }
@@ -208,7 +208,7 @@ extension PaneHostController {
         kind: PaneContentKind,
         from origin: SidePaneOrigin = .focusedPane
     ) -> Bool {
-        guard let source = SidePanePlacement.source(of: origin, focused: focusedCell, mainPane: panes.routedLeafID) else {
+        guard let source = SidePanePlacement.source(of: origin, focused: focusedCell, mainLeaf: panes.mainLeafID) else {
             return false
         }
         if kind == .game, AdaptiveWidth.isWide(traitCollection),
@@ -224,7 +224,7 @@ extension PaneHostController {
             canAddPane: panes.tree.leaves.count < PaneLayout.maximumLeaves,
             cells: cells,
             source: source,
-            routedLeaf: panes.routedLeafID,
+            mainLeaf: panes.mainLeafID,
             isPortrait: view.bounds.height > view.bounds.width,
             shown: placementShown,
             fits: { [weak self] target, edge in

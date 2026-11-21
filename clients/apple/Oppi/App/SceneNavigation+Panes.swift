@@ -1,19 +1,11 @@
 import Foundation
 
-// The window's primary leaf as pane entries: what restoration writes and
-// reads, and the `.paneEntry` screens that show a restored or linked entry's
-// leaf state (`PaneLeafStateViewController`) until its content can open.
+// The main leaf's route and the `.paneEntry` screens that show a restored or
+// linked entry's leaf state (`PaneLeafStateViewController`) until its content
+// can open.
 extension SceneNavigation {
-    /// Shows exactly `elements` (`MainPaneRoute.elements`) as the restored
-    /// primary leaf: a workspace's sessions first is the place. No scoped-lock gate
-    /// runs: a locked entry arrives as a `.paneEntry` that asks only when tapped.
-    func restorePrimaryStack(_ elements: [WorkspaceStackRouteElement]) {
-        guard case .workspace(let workspace)? = elements.first else {
-            mainPaneRoute = MainPaneRoute(stack: elements)
-            return
-        }
-        mainPaneRoute = MainPaneRoute(place: .sessions(workspace), stack: Array(elements.dropFirst()))
-    }
+    /// Applies the main leaf's restored route through `mainPaneRoute`'s setter.
+    func restoreMainRoute(_ route: PaneStack) { mainPaneRoute = route }
 
     /// The entry's content can open: its screen takes the entry's place. A
     /// workspace's session list is a place, not a pushed screen, so it opens
@@ -27,7 +19,7 @@ extension SceneNavigation {
         guard let index = mainPaneRoute.stack.firstIndex(of: .paneEntry(entry)) else { return }
         let before = workspaceStackRouteElements
         mainPaneRoute.stack[index] = element
-        panes.routedEntryResolved(from: before, to: workspaceStackRouteElements)
+        panes.mainEntryResolved(from: before, to: workspaceStackRouteElements)
     }
 
     /// Close Pane on an entry's leaf state: the entry and what was above it

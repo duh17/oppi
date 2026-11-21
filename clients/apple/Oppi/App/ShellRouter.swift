@@ -2,8 +2,8 @@ import UIKit
 
 // The workspace shell's stacks. `SceneNavigation` is the single source of truth
 // for which screens are open: one place and the stack over it
-// (`MainPaneRoute`), which the split shell shows from the place and the compact
-// stack over All Sessions (`MainPaneRoute.shellRoutes(split:)`).
+// (`PaneStack`), which the split shell shows from the place and the compact
+// stack over All Sessions (`PaneStack.shellRoutes(split:)`).
 // The shell controllers (`WorkspaceShellController.swift`) read that state in
 // `updateProperties()` and give each stack the routes it shows.
 // `ShellNavigationController` turns routes into hosted screens, and
@@ -315,7 +315,7 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
         applyNavigationBar(forIncoming: viewController, animated: animated)
         // In the bar the screen comes in with, not a pass later.
         applySidebarButton(to: viewController, at: viewControllers.firstIndex(of: viewController) ?? viewControllers.count)
-        PaneHostController.containing(self)?.routedLeafWillShowScreen()
+        PaneHostController.containing(self)?.mainLeafWillShowScreen()
     }
 
     func navigationController(

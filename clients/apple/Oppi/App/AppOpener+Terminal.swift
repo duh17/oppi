@@ -34,7 +34,7 @@ extension AppOpener {
     private var linkSourceScreen: UIViewController? {
         guard let window = navigation.window else { return nil }
         if sideContentOrigin == .external, let host = PaneHostController.focused(in: window) {
-            return host.frontScreen(ofCell: host.panes.routedLeafID)
+            return host.frontScreen(ofCell: host.panes.mainLeafID)
         }
         return Router.focusedScreen(in: window)
     }

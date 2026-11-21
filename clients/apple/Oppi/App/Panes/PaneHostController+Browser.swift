@@ -43,7 +43,7 @@ extension PaneHostController {
         let folded = cells.leaves.count { cells.collapsed[$0.id] != nil && frames[$0.id] != nil }
         let visible = cells.leaves.count { cells.collapsed[$0.id] == nil && frames[$0.id] != nil }
         let focusedKind: String
-        if focusedCell == panes.routedLeafID {
+        if focusedCell == panes.mainLeafID {
             focusedKind = "main"
         } else {
             switch cells.leaf(focusedCell).map(placementShown) {

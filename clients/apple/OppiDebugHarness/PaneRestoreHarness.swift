@@ -121,7 +121,7 @@ final class PaneRestorePreviewController: PreviewRootController {
         let content = PaneOpenContent(
             terminal: terminal, as: .terminal(workspaceId: ChatRoutesFixture.workspace.id), serverId: Self.serverId
         )
-        host.openBeside(content, kind: .terminal, from: .pane(host.panes.routedLeafID))
+        host.openBeside(content, kind: .terminal, from: .pane(host.panes.mainLeafID))
     }
 
     private static func paneHost(in controller: UIViewController) -> PaneHostController? {
@@ -152,7 +152,7 @@ final class PaneRestorePreviewController: PreviewRootController {
         }
         let workspace = ChatRoutesFixture.workspace.id
         return PaneLayoutArchive(restorable: PaneLayout(single: PaneLeaf(
-            id: ScenePanes().routedLeafID, name: nil,
+            id: ScenePanes().mainLeafID, name: nil,
             stack: [
                 entry(serverId, .sessions(workspace: workspace)),
                 entry(serverId, .file(.workspace(id: workspace, worktree: nil), path: "Sources/\(ChatRoutesFixture.removedFileName)", line: nil)),
@@ -171,7 +171,7 @@ final class PaneRestorePreviewController: PreviewRootController {
             return .leaf(PaneLeaf(id: id, name: nil, stack: [PaneStackEntry(serverId: serverId, route: route)],
                                   attachedTo: nil, origin: .split))
         }
-        let routed = ScenePanes().routedLeafID
+        let routed = ScenePanes().mainLeafID
         return PaneLayoutArchive(restorable: PaneLayout(
             root: .split(axis: .row, children: [
                 leaf(routed.raw, .sessions(workspace: workspace)),
@@ -184,7 +184,7 @@ final class PaneRestorePreviewController: PreviewRootController {
 
     private static func filesBelowTree() -> PaneLayoutArchive? {
         let workspace = ChatRoutesFixture.workspace.id
-        let routed = ScenePanes().routedLeafID
+        let routed = ScenePanes().mainLeafID
         guard let files = PaneID("leaf-notebook") else { return nil }
         return PaneLayoutArchive(restorable: PaneLayout(
             root: .split(axis: .column, children: [
@@ -199,7 +199,7 @@ final class PaneRestorePreviewController: PreviewRootController {
 
     private static func chatOverPDFTree() -> PaneLayoutArchive? {
         let workspace = ChatRoutesFixture.workspace.id
-        let routed = ScenePanes().routedLeafID
+        let routed = ScenePanes().mainLeafID
         guard let pdf = PaneID("leaf-pdf") else { return nil }
         let chat = [
             PaneStackEntry(serverId: serverId, route: .sessions(workspace: workspace)),
@@ -218,7 +218,7 @@ final class PaneRestorePreviewController: PreviewRootController {
 
     private static func sessionsBelowTree() -> PaneLayoutArchive? {
         let workspace = ChatRoutesFixture.workspace.id
-        let routed = ScenePanes().routedLeafID
+        let routed = ScenePanes().mainLeafID
         guard let files = PaneID("leaf-notebook") else { return nil }
         return PaneLayoutArchive(restorable: PaneLayout(
             root: .split(axis: .column, children: [
@@ -233,7 +233,7 @@ final class PaneRestorePreviewController: PreviewRootController {
 
     private static func gitBelowTree() -> PaneLayoutArchive? {
         let workspace = ChatRoutesFixture.workspace.id
-        let routed = ScenePanes().routedLeafID
+        let routed = ScenePanes().mainLeafID
         guard let git = PaneID("leaf-git") else { return nil }
         return PaneLayoutArchive(restorable: PaneLayout(
             root: .split(axis: .column, children: [
@@ -248,7 +248,7 @@ final class PaneRestorePreviewController: PreviewRootController {
 
     private static func godotTree() -> PaneLayoutArchive? {
         let workspace = ChatRoutesFixture.workspace.id
-        let routed = ScenePanes().routedLeafID
+        let routed = ScenePanes().mainLeafID
         guard let godot = PaneID("leaf-godot") else { return nil }
         return PaneLayoutArchive(restorable: PaneLayout(
             root: .split(axis: .row, children: [

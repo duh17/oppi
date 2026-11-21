@@ -7,18 +7,18 @@ import Foundation
 enum PaneEntries {
     // MARK: Shell routes to entries
 
-    /// The primary leaf's stack for these screens above its root: the session
-    /// list (of the workspace when the first screen is one), then each
-    /// screen, with `.local` for a screen that has no link.
-    static func primaryStack(_ elements: [WorkspaceStackRouteElement], rootServerId: String) -> [PaneStackEntry] {
-        var elements = elements[...]
-        var root = PaneStackEntry(serverId: rootServerId, route: .sessions(workspace: nil))
-        if case .workspace(let target)? = elements.first {
-            root = PaneStackEntry(serverId: target.serverId, route: .sessions(workspace: target.workspace.id))
-            elements = elements.dropFirst()
-        }
-        return [root] + elements.map { element in
-            entry(for: element) ?? PaneStackEntry(serverId: rootServerId, route: .local(PaneLocalToken(raw: "screen")))
+    /// A leaf's stack as it is saved: the place's session list first (All
+    /// Sessions when the place names no workspace), then each screen, with
+    /// `.local` for a screen that has no link.
+    static func entries(of stack: PaneStack, rootServerId: String) -> [PaneStackEntry] {
+        let local = PaneStackEntry(serverId: rootServerId, route: .local(PaneLocalToken(raw: "screen")))
+        let above = stack.stack.map { entry(for: $0) ?? local }
+        switch stack.place {
+        case nil: return above
+        case .sessions(let ws):
+            return [PaneStackEntry(serverId: ws?.serverId ?? rootServerId, route: .sessions(workspace: ws?.workspace.id))] + above
+        case .utility:
+            return [PaneStackEntry(serverId: rootServerId, route: .sessions(workspace: nil)), local] + above
         }
     }
 

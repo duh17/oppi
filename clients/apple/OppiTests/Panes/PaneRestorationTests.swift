@@ -52,22 +52,31 @@ struct PaneRestorationTests: PaneFixtureBuilding {
         ]
     }
 
-    /// Writes `navigation`'s tree for `scene` as the app does when it settles.
-    private func save(_ panes: ScenePanes, _ navigation: SceneNavigation, scene: String, store: PaneTreeStore) {
-        store.save(PaneLayoutArchive(restorable: panes.layout(navigation: navigation, rootServerId: serverId)), scene: scene)
+    /// The window's main leaf showing the chat `sessionId`, as a relaunch's
+    /// restore leaves it: the chat on its workspace's list.
+    private func showChat(_ sessionId: String, in navigation: SceneNavigation) {
+        navigation.mainPaneRoute = PaneStack(
+            place: .sessions(WorkspaceNavTarget(serverId: serverId, workspace: workspace)),
+            stack: [.session(WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId, workspaceId: "ws-1"))]
+        )
+    }
+
+    /// Writes `panes`' tree for `scene` as the app does when it settles.
+    private func save(_ panes: ScenePanes, scene: String, store: PaneTreeStore) {
+        store.save(PaneLayoutArchive(restorable: panes.layout(rootServerId: serverId)), scene: scene)
     }
 
     @Test func aRelaunchRestoresTheChatItsGitPanelWidthAndFocus() async throws {
         let store = try makeStore()
         let before = try await makeRoot(sessions: [session("s-1")])
-        before.navigation.restorePrimaryStack(chatInWorkspace("s-1"))
+        showChat("s-1", in: before.navigation)
         let panes = before.navigation.panes
         let git = PaneStackEntry(serverId: serverId, route: .git(workspace: "ws-1", worktree: nil))
         panes.companionDidOpen(git, pairing: Self.gitPairing)
         panes.setCompanionShare(0.4)
         panes.focusCompanion(true)
         panes.setCompanionZoomed(true)
-        save(panes, before.navigation, scene: "scene-a", store: store)
+        save(panes, scene: "scene-a", store: store)
 
         let after = try await makeRoot(sessions: [session("s-1")])
         after.navigation.panes.connect(scene: "scene-a", store: store)
@@ -88,13 +97,13 @@ struct PaneRestorationTests: PaneFixtureBuilding {
     @Test func aRestoredCompanionMountsAtItsSavedShareWithFocus() async throws {
         let store = try makeStore()
         let before = try await makeRoot(sessions: [session("s-1")])
-        before.navigation.restorePrimaryStack(chatInWorkspace("s-1"))
+        showChat("s-1", in: before.navigation)
         let saved = before.navigation.panes
         // An extension panel, the pairing the test host's panel shows.
         saved.companionDidOpen(PaneStackEntry(serverId: serverId, route: .panel(session: "s-1", id: "jobs")), pairing: PaneTestHost.pairing)
         saved.setCompanionShare(0.45)
         saved.focusCompanion(true)
-        save(saved, before.navigation, scene: "scene-host", store: store)
+        save(saved, scene: "scene-host", store: store)
 
         let after = try await makeRoot(sessions: [session("s-1")])
         after.navigation.panes.connect(scene: "scene-host", store: store)
@@ -115,12 +124,12 @@ struct PaneRestorationTests: PaneFixtureBuilding {
     @Test func aRelaunchWhileZoomedComesBackWithItsGripsRestore() async throws {
         let store = try makeStore()
         let before = try await makeRoot(sessions: [session("s-1")])
-        before.navigation.restorePrimaryStack(chatInWorkspace("s-1"))
+        showChat("s-1", in: before.navigation)
         let saved = before.navigation.panes
-        let files = try #require(saved.split(saved.routedLeafID, axis: .row))
+        let files = try #require(saved.split(saved.mainLeafID, axis: .row))
         saved.show(PaneStackEntry(serverId: serverId, route: .files(workspace: "ws-1", path: nil)), in: files)
         saved.zoom(files)
-        save(saved, before.navigation, scene: "scene-zoomed", store: store)
+        save(saved, scene: "scene-zoomed", store: store)
 
         let after = try await makeRoot(sessions: [session("s-1")])
         after.navigation.panes.connect(scene: "scene-zoomed", store: store)
@@ -143,18 +152,18 @@ struct PaneRestorationTests: PaneFixtureBuilding {
         #expect(leaf.frame.width < 1133)
     }
 
-    /// The routed leaf behind another pane's zoom: the restored stack showing
+    /// The main leaf behind another pane's zoom: the restored route showing
     /// keeps the restored zoom, and the person opening a session there (a
-    /// sidebar tap) brings the routed leaf back, focused.
-    @Test func navigatingTheHiddenRoutedLeafRevealsItButTheRestoreDoesNot() async throws {
+    /// sidebar tap) brings the main leaf back, focused.
+    @Test func navigatingTheHiddenMainLeafRevealsItButTheRestoreDoesNot() async throws {
         let store = try makeStore()
         let before = try await makeRoot(sessions: [session("s-1"), session("s-2")])
-        before.navigation.restorePrimaryStack(chatInWorkspace("s-1"))
+        showChat("s-1", in: before.navigation)
         let saved = before.navigation.panes
-        let files = try #require(saved.split(saved.routedLeafID, axis: .row))
+        let files = try #require(saved.split(saved.mainLeafID, axis: .row))
         saved.show(PaneStackEntry(serverId: serverId, route: .files(workspace: "ws-1", path: nil)), in: files)
         saved.zoom(files)
-        save(saved, before.navigation, scene: "scene-reveal", store: store)
+        save(saved, scene: "scene-reveal", store: store)
 
         let after = try await makeRoot(sessions: [session("s-1"), session("s-2")])
         let panes = after.navigation.panes
@@ -162,22 +171,22 @@ struct PaneRestorationTests: PaneFixtureBuilding {
         panes.restore(navigation: after.navigation, coordinator: after.coordinator)
         let host = PaneTestHost(width: 1133, height: 744, inNavigation: true, scenePanes: panes)
         defer { host.hide() }
-        host.act { host.panes.routedLeafWillShowScreen() }
+        host.act { host.panes.mainLeafWillShowScreen() }
         #expect(panes.zoomedCell == files, "the restored stack showing is not navigation")
         #expect(host.panes.primary.view.isHidden)
 
         after.navigation.open(.chat(WorkspaceSessionNavTarget(serverId: serverId, sessionId: "s-2", workspaceId: "ws-1")))
-        host.act { host.panes.routedLeafWillShowScreen() }
+        host.act { host.panes.mainLeafWillShowScreen() }
         #expect(panes.zoomedCell == nil, "the zoom ends")
         #expect(host.panes.focusedLeaf == .primary)
         #expect(!host.panes.primary.view.isHidden)
 
         // Collapsed, it expands the same way.
-        host.act { host.panes.collapse(panes.routedLeafID) }
-        #expect(panes.collapsedCells.contains(panes.routedLeafID))
+        host.act { host.panes.collapse(panes.mainLeafID) }
+        #expect(panes.collapsedCells.contains(panes.mainLeafID))
         after.navigation.open(.chat(WorkspaceSessionNavTarget(serverId: serverId, sessionId: "s-1", workspaceId: "ws-1")))
-        host.act { host.panes.routedLeafWillShowScreen() }
-        #expect(!panes.collapsedCells.contains(panes.routedLeafID))
+        host.act { host.panes.mainLeafWillShowScreen() }
+        #expect(!panes.collapsedCells.contains(panes.mainLeafID))
     }
 
     /// The tree is written once it has rested: a burst of changes writes
@@ -187,9 +196,9 @@ struct PaneRestorationTests: PaneFixtureBuilding {
         let root = try await makeRoot(sessions: [session("s-1"), session("s-2")])
         root.navigation.panes.connect(scene: "scene-burst", store: store)
         root.navigation.panes.restore(navigation: root.navigation, coordinator: root.coordinator)
-        root.navigation.restorePrimaryStack(chatInWorkspace("s-1"))
+        showChat("s-1", in: root.navigation)
         try await Task.sleep(for: .milliseconds(100))
-        root.navigation.restorePrimaryStack(chatInWorkspace("s-2"))
+        showChat("s-2", in: root.navigation)
         try await Task.sleep(for: .milliseconds(100))
         #expect(store.load(scene: "scene-burst") == nil, "nothing is written while the changes keep coming")
 
@@ -334,7 +343,7 @@ struct PaneRestorationTests: PaneFixtureBuilding {
         let root = try await makeRoot(sessions: [session("s-1"), session("s-incognito", ephemeral: true)])
         root.navigation.panes.connect(scene: "scene-c", store: store)
         root.navigation.panes.restore(navigation: root.navigation, coordinator: root.coordinator)
-        root.navigation.restorePrimaryStack(chatInWorkspace("s-incognito"))
+        showChat("s-incognito", in: root.navigation)
         // Its extension panel goes with it.
         root.navigation.panes.companionDidOpen(
             PaneStackEntry(serverId: serverId, route: .panel(session: "s-incognito", id: "jobs")), pairing: PaneTestHost.pairing
@@ -344,7 +353,7 @@ struct PaneRestorationTests: PaneFixtureBuilding {
         #expect(saved.layout.leaves.flatMap(\.stack).map(\.route) == [.sessions(workspace: "ws-1")])
 
         let placeholder = PaneStackEntry(serverId: serverId, route: .session("s-1"))
-        root.navigation.restorePrimaryStack([.paneEntry(placeholder)])
+        root.navigation.mainPaneRoute = PaneStack(place: .allSessions, stack: [.paneEntry(placeholder)])
         root.navigation.removeSessionRoute(serverId: serverId, sessionId: "s-1")
         #expect(root.navigation.workspaceStackRouteElements.isEmpty)
     }
@@ -373,8 +382,8 @@ struct PaneRestorationTests: PaneFixtureBuilding {
     @Test func aRestoreTheAppDidNotSurviveIsNotTriedAgain() async throws {
         let store = try makeStore()
         let root = try await makeRoot(sessions: [session("s-1")])
-        root.navigation.restorePrimaryStack(chatInWorkspace("s-1"))
-        save(root.navigation.panes, root.navigation, scene: "scene-d", store: store)
+        showChat("s-1", in: root.navigation)
+        save(root.navigation.panes, scene: "scene-d", store: store)
         store.markRestoring(true, scene: "scene-d")
 
         let after = try await makeRoot(sessions: [session("s-1")])
@@ -390,10 +399,10 @@ struct PaneRestorationTests: PaneFixtureBuilding {
     @Test func aRestoreTheAppDidNotSurviveCostsOnlyItsOwnScene() async throws {
         let store = try makeStore()
         let root = try await makeRoot(sessions: [session("s-1"), session("s-2")])
-        root.navigation.restorePrimaryStack(chatInWorkspace("s-1"))
-        save(root.navigation.panes, root.navigation, scene: "scene-crashed", store: store)
-        root.navigation.restorePrimaryStack(chatInWorkspace("s-2"))
-        save(root.navigation.panes, root.navigation, scene: "scene-other", store: store)
+        showChat("s-1", in: root.navigation)
+        save(root.navigation.panes, scene: "scene-crashed", store: store)
+        showChat("s-2", in: root.navigation)
+        save(root.navigation.panes, scene: "scene-other", store: store)
         store.markRestoring(true, scene: "scene-crashed")
 
         let after = try await makeRoot(sessions: [session("s-1"), session("s-2")])
@@ -411,8 +420,8 @@ struct PaneRestorationTests: PaneFixtureBuilding {
     @Test func aRestoreUnderAppLockWaitsForUnlock() async throws {
         let store = try makeStore()
         let before = try await makeRoot(sessions: [session("s-1")])
-        before.navigation.restorePrimaryStack(chatInWorkspace("s-1"))
-        save(before.navigation.panes, before.navigation, scene: "scene-locked", store: store)
+        showChat("s-1", in: before.navigation)
+        save(before.navigation.panes, scene: "scene-locked", store: store)
 
         let lockSuite = "PaneRestorationTests.lock.\(UUID().uuidString)"
         let lockDefaults = try #require(UserDefaults(suiteName: lockSuite))
@@ -502,5 +511,257 @@ struct PaneRestorationTests: PaneFixtureBuilding {
         let remaining = servers.filter { $0.id != "sha256:other" }
         #expect(AppLaunchPairingPolicy.launchServer(lastActiveId: lastActive, servers: remaining)?.id == "sha256:first")
         #expect(AppLaunchPairingPolicy.launchServer(lastActiveId: lastActive, servers: []) == nil)
+    }
+
+    /// Every leaf has a route: the main leaf's place and screens in `stacks`,
+    /// which the shell shows, and a split leaf's entry in `tree`, which its
+    /// own screen builds from. Saving writes each leaf's stack from its route,
+    /// and a utility place keeps `.local("screen")` in both `entries(of:)` and
+    /// `topEntry(of:)`.
+    @Test func everyLeafSavesItsOwnRoute() async throws {
+        let root = try await makeRoot(sessions: [session("s-1")])
+        showChat("s-1", in: root.navigation)
+        let panes = root.navigation.panes
+        let files = PaneStackEntry(serverId: serverId, route: .files(workspace: "ws-1", path: "Sources"))
+        let side = try #require(panes.split(panes.mainLeafID, edge: .right, showing: files))
+
+        let expectedMain = PaneStack(
+            place: .sessions(WorkspaceNavTarget(serverId: serverId, workspace: workspace)),
+            stack: [.session(WorkspaceSessionNavTarget(serverId: serverId, sessionId: "s-1", workspaceId: "ws-1"))]
+        )
+        #expect(panes.stacks[panes.mainLeafID] == expectedMain)
+        #expect(root.navigation.mainPaneRoute == expectedMain)
+        #expect(panes.topEntry(of: side) == files)
+
+        let saved = panes.layout(rootServerId: serverId)
+        #expect(saved.leaf(panes.mainLeafID)?.stack.map(\.route) == [.sessions(workspace: "ws-1"), .session("s-1")])
+        #expect(saved.leaf(side)?.stack == [files])
+
+        // A utility place ends in `.local("screen")` in both `layout` and `topEntry`.
+        panes.restore(navigation: root.navigation, coordinator: root.coordinator, applying: false)
+        root.navigation.mainPaneRoute = PaneStack(place: .utility(.appSettings))
+        let utilityLayout = panes.layout(rootServerId: serverId)
+        let expectedLocal = PaneStackEntry(serverId: serverId, route: .local(PaneLocalToken(raw: "screen")))
+        #expect(panes.topEntry(of: panes.mainLeafID) == expectedLocal)
+        #expect(utilityLayout.leaf(panes.mainLeafID)?.stack.last == expectedLocal)
+    }
+
+    /// Restoring scrubs the main leaf's restored stack out of `tree` so `tree`
+    /// never carries a stale copy after navigating away: `PaneOpenChoices.takesFile`
+    /// still targets the main pane, and `SidePanePlacement`'s game dedup does
+    /// not match a stale `.godot` entry on `mainLeafID`.
+    @Test func restoringScrubsMainLeafStackFromTree() async throws {
+        let godot = PaneStackEntry(serverId: serverId, route: .godot(project: "tide-runner"))
+        let browser = PaneStackEntry(serverId: serverId, route: .browser(try #require(URL(string: "https://example.com"))))
+        let sideEntry = PaneStackEntry(serverId: serverId, route: .files(workspace: "ws-1", path: nil))
+
+        for (name, restoredEntry) in [("godot", godot), ("browser", browser)] {
+            let store = try makeStore()
+            let main = PaneLeaf(
+                id: id("leaf-1"), name: nil,
+                stack: [PaneStackEntry(serverId: serverId, route: .sessions(workspace: "ws-1")), restoredEntry],
+                attachedTo: nil, origin: .split
+            )
+            let side = PaneLeaf(id: id("leaf-2"), name: nil, stack: [sideEntry], attachedTo: nil, origin: .split)
+            let layout = PaneLayout(
+                root: .split(axis: .row, children: [.leaf(main), .leaf(side)], weights: [0.5, 0.5]),
+                focus: main.id, recency: [main.id, side.id]
+            )
+            store.save(PaneLayoutArchive(restorable: layout), scene: "scene-scrub-\(name)")
+
+            let root = try await makeRoot(sessions: [])
+            let panes = root.navigation.panes
+            let prefSuite = "PaneRestorationTests.scrub.\(UUID().uuidString)"
+            let prefDefaults = try #require(UserDefaults(suiteName: prefSuite))
+            defer { prefDefaults.removePersistentDomain(forName: prefSuite) }
+            panes.preferences = prefDefaults
+            panes.connect(scene: "scene-scrub-\(name)", store: store)
+            panes.restore(navigation: root.navigation, coordinator: root.coordinator)
+
+            // Navigate away on the main pane.
+            root.navigation.open(.place(.allSessions))
+            let mainLeaf = try #require(panes.cellLayout.leaf(panes.mainLeafID))
+            #expect(mainLeaf.stack.last?.route == .sessions(workspace: nil), "main.stack was scrubbed for \(name)")
+            #expect(PaneOpenChoices.takesFile(mainLeaf), "takesFile targets the main pane after \(name)")
+
+            let host = PaneTestHost(width: 1133, height: 744, inNavigation: true, scenePanes: panes)
+            defer { host.hide() }
+            let choices = try #require(host.panes.openChoices(from: side.id))
+            #expect(choices.targets.map(\.id).contains(panes.mainLeafID), "Open in Pane targets main after \(name)")
+
+            if restoredEntry == godot {
+                var opened = false
+                host.act {
+                    opened = host.panes.openBeside(PaneOpenContent(entry: godot), kind: .game, from: .pane(side.id))
+                }
+                #expect(opened)
+                #expect(panes.splitLeaves.count == 2, "game dedup must not match scrubbed mainLeafID")
+                let gameLeaf = try #require(panes.splitLeaves.first { $0.id != side.id })
+                #expect(panes.cellLayout.focus == gameLeaf.id, "focused the new game pane, not main")
+                #expect(gameLeaf.stack.last == godot)
+            }
+        }
+    }
+
+    /// A deferred restore (after App Lock unlock) writes the main route through
+    /// `SceneNavigation.mainPaneRoute`, clearing a pre-existing `sidebarChoice`.
+    @Test func aDeferredRestoreClearsPreExistingSidebarChoice() async throws {
+        let store = try makeStore()
+        let before = try await makeRoot(sessions: [])
+        before.navigation.mainPaneRoute = PaneStack(
+            place: .sessions(WorkspaceNavTarget(serverId: serverId, workspace: workspace))
+        )
+        save(before.navigation.panes, scene: "scene-deferred-sidebar", store: store)
+
+        let lockSuite = "PaneRestorationTests.lockSidebar.\(UUID().uuidString)"
+        let lockDefaults = try #require(UserDefaults(suiteName: lockSuite))
+        defer { lockDefaults.removePersistentDomain(forName: lockSuite) }
+        AppLockSettings.setTimeout(.immediately, in: lockDefaults)
+        let appLock = AppLockService(
+            defaults: lockDefaults,
+            availability: { .available },
+            method: { .faceID },
+            authenticator: { _, _ in .success },
+            didTurnOn: {},
+            isProtectedDataAvailable: { true }
+        )
+        #expect(appLock.isLocked)
+
+        let after = try await makeRoot(sessions: [])
+        after.navigation.setWorkspaceNavigationPresentation(.split)
+        after.navigation.splitColumnVisibility = .detailOnly
+        #expect(after.navigation.splitColumnVisibility == .detailOnly, "pre-existing sidebarChoice overrides .allSessions")
+
+        after.navigation.panes.connect(scene: "scene-deferred-sidebar", store: store)
+        after.navigation.panes.restore(navigation: after.navigation, coordinator: after.coordinator, appLock: appLock)
+        #expect(await appLock.unlock())
+
+        let restored = await waitForMainActorCondition(timeout: .seconds(3)) {
+            after.navigation.workspaceStackRouteElements == [
+                .workspace(WorkspaceNavTarget(serverId: serverId, workspace: workspace)),
+            ]
+        }
+        #expect(restored)
+        #expect(after.navigation.splitColumnVisibility == .all, "deferred restore cleared sidebarChoice")
+    }
+
+    /// The tree `main` (98d8ead12) wrote for a workspace list with a Files
+    /// pane beside it still restores here and saves back as the same bytes:
+    /// a tree on a device survives the change to per-leaf routes, and nothing
+    /// an older build decodes moves. The fixture is an archive that commit's
+    /// own save path produced.
+    @Test func anArchiveWrittenBeforePerLeafRoutesSavesBackUnchanged() async throws {
+        let written = try Data(contentsOf: TestFixtures.url("pane-archive-split-panes.json"))
+        #expect(PaneLayoutArchive.decode(written) != nil, "the fixture decodes")
+
+        let store = try makeStore()
+        store.defaults.set(written, forKey: PaneTreeStore.key(forScene: "scene-archive"))
+        let root = try await makeRoot(sessions: [])
+        root.navigation.panes.connect(scene: "scene-archive", store: store)
+        root.navigation.panes.restore(navigation: root.navigation, coordinator: root.coordinator)
+        #expect(root.navigation.workspaceStackRouteElements == [
+            .workspace(WorkspaceNavTarget(serverId: serverId, workspace: workspace)),
+        ])
+
+        root.navigation.panes.flush()
+        let saved = try #require(store.defaults.data(forKey: PaneTreeStore.key(forScene: "scene-archive")))
+        #expect(saved == written, """
+            re-saved as \(String(decoding: saved, as: UTF8.self))
+            instead of \(String(decoding: written, as: UTF8.self))
+            """)
+    }
+
+    /// The tree `main` (98d8ead12) wrote with pushed screens on the main leaf
+    /// (a workspace file, an unresolvable session entry, and a live chat with
+    /// scroll state) plus a collapsed split pane restores its full stack and
+    /// saves back byte-for-byte unchanged.
+    @Test func anArchiveWithAPushedMainStackSavesBackUnchanged() async throws {
+        let written = try Data(contentsOf: TestFixtures.url("pane-archive-main-stack.json"))
+        #expect(PaneLayoutArchive.decode(written) != nil, "the fixture decodes")
+
+        let store = try makeStore()
+        store.defaults.set(written, forKey: PaneTreeStore.key(forScene: "scene-main-stack"))
+        let root = try await makeRoot(sessions: [session("s-1")])
+        root.navigation.panes.connect(scene: "scene-main-stack", store: store)
+        root.navigation.panes.restore(navigation: root.navigation, coordinator: root.coordinator)
+
+        #expect(root.navigation.panes.mainLeafID == id("leaf-1"))
+        #expect(root.navigation.mainPaneRoute == PaneStack(
+            place: .sessions(WorkspaceNavTarget(serverId: serverId, workspace: workspace)),
+            stack: [
+                .linkedFile(.workspaceFile(
+                    serverId: serverId, workspaceId: "ws-1", worktreeId: nil,
+                    path: "Sources/App.swift", lineAnchor: SourceLineAnchor(startLine: 12, endLine: 12)
+                )),
+                .paneEntry(PaneStackEntry(serverId: serverId, route: .session("s-offline"))),
+                .session(WorkspaceSessionNavTarget(serverId: serverId, sessionId: "s-1", workspaceId: "ws-1")),
+            ]
+        ))
+        #expect(root.navigation.panes.collapsedCells == [id("leaf-2")])
+
+        root.navigation.panes.flush()
+        let saved = try #require(store.defaults.data(forKey: PaneTreeStore.key(forScene: "scene-main-stack")))
+        #expect(saved == written, """
+            re-saved as \(String(decoding: saved, as: UTF8.self))
+            instead of \(String(decoding: written, as: UTF8.self))
+            """)
+        #expect(root.navigation.panes.takeRestoredScroll(for: "s-1") == PaneChatScroll(sessionId: "s-1", itemId: "item-9", relativeY: 0.25))
+    }
+
+    /// The tree `main` wrote for a chat with its Git panel beside it restores
+    /// its chat, its panel, the panel's share and the chat's reading position,
+    /// and saves back the same tree. The waiting panel returns with the lowest
+    /// free leaf id (`leaf-0`: `ScenePanes.layout`), matching pre-N7a behavior,
+    /// so only the waiting companion's id is normalised when comparing.
+    @Test func anArchiveWrittenBeforePerLeafRoutesRestoresItsChatAndPanel() async throws {
+        let written = try Data(contentsOf: TestFixtures.url("pane-archive-chat-and-panel.json"))
+        let archive = try #require(PaneLayoutArchive.decode(written), "the fixture decodes")
+
+        let store = try makeStore()
+        store.defaults.set(written, forKey: PaneTreeStore.key(forScene: "scene-panel"))
+        let root = try await makeRoot(sessions: [session("s-1")])
+        root.navigation.panes.connect(scene: "scene-panel", store: store)
+        root.navigation.panes.restore(navigation: root.navigation, coordinator: root.coordinator)
+
+        #expect(root.navigation.workspaceStackRouteElements == chatInWorkspace("s-1"))
+        #expect(root.navigation.panes.mainLeafID == id("leaf-1"))
+
+        root.navigation.panes.flush()
+        let savedData = try #require(store.defaults.data(forKey: PaneTreeStore.key(forScene: "scene-panel")))
+        let saved = try #require(PaneLayoutArchive.decode(savedData))
+        #expect(saved.chatScroll[id("leaf-1")] == PaneChatScroll(sessionId: "s-1", itemId: "item-9", relativeY: 0.25))
+        #expect(try #require(saved.layout.leaves.first { $0.attachedTo != nil }).id == id("leaf-0"))
+        #expect(try normalisingWaitingCompanion(saved, to: id("leaf-2")) == archive)
+        // The chat opens its panel and its reading position as it shows.
+        #expect(root.navigation.panes.takePendingPanel(for: "s-1") == .git(workspace: "ws-1", worktree: nil))
+        #expect(root.navigation.panes.takeRestoredScroll(for: "s-1")?.itemId == "item-9")
+    }
+
+    /// `archive` with only its waiting attached companion renamed to `target`,
+    /// keeping `mainLeafID` and `chatScroll` keys exact.
+    private func normalisingWaitingCompanion(
+        _ archive: PaneLayoutArchive,
+        to target: PaneID
+    ) throws -> PaneLayoutArchive {
+        let layout = archive.layout
+        let companion = try #require(layout.leaves.first { $0.attachedTo != nil })
+        let from = companion.id
+        func map(_ leafID: PaneID) -> PaneID { leafID == from ? target : leafID }
+        var renamed = layout
+        renamed.root = layout.root.mapLeaves { leaf in
+            PaneLeaf(
+                id: map(leaf.id), name: leaf.name, stack: leaf.stack,
+                attachedTo: leaf.attachedTo, origin: leaf.origin
+            )
+        }
+        renamed.focus = map(layout.focus)
+        renamed.recency = layout.recency.map(map)
+        renamed.zoomed = layout.zoomed.map(map)
+        renamed.collapsed = Dictionary(uniqueKeysWithValues: layout.collapsed.map { (map($0.key), $0.value) })
+        return try #require(PaneLayoutArchive(
+            restorable: renamed,
+            chatScroll: archive.chatScroll,
+            companionShares: archive.companionShares
+        ))
     }
 }

@@ -329,7 +329,7 @@ struct MainPanePlacementTests {
         navigation.setWorkspaceNavigationPresentation(layout.presentation)
         if layout == .splitShellBesideASidePane {
             let panes = navigation.panes
-            _ = panes.split(panes.routedLeafID, edge: .right, showing: PaneStackEntry(serverId: server, route: .file(.host, path: "notes/b.md", line: nil)))
+            _ = panes.split(panes.mainLeafID, edge: .right, showing: PaneStackEntry(serverId: server, route: .file(.host, path: "notes/b.md", line: nil)))
         }
         return navigation
     }

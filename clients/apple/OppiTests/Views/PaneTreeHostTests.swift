@@ -26,7 +26,7 @@ struct PaneTreeHostTests {
     @Test func splitRightPutsALauncherBesideTheChatWithGripsAndADivider() throws {
         let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
         defer { host.hide() }
-        let routed = host.scenePanes.routedLeafID
+        let routed = host.scenePanes.mainLeafID
         // ⌘D: the focused pane splits.
         host.act { host.panes.split(axis: .row) }
         let split = try #require(host.scenePanes.splitLeaves.first?.id)
@@ -76,7 +76,7 @@ struct PaneTreeHostTests {
         let capsule = try grip(host, split)
         #expect(capsule.accessibilityValue == "Zoomed")
         #expect(capsule.frame.width > PaneGripView.size.width, "the zoomed grip is the longer pill")
-        #expect(try grip(host, host.scenePanes.routedLeafID).isHidden)
+        #expect(try grip(host, host.scenePanes.mainLeafID).isHidden)
         #expect(host.panes.focusedLeaf == .split(split), "zoom focuses the pane")
         let menu = host.panes.menuItems(for: split)
         #expect(menu.first?.identifier == "pane.menu.zoom" && menu.first?.title == "Restore")
@@ -102,7 +102,7 @@ struct PaneTreeHostTests {
     @Test func closingTheZoomedPaneGivesTheChatTheWindow() throws {
         let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
         defer { host.hide() }
-        let routed = host.scenePanes.routedLeafID
+        let routed = host.scenePanes.mainLeafID
         host.act { host.panes.split(axis: .row) }
         let split = try #require(host.scenePanes.splitLeaves.first?.id)
         host.act { host.panes.zoom(split) }
@@ -119,7 +119,7 @@ struct PaneTreeHostTests {
     @Test func aPaneThatDoesNotFitGoesToOverflowAndTheMenuBringsItBack() throws {
         let host = PaneTestHost(width: 744, height: 1133, inNavigation: true)
         defer { host.hide() }
-        let routed = host.scenePanes.routedLeafID
+        let routed = host.scenePanes.mainLeafID
         host.act { host.panes.split(axis: .row) }
         let first = try #require(host.scenePanes.splitLeaves.first?.id)
         try run("Split Right", on: try grip(host, routed), in: host)
@@ -142,7 +142,7 @@ struct PaneTreeHostTests {
     @Test func aDropThatMakesAPaneThatDoesNotFitFocusesIt() throws {
         let host = PaneTestHost(width: 744, height: 1133, inNavigation: true)
         defer { host.hide() }
-        let routed = host.scenePanes.routedLeafID
+        let routed = host.scenePanes.mainLeafID
         host.act { host.panes.split(axis: .row) }
         let file = PaneStackEntry(serverId: "s", route: .file(.host, path: "/tmp/a.md", line: nil))
         host.act { host.panes.split(routed, edge: .left, showing: file) }
@@ -226,7 +226,7 @@ struct PaneTreeHostTests {
         let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
         defer { host.hide() }
         host.act { host.panes.split(axis: .row) }
-        let routed = host.scenePanes.routedLeafID
+        let routed = host.scenePanes.mainLeafID
         let split = try #require(host.scenePanes.splitLeaves.first?.id)
         let chat = try #require(host.panes.cellFrame(routed))
         let lifted = PaneDragPayload.Content.pane(split)
@@ -266,7 +266,7 @@ struct PaneTreeHostTests {
     func aLiftedPanesPreviewIsTheFrameItLandsIn(landscape: Bool, edge: PaneEdge?) throws {
         let host = Self.twoPanes(landscape: landscape)
         defer { host.hide() }
-        let routed = host.scenePanes.routedLeafID
+        let routed = host.scenePanes.mainLeafID
         let lifted = try #require(host.scenePanes.splitLeaves.first?.id)
         let cell = try #require(host.panes.cellFrame(routed))
         let drop = try #require(host.panes.dropTarget(at: Self.point(in: cell, at: edge), payload: .pane(lifted)))
@@ -319,7 +319,7 @@ struct PaneTreeHostTests {
         #expect(host.scenePanes.splitLeaves.isEmpty)
         #expect(leafView(host, split) == nil)
         #expect(host.screenWidth == 1133)
-        #expect(try grip(host, host.scenePanes.routedLeafID).isHidden)
+        #expect(try grip(host, host.scenePanes.mainLeafID).isHidden)
         #expect(host.screen.additionalSafeAreaInsets.top == 0, "one pane gives its strip back")
     }
 
@@ -373,7 +373,7 @@ struct PaneTreeHostTests {
     @Test func thePaneMenuCollapsesAPane() throws {
         let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
         defer { host.hide() }
-        let routed = host.scenePanes.routedLeafID
+        let routed = host.scenePanes.mainLeafID
         host.act { host.panes.split(axis: .row) }
         let split = try #require(host.scenePanes.splitLeaves.first?.id)
         try run("Collapse", on: try grip(host, routed), in: host)
@@ -390,7 +390,7 @@ struct PaneTreeHostTests {
     @Test func aCompactWindowShowsOnePaneAndTheChip() throws {
         let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
         defer { host.hide() }
-        let routed = host.scenePanes.routedLeafID
+        let routed = host.scenePanes.mainLeafID
         host.act { host.panes.split(axis: .row) }
         let split = try #require(host.scenePanes.splitLeaves.first?.id)
         host.window.traitOverrides.horizontalSizeClass = .compact
@@ -453,7 +453,7 @@ struct PaneTreeHostTests {
     @Test func paneChordsFocusMoveAndStepTheDivider() throws {
         let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
         defer { host.hide() }
-        let routed = host.scenePanes.routedLeafID
+        let routed = host.scenePanes.mainLeafID
         host.act { host.panes.split(axis: .row) }
         let split = try #require(host.scenePanes.splitLeaves.first?.id)
 
@@ -510,7 +510,7 @@ struct PaneTreeHostTests {
         }
         #expect(step(from: nil, .next) == nil, "one pane: nothing to step to")
 
-        let routed = host.scenePanes.routedLeafID
+        let routed = host.scenePanes.mainLeafID
         host.act { host.panes.split(axis: .row) }
         let split = try #require(host.scenePanes.splitLeaves.first?.id)
         let first = try #require(step(from: nil, .next))
@@ -533,7 +533,7 @@ struct PaneTreeHostTests {
     @Test func undoTakesBackCloseMoveAndReset() throws {
         let host = PaneTestHost(width: 1133, height: 744, inNavigation: true)
         defer { host.hide() }
-        let routed = host.scenePanes.routedLeafID
+        let routed = host.scenePanes.mainLeafID
         #expect(!host.scenePanes.undo(), "nothing to undo yet")
         host.act { host.panes.split(axis: .row) }
         let first = try #require(host.scenePanes.splitLeaves.first?.id)
@@ -576,7 +576,7 @@ struct PaneTreeHostTests {
         let host = PaneTestHost(width: size.width, height: size.height, inNavigation: true)
         defer { host.hide() }
         try await newPanes(host)
-        let routed = host.scenePanes.routedLeafID
+        let routed = host.scenePanes.mainLeafID
         let file = { (path: String) in
             PaneOpenContent(entry: PaneStackEntry(serverId: "s", route: .file(.host, path: path, line: nil)))
         }
@@ -665,7 +665,7 @@ struct PaneTreeHostTests {
             Issue.record("no split: \(host.scenePanes.cellLayout.root)")
             return (.row, pane)
         }
-        #expect(children.map(\.leaves.first?.id) == [host.scenePanes.routedLeafID, pane], "after the chat")
+        #expect(children.map(\.leaves.first?.id) == [host.scenePanes.mainLeafID, pane], "after the chat")
         return (axis, pane)
     }
 
@@ -684,7 +684,7 @@ struct PaneTreeHostTests {
             let entry = content.entry
             var opened = false
             host.act {
-                opened = host.panes.openBeside(content, kind: .terminal, from: .pane(host.scenePanes.routedLeafID))
+                opened = host.panes.openBeside(content, kind: .terminal, from: .pane(host.scenePanes.mainLeafID))
             }
             #expect(opened)
             let (axis, pane) = try splitBesideChat(host)
@@ -715,7 +715,7 @@ struct PaneTreeHostTests {
         try #require(AppRootEnvironment.near(host.panes) != nil, "the host sees the app root")
         try await newPanes(host, [.files: .below])
         let file = PaneOpenContent(entry: PaneStackEntry(serverId: "s", route: .file(.host, path: "/tmp/a.md", line: nil)))
-        host.act { host.panes.place(file, at: .newPane(.right), from: host.scenePanes.routedLeafID) }
+        host.act { host.panes.place(file, at: .newPane(.right), from: host.scenePanes.mainLeafID) }
         #expect(try splitBesideChat(host).axis == .row)
         host.act { host.panes.undoPanes() }
         #expect(host.scenePanes.splitLeaves.isEmpty)

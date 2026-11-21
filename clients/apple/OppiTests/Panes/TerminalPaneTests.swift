@@ -59,7 +59,7 @@ struct TerminalPaneTests {
                      "the shown pane keeps its neighbours live")
         let a = RexSessionTerminalTests.block("a")
 
-        host.act { host.panes.zoom(host.scenePanes.routedLeafID) }
+        host.act { host.panes.zoom(host.scenePanes.mainLeafID) }
         #expect(host.panes.cellPresentation?.frames[split] == nil, "the zoom hides the terminal's pane")
         #expect(!rig.model.isWarming, "a hidden pane keeps no neighbours live")
         #expect(!rig.channel.isViewed, "nor takes the host's clipboard writes")
@@ -100,7 +100,7 @@ struct TerminalPaneTests {
             let content = PaneOpenContent(terminal: TerminalNavTarget { folder }, as: .terminal(workspaceId: "w"), serverId: "s")
             var opened = false
             host.act {
-                opened = host.panes.openBeside(content, kind: .terminal, from: .pane(host.scenePanes.routedLeafID))
+                opened = host.panes.openBeside(content, kind: .terminal, from: .pane(host.scenePanes.mainLeafID))
             }
             try #require(opened, "the terminal opened in a pane beside the chat")
         } else {

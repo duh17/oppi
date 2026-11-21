@@ -288,7 +288,7 @@ struct GodotRuntimeTests {
         // A pane right of the chat holding the game, as a placed Godot link opens one.
         host.act {
             let entry = PaneStackEntry(serverId: "s", route: .godot(project: "full"))
-            guard let made = host.scenePanes.split(host.scenePanes.routedLeafID, edge: .right, showing: entry) else { return }
+            guard let made = host.scenePanes.split(host.scenePanes.mainLeafID, edge: .right, showing: entry) else { return }
             host.panes.syncSplitLeaves()
             // The test's game in place of the pane's own, as a leaf's ready content replaces its root.
             host.panes.splitLeaves[made]?.controller.setViewControllers([game], animated: false)
@@ -342,7 +342,7 @@ struct GodotRuntimeTests {
         // A zoom of another pane ends full screen too, and a later zoom of
         // the game is only a zoom.
         host.act { #expect(host.panes.enterFullScreen(cell)) }
-        host.act { host.panes.zoom(host.scenePanes.routedLeafID) }
+        host.act { host.panes.zoom(host.scenePanes.mainLeafID) }
         #expect(host.scenePanes.fullScreenCell == nil)
         host.act { host.panes.zoom(cell) }
         #expect(host.scenePanes.fullScreenCell == nil)

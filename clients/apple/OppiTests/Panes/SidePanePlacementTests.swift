@@ -65,7 +65,7 @@ struct SidePanePlacementTests: PaneFixtureBuilding {
             canAddPane: canAddPane,
             cells: cells,
             source: id(source),
-            routedLeaf: id("chat"),
+            mainLeaf: id("chat"),
             isPortrait: size.height > size.width,
             shown: { SidePanePlacement.shown($0.stack.last) },
             fits: { target, edge in
@@ -210,7 +210,7 @@ struct SidePanePlacementTests: PaneFixtureBuilding {
     private func place(
         _ kind: PaneContentKind, in cells: PaneLayout, origin: SidePaneOrigin, focused: String, size: CGSize = landscape
     ) -> SidePanePlacement? {
-        SidePanePlacement.source(of: origin, focused: id(focused), mainPane: id("chat")).map { place(kind, in: cells, from: $0.raw, size: size) }
+        SidePanePlacement.source(of: origin, focused: id(focused), mainLeaf: id("chat")).map { place(kind, in: cells, from: $0.raw, size: size) }
     }
 
     /// A link from outside the app (`oppi://file`, a share) has no pane of its

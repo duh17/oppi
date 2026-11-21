@@ -64,7 +64,7 @@ extension PaneHostController: UIDropInteractionDelegate {
     /// The chat in front in the primary's cell, shown or not: the window's
     /// current chat, which a pane beside it hands things to.
     var routedChat: ChatViewController? {
-        (frontScreen(ofCell: panes.routedLeafID) as? ChatRouteViewController)?.chat
+        (frontScreen(ofCell: panes.mainLeafID) as? ChatRouteViewController)?.chat
     }
 
     /// The chat in the primary's cell, while it shows.
@@ -76,8 +76,8 @@ extension PaneHostController: UIDropInteractionDelegate {
     /// Brings the primary's cell into view and gives it focus: out of
     /// another cell's zoom, and in place of the pane a compact window shows.
     func showRoutedCell() {
-        if let zoomed = panes.cellLayout.zoomed, zoomed != panes.routedLeafID { zoom(nil) }
-        focus(cell: panes.routedLeafID)
+        if let zoomed = panes.cellLayout.zoomed, zoomed != panes.mainLeafID { zoom(nil) }
+        focus(cell: panes.mainLeafID)
     }
 
     /// Where a drop at `point` would land, and the zone it lights (nil when
@@ -92,7 +92,7 @@ extension PaneHostController: UIDropInteractionDelegate {
             return (target, landingFrame(of: target, payload: payload))
         }
         let entry: PaneStackEntry? = if case .entry(let entry)? = payload { entry } else { nil }
-        let chat = id == panes.routedLeafID && primary.view.frame.contains(point) ? shownChat : nil
+        let chat = id == panes.mainLeafID && primary.view.frame.contains(point) ? shownChat : nil
         let chatTakes = chat.map { chat in entry.map(chat.canReference) ?? true } ?? false
         // The composer always takes a drop: it sits in the chat's bottom
         // quarter, which would otherwise split.

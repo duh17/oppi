@@ -27,10 +27,10 @@ struct PaneSplitTests: PaneFixtureBuilding {
         if let store, let scene { panes.connect(scene: scene, store: store) }
         panes.restore(navigation: root.navigation, coordinator: root.coordinator, applying: store != nil)
         if root.navigation.workspaceStackRouteElements.isEmpty {
-            root.navigation.restorePrimaryStack([
-                .workspace(WorkspaceNavTarget(serverId: serverId, workspace: workspace)),
-                .session(WorkspaceSessionNavTarget(serverId: serverId, sessionId: "s-1", workspaceId: "ws-1")),
-            ])
+            root.navigation.mainPaneRoute = PaneStack(
+                place: .sessions(WorkspaceNavTarget(serverId: serverId, workspace: workspace)),
+                stack: [.session(WorkspaceSessionNavTarget(serverId: serverId, sessionId: "s-1", workspaceId: "ws-1"))]
+            )
         }
         return root
     }
@@ -50,10 +50,10 @@ struct PaneSplitTests: PaneFixtureBuilding {
         let root = try await chatWindow()
         defer { withExtendedLifetime(root) {} }
         let panes = root.navigation.panes
-        let launcher = try #require(panes.split(panes.routedLeafID, axis: .row))
+        let launcher = try #require(panes.split(panes.mainLeafID, axis: .row))
         #expect(panes.topEntry(of: launcher) == entry(.local(PaneLocalScreen.launcher(workspaceId: "ws-1").token)),
                 "a chat's split offers its own workspace's Sessions, Files and Terminal")
-        #expect(panes.tree.focus == panes.routedLeafID, "the chat keeps focus")
+        #expect(panes.tree.focus == panes.mainLeafID, "the chat keeps focus")
 
         let files = entry(.files(workspace: "ws-1", path: nil))
         panes.show(files, in: launcher)
@@ -74,13 +74,13 @@ struct PaneSplitTests: PaneFixtureBuilding {
         panes.setCompanionShare(0.4)
         let companion = try #require(panes.companionID)
 
-        let split = try #require(panes.split(panes.routedLeafID, axis: .row))
+        let split = try #require(panes.split(panes.mainLeafID, axis: .row))
         #expect(shape(panes.tree.root) == "row[leaf-1 0.3, \(companion.raw) 0.2, \(split.raw) 0.5]",
                 "the chat and Git share the chat's half, Git keeping its 40%")
         #expect(shape(panes.cellLayout.root) == "row[leaf-1 0.5, \(split.raw) 0.5]",
                 "the host lays the chat and Git out as one cell")
 
-        panes.move(split, to: panes.routedLeafID, edge: .left)
+        panes.move(split, to: panes.mainLeafID, edge: .left)
         #expect(shape(panes.tree.root) == "row[\(split.raw) 0.5, leaf-1 0.3, \(companion.raw) 0.2]")
 
         panes.close(split)
@@ -93,9 +93,9 @@ struct PaneSplitTests: PaneFixtureBuilding {
         defer { withExtendedLifetime(root) {} }
         let panes = root.navigation.panes
         panes.companionDidOpen(entry(.git(workspace: "ws-1", worktree: nil)), pairing: Self.gitPairing)
-        let first = try #require(panes.split(panes.routedLeafID, axis: .row))
+        let first = try #require(panes.split(panes.mainLeafID, axis: .row))
         _ = try #require(panes.split(first, axis: .column))
-        panes.close(panes.routedLeafID)
+        panes.close(panes.mainLeafID)
         #expect(panes.tree.leaves.count == 4, "Close Pane on the chat's leaf does nothing")
 
         panes.resetPanes()
@@ -108,14 +108,14 @@ struct PaneSplitTests: PaneFixtureBuilding {
         let before = try await chatWindow()
         defer { withExtendedLifetime(before) {} }
         let panes = before.navigation.panes
-        let files = try #require(panes.split(panes.routedLeafID, axis: .row))
+        let files = try #require(panes.split(panes.mainLeafID, axis: .row))
         panes.show(entry(.files(workspace: "ws-1", path: "Sources")), in: files)
         let terminal = try #require(panes.split(files, axis: .column))
         panes.show(entry(.local(PaneLocalScreen.terminal(workspaceId: "ws-1").token)), in: terminal)
         let launcher = try #require(panes.split(files, axis: .row))
         #expect(panes.topEntry(of: launcher) == panes.topEntry(of: files), "a Files pane's split copies it")
         panes.show(panes.launcher(for: launcher), in: launcher)
-        store.save(PaneLayoutArchive(restorable: panes.layout(navigation: before.navigation, rootServerId: serverId)), scene: "a")
+        store.save(PaneLayoutArchive(restorable: panes.layout(rootServerId: serverId)), scene: "a")
 
         let afterRoot = try await chatWindow(store: store, scene: "a")
         defer { withExtendedLifetime(afterRoot) {} }
@@ -123,7 +123,7 @@ struct PaneSplitTests: PaneFixtureBuilding {
         #expect(after.splitLeaves.map(\.id) == [files])
         #expect(after.topEntry(of: files) == entry(.files(workspace: "ws-1", path: "Sources")))
         #expect(shape(after.tree.root) == "row[leaf-1 0.5, \(files.raw) 0.5]")
-        #expect(after.routedLeafID.raw == "leaf-1")
+        #expect(after.mainLeafID.raw == "leaf-1")
     }
 
     @Test func aDropOnAPaneEdgeOpensTheEntryOnThatSide() async throws {
@@ -131,7 +131,7 @@ struct PaneSplitTests: PaneFixtureBuilding {
         defer { withExtendedLifetime(root) {} }
         let panes = root.navigation.panes
         let file = entry(.file(.workspace(id: "ws-1", worktree: nil), path: "README.md", line: nil))
-        let above = try #require(panes.split(panes.routedLeafID, edge: .top, showing: file))
+        let above = try #require(panes.split(panes.mainLeafID, edge: .top, showing: file))
         #expect(shape(panes.tree.root) == "column[\(above.raw) 0.5, leaf-1 0.5]")
         #expect(panes.topEntry(of: above) == file)
     }

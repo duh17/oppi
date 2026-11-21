@@ -17,7 +17,7 @@ struct ServerPagePaneSidebarTests {
         let shell = try ShellWindow()
         defer { shell.hide() }
         let navigation = shell.root.navigation
-        #expect(navigation.panes.split(navigation.panes.routedLeafID, axis: .row) != nil)
+        #expect(navigation.panes.split(navigation.panes.mainLeafID, axis: .row) != nil)
         // The routed pane shows a chat or file: the sidebar is hidden.
         navigation.splitColumnVisibility = .detailOnly
         #expect(await shell.settles { shell.split.displayMode == .secondaryOnly })
@@ -77,7 +77,7 @@ struct ServerPagePaneSidebarTests {
         #expect(await shell.settles { (navigation.splitColumnVisibility != .detailOnly) != shown }, "It shows or hides the sidebar")
         #expect(await shell.settles { item.title == (shown ? "Show Sidebar" : "Hide Sidebar") }, "Its title says what a tap does")
 
-        #expect(navigation.panes.split(navigation.panes.routedLeafID, axis: .row) != nil)
+        #expect(navigation.panes.split(navigation.panes.mainLeafID, axis: .row) != nil)
         #expect(await shell.settles { !shell.sidePaneScreens.isEmpty }, "A side pane opened")
         for screen in shell.sidePaneScreens {
             #expect(screen.navigationItem.mainPaneSidebarItem == nil, "\(type(of: screen)) in a side pane has no sidebar button")

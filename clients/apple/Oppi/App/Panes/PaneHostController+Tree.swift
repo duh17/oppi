@@ -90,8 +90,8 @@ extension PaneHostController {
         let resolved = shownPresentation(of: cells)
         cellPresentation = resolved
         // A collapsed routed leaf is its strip: the primary and its companion park.
-        let routedCollapsed = cells.collapsed[panes.routedLeafID] != nil
-        routedCell = routedCollapsed ? .zero : resolved.frames[panes.routedLeafID] ?? .zero
+        let routedCollapsed = cells.collapsed[panes.mainLeafID] != nil
+        routedCell = routedCollapsed ? .zero : resolved.frames[panes.mainLeafID] ?? .zero
     }
 
     /// Where `cells` would be drawn now: the fit rule in this window, with
@@ -135,7 +135,7 @@ extension PaneHostController {
     /// A cell's minimum by what it shows: the routed leaf is a chat; a
     /// screen with no link is a list, but for a page waiting for its address.
     func minimumSize(of leaf: PaneLeaf) -> CGSize {
-        if leaf.id == panes.routedLeafID { return PaneMinimumSize.chat }
+        if leaf.id == panes.mainLeafID { return PaneMinimumSize.chat }
         let route = leaf.stack.last?.route ?? .sessions(workspace: nil)
         if case .local(let token) = route, case .browser? = PaneLocalScreen(token) { return PaneMinimumSize.browser }
         if case .local(let token) = route, case .godot? = PaneLocalScreen(token) { return PaneMinimumSize.list }
@@ -147,7 +147,7 @@ extension PaneHostController {
     private func firstResponderCell() -> PaneID? {
         guard let responder = Self.firstResponder(in: view) else { return nil }
         if let (id, _) = splitLeaves.first(where: { responder.isDescendant(of: $0.value.controller.view) }) { return id }
-        return responder.isDescendant(of: view) ? panes.routedLeafID : nil
+        return responder.isDescendant(of: view) ? panes.mainLeafID : nil
     }
 
     func layoutSplitLeaves() {
@@ -386,7 +386,7 @@ extension PaneHostController {
 
     /// The front screen of a cell, for its title and the grip's place.
     func frontScreen(ofCell id: PaneID) -> UIViewController? {
-        let leaf: UIViewController? = id == panes.routedLeafID ? primary : splitLeaves[id]?.controller
+        let leaf: UIViewController? = id == panes.mainLeafID ? primary : splitLeaves[id]?.controller
         return (leaf as? UINavigationController)?.topViewController ?? leaf
     }
 
@@ -413,7 +413,7 @@ extension PaneHostController {
         let collapsed = panes.collapsedCells
         for id in order where showsGrips && !collapsed.contains(id) {
             guard var frame = presentation.frames[id] else { continue }
-            if id == panes.routedLeafID, let leaf = leafController(ofCell: id), !leaf.view.isHidden { frame = leaf.view.frame }
+            if id == panes.mainLeafID, let leaf = leafController(ofCell: id), !leaf.view.isHidden { frame = leaf.view.frame }
             shown.insert(id)
             let grip = grips[id] ?? makeGrip(id)
             grip.show(PaneGripView.Shown(
@@ -442,7 +442,7 @@ extension PaneHostController {
     /// the grip clears the companion's first row rather than the hidden
     /// primary's; else the cell's own leaf.
     private func leafController(ofCell id: PaneID) -> UIViewController? {
-        guard id == panes.routedLeafID else { return splitLeaves[id]?.controller }
+        guard id == panes.mainLeafID else { return splitLeaves[id]?.controller }
         return companionCoveringPrimary ?? primary
     }
 
@@ -454,7 +454,7 @@ extension PaneHostController {
     /// search that hides as the list scrolls); a slot that moves lays the
     /// panes out again.
     private func reserveGripStrip(inCell id: PaneID, height: CGFloat) {
-        if id == panes.routedLeafID {
+        if id == panes.mainLeafID {
             // The primary keeps its strip under a covering companion; a
             // companion beside it has no grip of its own and gives the strip back.
             reserveGripStrip(in: primary, height: height)
@@ -570,7 +570,7 @@ extension PaneHostController {
             return
         }
         let id = cells.focus
-        if id == panes.routedLeafID, !primary.view.isHidden { frame = primary.view.frame }
+        if id == panes.mainLeafID, !primary.view.isHidden { frame = primary.view.frame }
         chip.show(PaneChipView.Shown(title: cellTitle(id), position: index + 1, count: order.count))
         let width = chip.fittingWidth(maximum: frame.width - 32)
         let top = gripTop(ofCell: id, in: frame) + (PaneStripSlot.height - PaneChipView.height) / 2
@@ -711,7 +711,7 @@ extension PaneHostController {
     func menuItems(for id: PaneID) -> [PaneMenuItem] {
         let cells = panes.cellLayout
         let isZoomed = cells.zoomed == id
-        let isSplitLeaf = id != panes.routedLeafID
+        let isSplitLeaf = id != panes.mainLeafID
         let zoom = PaneMenuItem(
             title: isZoomed ? PaneGripView.restoreTitle : String(localized: "Zoom"),
             symbol: isZoomed ? PaneGripView.restoreSymbol : "arrow.up.left.and.arrow.down.right",
@@ -808,7 +808,7 @@ extension PaneHostController {
         var child = screen
         while let parent = child.parent {
             if parent === self {
-                return splitLeaves.first { $0.value.controller === child }?.key ?? panes.routedLeafID
+                return splitLeaves.first { $0.value.controller === child }?.key ?? panes.mainLeafID
             }
             child = parent
         }

@@ -161,16 +161,16 @@ final class PaneHostController: UIViewController {
         view.setNeedsLayout()
     }
 
-    /// The routed leaf (the shell's stack) is about to show another screen.
+    /// The main leaf (the shell's stack) is about to show another screen.
     /// Sidebar taps, links, notifications and Settings all open there, so a
-    /// routed leaf behind another pane's zoom, collapsed, or in overflow is
+    /// main leaf behind another pane's zoom, collapsed, or in overflow is
     /// brought back and focused; otherwise the navigation would seem to do
     /// nothing. The screens a relaunch restores are not navigation and keep
-    /// a restored zoom (`ScenePanes.routedStackNavigated`).
-    func routedLeafWillShowScreen() {
+    /// a restored zoom (`ScenePanes.mainStackNavigated`).
+    func mainLeafWillShowScreen() {
         leafWillShowScreen()
-        guard panes.routedStackNavigated() else { return }
-        let id = panes.routedLeafID
+        guard panes.mainStackNavigated() else { return }
+        let id = panes.mainLeafID
         guard cellFrame(id) == nil || panes.collapsedCells.contains(id) else { return }
         focus(cell: id)
         announceLayoutChange()
@@ -310,7 +310,7 @@ final class PaneHostController: UIViewController {
         divider.onResetRequested = { [weak self] in self?.resetCompanionWidth() }
         installDropInteraction()
         // Tab and Full Keyboard Access move between panes as groups.
-        primary.view.focusGroupIdentifier = "pane.\(panes.routedLeafID.raw)"
+        primary.view.focusGroupIdentifier = "pane.\(panes.mainLeafID.raw)"
         view.accessibilityCustomRotors = [makePanesRotor()]
         for name in [UITextField.textDidBeginEditingNotification, UITextView.textDidBeginEditingNotification] {
             NotificationCenter.default.addObserver(
@@ -463,7 +463,7 @@ final class PaneHostController: UIViewController {
         let restored = panes.takeRestoredCompanionState()
         panes.setCompanionZoomed(opening ? restored.zoomed : zoomedWhenParked)
         applyFitRule()
-        controller.view.focusGroupIdentifier = "pane.\(panes.routedLeafID.raw).companion"
+        controller.view.focusGroupIdentifier = "pane.\(panes.mainLeafID.raw).companion"
         if controller.parent !== self {
             addChild(controller)
             view.insertSubview(controller.view, belowSubview: divider)
@@ -821,7 +821,7 @@ final class PaneHostController: UIViewController {
     private func focus(_ leaf: Leaf) {
         if case .split(let id) = leaf { return focus(cell: id) }
         guard focusedLeaf != leaf, leaf == .primary || companion != nil else { return }
-        if case .split = focusedLeaf { panes.focus(panes.routedLeafID) }
+        if case .split = focusedLeaf { panes.focus(panes.mainLeafID) }
         panes.focusCompanion(leaf == .companion)
         updateVisibility()
     }
@@ -890,7 +890,7 @@ final class PaneHostController: UIViewController {
         let hiddenByKeyboard: (PaneID) -> Bool = { [cellPresentation] id in
             cellPresentation.map { $0.zoomedForKeyboard != nil && $0.frames[id] == nil && !$0.overflow.contains(id) } ?? false
         }
-        let routedHidden: PaneVisibility = hiddenByKeyboard(panes.routedLeafID) ? .covered : .parked
+        let routedHidden: PaneVisibility = hiddenByKeyboard(panes.mainLeafID) ? .covered : .parked
         let covered = companion != nil && showsFull
         report(
             !routedShown ? routedHidden : covered ? .covered : .visible(focused: focusedLeaf == .primary),

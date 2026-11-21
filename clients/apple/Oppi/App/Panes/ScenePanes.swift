@@ -13,14 +13,12 @@ protocol PaneChat: AnyObject {
 }
 
 /// The window's pane tree (`PaneLayout`): its leaves, their weights, focus,
-/// recency and zoom. The routed leaf's stack is the shell's
-/// (`SceneNavigation.workspaceStackRouteElements`) and is read into the tree
-/// when it is saved; every other part lives here. Today a window holds the
-/// routed leaf and at most one attached companion beside it, which the pane
-/// host (`PaneHostController`) draws and reports into the tree: it opens and
-/// closes, takes a share of the width, zooms to the full window (by a drag,
-/// or because it does not fit beside its leaf: build plan §1.3), and takes
-/// focus.
+/// recency and zoom, and each leaf's route (`PaneStack`). Today a window
+/// holds the main leaf and at most one attached companion beside it, which the
+/// pane host (`PaneHostController`) draws and reports into the tree: it opens
+/// and closes, takes a share of the width, zooms to the full window (by a
+/// drag, or because it does not fit beside its leaf: build plan §1.3), and
+/// takes focus.
 ///
 /// This writes the tree when it settles (`PaneTreeStore`, 500 ms after the
 /// last change, and at once when the scene goes to the background), and
@@ -30,16 +28,20 @@ protocol PaneChat: AnyObject {
 /// diff are `.local` and are not saved.
 @MainActor @Observable
 final class ScenePanes {
-    /// The tree. The routed leaf's stack here is a placeholder; `layout(…)`
-    /// fills it from the shell's routes.
+    /// The tree. Leaves in `stacks` (today the main leaf) keep their route
+    /// there, not in `tree`; `layout(…)` writes each into the saved tree.
     private(set) var tree: PaneLayout {
         didSet {
             // Any other change of the zoom ends full screen.
             if let fullScreen, cellLayout.zoomed != fullScreen.cell { self.fullScreen = nil }
         }
     }
-    /// The routed leaf: the shell's stack.
-    private(set) var routedLeafID: PaneID
+    /// Each routed leaf's stack (today the main leaf's); split leaves keep
+    /// their entry in `tree` until N7b routes them through the shell too.
+    private(set) var stacks: [PaneID: PaneStack] = [:]
+    /// The main leaf: the one that cannot close, that iPhone shows, and that
+    /// an outside chat link targets.
+    private(set) var mainLeafID: PaneID
     /// The share of the width a companion rests at, by pairing
     /// (`PanePairing.key`): the last one the person settled on beside that
     /// screen, in this window or (restored) before relaunch.
@@ -70,24 +72,26 @@ final class ScenePanes {
     /// once an empty tree removed the entry.
     @ObservationIgnored private var lastWritten: PaneLayoutArchive?? = .none
     @ObservationIgnored private weak var navigation: SceneNavigation?
-    /// The routed stack a relaunch restored (and its entries resolved into
-    /// their screens), until the person navigates away from it: showing it
-    /// does not reveal a routed leaf a restored zoom hides.
-    @ObservationIgnored private var restoredRoutedStack: [WorkspaceStackRouteElement]?
+    /// The main leaf's route a relaunch restored (and its entries resolved
+    /// into their screens), until the person navigates away from it: showing
+    /// it does not reveal a main leaf a restored zoom hides.
+    @ObservationIgnored private var restoredMainStack: [WorkspaceStackRouteElement]?
     @ObservationIgnored private weak var coordinator: ConnectionCoordinator?
     /// Debounce before a settled change is written.
     private static let settleDelay: Duration = .milliseconds(500)
     /// How long restored screens must hold before the restore counts as
     /// survived (`PaneTreeStore.restoringKey(forScene:)`).
     private static let restoreSurvivalDelay: Duration = .seconds(5)
-    /// The routed leaf's stack until `layout(…)` reads the shell's.
-    private static let routedPlaceholder = PaneStackEntry(serverId: "", route: .local(PaneLocalToken(raw: "routes")))
+
+    /// Neutral stack kept on `mainLeafID` inside `tree` while its live route lives in `stacks`.
+    private static let mainTreeEntry = PaneStackEntry(serverId: "", route: .sessions(workspace: nil))
 
     init() {
         let id = Self.leafID(1)
         nextLeafNumber = 2
-        routedLeafID = id
-        tree = PaneLayout(single: PaneLeaf(id: id, name: nil, stack: [Self.routedPlaceholder], attachedTo: nil, origin: .split))
+        mainLeafID = id
+        stacks = [id: PaneStack(place: .allSessions)]
+        tree = PaneLayout(single: PaneLeaf(id: id, name: nil, stack: [Self.mainTreeEntry], attachedTo: nil, origin: .split))
     }
 
     private static func leafID(_ number: Int) -> PaneID {
@@ -133,9 +137,9 @@ final class ScenePanes {
 
     // MARK: The companion
 
-    /// The attached leaf beside the routed one, if one is open.
+    /// The attached leaf beside the main leaf, if one is open.
     var companionID: PaneID? {
-        tree.leaves.first { $0.attachedTo == routedLeafID }?.id
+        tree.leaves.first { $0.attachedTo == mainLeafID }?.id
     }
 
     /// The share of the width the shown companion rests at: the last one
@@ -150,7 +154,7 @@ final class ScenePanes {
     private(set) var companionZoomIsFit = false
     var isCompanionFocused: Bool { companionID != nil && tree.focus == companionID }
 
-    /// The companion's share of the cell it shares with its routed leaf, as
+    /// The companion's share of the cell it shares with its main leaf, as
     /// the tree's weights hold it; nil without a companion.
     private var companionPairShare: Double? {
         guard let companionID, let path = tree.root.path(of: companionID), let index = path.last, index > 0,
@@ -171,7 +175,7 @@ final class ScenePanes {
         return try? layout.setWeights(at: Array(path.dropLast()), weights)
     }
 
-    /// A companion opened beside the routed leaf, or the open one shows
+    /// A companion opened beside the main leaf, or the open one shows
     /// another panel (`route` is its link, nil when it has none) of
     /// `pairing`. Its weight is the pairing's remembered share, else
     /// `drawnShare` (read once the pairing is set, so it is the new panel's).
@@ -197,8 +201,8 @@ final class ScenePanes {
             if next != tree { tree = next }
             return
         }
-        let leaf = PaneLeaf(id: freshLeafID(), name: nil, stack: stack, attachedTo: routedLeafID, origin: .attached)
-        guard var opened = try? tree.split(routedLeafID, axis: .row, inserting: leaf) else { return }
+        let leaf = PaneLeaf(id: freshLeafID(), name: nil, stack: stack, attachedTo: mainLeafID, origin: .attached)
+        guard var opened = try? tree.split(mainLeafID, axis: .row, inserting: leaf) else { return }
         if let share = share(), let next = Self.settingShare(share, of: leaf.id, in: opened) {
             opened = next
         }
@@ -247,9 +251,9 @@ final class ScenePanes {
         tree = next
     }
 
-    /// Pane focus moved to the companion, or back to the routed leaf.
+    /// Pane focus moved to the companion, or back to the main leaf.
     func focusCompanion(_ onCompanion: Bool) {
-        guard let target = onCompanion ? companionID : routedLeafID, tree.focus != target,
+        guard let target = onCompanion ? companionID : mainLeafID, tree.focus != target,
               let next = try? tree.focusing(target) else { return }
         tree = next
     }
@@ -257,45 +261,45 @@ final class ScenePanes {
     // MARK: Cells and split leaves
 
     /// The leaves Split made (or a restored tree held): every leaf but the
-    /// routed one and its companion, in tree order.
+    /// main one and its companion, in tree order.
     var splitLeaves: [PaneLeaf] {
-        tree.leaves.filter { $0.id != routedLeafID && $0.attachedTo == nil }
+        tree.leaves.filter { $0.id != mainLeafID && $0.attachedTo == nil }
     }
 
     /// The tree the host lays out by the fit rule: one cell per leaf, the
-    /// companion folded into its routed leaf's cell, which draws it inside
+    /// companion folded into its main leaf's cell, which draws it inside
     /// itself (`PaneHostController`). The person's full-window companion is
     /// its cell's zoom; the fit rule's stays inside the cell.
     var cellLayout: PaneLayout {
         guard let companionID, var cells = try? tree.close(companionID) else { return tree }
         if tree.focus == companionID {
-            cells.focus = routedLeafID
-            cells.recency.removeAll { $0 == routedLeafID }
-            cells.recency.insert(routedLeafID, at: 0)
+            cells.focus = mainLeafID
+            cells.recency.removeAll { $0 == mainLeafID }
+            cells.recency.insert(mainLeafID, at: 0)
         }
-        if tree.zoomed == companionID, !companionZoomIsFit { cells.zoomed = routedLeafID }
+        if tree.zoomed == companionID, !companionZoomIsFit { cells.zoomed = mainLeafID }
         return cells
     }
 
     /// Runs `change` on the cells and puts the companion back beside its
-    /// routed leaf, at the share, focus, zoom and recency it had. False when
+    /// main leaf, at the share, focus, zoom and recency it had. False when
     /// the change is refused.
     @discardableResult
     private func changeCells(_ change: (PaneLayout) throws -> PaneLayout) -> Bool {
         guard var next = try? change(cellLayout) else { return false }
-        if let companionID, let companion = tree.leaf(companionID), next.leaf(routedLeafID) != nil,
-           var withCompanion = try? next.split(routedLeafID, axis: .row, inserting: companion) {
+        if let companionID, let companion = tree.leaf(companionID), next.leaf(mainLeafID) != nil,
+           var withCompanion = try? next.split(mainLeafID, axis: .row, inserting: companion) {
             if let share = companionPairShare,
                let shared = Self.settingShare(share, of: companionID, in: withCompanion) {
                 withCompanion = shared
             }
-            withCompanion.recency = next.recency.flatMap { $0 == routedLeafID ? [$0, companionID] : [$0] }
-            if tree.focus == companionID, next.focus == routedLeafID {
+            withCompanion.recency = next.recency.flatMap { $0 == mainLeafID ? [$0, companionID] : [$0] }
+            if tree.focus == companionID, next.focus == mainLeafID {
                 withCompanion.focus = companionID
                 withCompanion.recency.removeAll { $0 == companionID }
                 withCompanion.recency.insert(companionID, at: 0)
             }
-            if tree.zoomed == companionID, companionZoomIsFit || next.zoomed == routedLeafID {
+            if tree.zoomed == companionID, companionZoomIsFit || next.zoomed == mainLeafID {
                 withCompanion.zoomed = companionID
             }
             next = withCompanion
@@ -359,7 +363,7 @@ final class ScenePanes {
     /// Open in Pane: a split leaf shows `entry` in place of what it showed,
     /// focused. Undo brings back what it showed.
     func replace(_ entry: PaneStackEntry, inCell id: PaneID) {
-        guard id != routedLeafID, tree.leaf(id)?.attachedTo == nil else { return }
+        guard id != mainLeafID, tree.leaf(id)?.attachedTo == nil else { return }
         undoable(Self.openInPaneAction) { cells in
             var cells = cells
             cells.root = cells.root.mapLeaves { leaf in
@@ -396,34 +400,26 @@ final class ScenePanes {
         return PaneStackEntry(serverId: context.serverId, route: .local(PaneLocalScreen.launcher(workspaceId: context.workspaceId).token))
     }
 
-    /// The top entry of `id`'s stack; the routed leaf's from the shell.
+    func setStack(_ stack: PaneStack, for id: PaneID) { stacks[id] = stack }
+
+    /// The top entry of `id`, as its grip's title and menu read it: a screen
+    /// no link names is a `.local` one.
     func topEntry(of id: PaneID) -> PaneStackEntry {
-        if id == routedLeafID, let stack = routedStack, let top = stack.last { return top }
-        return tree.leaf(id)?.stack.last ?? Self.routedPlaceholder
+        let top = stacks[id].flatMap { PaneEntries.entries(of: $0, rootServerId: rootServerId).last }
+            ?? tree.leaf(id)?.stack.last
+        return top ?? PaneStackEntry(serverId: rootServerId, route: .sessions(workspace: nil))
     }
 
-    /// The routed leaf's stack as entries, once restore wired the window.
-    private var routedStack: [PaneStackEntry]? {
-        guard let navigation, let coordinator, let serverId = navigation.activeServerId(in: coordinator) else { return nil }
-        return PaneEntries.primaryStack(navigation.workspaceStackRouteElements, rootServerId: serverId)
-    }
+    private var rootServerId: String { coordinator.flatMap { navigation?.activeServerId(in: $0) } ?? "" }
 
     /// The server and workspace a leaf works in: its top screen's, else the
     /// nearest one below it that names a workspace.
     func context(of id: PaneID) -> (serverId: String, workspaceId: String?) {
-        if id == routedLeafID, let navigation {
-            // The shell's own targets name their workspace, also for a chat
-            // opened from All Sessions.
-            for element in navigation.workspaceStackRouteElements.reversed() {
-                if let found = Self.workspace(of: element) { return found }
-            }
-        }
-        let stack = id == routedLeafID ? routedStack ?? [] : tree.leaf(id)?.stack ?? []
-        let serverId = stack.last?.serverId ?? navigation.flatMap { nav in coordinator.flatMap(nav.activeServerId(in:)) } ?? ""
-        for entry in stack.reversed() {
-            if let workspaceId = workspaceId(of: entry) { return (entry.serverId, workspaceId) }
-        }
-        return (serverId, nil)
+        if let stack = stacks[id],
+           let found = stack.elements.reversed().lazy.compactMap(Self.workspace(of:)).first { return found }
+        let entries = stacks[id].map { PaneEntries.entries(of: $0, rootServerId: rootServerId) } ?? tree.leaf(id)?.stack ?? []
+        return entries.reversed().lazy.compactMap { entry in self.workspaceId(of: entry).map { (entry.serverId, $0) } }.first
+            ?? (entries.last?.serverId ?? rootServerId, nil)
     }
 
     private static func workspace(of element: WorkspaceStackRouteElement) -> (serverId: String, workspaceId: String?)? {
@@ -463,21 +459,21 @@ final class ScenePanes {
 
     /// A split leaf shows `entry` in place of what it showed.
     func show(_ entry: PaneStackEntry, in id: PaneID) {
-        guard id != routedLeafID, tree.leaf(id)?.attachedTo == nil else { return }
+        guard id != mainLeafID, tree.leaf(id)?.attachedTo == nil else { return }
         changeCells { try $0.showing(entry, in: id) }
     }
 
-    /// Closes a split leaf. The routed leaf holds the window's stack and does
+    /// Closes a split leaf. The main leaf holds the window's route and does
     /// not close.
     func close(_ id: PaneID) {
-        guard id != routedLeafID, tree.leaf(id)?.attachedTo == nil else { return }
+        guard id != mainLeafID, tree.leaf(id)?.attachedTo == nil else { return }
         undoable(Self.closeAction) { try $0.close(id) }
     }
 
-    /// Every split leaf closes; the routed leaf and its companion stay.
+    /// Every split leaf closes; the main leaf and its companion stay.
     func resetPanes() {
         undoable(Self.resetAction) { cells in
-            try cells.leaves.map(\.id).filter { $0 != routedLeafID }.reduce(cells) { try $0.close($1) }
+            try cells.leaves.map(\.id).filter { $0 != mainLeafID }.reduce(cells) { try $0.close($1) }
         }
     }
 
@@ -522,7 +518,7 @@ final class ScenePanes {
         return changeCells { _ in step.cells }
     }
 
-    /// Zooms a cell to the whole window; nil restores. A zoom of the routed
+    /// Zooms a cell to the whole window; nil restores. A zoom of the main
     /// leaf takes its companion with it.
     func zoom(_ id: PaneID?) {
         changeCells { try $0.zoom(id) }
@@ -562,20 +558,20 @@ final class ScenePanes {
         }
     }
 
-    /// Whether the routed stack about to show is the person's navigation,
-    /// not the stack a relaunch restored. The first change away from the
-    /// restored stack ends the restore's exemption.
-    func routedStackNavigated() -> Bool {
-        guard let restored = restoredRoutedStack else { return true }
-        guard navigation?.workspaceStackRouteElements != restored else { return false }
-        restoredRoutedStack = nil
+    /// Whether the main leaf's route about to show is the person's
+    /// navigation, not the route a relaunch restored. The first change away
+    /// from the restored route ends the restore's exemption.
+    func mainStackNavigated() -> Bool {
+        guard let restored = restoredMainStack else { return true }
+        guard stacks[mainLeafID]?.elements != restored else { return false }
+        restoredMainStack = nil
         return true
     }
 
     /// A restored entry resolved into its screen in place: still the
-    /// restore's stack, not navigation.
-    func routedEntryResolved(from before: [WorkspaceStackRouteElement], to after: [WorkspaceStackRouteElement]) {
-        if restoredRoutedStack == before { restoredRoutedStack = after }
+    /// restore's route, not navigation.
+    func mainEntryResolved(from before: [WorkspaceStackRouteElement], to after: [WorkspaceStackRouteElement]) {
+        if restoredMainStack == before { restoredMainStack = after }
     }
 
     /// Collapses a cell to its strip; focus moves to the most recent open
@@ -603,10 +599,10 @@ final class ScenePanes {
         undoable(Self.moveAction) { try $0.swap(first, second) }
     }
 
-    /// Focuses a cell: the routed leaf, or a split leaf.
+    /// Focuses a cell: the main leaf, or a split leaf.
     func focus(_ id: PaneID) {
         guard tree.focus != id else { return }
-        if id == routedLeafID, tree.focus == companionID { return }
+        if id == mainLeafID, tree.focus == companionID { return }
         changeCells { try $0.focusing(id) }
     }
 
@@ -690,22 +686,20 @@ final class ScenePanes {
 
     // MARK: Snapshot
 
-    /// The window's tree now, with the routed leaf's stack read from the
-    /// shell. A companion is kept only beside a chat, the one screen whose
-    /// panels have links. A panel still waiting for its chat (the chat is a
-    /// leaf state until its server connects) stays in the tree, so a save
-    /// meanwhile does not lose it.
-    func layout(navigation: SceneNavigation, rootServerId: String) -> PaneLayout {
-        let stack = PaneEntries.primaryStack(navigation.workspaceStackRouteElements, rootServerId: rootServerId)
-        let routed = routedLeafID
+    /// The window's tree now, every leaf's stack as it is saved from its route
+    /// (`PaneEntries.entries(of:rootServerId:)`). A companion is kept only
+    /// beside a chat, the one screen whose panels have links. A panel still
+    /// waiting for its chat (the chat is a leaf state until its server
+    /// connects) stays in the tree, so a save meanwhile does not lose it.
+    func layout(rootServerId: String) -> PaneLayout {
         var layout = tree
         layout.root = layout.root.mapLeaves { leaf in
-            guard leaf.id == routed else { return leaf }
+            guard let stack = stacks[leaf.id] else { return leaf }
             var leaf = leaf
-            leaf.stack = stack
+            leaf.stack = PaneEntries.entries(of: stack, rootServerId: rootServerId)
             return leaf
         }
-        guard let top = stack.last, case .session(let sessionId) = top.route else {
+        guard let top = layout.leaf(mainLeafID)?.stack.last, case .session(let sessionId) = top.route else {
             if let companionID, let closed = try? layout.close(companionID) { return closed }
             return layout
         }
@@ -714,10 +708,10 @@ final class ScenePanes {
             id: (0...).lazy.map(Self.leafID).first { layout.leaf($0) == nil } ?? Self.leafID(0),
             name: nil,
             stack: [PaneStackEntry(serverId: top.serverId, route: waiting)],
-            attachedTo: routed,
+            attachedTo: mainLeafID,
             origin: .attached
         )
-        guard var withPanel = try? layout.split(routed, axis: .row, inserting: side) else { return layout }
+        guard var withPanel = try? layout.split(mainLeafID, axis: .row, inserting: side) else { return layout }
         if let share = rememberedShares[PanePairing.restoredChatPanelKey(waiting)],
            let next = Self.settingShare(share, of: side.id, in: withPanel) {
             withPanel = next
@@ -729,8 +723,8 @@ final class ScenePanes {
 
     // MARK: Restore
 
-    /// Applies the tree read at `connect`: the routed leaf's screens, then
-    /// the chat's panel, width share, focus, zoom and reading position, which
+    /// Applies the tree read at `connect`: the main leaf's route, then the
+    /// chat's panel, width share, focus, zoom and reading position, which
     /// the chat takes as it appears. With App Lock on, this waits for unlock
     /// so nothing mounts behind the cover. Then the window's changes are
     /// saved. `applying: false` drops the saved tree (nothing paired to show
@@ -771,49 +765,43 @@ final class ScenePanes {
         markRestoringUntilSurvived()
         rememberedShares = archive.companionShares
         let layout = archive.layout
-        // The routed leaf keeps the id a window's first leaf gets; split
-        // leaves get later ones. An older tree names it only by being first.
+        // The main leaf keeps the id a window's first leaf gets; split leaves
+        // get later ones. An older tree names it only by being first.
         let unattached = layout.leaves.filter { $0.attachedTo == nil }
-        guard let primary = unattached.first(where: { $0.id == Self.leafID(1) }) ?? unattached.first else { return }
-        routedLeafID = primary.id
+        guard let main = unattached.first(where: { $0.id == Self.leafID(1) }) ?? unattached.first else { return }
+        let place: NavigationPlace = if case .workspace(let target)? = main.stack.first.flatMap({
+            PaneEntries.element(for: $0, coordinator: coordinator)
+        }) { .sessions(target) } else { .allSessions }
+        let route = PaneStack(place: place, stack: main.stack.dropFirst().map { entry in
+            PaneEntries.state(of: entry, coordinator: coordinator) == .content
+                ? PaneEntries.element(for: entry, coordinator: coordinator) ?? .paneEntry(entry)
+                : .paneEntry(entry)
+        })
+        let previousMain = stacks[mainLeafID]
+        mainLeafID = main.id
+        stacks = previousMain.map { [main.id: $0] } ?? [:]
         // The split leaves come back where they were; the companion comes
-        // back when its chat shows (`handoff.panel`), so it leaves the tree.
+        // back when its chat shows (`handoff.panel`), so it leaves the tree,
+        // and the main leaf's live route lives in `stacks`, not `tree`.
         var restored = layout
         for leaf in layout.leaves where leaf.attachedTo != nil {
             if restored.leaf(leaf.id) != nil, let closed = try? restored.close(leaf.id) { restored = closed }
         }
         restored.root = restored.root.mapLeaves { leaf in
-            guard leaf.id == primary.id else { return leaf }
+            guard leaf.id == main.id else { return leaf }
             var leaf = leaf
-            leaf.stack = [Self.routedPlaceholder]
+            leaf.stack = [Self.mainTreeEntry]
             return leaf
         }
         restored.zoomed = restored.zoomed.flatMap { layout.leaf($0)?.attachedTo == nil ? $0 : nil }
         tree = restored
-        restoredLeaves = Set(restored.leaves.map(\.id)).subtracting([primary.id])
-        var elements: [WorkspaceStackRouteElement] = []
-        for (index, entry) in primary.stack.enumerated() {
-            if index == 0 {
-                // The root: a workspace's sessions when it still exists, else All Sessions.
-                if case .sessions(_?) = entry.route,
-                   let element = PaneEntries.element(for: entry, coordinator: coordinator) {
-                    elements.append(element)
-                }
-                continue
-            }
-            if PaneEntries.state(of: entry, coordinator: coordinator) == .content,
-               let element = PaneEntries.element(for: entry, coordinator: coordinator) {
-                elements.append(element)
-            } else {
-                elements.append(.paneEntry(entry))
-            }
-        }
-        navigation.restorePrimaryStack(elements)
-        restoredRoutedStack = navigation.workspaceStackRouteElements
+        restoredLeaves = Set(restored.leaves.map(\.id)).subtracting([main.id])
+        navigation.restoreMainRoute(route)
+        restoredMainStack = route.elements
 
-        guard case .session(let sessionId)? = primary.stack.last?.route else { return }
-        handoff.scroll = archive.chatScroll[primary.id].flatMap { $0.sessionId == sessionId ? $0 : nil }
-        guard let companion = layout.leaves.first(where: { $0.attachedTo == primary.id }),
+        guard case .session(let sessionId)? = main.stack.last?.route else { return }
+        handoff.scroll = archive.chatScroll[main.id].flatMap { $0.sessionId == sessionId ? $0 : nil }
+        guard let companion = layout.leaves.first(where: { $0.attachedTo == main.id }),
               let route = companion.stack.last?.route else { return }
         // The open panel's weight is the share it rests at.
         if let path = layout.root.path(of: companion.id), let index = path.last, index > 0,
@@ -870,11 +858,11 @@ final class ScenePanes {
 
     /// The tree as saved, or nil (`.none`) before restore wired the window:
     /// Incognito chats, and the files opened from their session copies,
-    /// leave nothing behind; the routed chat's reading position comes from
+    /// leave nothing behind; the main leaf's chat reading position comes from
     /// the live chat; and each pairing's remembered share is kept.
     private func currentArchive() -> PaneLayoutArchive?? {
         guard let navigation, let rootServerId = coordinator.flatMap(navigation.activeServerId(in:)) else { return .none }
-        var layout = layout(navigation: navigation, rootServerId: rootServerId)
+        var layout = layout(rootServerId: rootServerId)
         // A zoom the window's width forced is redrawn from the width.
         if companionZoomIsFit, layout.zoomed == companionID { layout.zoomed = nil }
         // Full screen is not restored: the split comes back as it was.
@@ -894,11 +882,11 @@ final class ScenePanes {
             return leaf
         }
         var scroll: [PaneID: PaneChatScroll] = [:]
-        if case .session(let sessionId)? = layout.leaf(routedLeafID)?.stack.last?.route {
+        if case .session(let sessionId)? = layout.leaf(mainLeafID)?.stack.last?.route {
             let reports = chats.allObjects.compactMap { ($0 as? PaneChat)?.paneChatScroll }
             // A restored position the chat has not taken yet is still the
             // reader's place.
-            scroll[routedLeafID] = reports.first { $0.sessionId == sessionId }
+            scroll[mainLeafID] = reports.first { $0.sessionId == sessionId }
                 ?? handoff.scroll.flatMap { $0.sessionId == sessionId ? $0 : nil }
         }
         return .some(PaneLayoutArchive(

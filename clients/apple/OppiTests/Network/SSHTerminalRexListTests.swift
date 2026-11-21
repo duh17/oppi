@@ -1515,8 +1515,8 @@ struct SSHTerminalRexSectionTests {
         #expect(fake.requests("session.attach").count == 1)
 
         // Move focus back to the Rex list pane, then ask to open b2 in a new pane.
-        panes.focus(cell: panes.panes.routedLeafID)
-        #expect(panes.panes.tree.focus == panes.panes.routedLeafID)
+        panes.focus(cell: panes.panes.mainLeafID)
+        #expect(panes.panes.tree.focus == panes.panes.mainLeafID)
 
         let b2Items = rig.list.rexPaneMenuItems(near: collection, for: b2Row)
         try #require(b2Items.first).run()
