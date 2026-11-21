@@ -1211,6 +1211,9 @@ final class ConnectionCoordinator {
         connection?.workspaceStore.removeServer(serverId)
         await timelineCache.removeServer(serverId)
         await fileBrowserCache.removeServer(serverId)
+        // The icons this device kept, so a removed server leaves none of its art
+        // behind; pairing it again fetches them.
+        IconAssetCache.DiskStore.removeBytes(for: serverId)
         // URLCache cannot remove by host. It holds only disposable copies, so clear all of it.
         LocalHTTPCache.clear()
     }

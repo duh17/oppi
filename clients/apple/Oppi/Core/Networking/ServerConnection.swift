@@ -568,7 +568,8 @@ final class ServerConnection {
         }
         apiClient = client
         iconAssetCache?.removeAll()
-        iconAssetCache = client.map(IconAssetCache.init(apiClient:))
+        let serverId = currentServerId
+        iconAssetCache = client.map { IconAssetCache(apiClient: $0, serverId: serverId) }
     }
 
     private func makeClientEnvironment(

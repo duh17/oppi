@@ -1,8 +1,16 @@
+import CryptoKit
 import Foundation
 import ImageIO
 import UIKit
 import UniformTypeIdentifiers
 
+/// A server's icon artwork on this device: decoded images in memory, and the
+/// bytes behind them on disk so an icon draws on the first frame after a
+/// relaunch or a reconnect instead of the fallback symbol.
+///
+/// The disk tier is the same cache's, not a second one: `removeAll()` drops the
+/// decoded memory a new API client invalidates and leaves the device's bytes,
+/// and every read takes the same size and decode checks the network does.
 @MainActor
 final class IconAssetCache {
     typealias Fetch = @Sendable (String) async throws -> Data
@@ -34,6 +42,13 @@ final class IconAssetCache {
     private let rawData = NSCache<NSString, NSData>()
     private let fetch: Fetch
     private let decode: Decode
+    /// Where fetched bytes are kept between launches, nil for a cache that has
+    /// no server to key them by (a preview, a test).
+    private let disk: DiskStore?
+    /// The assets this device holds bytes for, read once from its folder. Only
+    /// these are read from disk, so an icon the device never stored never
+    /// touches the file system on the draw path.
+    private var storedAssets: Set<String>
     private var inFlight: [String: InFlight] = [:]
     /// One fetch per asset at a time, shared by every decode size and `data`.
     private var byteLoads: [String: Task<Data, Error>] = [:]
@@ -43,19 +58,25 @@ final class IconAssetCache {
 
     init(
         fetch: @escaping Fetch,
-        decode: @escaping Decode = IconAssetCache.decodeRemoteIcon
+        decode: @escaping Decode = IconAssetCache.decodeRemoteIcon,
+        disk: DiskStore? = nil
     ) {
         self.fetch = fetch
         self.decode = decode
+        self.disk = disk
+        storedAssets = disk?.assetIds() ?? []
         entries.countLimit = 128
         entries.totalCostLimit = 16 * 1024 * 1024
         rawData.totalCostLimit = 8 * 1024 * 1024
     }
 
-    convenience init(apiClient: APIClient) {
-        self.init { assetId in
-            try await apiClient.fetchIconAsset(assetId: assetId)
-        }
+    convenience init(apiClient: APIClient, serverId: String?) {
+        self.init(
+            fetch: { assetId in
+                try await apiClient.fetchIconAsset(assetId: assetId)
+            },
+            disk: serverId.map { DiskStore(serverId: $0) }
+        )
     }
 
     func image(assetId: String, size: CGFloat) async throws -> UIImage {
@@ -100,10 +121,17 @@ final class IconAssetCache {
         }
         let fetch = self.fetch
         let rawData = self.rawData
-        let load = Task { @MainActor in
-            let data = try await fetch(assetId)
-            guard Self.isAcceptableAssetSize(data) else {
-                throw APIError.server(status: 422, message: "Icon asset data is invalid")
+        let stored = storedData(assetId)
+        let load = Task { @MainActor [weak self, stored] in
+            let data: Data
+            if let stored {
+                data = stored
+            } else {
+                data = try await fetch(assetId)
+                guard Self.isAcceptableAssetSize(data) else {
+                    throw APIError.server(status: 422, message: "Icon asset data is invalid")
+                }
+                self?.keep(data, assetId: assetId)
             }
             if !Self.isHEIF(data) {
                 rawData.setObject(data as NSData, forKey: assetId as NSString, cost: data.count)
@@ -128,8 +156,25 @@ final class IconAssetCache {
 
     /// The artwork if it is already decoded at `size`, for a caller that draws
     /// once and cannot await: a menu's action image, a list row's icon.
+    ///
+    /// The first draw after a launch or a reconnect finds nothing decoded and
+    /// asks the device: a stored asset decodes here, in the frame its caller is
+    /// configuring, so the row never shows the fallback symbol first. One small
+    /// file read and a bounded decode is what replaces a fallback raster; an
+    /// asset the device did not store is not read at all.
     func cachedImage(assetId: String, size: CGFloat) -> UIImage? {
-        entries.object(forKey: Self.cacheKey(assetId: assetId, size: size) as NSString)?.image
+        let key = Self.cacheKey(assetId: assetId, size: size)
+        if let cached = entries.object(forKey: key as NSString) {
+            return cached.image
+        }
+        guard let data = storedData(assetId) else { return nil }
+        guard let entry = try? makeEntry(data: data, size: size) else {
+            // Bytes that will not decode are worth less than a fetch.
+            discard(assetId)
+            return nil
+        }
+        remember(entry, data: data, assetId: assetId, key: key)
+        return entry.image
     }
 
     private static func cacheKey(assetId: String, size: CGFloat) -> String {
@@ -140,6 +185,8 @@ final class IconAssetCache {
         failed.contains(assetId)
     }
 
+    /// Drops what this cache decoded and fetched, for a new API client. The
+    /// device's bytes stay: they are what the next draw reads before it waits.
     func removeAll() {
         entries.removeAllObjects()
         rawData.removeAllObjects()
@@ -168,23 +215,19 @@ final class IconAssetCache {
         }
 
         let requestID = UUID()
-        let decode = self.decode
         let task = Task { @MainActor [weak self] in
             guard let self else { throw CancellationError() }
+            // A hub that renders a session list asks every size it draws: the
+            // device's bytes answer those before any fetch does.
+            if let stored = storedData(assetId) {
+                if let entry = try? makeEntry(data: stored, size: size) {
+                    return entry
+                }
+                discard(assetId)
+            }
             let data = try await self.data(assetId: assetId)
             try Task.checkCancellation()
-
-            // Remote Agent/workspace bytes are untrusted even after the
-            // authenticated fetch. Decode through ImageIO's failable boundary;
-            // never pass fetched bytes to NSAdaptiveImageGlyph, whose initializer
-            // requires conforming input as a precondition.
-            let decoded = try decode(data, size)
-            try Task.checkCancellation()
-            return Entry(
-                retainedObject: decoded.retainedObject,
-                image: decoded.image,
-                cost: Self.decodedByteCost(for: decoded.image)
-            )
+            return try makeEntry(data: data, size: size)
         }
         inFlight[key] = InFlight(
             requestID: requestID,
@@ -231,6 +274,198 @@ final class IconAssetCache {
                 failed.insert(assetId)
             }
             request.waiters.values.forEach { $0.resume(throwing: error) }
+        }
+    }
+
+    /// Remote Agent/workspace bytes are untrusted however they arrived. Decode
+    /// through ImageIO's failable boundary; never pass fetched bytes to
+    /// NSAdaptiveImageGlyph, whose initializer requires conforming input as a
+    /// precondition.
+    private func makeEntry(data: Data, size: CGFloat) throws -> Entry {
+        let decoded = try decode(data, size)
+        return Entry(
+            retainedObject: decoded.retainedObject,
+            image: decoded.image,
+            cost: Self.decodedByteCost(for: decoded.image)
+        )
+    }
+
+    private func remember(_ entry: Entry, data: Data, assetId: String, key: String) {
+        entries.setObject(entry, forKey: key as NSString, cost: entry.cost)
+        if !Self.isHEIF(data) {
+            rawData.setObject(data as NSData, forKey: assetId as NSString, cost: data.count)
+        }
+    }
+
+    // MARK: - The bytes this device keeps
+
+    /// The device's bytes for `assetId`, or nil when it holds none or holds one
+    /// that fails a read's checks, which is deleted so the next load refetches it.
+    private func storedData(_ assetId: String) -> Data? {
+        guard let disk, storedAssets.contains(assetId) else { return nil }
+        guard let data = disk.read(assetId), Self.isAcceptableAssetSize(data) else {
+            discard(assetId)
+            return nil
+        }
+        return data
+    }
+
+    /// Forgets stored bytes this cache cannot use, so the next load fetches them.
+    private func discard(_ assetId: String) {
+        disk?.remove(assetId)
+        storedAssets.remove(assetId)
+    }
+
+    /// Keeps a fetched asset on the device for the next launch. The write lists
+    /// the folder to stay inside its bound, so it runs off the main thread and
+    /// nothing waits for it: a launch that ends first costs one refetch.
+    private func keep(_ data: Data, assetId: String) {
+        guard let disk, DiskStore.isStorableAssetId(assetId) else { return }
+        storedAssets.insert(assetId)
+        Task.detached(priority: .utility) {
+            disk.write(assetId: assetId, data: data)
+        }
+    }
+
+    /// The bytes kept on this device: one file per asset, under one folder per
+    /// server, in the app's Caches. An asset id is the asset's own hash and
+    /// never changes, so a stored entry never goes stale; the folder per server
+    /// keeps two servers' artwork apart; and the bound keeps the whole device's
+    /// copy small, oldest first. The system may evict it like any cache.
+    ///
+    /// `nonisolated`: it is plain file I/O, so a write and its folder listing run
+    /// off the main thread, while the draw path reads it synchronously.
+    nonisolated struct DiskStore: Sendable {
+        /// What one server's entries may add up to before the oldest go.
+        static let maximumBytes = 8 * 1024 * 1024
+
+        let root: URL
+        private let byteLimit: Int
+
+        init(root: URL, maximumBytes: Int = Self.maximumBytes) {
+            self.root = root
+            byteLimit = maximumBytes
+        }
+
+        /// The store for `serverId`, under `<caches>/IconAssets/<key>`: a keyed
+        /// folder name, so a server id that carries punctuation never reaches the
+        /// file system.
+        init(
+            serverId: String,
+            caches: URL = AppLibrary.caches(),
+            maximumBytes: Int = Self.maximumBytes
+        ) {
+            self.init(
+                root: Self.folder(in: caches)
+                    .appendingPathComponent(Self.folderKey(serverId), isDirectory: true),
+                maximumBytes: maximumBytes
+            )
+        }
+
+        /// Every server's stored artwork on this device, in bytes: what Storage &
+        /// About adds to its cache size.
+        static func storedBytes(caches: URL = AppLibrary.caches()) -> Int64 {
+            guard let files = FileManager.default.enumerator(
+                at: Self.folder(in: caches),
+                includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]
+            ) else { return 0 }
+            var total: Int64 = 0
+            for case let url as URL in files {
+                let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+                if values?.isRegularFile == true { total += Int64(values?.fileSize ?? 0) }
+            }
+            return total
+        }
+
+        /// Deletes a removed server's artwork. Its icons are fetched again if it
+        /// is ever paired again.
+        static func removeBytes(for serverId: String, caches: URL = AppLibrary.caches()) {
+            try? FileManager.default.removeItem(
+                at: Self.folder(in: caches).appendingPathComponent(folderKey(serverId), isDirectory: true)
+            )
+        }
+
+        /// Deletes every server's artwork, for Clear Local Cache.
+        static func removeAllBytes(caches: URL = AppLibrary.caches()) {
+            try? FileManager.default.removeItem(at: Self.folder(in: caches))
+        }
+
+        /// Where every server's folder lives.
+        private static func folder(in caches: URL) -> URL {
+            caches.appendingPathComponent("IconAssets", isDirectory: true)
+        }
+
+        /// Every asset this folder holds.
+        func assetIds() -> Set<String> {
+            guard let names = try? FileManager.default.contentsOfDirectory(atPath: root.path) else { return [] }
+            return Set(names.filter(Self.isStorableAssetId))
+        }
+
+        func read(_ assetId: String) -> Data? {
+            guard Self.isStorableAssetId(assetId) else { return nil }
+            return FileManager.default.contents(atPath: fileURL(assetId).path)
+        }
+
+        func write(assetId: String, data: Data) {
+            guard Self.isStorableAssetId(assetId) else { return }
+            try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            try? data.write(to: fileURL(assetId), options: .atomic)
+            trim()
+        }
+
+        func remove(_ assetId: String) {
+            guard Self.isStorableAssetId(assetId) else { return }
+            try? FileManager.default.removeItem(at: fileURL(assetId))
+        }
+
+        /// Keeps the folder within its bound, least recently written first.
+        private func trim() {
+            let keys: Set<URLResourceKey> = [.fileSizeKey, .isRegularFileKey, .contentModificationDateKey]
+            guard let entries = try? FileManager.default.contentsOfDirectory(
+                at: root,
+                includingPropertiesForKeys: Array(keys)
+            ) else { return }
+            var files: [(url: URL, bytes: Int, writtenAt: Date)] = []
+            var total = 0
+            for url in entries {
+                guard let values = try? url.resourceValues(forKeys: keys),
+                      values.isRegularFile == true else { continue }
+                let bytes = values.fileSize ?? 0
+                files.append((url, bytes, values.contentModificationDate ?? .distantPast))
+                total += bytes
+            }
+            guard total > byteLimit else { return }
+            for file in files.sorted(by: { $0.writtenAt < $1.writtenAt }) where total > byteLimit {
+                guard (try? FileManager.default.removeItem(at: file.url)) != nil else { continue }
+                total -= file.bytes
+            }
+        }
+
+        private func fileURL(_ assetId: String) -> URL {
+            root.appendingPathComponent(assetId)
+        }
+
+        /// An asset id this store may name a file after: the ids the protocol
+        /// carries (ASCII letters, digits, `-`, `_`). An id a server made up
+        /// another way stays in memory, so it can never name a path.
+        static func isStorableAssetId(_ assetId: String) -> Bool {
+            guard !assetId.isEmpty, assetId.utf8.count <= 128 else { return false }
+            return assetId.utf8.allSatisfy { byte in
+                switch byte {
+                case UInt8(ascii: "0")...UInt8(ascii: "9"),
+                     UInt8(ascii: "A")...UInt8(ascii: "Z"),
+                     UInt8(ascii: "a")...UInt8(ascii: "z"),
+                     UInt8(ascii: "-"), UInt8(ascii: "_"):
+                    return true
+                default:
+                    return false
+                }
+            }
+        }
+
+        /// A deterministic, filesystem-safe folder name for a server id.
+        private static func folderKey(_ serverId: String) -> String {
+            SHA256.hash(data: Data(serverId.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
         }
     }
 

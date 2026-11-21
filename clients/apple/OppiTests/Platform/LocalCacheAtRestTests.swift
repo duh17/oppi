@@ -102,6 +102,43 @@ struct LocalCacheAtRestTests {
         #expect(await files.diskSize() == 0)
     }
 
+    /// The icon artwork Clear keeps on the device is part of the size Storage &
+    /// About reports, and Clear takes every server's copy with the other caches.
+    @Test func clearLocalCacheDeletesTheStoredIconsAndTheSizeCountsThem() async throws {
+        let base = try makeTempDirectory()
+        defer { try? fileManager.removeItem(at: base) }
+        let timeline = TimelineCache(rootURL: base.appending(path: "timeline"))
+        let files = FileBrowserCache(root: base.appending(path: "files"))
+        let caches = base.appending(path: "caches", directoryHint: .isDirectory)
+        let http = base.appending(path: "http", directoryHint: .isDirectory)
+        let assetId = "ia_" + String(repeating: "A", count: 43)
+        // Two servers, so the clear is the whole device's copy and not one folder.
+        IconAssetCache.DiskStore(serverId: "sha256:a", caches: caches)
+            .write(assetId: assetId, data: Data(repeating: 7, count: 4_096))
+        IconAssetCache.DiskStore(serverId: "sha256:b", caches: caches)
+            .write(assetId: assetId, data: Data(repeating: 7, count: 2_048))
+
+        let before = await LocalCache.byteCount(
+            timelineCache: timeline, fileBrowserCache: files, iconCaches: caches
+        )
+        #expect(IconAssetCache.DiskStore.storedBytes(caches: caches) == 6_144)
+        #expect(before >= 6_144, "the reported size includes the stored icons")
+
+        await LocalCache.clear(
+            timelineCache: timeline,
+            fileBrowserCache: files,
+            httpCacheDirectory: http,
+            iconCaches: caches
+        )
+
+        #expect(IconAssetCache.DiskStore.storedBytes(caches: caches) == 0)
+        #expect(!fileManager.fileExists(atPath: caches.appending(path: "IconAssets").path))
+        let after = await LocalCache.byteCount(
+            timelineCache: timeline, fileBrowserCache: files, iconCaches: caches
+        )
+        #expect(after <= before - 6_144, "the cleared icons left the reported size")
+    }
+
     /// Clear Local Cache deletes cache bytes and nothing else. App Lock lives in
     /// the App Group suite; every other setting lives in the app's own domain. Both
     /// are `Library/Preferences` plists (the group's in its own container), so the

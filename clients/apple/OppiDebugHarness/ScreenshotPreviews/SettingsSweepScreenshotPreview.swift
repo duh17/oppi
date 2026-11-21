@@ -241,9 +241,10 @@ final class SettingsSweepPreviewController: PreviewRootController {
         connection.setPreviewServerId(server.id)
         connection.setPreviewAPIClient(client)
         // Artwork loads through the connection's icon cache, which a preview client
-        // does not install: the capture's own icon asset needs one.
+        // does not install: the capture's own icon asset needs one, kept on this
+        // device under the preview server's id like the app's.
         if Self.agentIconGIF != nil {
-            connection.setIconAssetCacheForTesting(IconAssetCache(apiClient: client))
+            connection.setIconAssetCacheForTesting(IconAssetCache(apiClient: client, serverId: server.id))
         }
         connection.serverResourceStore.replaceSkills(Self.skills, serverId: server.id)
         // `extensions-unavailable` has no cached catalog; its page clears the disk cache first.
@@ -561,9 +562,14 @@ final class SettingsSweepPreviewController: PreviewRootController {
     /// animated icon without a server holding one. Without it the Agent keeps its
     /// default icon. The id is one `IconChoice` accepts (`ia_` and 43 URL-safe
     /// characters); any other string decodes as the default icon.
+    /// `SCREENSHOT_AGENT_ICON_OFFLINE=1` fails the icon's own route, so a second
+    /// launch shows what this device drew on its own: the icon it kept, or the
+    /// fallback symbol when it kept nothing.
     private static let agentIconAssetId = "ia_" + String(repeating: "b", count: 43)
     private static let agentIconGIF: Data? = ProcessInfo.processInfo.environment["SCREENSHOT_AGENT_ICON_GIF"]
         .flatMap { FileManager.default.contents(atPath: $0) }
+    private static let agentIconFetchFails =
+        ProcessInfo.processInfo.environment["SCREENSHOT_AGENT_ICON_OFFLINE"] == "1"
     private static let agentIcon: IconChoice = agentIconGIF == nil
         ? .defaultValue
         : .image(assetId: agentIconAssetId)
@@ -683,7 +689,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
             )),
             "/server/resources/extensions/oppi-control": json(controlDetail),
             "/agents": json(Agents(agents: [agentSummary])),
-            "/icon-assets/\(agentIconAssetId)": agentIconGIF ?? Data(),
+            "/icon-assets/\(agentIconAssetId)": agentIconFetchFails ? Data() : agentIconGIF ?? Data(),
             "/schedules/\(schedule.id)/runs": Data(#"{"runs":[]}"#.utf8),
         ]
         // A record's reads and writes answer from one state, so a save is what
