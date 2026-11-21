@@ -167,6 +167,19 @@ final class NativeMarkdownImageView: UIView {
     /// loading placeholder, loaded aspect-fit media, and error states.
     private var heightConstraint: NSLayoutConstraint?
 
+    /// Height over width of the media on screen, once any size is known: from
+    /// the fetched bytes' pixel size before the decode finishes, then the
+    /// decoded image. Kept so the height can be fitted again at another width
+    /// without another load.
+    private var sourceHeightToWidthRatio: CGFloat?
+    /// The width `heightConstraint` currently fits. A laid-out width that
+    /// differs (a pane opened, a rotation, the row reconfigured narrower)
+    /// means the height is stale and the image is drawn letterboxed in a row
+    /// that is too tall, so `layoutSubviews` fits it again.
+    private var fittedWidth: CGFloat?
+    /// One refit is queued off the current layout pass.
+    private var refitScheduled = false
+
     /// Placeholder height shown while loading. Ensures the view is visible
     /// in the stack view during async fetches (workspace or URLSession).
     private static let loadingPlaceholderHeight = ImageViewportSizing.defaultPlaceholderHeight
@@ -293,6 +306,28 @@ final class NativeMarkdownImageView: UIView {
         if preparesForDisplay {
             activatePreparedDisplay()
         }
+        scheduleRefitIfWidthChanged()
+    }
+
+    /// The row lays this picture out at a width its height was not fitted for
+    /// (a pane opened beside the chat, a rotation, the row reconfigured
+    /// narrower). Fit it again from the known aspect ratio, off this layout
+    /// pass: a height set inside the pass is one the collection view has
+    /// already measured the row for, and the row would keep the width before's
+    /// height until it left the screen. A decode finishing between passes
+    /// re-measures the row, and so does this.
+    private func scheduleRefitIfWidthChanged() {
+        guard sourceHeightToWidthRatio != nil, bounds.width > 1,
+              abs(bounds.width - (fittedWidth ?? 0)) > 0.5,
+              !refitScheduled else { return }
+        refitScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.refitScheduled = false
+            guard let ratio = self.sourceHeightToWidthRatio, self.bounds.width > 1,
+                  abs(self.bounds.width - (self.fittedWidth ?? 0)) > 0.5 else { return }
+            self.applyFittedDisplayHeight(width: 1, height: ratio)
+        }
     }
 
     func apply(
@@ -366,6 +401,9 @@ final class NativeMarkdownImageView: UIView {
             cancelPreparationDemand()
             currentRequestIdentity = identity
             currentURL = url
+            sourceHeightToWidthRatio = nil
+            fittedWidth = nil
+            refitScheduled = false
             self.preferredDisplayWidth = canonicalWidth
             self.displaySize = displaySize
             setMediaWidth(nil)
@@ -829,10 +867,16 @@ final class NativeMarkdownImageView: UIView {
             width: width,
             height: height
         ) ?? 1
-        let displayWidth = preferredDisplayWidth
-            ?? (bounds.width > 0
-                ? bounds.width
-                : ((superview?.bounds.width).flatMap { $0 > 0 ? $0 : nil } ?? 360))
+        sourceHeightToWidthRatio = heightToWidthRatio
+        // The width this view is laid out at is the one the picture is drawn
+        // in. Before its first layout (a cell configured off screen) the row's
+        // prepared width stands in, and `layoutSubviews` fits again once the
+        // real one is known.
+        let displayWidth = bounds.width > 1
+            ? bounds.width
+            : (preferredDisplayWidth
+                ?? ((superview?.bounds.width).flatMap { $0 > 0 ? $0 : nil } ?? 360))
+        fittedWidth = displayWidth
         let displayHeight = ImageViewportSizing.fittedHeight(
             forWidth: displayWidth,
             heightToWidthRatio: heightToWidthRatio,
@@ -1394,6 +1438,29 @@ final class NativeMarkdownImageView: UIView {
 extension NativeMarkdownImageView {
     func debugSetDisplayHeightForTesting(_ height: CGFloat) {
         setDisplayHeight(height)
+    }
+
+    /// What a fit at `width` gives for the image that is on screen now.
+    func debugFittedHeightForTesting(width: CGFloat, screenHeight: CGFloat?) -> CGFloat? {
+        guard let size = imageView.image?.size, size.width > 0, size.height > 0 else { return nil }
+        return ImageViewportSizing.fittedHeight(
+            forWidth: width,
+            heightToWidthRatio: ImageViewportSizing.validatedHeightToWidthRatio(
+                width: size.width,
+                height: size.height
+            ) ?? 1,
+            surface: .inlineProse,
+            screenHeight: screenHeight
+        )
+    }
+
+    /// Which of this view's states is showing, for a layout test's failure message.
+    var debugStateForTesting: String {
+        let alt = altLabel.isHidden ? "-" : (altLabel.text ?? "")
+        let error = errorLabel.isHidden ? "-" : (errorLabel.text ?? "")
+        let prompt = remotePromptStack.isHidden ? "-" : "shown"
+        return "spinner=\(!spinner.isHidden) alt=\(alt) error=\(error)"
+            + " prompt=\(prompt) url=\(currentURL?.lastPathComponent ?? "nil")"
     }
 
     var debugHasRasterPreviewForTesting: Bool {

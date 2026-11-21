@@ -43,7 +43,9 @@ import UIKit
 /// `CHAT_ROUTES_QUEUE=followup` queues one follow-up; the `chatRoutes.queueFollowUp` control queues
 /// one later, as a busy-time send does (the chat never connects, so the composer cannot send).
 /// `CHAT_ROUTES_LIVE_WORK=1` ends the timeline on a running tool call (with `CHAT_ROUTES_STATUS=busy`,
-/// a turn in progress); the `chatRoutes.endTurn` control ends the turn. The
+/// a turn in progress); the `chatRoutes.endTurn` control ends the turn.
+/// `CHAT_ROUTES_WIDE_IMAGE=1` ends the timeline on a reply that embeds a 1600 x 900 picture the
+/// stub serves late, so a wide image arrives while the chat follows the stream. The
 /// `chatRoutes.narrowWindow` control makes the window compact, as Split View does.
 /// `chatRoutes.createdSessions` counts the new sessions the stub received.
 /// Leading controls open the timeline's commit and file viewers through the
@@ -331,6 +333,30 @@ enum ChatRoutesFixture {
     static let sessionId = "chat-routes-session"
     static let commitSha = "abc1234"
     static let changedPath = "Sources/App.swift"
+    /// The wide picture a reply embeds (`CHAT_ROUTES_WIDE_IMAGE=1`), served by
+    /// `/files/current` so a real Markdown image arrives in the timeline.
+    static let wideImageName = "wide-panorama.png"
+    static let wideImageData: Data = {
+        let size = CGSize(width: 1_600, height: 900)
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: size, format: format).image { context in
+            UIColor(red: 0.07, green: 0.30, blue: 0.34, alpha: 1).setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            for step in 1...4 {
+                UIColor(red: 0.10, green: 0.42 + CGFloat(step) * 0.08, blue: 0.46, alpha: 1).setFill()
+                context.fill(CGRect(x: 0, y: CGFloat(step) * 180, width: size.width, height: 90))
+            }
+            ("1600 x 900 panorama" as NSString).draw(
+                at: CGPoint(x: 72, y: 72),
+                withAttributes: [
+                    .font: UIFont.systemFont(ofSize: 64, weight: .semibold),
+                    .foregroundColor: UIColor.white,
+                ]
+            )
+        }.pngData() ?? Data()
+    }()
+
     /// A PDF in the home folder, which `/files/current` serves as a few pages
     /// of prose, so a pane shows a real document.
     static let pdfName = "field-guide.pdf"
@@ -808,6 +834,19 @@ enum ChatRoutesFixture {
            let trace = try? JSONDecoder().decode([TraceEvent].self, from: data) {
             events += trace
         }
+        // `CHAT_ROUTES_WIDE_IMAGE=1`: the last reply embeds a 1600 x 900
+        // picture, so a wide image arrives at the tail of a following timeline.
+        if environment["CHAT_ROUTES_WIDE_IMAGE"] == "1" {
+            // The embed is its own literal: a newline escape followed by the
+            // embed's bang trips the no-force-unwrap lint rule.
+            let embed = "!" + "[Wide panorama](\(wideImageName))"
+            events.append(traceEvent(
+                id: "chat-routes-wide-image",
+                type: .assistant,
+                text: "Here is the wide panorama.\n\n" + embed
+                    + "\n\nThe picture is 1600 by 900, so it takes the column's full width."
+            ))
+        }
         // `CHAT_ROUTES_WEB_LINK=<url>`: a reply linking a page (a UI test's own
         // server), by name and as a bare address long enough to wrap.
         if let link = environment["CHAT_ROUTES_WEB_LINK"] {
@@ -1117,6 +1156,14 @@ private final class ChatRoutesURLProtocol: URLProtocol {
         case ("GET", "/files/current") where (url.query ?? "").contains(ChatRoutesPDF.fileName):
             contentType = "application/pdf"
             body = ChatRoutesPDF.data
+        case ("GET", "/files/current") where (url.query ?? "").contains(ChatRoutesFixture.wideImageName):
+            // A generated picture lands after its row: answer late enough that
+            // the timeline has measured and followed the row first. The stub
+            // answers on its own loading thread, so holding it costs the app
+            // nothing.
+            Thread.sleep(forTimeInterval: 1.2)
+            contentType = "image/png"
+            body = ChatRoutesFixture.wideImageData
         case ("GET", "/files/current") where (url.query ?? "").contains(ChatRoutesFixture.pdfName):
             contentType = "application/pdf"
             body = ChatRoutesFixture.pdfData
