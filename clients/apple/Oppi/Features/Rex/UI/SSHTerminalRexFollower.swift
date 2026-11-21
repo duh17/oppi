@@ -90,7 +90,10 @@ final class SSHTerminalRexFollower: SSHTerminalRexListFollowing {
         self.standIn = standIn
         self.signsInSilently = signsInSilently
         self.tailnetPlan = tailnetPlan
-        monitor.openPane = { [weak session] pane in session?.openRexPane(pane) }
+        monitor.openPane = { [weak self] pane in
+            guard let self else { return }
+            self.session.openRexPane(pane, on: self.profile)
+        }
         // Backgrounding closes the connection even while a terminal covers the
         // screen, whose updates then stop.
         observers = [

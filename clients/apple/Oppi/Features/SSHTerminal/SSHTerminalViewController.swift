@@ -1880,7 +1880,11 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     }
 
     private func openRexPane(_ pane: RexPaneTarget) {
-        if let rexPaneOpener { rexPaneOpener(pane) } else { session?.openRexPane(pane) }
+        if let rexPaneOpener {
+            rexPaneOpener(pane)
+        } else if let session, let profile = session.currentProfile {
+            session.openRexPane(pane, on: profile)
+        }
     }
 
     private func showStatusDetail() {

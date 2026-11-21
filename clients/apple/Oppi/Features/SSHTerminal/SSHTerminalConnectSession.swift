@@ -364,12 +364,13 @@ final class SSHTerminalConnectSession {
         }
     }
 
-    /// Shows a Rex pane on the host this session stands for, in a terminal of
-    /// its own beside the host's shell: the open one if it is still connected,
-    /// else a new connection with the same sign-in. The session then stands
-    /// for the pane, so Reconnect reopens it.
-    func openRexPane(_ pane: RexPaneTarget) {
-        guard let profile = currentProfile else { return }
+    /// Shows a Rex pane of `profile`, the saved host Rex was read for, in a
+    /// terminal of its own beside the host's shell: the open one if it is still
+    /// connected, else a new connection with the host's sign-in. The host comes
+    /// from the caller, not from this session's connection: a Rex list read
+    /// over Tailscale has signed in nowhere. The session then stands for the
+    /// pane, so Reconnect reopens it.
+    func openRexPane(_ pane: RexPaneTarget, on profile: SSHTerminalProfile) {
         folder = nil
         folderTerminalCommand = nil
         multiplexerFolder = nil

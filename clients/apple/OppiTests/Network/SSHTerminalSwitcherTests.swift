@@ -226,8 +226,7 @@ struct SSHTerminalSwitcherTests {
         let paneChannel = try SSHTerminalChannel(answersTerminalQueries: false)
         paneChannel.opened(QuietConnection())
         registry.adopt(paneChannel, profile: rexHost, rexPane: pane, queue: SSHTerminalEventQueue())
-        session.connectedProfile = rexHost
-        session.openRexPane(pane)
+        session.openRexPane(pane, on: rexHost)
         #expect(session.channel === paneChannel && session.showsTerminal)
         #expect(!session.listsRexSessions)
 
@@ -255,8 +254,7 @@ struct SSHTerminalSwitcherTests {
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.model.state.panes.count == 3 })
 
         let session = SSHTerminalConnectSession(registry: registry, profileStore: IsolatedProfiles().make)
-        session.connectedProfile = rexHost
-        session.openRexPane(target(c, "title c"))
+        session.openRexPane(target(c, "title c"), on: rexHost)
         #expect(session.channel === rig.channel && session.showsTerminal, "the terminal that is open is shown")
         #expect(!session.connecting && registry.openTerminals().count == 1, "no second connection")
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of c") })

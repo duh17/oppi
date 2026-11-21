@@ -1,0 +1,1 @@
+- **Client:** On the **Rex** screen, tapping a pane of a saved host whose Rex is reached over Tailscale now opens its terminal. Before, the tap did nothing, because the list had been read over Tailscale without an SSH sign-in and the pane had no host to open on.

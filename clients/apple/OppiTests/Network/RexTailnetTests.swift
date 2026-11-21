@@ -249,6 +249,44 @@ struct RexTailnetTests {
         #expect(!session.connecting && session.rexSessions == nil, "no SSH sign-in")
     }
 
+    /// A pane tapped on a saved host's Rex list that was read over Tailscale,
+    /// with no SSH sign-in, opens its terminal: the follower names the host,
+    /// since the list's session has connected to none.
+    @Test func aPaneOnASavedHostsRexListReadOverTailscaleOpens() async throws {
+        let world = RexFakeWorld(sessions: [.init(id: "session:1", label: "work", serverLabel: "work", windows: [
+            .init(id: "window:1", label: "Window 1", panes: [.init(block: "b1", title: "zsh")]),
+        ])])
+        let fake = RexFakeSession(sessionID: "session:1", panes: [.init(block: "b1", label: "shell", title: "zsh", screen: "pane")])
+        let registry = Self.registry()
+        defer { registry.closeAll(reason: "done") }
+        let profiles = Self.profiles()
+        let host = SSHTerminalProfile(host: "mac-studio", username: "alex", authentication: .password, opensRexSessions: true)
+        try profiles().save(host, password: nil, sudoPassword: nil)
+        profiles().rexDirect.apply(.available(url: Self.rex.url, hostID: "host-1"), for: RexDirectHost(profile: host))
+        world.setStatus(url: Self.rex.url, hostID: "host-1")
+        fake.setStatus(url: Self.rex.url, hostID: "host-1")
+        let plan = RexRoutePlan(
+            host: RexDirectHost(profile: host), store: profiles().rexDirect, tailnetUsable: { true }, isCurrent: { true },
+            openDirect: { _, _, _, sink in world.host().open(sink: sink) }
+        )
+        let session = SSHTerminalConnectSession(
+            registry: registry, profileStore: profiles, openRexDirect: fake.openDirect(), rexTailnetUsable: { true }
+        )
+        let follower = SSHTerminalRexFollower(
+            profile: host, promptsAutomatically: false, session: session,
+            signsInSilently: { _ in false }, tailnetPlan: { _ in plan }
+        )
+        defer { follower.close() }
+        follower.sync(active: true)
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { follower.monitor.snapshot?.sessions.count == 1 })
+        #expect(session.currentProfile == nil, "the list signed in nowhere")
+
+        #expect(follower.open(session: "session:1", pane: "b1"))
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { session.showsTerminal }, "the pane's terminal opens")
+        #expect(session.failure == nil && !session.passwordPrompt)
+        #expect(session.channel?.rex?.route == .tailscale(Self.rex.url))
+    }
+
     /// Over Tailscale the SSH connection beside Rex carries only side commands:
     /// when it drops, Rex's own connection stays up and the terminal with it.
     @Test func anSSHDropDoesNotEndRexReachedOverTailscale() async throws {
