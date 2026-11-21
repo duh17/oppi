@@ -159,6 +159,19 @@ struct ComposerPrimaryActionLook {
     }
 }
 
+extension UIButton {
+    /// The composer draws its own buttons: fills, strokes, glass, and pop-up
+    /// menus from its configuration. The Mac build runs in the Mac idiom,
+    /// where a button's automatic behavioral style is `.mac`: it draws an
+    /// AppKit-style button that drops the configuration's background (Send
+    /// became a bare arrow) and draws nothing for a button whose tap opens a
+    /// menu (the thinking pill and "+" vanished). The iPad style keeps the
+    /// same drawing as iPhone and iPad, where it is already the automatic one.
+    func drawsComposerChrome() {
+        preferredBehavioralStyle = .pad
+    }
+}
+
 final class ComposerCircleActionButton: UIButton {
     var visualDiameter: CGFloat = ComposerInputMetrics.controlDiameter {
         didSet { invalidateIntrinsicContentSize() }
@@ -166,6 +179,7 @@ final class ComposerCircleActionButton: UIButton {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        drawsComposerChrome()
         configurationUpdateHandler = { button in
             button.alpha = button.isEnabled ? (button.isHighlighted ? 0.82 : 1) : 0.45
         }
@@ -270,6 +284,7 @@ final class ComposerGlassPillButton: UIButton {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        drawsComposerChrome()
         glassView.isUserInteractionEnabled = false
         glassView.clipsToBounds = true
         insertSubview(glassView, at: 0)
@@ -411,6 +426,7 @@ final class ComposerToolbarPillButton: UIButton {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        drawsComposerChrome()
         isAccessibilityElement = true
         accessibilityTraits.insert(.button)
         glassView.clipsToBounds = true
@@ -519,6 +535,7 @@ final class ComposerToolbarPillButton: UIButton {
 final class ComposerActionChipButton: UIButton {
     override init(frame: CGRect) {
         super.init(frame: frame)
+        drawsComposerChrome()
         configurationUpdateHandler = { button in
             button.alpha = button.isEnabled ? (button.isHighlighted ? 0.82 : 1) : 0.45
         }
@@ -554,6 +571,7 @@ final class ComposerActionChipButton: UIButton {
 final class ComposerActionCancelButton: UIButton {
     override init(frame: CGRect) {
         super.init(frame: frame)
+        drawsComposerChrome()
         configurationUpdateHandler = { button in
             button.alpha = button.isEnabled ? (button.isHighlighted ? 0.82 : 1) : 0.45
         }

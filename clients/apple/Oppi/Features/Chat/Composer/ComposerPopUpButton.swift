@@ -38,6 +38,7 @@ final class ComposerPopUpButton: UIButton {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        drawsComposerChrome()
         isPointerInteractionEnabled = true
         heightAnchor.constraint(equalToConstant: Self.height).isActive = true
         setContentHuggingPriority(.required, for: .horizontal)
@@ -167,6 +168,7 @@ final class ComposerPopUpButton: UIButton {
     /// has the system's own metrics for the indicator and insets.
     private func width(for config: UIButton.Configuration) -> CGFloat {
         let scratch = UIButton(configuration: config)
+        scratch.drawsComposerChrome()
         scratch.showsMenuAsPrimaryAction = showsMenuAsPrimaryAction
         let size = scratch.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
         return ceil(max(size.width, Self.height))
