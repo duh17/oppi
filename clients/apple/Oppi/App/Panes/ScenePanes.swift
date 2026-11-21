@@ -330,15 +330,16 @@ final class ScenePanes {
         } ? leaf.id : nil
     }
 
-    /// The screens items opened as whose entries have no link (a file opened
-    /// from a chat keeps its chat's lock), by entry: Undo brings such a pane
+    /// The screens items opened as, by entry, where the entry cannot say all
+    /// of it: a file opened from a chat keeps its chat's lock, and a
+    /// terminal's entry has only a token its opener's recipe stands behind.
+    /// A pane builds its screen from these first, and Undo brings such a pane
     /// back as it was while the window lives. Not saved.
-    @ObservationIgnored private(set) var standIns: [PaneLocalToken: WorkspaceStackRouteElement] = [:]
+    @ObservationIgnored private(set) var standIns: [PaneStackEntry: WorkspaceStackRouteElement] = [:]
 
-    /// Remembers the screen an opened item's stand-in entry shows.
+    /// Remembers the screen an opened item's entry shows.
     func remember(_ element: WorkspaceStackRouteElement, for entry: PaneStackEntry) {
-        guard case .local(let token) = entry.route else { return }
-        standIns[token] = element
+        standIns[entry] = element
     }
 
     /// Open in New Pane: `entry` in a new leaf at `edge` of `id` (`.right` or
@@ -378,7 +379,11 @@ final class ScenePanes {
         case .files, .hostFiles, .file, .git, .commit:
             return top
         case .local(let token):
-            if case .terminal? = PaneLocalScreen(token) { return top }
+            // A terminal's split is the workspace's own terminal, not a
+            // second screen on the shell its opener made.
+            if let screen = PaneLocalScreen(token), case .terminal = screen {
+                return PaneStackEntry(serverId: top.serverId, route: .local(screen.token))
+            }
             return launcher(for: id)
         default:
             return launcher(for: id)

@@ -365,8 +365,9 @@ extension PaneHostController {
     }
 
     private func makeScreen(_ entry: PaneStackEntry, leaf id: PaneID) -> UIViewController {
-        if let screen = openingScreens.removeValue(forKey: id) { return screen }
-        if case .local(let token) = entry.route, let element = panes.standIns[token], let root = AppRootEnvironment.near(self) {
+        // A terminal's opener made its screen; it needs nothing from the window.
+        if case .terminal(let terminal)? = panes.standIns[entry] { return terminal.screen }
+        if let element = panes.standIns[entry], let root = AppRootEnvironment.near(self) {
             return PaneSplitScreens.screen(for: element, root: root)
         }
         let restored = panes.takeRestored(id)

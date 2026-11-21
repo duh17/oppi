@@ -251,11 +251,11 @@ enum SSHTerminalFolderEntry {
         from presenter: UIViewController,
         missingReason: SSHTerminalFolderFailure = .noFolder
     ) -> Bool {
-        guard let screen = screen(for: target) else {
+        guard let terminal = terminal(for: target) else {
             present(target, failure: missingReason, from: presenter)
             return true
         }
-        Router.push(screen, from: presenter)
+        terminal.show(from: presenter)
         return true
     }
 
@@ -263,7 +263,16 @@ enum SSHTerminalFolderEntry {
     /// that serves its server, or Add Host for that server. Nil when the
     /// target has no folder to open.
     static func screen(for target: SSHTerminalFolderTarget) -> UIViewController? {
+        target.isUsable ? folderScreen(for: target) : nil
+    }
+
+    /// `screen(for:)` as a terminal route, made when a stack shows it.
+    static func terminal(for target: SSHTerminalFolderTarget) -> TerminalNavTarget? {
         guard target.isUsable else { return nil }
+        return TerminalNavTarget { folderScreen(for: target) }
+    }
+
+    private static func folderScreen(for target: SSHTerminalFolderTarget) -> UIViewController {
         let profiles = SSHTerminalProfileStore().load()
         if let profile = SSHTerminalHostMatch.bestMatch(in: profiles, serverHost: target.serverHost) {
             // The folder screen decides from this host's Run on Connect command

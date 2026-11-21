@@ -49,6 +49,12 @@ enum ShellRouteScreens {
                 return git
             }
             return PaneLeafStateViewController(entry: entry, root: root)
+        case .terminal(let target):
+            let screen = target.screen
+            if screen.traitOverrides.appRootEnvironment == nil {
+                screen.traitOverrides.appRootEnvironment = root
+            }
+            return screen
         }
     }
 

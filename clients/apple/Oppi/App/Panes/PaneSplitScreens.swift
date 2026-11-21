@@ -19,8 +19,10 @@ enum PaneLocalScreen: Equatable {
     /// The Godot projects the server discovered, to pick one to play.
     case godot
 
+    /// `token` may carry an open's own mark after `#` (`openedToken()`).
     init?(_ token: PaneLocalToken) {
-        let parts = token.raw.split(separator: "/", maxSplits: 1).map(String.init)
+        let screen = token.raw.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first ?? ""
+        let parts = screen.split(separator: "/", maxSplits: 1).map(String.init)
         switch (parts.first, parts.count) {
         case ("launcher", 1): self = .launcher(workspaceId: nil)
         case ("launcher", 2): self = .launcher(workspaceId: parts[1])
@@ -41,6 +43,13 @@ enum PaneLocalScreen: Equatable {
         case .browser: PaneLocalToken(raw: "browser")
         case .godot: PaneLocalToken(raw: "godot")
         }
+    }
+
+    /// This screen's token with a mark of this open's own: a pane opened with
+    /// a screen its opener made (`PaneOpenContent(terminal:as:serverId:)`)
+    /// still reads as this kind of screen, and no other pane shares its entry.
+    func openedToken() -> PaneLocalToken {
+        PaneLocalToken(raw: "\(token.raw)#\(UUID().uuidString.lowercased())")
     }
 
     var workspaceId: String? {

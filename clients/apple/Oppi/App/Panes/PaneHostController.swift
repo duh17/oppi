@@ -120,9 +120,6 @@ final class PaneHostController: UIViewController {
     var splitDividers: [PaneSplitDividerView] = []
     var grips: [PaneID: PaneGripView] = [:]
     var strips: [PaneID: PaneStripView] = [:]
-    /// Screens a split leaf shows first, built by whoever opened it (the
-    /// chat's terminal), taken when the leaf mounts.
-    var openingScreens: [PaneID: UIViewController] = [:]
     /// The pane chip a compact window shows in place of the grips.
     lazy var chip = makeChip()
     /// The toast that offers Undo after a pane change.

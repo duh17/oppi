@@ -235,13 +235,17 @@ final class SSHTerminalConnectChrome {
                 session.showsTerminal = false
                 return
             }
-            Router.push(SSHTerminalViewController(
-                channel: channel,
-                reconnect: { session.reconnect() },
-                editHost: editHost,
-                hostLabel: hostLabel,
-                session: session
-            ), from: host)
+            // In the main pane a route: Back returns to the list, and the
+            // window shows the terminal as it shows a chat.
+            TerminalNavTarget {
+                SSHTerminalViewController(
+                    channel: channel,
+                    reconnect: { session.reconnect() },
+                    editHost: editHost,
+                    hostLabel: hostLabel,
+                    session: session
+                )
+            }.show(from: host)
         }
     }
 }

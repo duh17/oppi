@@ -185,31 +185,27 @@ extension PaneHostController {
     /// Side content `opener` opens itself (a path in a terminal, the File
     /// Browser's row, the chat bar's Terminal, a Rex link): beside the
     /// opener's pane where `PanePlacement` puts it, else `otherwise`, which
-    /// pushes it over the opener in its own pane. `standIn` is as `openBeside`'s `screen`.
+    /// shows it over the opener in its own pane.
     static func open(
         _ content: PaneOpenContent,
         kind: PaneContentKind,
         from opener: UIViewController,
-        standIn: UIViewController? = nil,
         otherwise: () -> Void
     ) {
         if let host = containing(opener), let cell = host.cell(holding: opener),
-           host.openBeside(content, kind: kind, from: .pane(cell), screen: standIn) { return }
+           host.openBeside(content, kind: kind, from: .pane(cell)) { return }
         otherwise()
     }
 
     /// Opens `content` in a pane beside the pane `origin` names, where
     /// `PanePlacement` puts it, and focuses that pane; a game already shown
-    /// in a pane is focused there. `screen` is the screen the pane shows when
-    /// its entry cannot build it (a folder terminal, a Rex host's list).
-    /// False when no pane beside takes it: the opener shows it in the main
-    /// pane, or over itself (`SideContentOrigin`).
+    /// in a pane is focused there. False when no pane beside takes it: the
+    /// opener shows it in the main pane, or over itself (`SideContentOrigin`).
     @discardableResult
     func openBeside(
         _ content: PaneOpenContent,
         kind: PaneContentKind,
-        from origin: SideContentOrigin = .focusedPane,
-        screen: UIViewController? = nil
+        from origin: SideContentOrigin = .focusedPane
     ) -> Bool {
         guard let source = PanePlacement.source(of: origin, focused: focusedCell, mainPane: panes.routedLeafID) else {
             return false
@@ -235,9 +231,8 @@ extension PaneHostController {
                 return PaneOpenChoices.fits(edge, of: target, in: cells, showing: content.entry.route) { self.presentation(of: $0) }
             }
         )
-        let root = AppRootEnvironment.near(self)
-        if let element = content.element { panes.remember(element, for: content.entry) }
-        let screen = { screen ?? content.element.flatMap { element in root.map { PaneSplitScreens.screen(for: element, root: $0) } } }
+        // Only a pane that takes the item builds its screen from what the item remembers.
+        func remember() { if let element = content.element { panes.remember(element, for: content.entry) } }
         switch placement {
         case .mainPane:
             return false
@@ -247,20 +242,18 @@ extension PaneHostController {
                 // A live page loads the link in place, keeping its history.
                 browser.open(url)
             } else {
-                openingScreens[id] = screen()
+                remember()
                 panes.show(content.entry, in: id)
                 syncSplitLeaves()
-                openingScreens[id] = nil
             }
             focus(cell: id)
         case .split(let target, let edge):
             // A file beside a pane reads at its reading width; anything else,
             // or a pane below, halves the cell.
             let share = kind == .file && edge == .right ? readerShare(beside: target) : nil
+            remember()
             guard let made = panes.split(target, edge: edge, showing: content.entry, share: share) else { return false }
-            openingScreens[made] = screen()
             syncSplitLeaves()
-            openingScreens[made] = nil
             focus(cell: made)
         }
         announceLayoutChange()
@@ -274,11 +267,11 @@ extension PaneHostController {
         return PaneReadingWidth.splitShare(of: width, neighbourMinimum: minimumSize(of: leaf).width)
     }
 
-    /// What `leaf` shows as the placement weighs it, naming the screens a
-    /// stand-in entry holds (a file or folder opened from a chat).
+    /// What `leaf` shows as the placement weighs it, naming the screen an
+    /// entry with no link of its own holds (a file or folder opened from a chat).
     func placementShown(_ leaf: PaneLeaf) -> PanePlacement.Shown {
-        guard case .local(let token)? = leaf.stack.last?.route else { return PanePlacement.shown(leaf.stack.last) }
-        switch panes.standIns[token] {
+        guard let top = leaf.stack.last, case .local = top.route else { return PanePlacement.shown(leaf.stack.last) }
+        switch panes.standIns[top] {
         case .linkedFile?: return .kind(.file)
         case .fileBrowser?: return .kind(.folder)
         default: return PanePlacement.shown(leaf.stack.last)

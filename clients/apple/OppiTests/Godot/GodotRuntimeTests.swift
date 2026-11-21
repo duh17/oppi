@@ -289,8 +289,9 @@ struct GodotRuntimeTests {
         host.act {
             let entry = PaneStackEntry(serverId: "s", route: .godot(project: "full"))
             guard let made = host.scenePanes.split(host.scenePanes.routedLeafID, edge: .right, showing: entry) else { return }
-            host.panes.openingScreens[made] = game
             host.panes.syncSplitLeaves()
+            // The test's game in place of the pane's own, as a leaf's ready content replaces its root.
+            host.panes.splitLeaves[made]?.controller.setViewControllers([game], animated: false)
             host.panes.focus(cell: made)
         }
         let cell = try #require(host.panes.cell(holding: game))

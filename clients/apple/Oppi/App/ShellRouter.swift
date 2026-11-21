@@ -32,6 +32,8 @@ enum ShellRoute: Hashable {
     /// A restored or linked pane entry, shown through its leaf state until
     /// its content can open (`PaneLeafStateViewController`).
     case paneEntry(PaneStackEntry)
+    /// A terminal its opener made (`TerminalNavTarget`).
+    case terminal(TerminalNavTarget)
 
     /// The screen a route shows. A workspace route whose workspace was
     /// refreshed is the same screen with newer content.
@@ -68,6 +70,7 @@ enum ShellRoute: Hashable {
         case .modelProviders(let target): self = .modelProviders(target)
         case .serverResourceDetail(let target): self = .serverResourceDetail(target)
         case .paneEntry(let entry): self = .paneEntry(entry)
+        case .terminal(let target): self = .terminal(target)
         }
     }
 
@@ -237,20 +240,24 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
         // moves it: the compact stack keeps All Sessions under a place and the
         // split detail column starts at the place. A route removed below it (a
         // removed session's chat) moves it too. The pages it pushed itself come
-        // along when it stays on top.
-        var movable: [AnyHashable: (screen: UIViewController, pages: [UIViewController])] = [:]
+        // along when it stays on top, or when the route it pushed them under
+        // moves with it (a host's form under the terminal it opened).
+        var movable: [AnyHashable: (screen: UIViewController, pages: [UIViewController], next: AnyHashable?)] = [:]
         for (offset, entry) in current.enumerated().dropFirst(kept) {
             guard movable[entry.route.screenIdentity] == nil,
                   let start = viewControllers.firstIndex(of: entry.screen) else { continue }
-            let end = current.dropFirst(offset + 1).first.flatMap { viewControllers.firstIndex(of: $0.screen) }
-                ?? viewControllers.endIndex
-            movable[entry.route.screenIdentity] = (entry.screen, Array(viewControllers[(start + 1)..<end]))
+            let next = current.dropFirst(offset + 1).first
+            let end = next.flatMap { viewControllers.firstIndex(of: $0.screen) } ?? viewControllers.endIndex
+            movable[entry.route.screenIdentity] = (entry.screen, Array(viewControllers[(start + 1)..<end]), next?.route.screenIdentity)
         }
         for index in kept..<routes.count {
             if let moved = movable.removeValue(forKey: routes[index].screenIdentity) {
                 reuse(moved.screen, as: index)
                 stack.append(moved.screen)
-                if index == routes.count - 1 { stack.append(contentsOf: moved.pages) }
+                let isTop = index == routes.count - 1
+                if isTop || (moved.next != nil && moved.next == routes[index + 1].screenIdentity) {
+                    stack.append(contentsOf: moved.pages)
+                }
                 continue
             }
             let screen = ShellRouteScreens.make(routes[index], root: root)

@@ -675,17 +675,16 @@ struct PaneTreeHostTests {
     /// Panes, it opens to the chat's right instead.
     @Test(arguments: [CGSize(width: 1133, height: 744), CGSize(width: 744, height: 1133)])
     func theChatBarsTerminalOpensBelowTheChatAndFollowsNewPanes(size: CGSize) async throws {
-        let entry = PaneStackEntry(serverId: "s", route: .local(PaneLocalScreen.terminal(workspaceId: "w").token))
         func openTerminal(right: Bool) async throws -> (axis: PaneAxis, frame: CGRect) {
             let host = PaneTestHost(width: size.width, height: size.height, inNavigation: true)
             defer { host.hide() }
             try await newPanes(host, right ? [.terminal: .right] : [:])
             let screen = UIViewController()
+            let content = PaneOpenContent(terminal: TerminalNavTarget { screen }, as: .terminal(workspaceId: "w"), serverId: "s")
+            let entry = content.entry
             var opened = false
             host.act {
-                opened = host.panes.openBeside(
-                    PaneOpenContent(entry: entry), kind: .terminal, from: .pane(host.scenePanes.routedLeafID), screen: screen
-                )
+                opened = host.panes.openBeside(content, kind: .terminal, from: .pane(host.scenePanes.routedLeafID))
             }
             #expect(opened)
             let (axis, pane) = try splitBesideChat(host)
@@ -761,8 +760,7 @@ struct PaneTreeHostTests {
         #expect(host.scenePanes.topEntry(of: terminalPane) == terminalEntry, "the terminal keeps its pane")
         let filePane = try #require(host.scenePanes.splitLeaves.map(\.id).first { $0 != terminalPane })
         #expect(host.scenePanes.cellLayout.focus == filePane)
-        guard case .local(let token) = host.scenePanes.topEntry(of: filePane).route,
-              case .linkedFile(let shown)? = host.scenePanes.standIns[token] else {
+        guard case .linkedFile(let shown)? = host.scenePanes.standIns[host.scenePanes.topEntry(of: filePane)] else {
             Issue.record("no file in the new pane: \(host.scenePanes.topEntry(of: filePane))")
             return
         }

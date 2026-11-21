@@ -51,9 +51,19 @@ struct PaneOpenContent {
             ?? PaneStackEntry(serverId: target.serverId, route: .local(PaneLocalToken(raw: "folder/\(UUID().uuidString)")))
     }
 
+    /// A terminal its opener made, in a pane of `screen`'s kind (a folder
+    /// terminal, Rex). The entry's token is `screen`'s with a mark of its own,
+    /// so only this open, never a later pane of the same kind, shows the
+    /// opener's screen.
+    @MainActor
+    init(terminal: TerminalNavTarget, as screen: PaneLocalScreen, serverId: String) {
+        element = .terminal(terminal)
+        entry = PaneStackEntry(serverId: serverId, route: .local(screen.openedToken()))
+    }
+
     /// What the item shows as in the main pane: a workspace's sessions is that
-    /// place, a file or folder its page, anything else the entry's leaf state,
-    /// which turns into the content when it can.
+    /// place, a file or folder its page, anything else the entry's
+    /// leaf state, which turns into the content when it can.
     @MainActor
     func mainPaneDestination(coordinator: ConnectionCoordinator) -> NavigationDestination {
         switch element ?? PaneEntries.element(for: entry, coordinator: coordinator) {
@@ -366,17 +376,14 @@ extension PaneHostController {
         guard let choices = openChoices(from: source), let root = AppRootEnvironment.near(self) else { return }
         // The shell's own screen for the item, when its entry cannot say all
         // of it; else the leaf builds it from the entry.
-        let screen = { content.element.map { PaneSplitScreens.screen(for: $0, root: root) } }
         if let element = content.element { panes.remember(element, for: content.entry) }
         switch placement {
         case .here:
             return
         case .newPane(let edge):
             guard let newPane = edge == .bottom ? choices.below : choices.right,
-                  let made = panes.open(content.entry, at: edge, ofCell: source, full: newPane == .full) else { return }
-            openingScreens[made] = screen()
+                  panes.open(content.entry, at: edge, ofCell: source, full: newPane == .full) != nil else { return }
             syncSplitLeaves()
-            openingScreens[made] = nil
         case .pane(let id):
             guard choices.targets.contains(where: { $0.id == id }) else { return }
             if id == panes.routedLeafID {
@@ -385,10 +392,8 @@ extension PaneHostController {
                 focus(cell: id)
                 return
             }
-            openingScreens[id] = screen()
             panes.open(content.entry, inCell: id)
             syncSplitLeaves()
-            openingScreens[id] = nil
         }
         relayoutCells()
         updateVisibility()

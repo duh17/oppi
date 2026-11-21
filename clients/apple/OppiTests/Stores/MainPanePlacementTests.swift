@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UIKit
 @testable import Oppi
 
 /// The one placement rule (`SceneNavigation.open(_:from:)`), as a table: every
@@ -56,6 +57,9 @@ struct MainPanePlacementTests {
     static let entry = PaneStackEntry(serverId: "server-unpaired", route: .session("linked"))
     static let serverDetails = ServerDetailsNavTarget(serverId: server)
     static let inWorkspace = NavigationPlace.sessions(workspace)
+    static let terminal = TerminalNavTarget { UIViewController() }
+    static let rex = NavigationPlace.utility(.rex)
+    static let terminals = NavigationPlace.utility(.sshTerminal)
 
     static func outcome(
         _ placement: MainPanePlacement,
@@ -190,6 +194,27 @@ struct MainPanePlacementTests {
             open: .page(.paneEntry(entry)), from: .external,
             stack: outcome(.push, shows: .paneEntry(entry), back: .session(chat)),
             split: outcome(.push, shows: .paneEntry(entry), back: .session(chat))),
+
+        // Terminals: a page over its list or chat, which the window knows is there.
+        Row(journey: "Rex → a session's terminal", start: [(.place(rex), .screen())],
+            open: .page(.terminal(terminal)),
+            stack: outcome(.push, shows: .terminal(terminal), back: .utility(.rex), place: rex),
+            split: outcome(.push, shows: .terminal(terminal), back: .utility(.rex), place: rex)),
+        Row(journey: "a chat → its folder terminal", start: [(.chat(chat), .screen())],
+            open: .page(.terminal(terminal)),
+            stack: outcome(.push, shows: .terminal(terminal), back: .session(chat)),
+            split: outcome(.push, shows: .terminal(terminal), back: .session(chat))),
+        // A chat replaces a terminal as it replaces any page: the shell lives on in the
+        // terminal registry, reachable again from its list.
+        Row(journey: "a terminal → a notification's chat",
+            start: [(.place(terminals), .screen()), (.page(.terminal(terminal)), .screen())],
+            open: .chat(chat), from: .external,
+            stack: outcome(.onPlace(.allSessions), shows: .session(chat), back: .inbox),
+            split: outcome(.onPlace(.allSessions), shows: .session(chat), back: .inbox)),
+        Row(journey: "a terminal → All Sessions", start: [(.place(rex), .screen()), (.page(.terminal(terminal)), .screen())],
+            open: .place(.allSessions),
+            stack: outcome(.root(.allSessions), shows: .inbox, back: nil),
+            split: outcome(.root(.allSessions), shows: .inbox, back: nil)),
 
         // The host switcher's jobs.
         Row(journey: "All Sessions → Server Settings in the host switcher",

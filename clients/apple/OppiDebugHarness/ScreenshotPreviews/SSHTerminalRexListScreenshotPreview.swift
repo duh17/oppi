@@ -84,9 +84,12 @@ final class SSHTerminalRexListPreviewController: PreviewRootController {
                 Task { @MainActor in
                     guard let list = listRef, let channel = try? SSHTerminalChannel() else { return }
                     if let task = await SSHTerminalPreviewController.playRexSession(on: channel) { consumers.tasks.append(task) }
-                    Router.push(SSHTerminalViewController(
-                        channel: channel, reconnect: {}, editHost: {}, hostLabel: "alex@mac-studio \u{00B7} \(pane.label)"
-                    ), from: list)
+                    // As the connect flow opens one: a route in the main pane, pushed in a side pane.
+                    TerminalNavTarget {
+                        SSHTerminalViewController(
+                            channel: channel, reconnect: {}, editHost: {}, hostLabel: "alex@mac-studio \u{00B7} \(pane.label)"
+                        )
+                    }.show(from: list)
                 }
             }
             return follower

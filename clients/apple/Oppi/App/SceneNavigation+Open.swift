@@ -153,7 +153,7 @@ extension MainPaneRoute {
     /// sidebar, the drawer, a link or a key (the compact stack keeps All
     /// Sessions under it). A chat from a list sits on that list; from a link,
     /// over the screen the link is in; from outside, on the list the window
-    /// shows. A page sits over its opener. Workspace
+    /// shows. A page (a terminal too) sits over its opener. Workspace
     /// Settings sits on its workspace's list. The host switcher's jobs
     /// replace each other.
     func placement(of destination: NavigationDestination, from origin: NavigationOrigin, split: Bool) -> MainPanePlacement {

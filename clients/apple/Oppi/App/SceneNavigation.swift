@@ -153,11 +153,11 @@ struct MainPaneRoute: Equatable {
     }
 
     /// Whether the sidebar shows beside the split shell's column, from the
-    /// screen on top: hidden under a chat, a file or a page of one, shown
+    /// screen on top: hidden under a chat, a file, a terminal or a page of one, shown
     /// beside a list, a configuration, a utility or a server page.
     var visibility: SplitColumnVisibility {
         switch stack.last {
-        case .session?, .fileBrowser?, .linkedFile?, .chatReader?, .paneEntry?: .detailOnly
+        case .session?, .fileBrowser?, .linkedFile?, .chatReader?, .paneEntry?, .terminal?: .detailOnly
         default: .all
         }
     }
@@ -198,6 +198,56 @@ enum WorkspaceStackRouteElement: Hashable {
     case serverResourceDetail(ServerResourceDetailNavTarget)
     /// A restored or linked pane entry shown through its leaf state.
     case paneEntry(PaneStackEntry)
+    /// A terminal: a live shell, or the screen that connects one.
+    case terminal(TerminalNavTarget)
+}
+
+/// A terminal as a route: the live shell a connect flow reached (a host,
+/// Rex or folder terminal), or the screen that connects one (a chat's folder
+/// terminal, a Rex link's host list). Only its opener can make the screen,
+/// so the target carries the opener's recipe and is equal only to itself;
+/// it is never saved. The main pane's stack holds it like a chat, so the
+/// window knows a terminal shows; a side pane builds it from its entry
+/// (`ScenePanes.remember`) as it builds a file opened from a chat.
+///
+/// The screen is made once and kept while a stack shows it: a rotation or a
+/// route change below moves the same screen (`ShellNavigationController`), so
+/// the shell is never dialled again. A target asked again after its screen
+/// went (Undo of a closed pane) makes a new one from the same recipe.
+@MainActor
+final class TerminalNavTarget: Hashable {
+    private let make: () -> UIViewController
+    private weak var made: UIViewController?
+
+    init(_ make: @escaping () -> UIViewController) {
+        self.make = make
+    }
+
+    var screen: UIViewController {
+        if let made { return made }
+        let screen = make()
+        made = screen
+        return screen
+    }
+
+    nonisolated static func == (lhs: TerminalNavTarget, rhs: TerminalNavTarget) -> Bool {
+        lhs === rhs
+    }
+
+    nonisolated func hash(into hasher: inout Hasher) {
+        hasher.combine(ObjectIdentifier(self))
+    }
+
+    /// Shows the terminal over `opener`: on the main pane's stack when
+    /// `opener` is one of its routed screens or a page one of them pushed,
+    /// else pushed in `opener`'s own stack (a side pane, a sheet).
+    func show(from opener: UIViewController) {
+        if opener.navigationController is RoutedScreenStack, let navigation = AppRootEnvironment.near(opener)?.navigation {
+            navigation.open(.page(.terminal(self)))
+        } else {
+            Router.push(screen, from: opener)
+        }
+    }
 }
 
 struct WorkspaceStackDiagnosticContext: Equatable, Sendable {
@@ -575,7 +625,7 @@ final class SceneNavigation {
         case .linkedFile(let target):
             return .coveringPage(sourceSessionId: coveringSourceSessionId(for: target))
         case .workspace, .fileBrowser, .workspaceConfiguration, .utility,
-             .serverDetails, .modelProviders, .serverResourceDetail, .paneEntry:
+             .serverDetails, .modelProviders, .serverResourceDetail, .paneEntry, .terminal:
             return .other
         }
     }
@@ -764,6 +814,7 @@ final class SceneNavigation {
         case .serverDetails: serverDetailsDiagnosticContext
         case .modelProviders: modelProvidersDiagnosticContext
         case .serverResourceDetail: serverResourceDetailDiagnosticContext
+        case .terminal: terminalDiagnosticContext
         case .paneEntry(let entry): paneEntryDiagnosticContext(entry)
         }
     }
@@ -845,6 +896,12 @@ final class SceneNavigation {
             workspaceId: nil
         )
     }
+
+    private static let terminalDiagnosticContext = WorkspaceStackDiagnosticContext(
+        screen: "terminal",
+        sessionId: nil,
+        workspaceId: nil
+    )
 
     private static let serverResourceDetailDiagnosticContext = WorkspaceStackDiagnosticContext(
         screen: "server_extension_detail",

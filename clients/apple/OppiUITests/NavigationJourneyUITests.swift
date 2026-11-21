@@ -172,9 +172,10 @@ final class NavigationJourneyUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
     }
 
-    /// iPad mini in landscape: the sidebar hidden from the Rex list, a pane's
-    /// terminal pushed over it; the sidebar button beside the terminal's Back
-    /// shows the sidebar, and All Sessions replaces the terminal.
+    /// iPad mini in landscape: a pane's terminal opened from the Rex list takes
+    /// the full width and hides the sidebar, as a chat does, and Back returns
+    /// to the list beside the sidebar. The sidebar button beside the
+    /// terminal's Back shows the sidebar, and All Sessions replaces the terminal.
     func testSplitSidebarButtonOnARexTerminalGoesHome() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "The split view needs the iPad mini in landscape")
         launchRex(orientation: .landscapeLeft)
@@ -184,13 +185,26 @@ final class NavigationJourneyUITests: XCTestCase, PreviewUITestCase {
         let session = app.buttons[Self.rexRow]
         XCTAssertTrue(session.waitUntilExists(timeout: 15), "The Rex list shows the host's sessions")
         XCTAssertTrue(toggle.waitUntilExists(timeout: 5), "The Rex list has the sidebar button")
-        toggle.tap()
-        XCTAssertTrue(waitFor(!isShowing(allSessions)), "The sidebar button hid the sidebar")
+        XCTAssertTrue(waitFor(isShowing(allSessions)), "The sidebar shows beside the Rex list")
+        hold()
+        attachScreenshot("rex-list-ipad-landscape")
 
         session.tap()
         let grid = app.descendants(matching: .any)["sshTerminal.grid"]
         XCTAssertTrue(grid.waitUntilExists(timeout: 15), "The session's terminal opened")
+        XCTAssertTrue(waitFor(!isShowing(allSessions)), "The terminal hid the sidebar, as a chat does")
+        XCTAssertTrue(waitFor(grid.frame.minX < 40 && grid.frame.width > app.windows.firstMatch.frame.width - 80),
+                      "The terminal takes the full width: \(grid.frame) in \(app.windows.firstMatch.frame)")
         let back = app.buttons["sshTerminal.back"]
+        hold()
+        attachScreenshot("rex-terminal-ipad-landscape-full-width")
+        back.tap()
+        XCTAssertTrue(grid.waitUntilGone(timeout: 5), "Back left the terminal")
+        XCTAssertTrue(waitFor(isShowing(session)), "Back returned to the Rex list")
+        XCTAssertTrue(waitFor(isShowing(allSessions)), "The sidebar is back beside the list")
+
+        session.tap()
+        XCTAssertTrue(grid.waitUntilExists(timeout: 15), "The session's terminal opened again")
         XCTAssertTrue(toggle.waitUntilExists(timeout: 5), "The terminal has the sidebar button")
         XCTAssertGreaterThan(toggle.frame.minX, back.frame.maxX - 1, "It follows the terminal's Back")
         XCTAssertEqual(toggle.frame.midY, back.frame.midY, accuracy: 2, "It sits in Back's row")

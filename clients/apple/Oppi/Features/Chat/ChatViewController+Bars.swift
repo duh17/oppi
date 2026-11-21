@@ -1004,13 +1004,13 @@ extension ChatViewController {
     /// over the chat.
     private func openTerminal(_ target: SSHTerminalFolderTarget, workspaceId: String) {
         guard let serverId = connection.currentServerId ?? serverIdHint,
-              let screen = SSHTerminalFolderEntry.screen(for: target) else {
+              let terminal = SSHTerminalFolderEntry.terminal(for: target) else {
             SSHTerminalFolderEntry.open(target, from: self)
             return
         }
-        let entry = PaneStackEntry(serverId: serverId, route: .local(PaneLocalScreen.terminal(workspaceId: workspaceId).token))
-        PaneHostController.open(PaneOpenContent(entry: entry), kind: .terminal, from: self, standIn: screen) {
-            Router.push(screen, from: self)
+        let content = PaneOpenContent(terminal: terminal, as: .terminal(workspaceId: workspaceId), serverId: serverId)
+        PaneHostController.open(content, kind: .terminal, from: self) {
+            terminal.show(from: self)
         }
     }
 }

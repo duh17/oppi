@@ -1,0 +1,1 @@
+- **Client:** On iPad in landscape, a terminal opened in the main pane takes the full width and the sidebar hides, as it does for a chat. This covers a host or Rex session from **Terminal** or **Rex**, a chat's or workspace's **Terminal**, and a terminal link. Back from the terminal returns to the screen it was opened from, and rotating the iPad keeps the same terminal on screen.
