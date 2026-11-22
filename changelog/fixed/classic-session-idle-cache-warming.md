@@ -1,1 +1,0 @@
-- **Server:** Classic sessions no longer send cache-keepalive requests while idle. They again keep the prompt cache warm only during a run, unless `cacheWarming` is set in Pi's settings.

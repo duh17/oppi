@@ -1,0 +1,1 @@
+- **Client:** Panes on iPad got many improvements, including a chat from another server beside yours; split panes are always on.

@@ -1,0 +1,1 @@
+- **Client:** The chat title menu has **Copy Session ID**, **Rename**, **Share Session** and **Edit Agent**.

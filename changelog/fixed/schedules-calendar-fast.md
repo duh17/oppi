@@ -1,2 +1,0 @@
-- **Server:** The Schedules calendar finds each run's subagents through an index instead of reading every session stored on the server, so its cost follows the runs in the range shown, not how many sessions the server has collected.
-- **Client:** The Schedules calendar opens on the last calendar it loaded while it refreshes, and keeps showing it if the refresh fails. Switching between Day, Week, and Month shows what is already loaded unless that answer is more than a minute old or the view needs a wider range, and switching back to List no longer reloads the list.

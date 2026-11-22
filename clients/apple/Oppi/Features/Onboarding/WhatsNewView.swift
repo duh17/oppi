@@ -104,56 +104,49 @@ final class WhatsNewViewController: UIViewController, RouterModalContainer {
     private var rows: [FeatureRow] = []
     private var hasAppeared = false
 
-    /// Build 58 · Changes since Build 57
+    /// Build 59 · Changes since Build 58
     private static let features: [WhatsNewFeature] = [
+        WhatsNewFeature(
+            id: "agent-icons",
+            icon: .symbol("sparkles"),
+            iconColor: \.blue,
+            title: String(localized: "Agent icons"),
+            description: String(localized: "Animated icons, and pick their size in the session list.")
+        ),
+        WhatsNewFeature(
+            id: "pins",
+            icon: .symbol("pin"),
+            iconColor: \.orange,
+            title: String(localized: "Pins"),
+            description: String(localized: "Pin sessions, files and pages to the sidebar.")
+        ),
         WhatsNewFeature(
             id: "panes",
             icon: .symbol("rectangle.split.2x1"),
-            iconColor: \.blue,
-            title: String(localized: "Better iPad support with panes"),
-            description: String(localized: "On iPad, split the window with ⌘D or the chat’s … menu to keep chats, files, terminals, and web pages side by side, and a link you tap opens beside the chat. Zoom fills the window with one pane, and Restore brings the others back. Split Panes is an experiment you can turn off in Settings → Experiments. Godot Pane there, off by default, plays a Godot game you are building in a workspace.")
-        ),
-        WhatsNewFeature(
-            id: "math-tables",
-            icon: .symbol("function"),
-            iconColor: \.purple,
-            title: String(localized: "Math, tables, and HTML"),
-            description: String(localized: "Formulas are typeset like TeX, in the STIX Two Math font, and work in headings, tables, and lists. Tables fit the screen and open full screen from their bar or a long press. Markdown draws common inline HTML tags such as <b>, <sup>, <kbd>, and <br>, as GitHub does.")
-        ),
-        WhatsNewFeature(
-            id: "reader",
-            icon: .symbol("doc.text.magnifyingglass"),
             iconColor: \.green,
-            title: String(localized: "A better file reader"),
-            description: String(localized: "Org headings get Emacs-style bullets and colors by level and fold with a tap. Jump with Outline, search with Find, check off tasks, and read EPUB books. A file the reader can’t show, such as a zip, opens as a card you can share or save to Files, and its download resumes after a dropped connection.")
+            title: String(localized: "Panes"),
+            description: String(localized: "Many pane improvements on iPad.")
         ),
         WhatsNewFeature(
-            id: "schedules-calendar",
-            icon: .symbol("calendar"),
-            iconColor: \.orange,
-            title: String(localized: "Schedules calendar"),
-            description: String(localized: "Schedules opens on a calendar of past runs and what comes next: failed runs, runs waiting on you, and what each run cost, subagents included. On iPad, Week and Month show more.")
-        ),
-        WhatsNewFeature(
-            id: "subagents",
-            icon: .symbol("person.2"),
+            id: "rex-terminal",
+            icon: .symbol("apple.terminal"),
             iconColor: \.yellow,
-            title: String(localized: "Subagents in durable sessions"),
-            description: String(localized: "The built-in subagents extension, inspired by how Pi’s subagents work, shows which children need you, what the working ones are doing, and what the finished ones sent back. Tap a child in the Subagents pill or in the chat to jump into its session. It comes with Durable Sessions, which are off by default; turn them on in Server Settings → Durable Sessions.")
+            title: String(localized: "Rex and Terminal"),
+            description: String(localized: "Rex has its own page; terminals open like a chat.")
         ),
         WhatsNewFeature(
-            id: "terminal",
-            icon: .symbol("terminal"),
-            iconColor: \.red,
-            title: String(localized: "Terminal improvements"),
-            description: String(localized: "Scrolling a Rex terminal stays smooth while other panes stream output. Dictate types your words at the cursor as you speak, and Attach saves a photo or file on the host and types its path.")
+            id: "comments",
+            icon: .symbol("text.bubble"),
+            iconColor: \.purple,
+            title: String(localized: "Comments"),
+            description: String(localized: "You can now comment on PDFs too.")
         ),
         WhatsNewFeature(
-            id: "resources",
-            icon: .symbol("gauge.with.dots.needle.33percent"),
+            id: "more",
+            icon: .symbol("ellipsis.circle"),
             iconColor: \.cyan,
-            title: String(localized: "Less memory and CPU"),
-            description: String(localized: "The app and the server use less memory and CPU, with fewer spikes. Long Markdown parses about 30% faster, and a streaming reply with long tables or math redoes only the parts that changed. Long files, photos in closed chats, and closed settings screens no longer hold memory. A server with many durable sessions no longer spikes in memory at startup or when a turn ends.")
+            title: String(localized: "And more"),
+            description: String(localized: "Server feature switches, larger background uploads, an Animations setting, and many fixes.")
         ),
     ]
 

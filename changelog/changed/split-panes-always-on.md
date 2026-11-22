@@ -1,1 +1,0 @@
-- **Client:** Split panes on iPad are no longer an experiment: the **Split Panes** switch is gone from **Settings → Experiments**, and a wide window always splits. If you had turned it off, your saved panes come back. Where new panes open is set in **Settings → Panes**. See [The iPad side column](docs/usage.md#the-ipad-side-column).

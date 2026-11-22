@@ -1,1 +1,0 @@
-- **Client:** Godot files are syntax highlighted in tool rows, the file viewer, diffs and Markdown code blocks: GDScript (`.gd`, fenced as `gdscript` or `gd`), scenes and resources (`.tscn`, `.tres`, `project.godot`, `.import`, `export_presets.cfg`), and shaders (`.gdshader`). Tool rows, the file browser and changed-file lists show these files with the Godot logo.

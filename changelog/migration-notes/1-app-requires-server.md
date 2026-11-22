@@ -1,0 +1,1 @@
+- **Compatibility:** This app needs `oppi-server@0.55.0` or later; pins, comments, image icons, uploads over 50 MB, Agent tools and feature switches need `0.56.0`.

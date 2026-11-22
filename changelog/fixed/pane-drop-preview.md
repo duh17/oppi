@@ -1,1 +1,0 @@
-- **Client:** On iPad, the highlight shown while you drag a pane or a file onto another pane now matches where it will land. Dragging a pane to the bottom of the pane beside it used to highlight a quarter of the window, but the pane took the whole bottom half.

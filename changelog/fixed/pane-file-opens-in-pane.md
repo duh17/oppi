@@ -1,1 +1,0 @@
-- **Client:** On iPad, a file tapped in a wide File Browser pane, such as a folder from Pinned opened below another pane, now opens in that pane. Back returns to the folder, and the pane's **Zoom** fills the window with the file. Before, the file opened in a small sheet over every pane, and the sheet could not be enlarged.

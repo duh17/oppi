@@ -1,1 +1,0 @@
-- **Client:** On iPad with Split Panes, opening **Server Metrics**, **Usage**, or **Server Settings** from the server switcher while another pane is open no longer shows the sidebar. The page replaces the pane's content, and the sidebar appears only when you tap the sidebar button.

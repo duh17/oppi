@@ -1,1 +1,0 @@
-- **Client:** **Play Full Screen** in the Godot pane's bar gives the game the whole window: the sidebar, the pane's bar, the status bar and the home indicator go away, and the game resizes to the window. The small button in the corner brings back the panes exactly as you left them. See [Play full screen](docs/godot.md#play-full-screen).

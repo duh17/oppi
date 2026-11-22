@@ -1,0 +1,1 @@
+- **Client:** A terminal opens in the main pane like a chat, and an App Lock unlock approves its sign-in.

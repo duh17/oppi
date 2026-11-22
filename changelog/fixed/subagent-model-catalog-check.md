@@ -1,1 +1,0 @@
-- **Server:** A durable `subagent` spawn now refuses a model the model picker doesn't offer (a typo, or a retired version still in Pi's model list) before the child starts, and names the closest models. `oppi session create --model` and model switches name them too when an unknown model is close to one.

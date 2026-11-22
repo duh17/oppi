@@ -1,1 +1,0 @@
-- **Client:** An attachment that takes longer than 30 seconds to upload, such as a large screen recording, no longer fails partway. Uploads now stop only when no data moves for two minutes.

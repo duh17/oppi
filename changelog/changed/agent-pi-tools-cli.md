@@ -1,1 +1,0 @@
-- **Server:** `oppi agent create|update` takes `--tools <all|none|csv>` in place of `--core`, and `--clear-tools` follows the Pi Tools setting again. `oppi agent get` shows an Agent's own tools, which include `codemode` when it names it.

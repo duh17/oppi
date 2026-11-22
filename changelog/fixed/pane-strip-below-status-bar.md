@@ -1,1 +1,0 @@
-- **Client:** On iPad, a pane dragged all the way to the top of the window now folds into a strip below the status bar instead of under it, where pulling it back down opened Notification Center. Tap the strip or drag it down to bring the pane back.

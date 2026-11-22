@@ -1,2 +1,0 @@
-- **Client:** On iPad, a File Browser in a split pane opens folders in that pane, and its breadcrumb goes back up there, also from a pane that opened at a subfolder. A file you tap there opens in a pane beside it. Neither opens in the main pane any more.
-- **Client:** A workspace created on another device, from the command line, or by a mirrored terminal now shows up at once. Panes and pins that name it open it and show its name, instead of "Workspace Not Found" or a plain "Workspace" until a relaunch.

@@ -1,1 +1,0 @@
-- **Client:** **Rex** has its own entry in the sidebar, below **Terminal**. It lists the Rex servers on your tailnet first, reached straight over Tailscale with no SSH, then your saved hosts' Rex, each Rex once. The Terminal page lists only saved hosts now, with no mode button. See [The Rex screen](docs/ssh-terminal.md#the-rex-screen).

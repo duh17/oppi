@@ -1,1 +1,0 @@
-- **Protocol:** This app shows **MCP Servers** only with a server of this release or later; with an older server the sidebar row and the host workspace's **MCP Servers** page are gone until the server is updated. A sandbox workspace's MCP list is unchanged.

@@ -1,1 +1,0 @@
-- **Server:** Server Settings shows Pi's current default system prompt again. Since Pi 1.5.2 it had shown an older version of that prompt instead of the one Pi sends.

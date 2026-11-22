@@ -1,1 +1,0 @@
-- **Client:** A game in the Godot pane fits its pane again after you switch games, press **Play**, or move the pane. Before, a game started after you dragged a divider could show only its top-left corner, magnified. Games also no longer log "Mouse is not supported by this display server." each time they start.

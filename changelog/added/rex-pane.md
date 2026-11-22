@@ -1,1 +1,0 @@
-- **Client:** On iPad, **Rex** in a new pane's choices lists your Rex sessions beside the chat, and a tapped session opens its terminal in that pane. It shows while the server has Rex on. See [The Rex screen](docs/ssh-terminal.md#the-rex-screen).

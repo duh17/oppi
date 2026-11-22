@@ -1,1 +1,0 @@
-- **Client:** On iPad in landscape, opening a chat from Agents, Schedules, or another screen beside the sidebar no longer leaves an empty column where the sidebar was: the chat fills the window. Going back shows the sidebar again, and a sidebar you show or hide yourself stays that way until you go somewhere else.

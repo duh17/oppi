@@ -1,0 +1,1 @@
+- **Client:** Session icons are circles in three sizes, under **Settings → Session Rows**; **Settings → Chat → Animations** (On, Short, Off) sets how much moves.

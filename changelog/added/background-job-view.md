@@ -1,5 +1,0 @@
-- **Client:** A background job opens in its own view, beside the chat on iPad or full screen on iPhone: tap the job's title in the **Background jobs** drawer, or a `proc://` link in the chat. The top shows its status with how long it has run and **Stop**, its folder and times, and the whole command with **Copy**. Below is all the output the server keeps, following new lines while the job runs, with Find, Copy, and Share. Pin it like any pane, or link it with `oppi://read`. See [Durable Sessions](docs/usage.md#durable-sessions).
-- **Client:** In the **Background jobs** drawer, each job shows its whole command wrapped, how it ended and how long it ran, and its last 8 lines of output.
-- **Client:** Find works in the full-screen reader for command output.
-- **Server:** Background jobs record when they end, and a built-in plugin can register a viewer for its internal URL scheme, which the app opens from links.
-- **Protocol:** A panel's row or stack can open a link (`link`), and a code block can open wrapped (`wrap`). See [Extension native UI](docs/extension-native-ui.md#blocks-nodes).

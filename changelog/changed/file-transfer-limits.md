@@ -1,2 +1,0 @@
-- **Client:** Downloads no longer stop at 2 GB; free space for twice the file is the only limit.
-- **Server:** Folder listings come in pages of 1,000 entries (`?after=<next>`), and the File Browser fetches every page, so a folder with more than 1,000 entries lists completely instead of stopping at the first 1,000.

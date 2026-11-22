@@ -1,2 +1,0 @@
-- **Server:** A saved Agent can require the durable engine (`launchConstraints.requiredEngine`, `oppi agent create|update --required-engine durable`). Every launch of it then starts durable, a Classic request is refused, and it does not start while Durable Sessions is off. See [Durable Sessions](docs/usage.md#durable-sessions).
-- **Client:** **Edit Agent → Launch Constraints → Engine** sets it, and Quick Session shows **Durable · Required by Agent** for such an Agent.

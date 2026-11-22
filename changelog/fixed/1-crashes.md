@@ -1,0 +1,1 @@
+- **Client:** Fixed a crash when a chat row changed kind, and Godot game crashes on restart and reload.

@@ -1,0 +1,1 @@
+- **Client/Server:** A saved Agent's tools are an exact set of Pi tools, set in Edit Agent.

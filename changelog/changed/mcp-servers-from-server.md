@@ -1,1 +1,0 @@
-- **Client:** **MCP Servers**, in the sidebar and in a host workspace's **Workspace Settings**, is now drawn from what the server sends, so it follows the server's version. **Add** stays off until the server has a name and a URL or command, and the exposure picker explains only the choice you made.

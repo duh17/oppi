@@ -1,1 +1,0 @@
-- **Server:** A `table` node in an extension surface's blocks tree now accepts an empty string cell, as a `dataTable` section already did. Before, one empty cell refused the whole surface.

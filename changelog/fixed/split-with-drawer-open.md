@@ -1,1 +1,0 @@
-- **Client:** On iPad mini in portrait, ⌘D and the other pane shortcuts close the workspace drawer first, so the split shows instead of opening hidden behind the drawer.

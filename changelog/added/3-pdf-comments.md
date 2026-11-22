@@ -1,0 +1,1 @@
+- **Client:** Comment on selected text in a PDF.
