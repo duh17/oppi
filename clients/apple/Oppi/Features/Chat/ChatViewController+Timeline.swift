@@ -254,7 +254,9 @@ extension ChatViewController {
 
     func makeTimelineConfiguration() -> ChatTimelineConfiguration {
         let extensionLayout = extensionSurfaceState
-        return ChatTimelineConfiguration(
+        // The empty chat's half holds closures back onto this screen, so it is
+        // set once the value is built.
+        var configuration = ChatTimelineConfiguration(
             items: [],
             hiddenCount: 0,
             renderWindowStep: TimelineRenderWindowPolicy.renderWindowStep,
@@ -308,6 +310,8 @@ extension ChatViewController {
             sessionManager: sessionManager,
             outlineAvailability: outlineAvailability
         )
+        configuration.emptyChat = emptyChatHost
+        return configuration
     }
 
     /// Pushes chrome to the timeline when a value it shows changed. Streaming
@@ -323,6 +327,7 @@ extension ChatViewController {
             workspaceId: timelineWorkspaceId,
             agentId: session?.launch?.agentId,
             agentIcon: session?.launch?.agentIcon,
+            agentGreeting: model.agentGreeting,
             readAloudAvailable: connection.speechAvailable,
             routeScope: focusedRouteScope,
             model: session?.model,
@@ -347,6 +352,8 @@ struct ChatTimelineChromeKey: Equatable {
     let workspaceId: String?
     let agentId: String?
     let agentIcon: IconChoice?
+    /// The empty chat's Agent name and description, once read.
+    let agentGreeting: ChatAgentGreeting?
     /// `capabilities.speech`: reloaded on foreground and after a failed read aloud.
     let readAloudAvailable: Bool
     let routeScope: SessionRouteScope?

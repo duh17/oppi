@@ -681,21 +681,28 @@ final class ChatJumpToBottomView: UIView {
 
 // MARK: - Title
 
+/// The bar title's sizes: its icon's circle, the gap the name keeps beside it,
+/// and the name's smallest readable width. The bar's overflow rule counts the
+/// whole title from these, so the circle growing takes room from the buttons.
+enum ChatTitleMetrics {
+    static let iconSide: CGFloat = 40
+    static let iconGap: CGFloat = 6
+    /// With the 40 pt circle the title still reserves 96 pt, so a 402 pt
+    /// iPhone keeps four buttons beside it.
+    static let nameMinimumWidth: CGFloat = 50
+    /// The narrowest a title may be drawn and still read.
+    static var minimumWidth: CGFloat { nameMinimumWidth + iconSide + iconGap }
+}
+
 /// The session title in the bar: the session's icon on its circle, the name,
 /// its cost, the pi-tui mirror and Durable marks, and in the Conversation
 /// layout the model and thinking level under it. `ChatTitleControl` owns
-/// the taps, the menu, and accessibility.
+/// the tap, the menu, and accessibility.
 final class ChatTitleView: UIView {
     weak var chat: ChatViewController?
-    /// The Pi mark or the session's Agent icon on its 32 pt circle. A tap opens
-    /// that Agent's page (Pi's for a session launched without one); the title
-    /// around it still renames (`ChatTitleControl.hitTest`).
-    private let avatar = ChatTitleAvatarButton()
-    /// What the circle opens, from `ChatTitleControl`, so touch and accessibility
-    /// run one action.
-    var onOpenAgent: (() -> Void)? {
-        didSet { avatar.onOpenAgent = onOpenAgent }
-    }
+    /// The Pi mark or the session's Agent icon on its 40 pt circle. It draws
+    /// and never takes a touch: the whole title opens the session's menu.
+    private let avatar = ChatTitleAvatar()
     private let nameLabel = ExtensionChromeFont.label(.subheadline, .semibold)
     private let costLabel = UILabel()
     private let mirror = TerminalMirrorIndicatorUIView()
@@ -743,7 +750,7 @@ final class ChatTitleView: UIView {
         let row = UIStackView(arrangedSubviews: [avatar, nameLabel, costLabel, mirror, durableLabel])
         row.axis = .horizontal
         row.alignment = .center
-        row.spacing = 6
+        row.spacing = ChatTitleMetrics.iconGap
         let column = UIStackView(arrangedSubviews: [row, subtitleLabel])
         column.axis = .vertical
         column.alignment = .center
@@ -820,30 +827,27 @@ final class ChatTitleView: UIView {
         avatar.playBurst()
     }
 
-    /// The circle's touch target in this view's coordinates, for the title
-    /// control's hit test: the circle opens the Agent, the title renames.
-    func avatarHitTarget(for point: CGPoint) -> UIView? {
-        avatar.point(inside: avatar.convert(point, from: self), with: nil) ? avatar : nil
+    /// The circle in window coordinates: where the empty chat's own circle
+    /// lands when the first message arrives.
+    func iconFrameInWindow() -> CGRect? {
+        guard window != nil else { return nil }
+        return avatar.convert(avatar.bounds, to: nil)
     }
 }
 
 /// The session's icon in the chat title: the Agent's, else the Pi mark, on a
-/// 32 pt circle. It opens that Agent's page, so it is a control of its own
-/// inside the title; the title around it still renames. A moment plays it for
-/// 2.4 s, and it rests on its first frame after that.
-private final class ChatTitleAvatarButton: UIControl {
-    private static let side: CGFloat = 32
+/// 40 pt circle. A moment plays it for 2.4 s, and it rests on its first frame
+/// after that.
+private final class ChatTitleAvatar: UIView {
+    /// The largest circle that sits in the bar with the title's own line, as
+    /// the identity of the chat (`ChatTitleMetrics.iconSide`).
+    static let side = ChatTitleMetrics.iconSide
     private let icon = IconChoiceUIView(frameSize: side, shape: .circle)
-    /// The same action the title's accessibility custom action runs.
-    var onOpenAgent: (() -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        // The title is one accessibility element whose activation renames; the
-        // circle's open is that element's custom action, so the circle stays out
-        // of the tree rather than being an element the title would hide.
         isAccessibilityElement = false
-        icon.isUserInteractionEnabled = false
+        isUserInteractionEnabled = false
         icon.translatesAutoresizingMaskIntoConstraints = false
         addSubview(icon)
         NSLayoutConstraint.activate([
@@ -854,7 +858,6 @@ private final class ChatTitleAvatarButton: UIControl {
             widthAnchor.constraint(equalToConstant: Self.side),
             heightAnchor.constraint(equalToConstant: Self.side),
         ])
-        addAction(UIAction { [weak self] _ in self?.onOpenAgent?() }, for: .touchUpInside)
     }
 
     @available(*, unavailable)
@@ -866,13 +869,6 @@ private final class ChatTitleAvatarButton: UIControl {
 
     func playBurst() {
         icon.playBurst()
-    }
-
-    /// A 32 pt circle in a bar about that tall reaches up and down for a
-    /// comfortable target and never sideways, so a tap on the title beside it
-    /// still renames.
-    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        bounds.insetBy(dx: 0, dy: -6).contains(point)
     }
 }
 

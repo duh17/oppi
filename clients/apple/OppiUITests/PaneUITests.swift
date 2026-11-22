@@ -254,7 +254,7 @@ final class PaneUITests: XCTestCase, PreviewUITestCase {
         app.buttons["chat.toolbar.files"].tap()
         XCTAssertTrue(app.navigationBars["Files"].waitUntilExists(timeout: 5), "Files panel did not open")
         XCTAssertTrue(divider.waitUntilExists(timeout: 5))
-        let titleButton = app.buttons.matching(NSPredicate(format: "label == %@", "Rename session")).firstMatch
+        let titleButton = app.buttons["chat.title"]
         XCTAssertTrue(titleButton.waitUntilExists(timeout: 5), "The chat's title is missing")
         XCTAssertEqual(titleButton.value as? String, String(title), "The title's value carries the whole title")
         XCTAssertLessThanOrEqual(
@@ -324,11 +324,11 @@ final class PaneUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(app.navigationBars["Git"].waitUntilExists(timeout: 5), "The Git panel did not open")
     }
 
-    /// Share is in the title's context menu.
+    /// Share is in the title's menu, which a tap on the title opens.
     private func openShareSheet() {
-        let title = app.buttons["Rename session"]
+        let title = app.buttons["chat.title"]
         XCTAssertTrue(title.waitUntilExists(timeout: 10))
-        title.press(forDuration: 1.0)
+        title.tap()
         let share = app.buttons["Share Session"]
         XCTAssertTrue(share.waitUntilExists(timeout: 5), "Share Session missing from the title menu")
         share.tap()

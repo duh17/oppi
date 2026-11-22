@@ -73,12 +73,14 @@ extension ChatViewController {
         )
     }
 
+    /// The title menu's Copy Session ID: this session's id, for a command line
+    /// or another device.
     func copySessionID() {
         UIPasteboard.general.string = sessionId
     }
 
-    /// The chat title's icon opens the Agent this session launched with, on the
-    /// same page the Agents list pushes, and Pi's own page for a session launched
+    /// The title menu's Edit Agent opens the Agent this session launched with, on
+    /// the same page the Agents list pushes, and Pi's page for a session launched
     /// without one.
     func openSessionAgentPage() {
         guard let root else { return }

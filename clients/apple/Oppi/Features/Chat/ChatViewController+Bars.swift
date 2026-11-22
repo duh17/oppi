@@ -87,6 +87,8 @@ final class ChatBarItems {
     /// nothing leaves an open menu attached to its owner. Nil until the first
     /// pass builds the group: nothing drawn is still a group holding only ….
     private var appliedBar: [ChatTopBarAction]?
+    /// What the title's menu was built from (`sessionMenuKey`).
+    private var appliedSessionMenuKey: String?
 
     /// Rail order, top to bottom: Back, session, then the shown buttons in the
     /// user's order, then … . Overflow empties the rail from the bottom; on a
@@ -190,7 +192,7 @@ final class ChatBarItems {
         }
 
         if joinsRail {
-            railSessionItem.menu = makeSessionMenu(title: chat.sessionDisplayName, includesRename: true)
+            railSessionItem.menu = makeSessionMenu()
             railSessionItem.image = chat.railSessionImage()
             railSessionItem.accessibilityValue = chat.sessionDisplayName
             var rail: [UIBarButtonItem] = []
@@ -213,19 +215,15 @@ final class ChatBarItems {
             setItems(back: leadingGroup, right: [trailingGroup], on: navigationItem)
         }
 
-        titleControl.onTap = { [weak chat] in chat?.presentRenameAlert() }
-        titleControl.onOpenAgent = { [weak chat] in chat?.openSessionAgentPage() }
-        titleControl.openAgentName = chat.assistantIdentityPresentation == .globalAvatar
-            ? String(localized: "Open Pi")
-            : String(localized: "Open Agent")
-        titleControl.menuProvider = { [weak self, weak chat] in
-            guard let self, let chat else { return nil }
-            return self.makeSessionMenu(title: nil, includesRename: false, chat: chat)
+        // The title's menu reads live state; a pass that changes none of it
+        // leaves the menu its owner may be holding in place.
+        let menuKey = sessionMenuKey(for: chat)
+        if menuKey != appliedSessionMenuKey {
+            appliedSessionMenuKey = menuKey
+            titleControl.menu = makeSessionMenu()
         }
-        titleControl.accessibilityLabel = "Rename session"
-        titleControl.accessibilityValue = chat.assistantIdentityPresentation == .globalAvatar
-            ? chat.sessionDisplayName
-            : "\(chat.sessionDisplayName), launched with a saved Agent"
+        titleControl.accessibilityLabel = "Session menu"
+        titleControl.accessibilityValue = chat.sessionDisplayName
     }
 
     /// Which actions this chat can offer right now. One owner for the bar and
@@ -266,7 +264,7 @@ final class ChatBarItems {
     private static let barMargins: CGFloat = 2 * 16
     private static let leadingItemWidth: CGFloat = 44 + 8
     private static let titleGaps: CGFloat = 2 * 8
-    static let titleMinimumWidth: CGFloat = 96
+    static let titleMinimumWidth = ChatTitleMetrics.minimumWidth
     private static let moreWidth: CGFloat = 44 + 2 * 4
 
     /// How many buttons the horizontal bar has room for beside Back, the
@@ -622,66 +620,73 @@ final class ChatBarItems {
         return item
     }
 
-    private func makeSessionMenu(title: String?, includesRename: Bool, chat: ChatViewController? = nil) -> UIMenu {
-        guard let chat = chat ?? self.chat else { return UIMenu() }
-        var actions: [UIMenuElement] = []
-        if includesRename {
-            actions.append(UIAction(title: "Rename", image: UIImage(systemName: "pencil")) { [weak chat] _ in
-                chat?.presentRenameAlert()
-            })
-        }
-        actions.append(UIAction(title: "Copy Session ID", image: UIImage(systemName: "doc.on.doc")) { [weak chat] _ in
-            chat?.copySessionID()
-        })
+    /// The session's one menu: the title opens it, and so does the session item
+    /// on the vertical rail. A header names the whole session, then what the
+    /// title can do, and the Agent this session launched with (Pi's page for a
+    /// session launched without one).
+    func makeSessionMenu() -> UIMenu {
+        guard let chat else { return UIMenu() }
+        let agentItem = chat.assistantIdentityPresentation == .globalAvatar
+            ? UIAction(title: "Pi Settings", image: UIImage(systemName: "gearshape")) { [weak chat] _ in
+                chat?.openSessionAgentPage()
+            }
+            : UIAction(title: "Edit Agent", image: UIImage(systemName: "person.crop.circle")) { [weak chat] _ in
+                chat?.openSessionAgentPage()
+            }
         let share = UIAction(title: "Share Session", image: UIImage(systemName: "square.and.arrow.up")) { [weak chat] _ in
             chat?.shareSessionFromTitleMenu()
         }
         if !chat.hasShareSlashCommand { share.attributes = .disabled }
-        actions.append(share)
-        guard let title else { return UIMenu(children: actions) }
-        return UIMenu(children: [UIMenu(title: title, options: .displayInline, children: actions)])
+        let actions: [UIMenuElement] = [
+            UIAction(title: "Copy Session ID", image: UIImage(systemName: "doc.on.doc")) { [weak chat] _ in
+                chat?.copySessionID()
+            },
+            UIAction(title: "Rename", image: UIImage(systemName: "pencil")) { [weak chat] _ in
+                chat?.presentRenameAlert()
+            },
+            share,
+            agentItem,
+        ]
+        return UIMenu(children: [UIMenu(title: chat.sessionDisplayName, options: .displayInline, children: actions)])
+    }
+
+    /// What the menu says and offers, so a pass that changes none of it leaves
+    /// the open menu attached to its owner.
+    private func sessionMenuKey(for chat: ChatViewController) -> String {
+        "\(chat.sessionDisplayName)\u{1F}\(chat.hasShareSlashCommand)\u{1F}\(chat.assistantIdentityPresentation == .globalAvatar)"
     }
 }
 
-/// The session title in the bar: `ChatTitleView` (icon, name, cost,
-/// mirror and durable marks, Conversation subtitle). A tap renames; a long
-/// press offers Copy Session ID and Share Session. One element for
-/// accessibility, whose activation is the same rename; a tap on the icon
-/// opens the session's Agent, which is that element's one custom action.
+/// The session title in the bar: `ChatTitleView` (icon, name, cost, mirror
+/// and durable marks, Conversation subtitle) and the session's menu. A tap
+/// anywhere on it, the icon or the name, opens that menu: a header with the
+/// whole session name, then what the title can do, the Agent's page included.
+/// One element for accessibility, whose activation is the same tap.
 @MainActor
-final class ChatTitleControl: UIControl {
-    var onTap: (() -> Void)?
-    var menuProvider: (() -> UIMenu?)?
-    /// Opens the session's Agent page from the title's icon.
-    var onOpenAgent: (() -> Void)? {
-        didSet { (titleView as? ChatTitleView)?.onOpenAgent = onOpenAgent }
-    }
-    /// What the icon's open is called for VoiceOver: "Open Agent", or "Open Pi"
-    /// for a session launched without one. Nil while there is nothing to open.
-    var openAgentName: String? {
-        didSet {
-            guard openAgentName != oldValue else { return }
-            accessibilityCustomActions = openAgentName.map { name in
-                [UIAccessibilityCustomAction(name: name, image: nil) { [weak self] _ in
-                    guard let open = self?.onOpenAgent else { return false }
-                    open()
-                    return true
-                }]
-            }
-        }
-    }
+final class ChatTitleControl: UIButton {
     private(set) var titleView: UIView?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         isAccessibilityElement = true
         accessibilityTraits = .button
-        addAction(UIAction { [weak self] _ in self?.onTap?() }, for: .touchUpInside)
-        isContextMenuInteractionEnabled = true
+        accessibilityIdentifier = "chat.title"
+        showsMenuAsPrimaryAction = true
+        // The bar sizes an Auto Layout title view to the room between its
+        // items. One with autoresizing on gets pinned at its `sizeThatFits`
+        // width instead, which for a button is its empty title's, about 30 pt.
+        translatesAutoresizingMaskIntoConstraints = false
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    /// The title's size is the view it holds. A button's own (empty title)
+    /// size would hug as hard as the name resists squeezing, and the bar
+    /// would draw the circle alone.
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: UIView.noIntrinsicMetric, height: UIView.noIntrinsicMetric)
+    }
 
     /// Installs the title view once; its content follows the session itself.
     func install(_ view: UIView) {
@@ -697,15 +702,6 @@ final class ChatTitleControl: UIControl {
             view.topAnchor.constraint(equalTo: topAnchor),
             view.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
-        (view as? ChatTitleView)?.onOpenAgent = onOpenAgent
-    }
-
-    /// The title around the icon renames, as its activation does; the icon itself
-    /// takes the touches inside it (`ChatTitleView.avatarHitTarget`).
-    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        guard isUserInteractionEnabled, !isHidden, alpha > 0.01,
-              self.point(inside: point, with: event) else { return nil }
-        return (titleView as? ChatTitleView)?.avatarHitTarget(for: point) ?? self
     }
 
     /// One burst of the icon, for the chat's moments (it opened, a turn ended, it
@@ -714,17 +710,10 @@ final class ChatTitleControl: UIControl {
         (titleView as? ChatTitleView)?.playIconMoment()
     }
 
-    override func accessibilityActivate() -> Bool {
-        onTap?()
-        return true
-    }
-
-    override func contextMenuInteraction(
-        _ interaction: UIContextMenuInteraction,
-        configurationForMenuAtLocation location: CGPoint
-    ) -> UIContextMenuConfiguration? {
-        guard let menu = menuProvider?() else { return nil }
-        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { _ in menu }
+    /// Where the title's icon is in window coordinates: the empty chat's circle
+    /// lands there when the first message arrives.
+    func iconFrameInWindow() -> CGRect? {
+        (titleView as? ChatTitleView)?.iconFrameInWindow()
     }
 }
 

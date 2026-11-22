@@ -350,7 +350,7 @@ extension ChatViewController: ChatComposerSource {
             busyStreamingBehavior: model.busyStreamingBehavior,
             isSending: composerIsSending,
             pendingReviewCommentCount: reviewing ? 0 : reviewComments.stagedCount,
-            placeholderOverride: reviewing ? "Comment…" : nil,
+            placeholderOverride: reviewing ? "Comment…" : greetingComposerPlaceholder,
             allowsEmptySubmit: false,
             sendProgressText: uploads?.statusLine ?? actionHandler.sendProgressText,
             isStopping: isStopping,

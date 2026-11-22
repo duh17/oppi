@@ -46,6 +46,9 @@ struct ChatTimelineConfiguration {
     /// The session's saved Agent, for the empty timeline's icon (`ChatEmptyStateView`).
     let agentId: String?
     let agentIcon: IconChoice?
+    /// The chat's half of the empty timeline: its greeting text and where its
+    /// circle lands. Nil for a Pi session, whose hero stays plain.
+    var emptyChat: ChatEmptyChatHost? = nil
     /// The launch snapshot of the session that sent an agent message, looked up by
     /// `MessageOrigin.sessionId` in this client's session store. Nil means the store
     /// does not hold that session, so the card draws the global avatar; the row never

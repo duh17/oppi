@@ -33,8 +33,11 @@ import UIKit
 /// `SCREENSHOT_COLOR_SCHEME=light` shows the chat in the light theme.
 /// `CHAT_ROUTES_SESSION_TITLE=<title>` names the chat (a long-title check).
 /// `CHAT_ROUTES_AGENT=1` launches the fixture session with a saved Agent, so the
-/// title's and the empty hero's icon is that Agent's; `CHAT_ROUTES_EMPTY=1` leaves the
-/// timeline empty, so the chat shows its own empty state.
+/// title's and the empty hero's icon is that Agent's, and the stub answers `/agents`
+/// with its name and description; `CHAT_ROUTES_EMPTY=1` leaves the timeline empty, so
+/// the chat shows its own empty state. `chatRoutes.firstMessage` lands the first user
+/// message in an empty timeline, as a send does; `CHAT_ROUTES_FIRST_MESSAGE=<seconds>`
+/// lands it that many seconds after the screen appears, for a recording.
 /// `CHAT_ROUTES_LONG_FILE=1` serves a long file with wide lines;
 /// `CHAT_ROUTES_LONG_FILE=<n>` serves n lines of wrapping code.
 /// `CHAT_ROUTES_PANE_RESIZE=1` adds the live divider resize readout
@@ -134,6 +137,7 @@ final class ChatRoutesPreviewController: PreviewRootController {
     /// left under a test's tap: a Git tap opened the outline.
     private func keepTimelineSeeded() {
         ChatRoutesFixture.seedTimelineIfNeeded(into: reducer)
+        ChatRoutesFixture.seedFirstMessageIfNeeded(into: reducer)
         withObservationTracking {
             _ = reducer.items
         } onChange: { [weak self] in
@@ -182,6 +186,11 @@ final class ChatRoutesPreviewController: PreviewRootController {
                         on: ChatRoutesFixture.connection
                     )
                 }
+            },
+            // The first message of an empty chat: the row a send echoes lands, and
+            // the greeting's circle flies into the title's.
+            control("chatRoutes.firstMessage") { [reducer] in
+                ChatRoutesFixture.landFirstMessage(into: reducer)
             },
             control("chatRoutes.endTurn") {
                 let connection = ChatRoutesFixture.connection
@@ -241,6 +250,13 @@ final class ChatRoutesPreviewController: PreviewRootController {
                     ChatRoutesFixture.seedSurfaceIfNeeded(on: connection)
                     try? await Task.sleep(for: .milliseconds(200))
                 }
+            },
+            // A recording of the first message's arrival (`CHAT_ROUTES_FIRST_MESSAGE`).
+            Task { @MainActor [weak self] in
+                guard let seconds = ChatRoutesFixture.firstMessageDelay else { return }
+                try? await Task.sleep(for: .seconds(seconds))
+                guard !Task.isCancelled, let reducer = self?.reducer else { return }
+                ChatRoutesFixture.landFirstMessage(into: reducer)
             },
             // A busy session's store updates all the time, and each one repaints the footer
             // and the drawer in it (`CHAT_ROUTES_SURFACE=tall`).
@@ -446,6 +462,7 @@ enum ChatRoutesFixture {
         lastArrival = ""
         ChatRoutesStubRecord.shared.createdSessions = 0
         ChatRoutesStubRecord.shared.surfaceActions = []
+        landedFirstMessage = false
     }
 
     @MainActor private static func makeConnection() -> ServerConnection {
@@ -688,7 +705,7 @@ enum ChatRoutesFixture {
         // chat's title and empty hero draw its icon and play its moment.
         if environment["CHAT_ROUTES_AGENT"] == "1" {
             session.launch = SessionLaunchMetadata(
-                agentId: "chat-routes-agent",
+                agentId: agentID,
                 agentIcon: .symbol("sparkles", effect: .bounce)
             )
         }
@@ -885,6 +902,53 @@ enum ChatRoutesFixture {
             events += liveWorkEvents
         }
         reducer.loadSession(events)
+    }
+
+    /// `CHAT_ROUTES_EMPTY=1` plus `chatRoutes.firstMessage`: the user row a send
+    /// echoes into an empty timeline, which is what makes the chat stop being
+    /// empty and sends its greeting into the title.
+    @MainActor static func landFirstMessage(into reducer: TimelineReducer) {
+        landedFirstMessage = true
+        seedFirstMessageIfNeeded(into: reducer)
+    }
+
+    /// The row stays landed: the chat's connect resets its reducer, and a
+    /// timeline that went back to empty would greet again. `keepTimelineSeeded`
+    /// puts the row back, as it does the fixture rows.
+    @MainActor static func seedFirstMessageIfNeeded(into reducer: TimelineReducer) {
+        guard landedFirstMessage, reducer.items.isEmpty else { return }
+        reducer.loadSession([
+            traceEvent(id: firstMessageID, type: .user, text: "Audit the routes end to end."),
+        ])
+    }
+
+    /// Set once the empty chat has its first message (`chatRoutes.firstMessage`,
+    /// `CHAT_ROUTES_FIRST_MESSAGE`), and by the in-process reset.
+    @MainActor private static var landedFirstMessage = false
+
+    static let firstMessageID = "chat-routes-first-user"
+
+    /// `CHAT_ROUTES_FIRST_MESSAGE=<seconds>`: `chatRoutes.firstMessage` on its own,
+    /// after the screen has settled, so a recording shows the greeting leave.
+    static var firstMessageDelay: Double? {
+        environment["CHAT_ROUTES_FIRST_MESSAGE"].flatMap(Double.init)
+    }
+
+    /// The saved Agent `CHAT_ROUTES_AGENT=1` launches with: what the empty chat's
+    /// greeting names, read from the stub's `/agents` as Quick Session reads it.
+    static let agentID = "chat-routes-agent"
+
+    static var agentJSON: [String: Any] {
+        [
+            "id": agentID,
+            "name": "Routes Agent",
+            "icon": ["kind": "symbol", "name": "sparkles", "effect": "bounce"],
+            "description": "Reviews routes end to end, then reruns the checks.",
+            "status": "active",
+            "version": 1,
+            "createdAt": 1_770_000_000_000,
+            "updatedAt": 1_770_000_000_000,
+        ]
     }
 
     /// `CHAT_ROUTES_LIVE_WORK=1`: a prompt, then thinking and a tool call with no result yet.
@@ -1211,6 +1275,8 @@ private final class ChatRoutesURLProtocol: URLProtocol {
         case ("GET", "/files/current") where !(url.query ?? "").contains(ChatRoutesFixture.removedFileName):
             contentType = "text/plain"
             body = Data(ChatRoutesFixture.fileText.utf8)
+        case ("GET", "/agents"):
+            body = Self.json(["agents": [ChatRoutesFixture.agentJSON]])
         case ("GET", "/models"):
             body = Self.json([
                 "models": ChatRoutesFixture.models.map { model in

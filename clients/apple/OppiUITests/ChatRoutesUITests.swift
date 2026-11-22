@@ -1475,6 +1475,57 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         assertRunning()
     }
 
+    // MARK: - Empty chat
+
+    /// An Agent's new chat opens on that Agent: the circle, its name and
+    /// description, and the composer naming it. The title's menu carries what the
+    /// title used to do (Rename, Share) and opens the Agent's page.
+    func testEmptyAgentChatGreetsAndOpensTheSessionMenu() {
+        launchScreen("chat-routes", environment: ["CHAT_ROUTES_AGENT": "1", "CHAT_ROUTES_EMPTY": "1"])
+        let title = app.buttons["chat.title"]
+        XCTAssertTrue(title.waitUntilExists(timeout: 15), "An empty chat still has its title")
+
+        let name = app.staticTexts["chat.emptyState.name"]
+        XCTAssertTrue(name.waitUntilExists(timeout: 10), "The greeting names the Agent")
+        XCTAssertEqual(name.label, "Routes Agent")
+        let description = app.staticTexts["chat.emptyState.description"]
+        XCTAssertTrue(description.waitUntilExists(timeout: 5), "The greeting says what the Agent does")
+        let hero = app.descendants(matching: .any)["chat.emptyState.hero"]
+        XCTAssertTrue(hero.exists, "The Agent's circle is the empty chat's centre")
+        XCTAssertEqual(title.value as? String, "Routes", "The title still names the session")
+        attachScreenshot("empty-agent-chat")
+
+        title.tap()
+        for item in ["Copy Session ID", "Rename", "Share Session", "Edit Agent"] {
+            let button = app.buttons.matching(NSPredicate(format: "label == %@", item)).firstMatch
+            XCTAssertTrue(button.waitUntilExists(timeout: 5), "\(item) is missing from the title's menu")
+        }
+        attachScreenshot("title-menu")
+        app.buttons.matching(NSPredicate(format: "label == %@", "Rename")).firstMatch.tap()
+        let alert = app.alerts["Rename Session"]
+        XCTAssertTrue(alert.waitUntilExists(timeout: 5), "Rename comes from the menu")
+        alert.buttons.matching(NSPredicate(format: "label == %@", "Cancel")).firstMatch.tap()
+        XCTAssertTrue(alert.waitUntilGone(timeout: 5))
+
+        assertRunning()
+    }
+
+    /// The first message ends the greeting: the circle lands in the title, the
+    /// description goes, and the composer stops naming the Agent.
+    func testFirstMessageSendsTheGreetingIntoTheTitle() {
+        launchScreen("chat-routes", environment: ["CHAT_ROUTES_AGENT": "1", "CHAT_ROUTES_EMPTY": "1"])
+        let name = app.staticTexts["chat.emptyState.name"]
+        XCTAssertTrue(name.waitUntilExists(timeout: 15), "The empty chat greets first")
+
+        app.buttons["chatRoutes.firstMessage"].tap()
+        XCTAssertTrue(name.waitUntilGone(timeout: 10), "The greeting leaves with the first message")
+        XCTAssertFalse(app.descendants(matching: .any)["chat.emptyState.hero"].exists)
+        XCTAssertTrue(app.buttons["chat.title"].waitUntilExists(timeout: 5), "The title stays")
+        hold()
+        attachScreenshot("first-message-landed")
+        assertRunning()
+    }
+
     // MARK: - Review modals
 
     /// Compact width presents the commit as a sheet, with New Session pushing
@@ -1904,10 +1955,8 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
     /// Whether the chat named `title` is on screen. Its title button says so; the
     /// Duo's vertical rail has none, so its session item's value names the chat.
     private func chatIsShown(title: String) -> Bool {
-        let named = app.buttons.matching(
-            NSPredicate(format: "label == %@ AND value == %@", "Rename session", title)
-        ).firstMatch
-        if named.exists { return true }
+        let named = app.buttons["chat.title"]
+        if named.exists, named.value as? String == title { return true }
         return app.buttons["chat.rail.session"].exists && app.buttons["chat.rail.session"].value as? String == title
     }
 
@@ -1932,16 +1981,16 @@ final class ChatRoutesUITests: XCTestCase, PreviewUITestCase {
         }()), "The expanded bar did not settle")
     }
 
-    /// Share is in the title's context menu, or in the session menu on the
-    /// vertical rail (iPhone Duo).
+    /// Share is in the title's menu, which a tap on the title opens, or in the
+    /// session menu on the vertical rail (iPhone Duo).
     private func openShareSheet() {
         let railSession = app.buttons["chat.rail.session"]
         if railSession.exists {
             railSession.tap()
         } else {
-            let title = app.buttons["Rename session"]
+            let title = app.buttons["chat.title"]
             XCTAssertTrue(title.waitUntilExists(timeout: 10))
-            title.press(forDuration: 1.0)
+            title.tap()
         }
         let share = app.buttons["Share Session"]
         XCTAssertTrue(share.waitUntilExists(timeout: 5), "Share Session missing from the title menu")

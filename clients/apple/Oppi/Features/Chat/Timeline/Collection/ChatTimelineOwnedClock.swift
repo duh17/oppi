@@ -411,6 +411,7 @@ extension ChatTimelineController {
             || previous.extensionHiddenThinkingLabel != next.extensionHiddenThinkingLabel
             || previous.agentId != next.agentId
             || previous.agentIcon != next.agentIcon
+            || previous.emptyChat?.greeting != next.emptyChat?.greeting
             || previous.readAloudAvailable != next.readAloudAvailable
             || previous.iconAssetCache !== next.iconAssetCache
             || previous.topOverlap != next.topOverlap

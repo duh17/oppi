@@ -76,6 +76,11 @@ final class ChatScreenModel {
     var isOpeningTerminal = false
     /// The bar title's widest size (`updateTitleMaxWidth`).
     var titleMaxWidth: CGFloat = 320
+    /// The empty chat's greeting: this chat's Agent, by name and description,
+    /// read when the timeline shows empty and dropped when the first message
+    /// lands. Nil for a Pi session and during a read.
+    var agentGreeting: ChatAgentGreeting?
+    @ObservationIgnored var agentGreetingTask: Task<Void, Never>?
 }
 
 /// The chat screen. UIKit owns its structure: the timeline
