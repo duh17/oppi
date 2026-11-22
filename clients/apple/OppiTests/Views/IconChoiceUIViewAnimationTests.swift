@@ -14,7 +14,7 @@ import UniformTypeIdentifiers
 struct IconChoiceUIViewAnimationTests {
 
     @Test func onlyAnAnimatingViewPlaysAndItStopsWhenItLeavesItsWindow() async throws {
-        let gif = try animatedGIFFrames([.systemRed, .systemGreen, .systemBlue])
+        let webp = IconWebPFixtures.threeColour
         let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
         window.isHidden = false
         defer { hideTestWindow(window) }
@@ -28,7 +28,7 @@ struct IconChoiceUIViewAnimationTests {
                 view.leadingAnchor.constraint(equalTo: window.leadingAnchor, constant: CGFloat(index) * 100),
                 view.topAnchor.constraint(equalTo: window.topAnchor),
             ])
-            view.apply(.importedImage(gif))
+            view.apply(.importedImage(webp))
         }
         window.layoutIfNeeded()
         #expect(still.bounds.width == 64 && playing.bounds.width == 64)
@@ -42,6 +42,26 @@ struct IconChoiceUIViewAnimationTests {
         try await Task.sleep(for: .milliseconds(150))
         let afterRemoval = try await centreSwatches(of: playing, for: .milliseconds(600))
         #expect(afterRemoval.count == 1, "a view out of its window stops playing: \(afterRemoval)")
+    }
+
+    @Test func aGIFStoredBeforeWebPDrawsItsFirstFrameAndNeverPlays() async throws {
+        let gif = try animatedGIFFrames([.systemRed, .systemGreen, .systemBlue])
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+        window.isHidden = false
+        defer { hideTestWindow(window) }
+
+        let playing = IconChoiceUIView(frameSize: 64, animates: true)
+        playing.translatesAutoresizingMaskIntoConstraints = false
+        window.addSubview(playing)
+        NSLayoutConstraint.activate([
+            playing.leadingAnchor.constraint(equalTo: window.leadingAnchor),
+            playing.topAnchor.constraint(equalTo: window.topAnchor),
+        ])
+        playing.apply(.importedImage(gif))
+        window.layoutIfNeeded()
+
+        let seen = try await centreSwatches(of: playing, for: .milliseconds(900))
+        #expect(seen == [.red], "WebP is the only animated icon, so a GIF holds still: \(seen)")
     }
 }
 
@@ -83,7 +103,8 @@ private func centreSwatch(of view: UIView) -> Swatch {
     return .other
 }
 
-/// A looping GIF of solid frames, 100 ms each.
+/// A looping GIF of solid frames, 100 ms each: the format Oppi no longer accepts,
+/// kept as the bytes a server stored before WebP.
 @MainActor
 private func animatedGIFFrames(_ colors: [UIColor]) throws -> Data {
     let output = NSMutableData()
@@ -110,7 +131,7 @@ private func animatedGIFFrames(_ colors: [UIColor]) throws -> Data {
 }
 
 /// A burst plays the icon briefly and then rests on its still drawing: an
-/// animated image's frames for `burstDuration`, a symbol's effect once. A view
+/// animated WebP's frames for `burstDuration`, a symbol's effect once. A view
 /// outside a window, and one that already animates, do not burst.
 @Suite("Icon burst")
 @MainActor
@@ -140,12 +161,12 @@ struct IconBurstTests {
     }
 
     @Test func anAnimatedImageBurstsThenRestsOnItsFirstFrame() async throws {
-        let gif = try animatedGIFFrames([.systemRed, .systemGreen, .systemBlue])
+        let webp = IconWebPFixtures.threeColour
         let window = makeWindow()
         defer { hideTestWindow(window) }
         let view = IconChoiceUIView(frameSize: 64)
         add(view, to: window)
-        view.apply(.importedImage(gif))
+        view.apply(.importedImage(webp))
 
         let before = try await centreSwatches(of: view, for: .milliseconds(200))
         #expect(before == [.red], "an icon that is asked to burst draws its first frame first")
@@ -249,7 +270,7 @@ struct IconCircleShapeTests {
     }
 
     @Test func aCirclePlaysItsAnimatedImage() async throws {
-        let gif = try animatedGIFFrames([.systemRed, .systemGreen, .systemBlue])
+        let webp = IconWebPFixtures.threeColour
         let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
         window.isHidden = false
         defer { hideTestWindow(window) }
@@ -261,7 +282,7 @@ struct IconCircleShapeTests {
             playing.leadingAnchor.constraint(equalTo: window.leadingAnchor),
             playing.topAnchor.constraint(equalTo: window.topAnchor),
         ])
-        playing.apply(.importedImage(gif))
+        playing.apply(.importedImage(webp))
         window.layoutIfNeeded()
 
         let seen = try await centreSwatches(of: playing, for: .milliseconds(900))

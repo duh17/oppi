@@ -872,8 +872,7 @@ private func imageIOHEIFFixture(
     height: Int,
     visible: Bool,
     type: UTType = .heic,
-    frames: Int = 1,
-    noise: Bool = false
+    frames: Int = 1
 ) throws -> Data {
     let bytesPerRow = width * 4
     var pixels = [UInt8](repeating: 0, count: bytesPerRow * height)
@@ -901,12 +900,6 @@ private func imageIOHEIFFixture(
         nil
     ) else { throw HEIFFixtureError.destination }
     for _ in 0..<frames {
-        if noise {
-            // Incompressible pixels, so a few frames pass the 1 MiB cap.
-            context.data?.withMemoryRebound(to: UInt8.self, capacity: bytesPerRow * height) { pixels in
-                for index in 0..<(bytesPerRow * height) { pixels[index] = UInt8.random(in: 0...255) | (index % 4 == 3 ? 0xFF : 0) }
-            }
-        }
         guard let image = context.makeImage() else { throw HEIFFixtureError.context }
         CGImageDestinationAddImage(destination, image, nil)
     }
@@ -1577,30 +1570,39 @@ struct IconImageImportTests {
     }
 
     @Test func anAnimatedImageWithinTheCapIsKeptAsUploaded() throws {
-        let gif = try imageIOHEIFFixture(width: 200, height: 200, visible: true, type: .gif, frames: 4)
-        #expect(try IconImageImport.prepare(gif) == gif)
+        let webp = IconWebPFixtures.threeColour
+        #expect(try IconImageImport.prepare(webp) == webp)
+    }
+
+    @Test func aGIFIsRefusedAndToldToUseWebP() throws {
+        for frames in [1, 4] {
+            let gif = try imageIOHEIFFixture(width: 200, height: 200, visible: true, type: .gif, frames: frames)
+            #expect(throws: IconImageImport.Failure.gifUnsupported) {
+                _ = try IconImageImport.prepare(gif)
+            }
+        }
     }
 
     @Test func anAnimatedImageWiderThanTheServerAllowsIsRefused() throws {
-        let gif = try imageIOHEIFFixture(width: 1_100, height: 8, visible: true, type: .gif, frames: 2)
-        #expect(gif.count <= IconImageImport.maxUploadBytes)
+        let webp = IconWebPFixtures.tooWide
+        #expect(webp.count <= IconImageImport.maxUploadBytes)
         #expect(throws: IconImageImport.Failure.animatedTooLarge) {
-            _ = try IconImageImport.prepare(gif)
+            _ = try IconImageImport.prepare(webp)
         }
     }
 
     @Test func anImageWhoseFirstFrameIsBlankIsRefused() throws {
-        let gif = try imageIOHEIFFixture(width: 64, height: 64, visible: false, type: .gif, frames: 2)
+        let blank = try imageIOHEIFFixture(width: 64, height: 64, visible: false, type: .png)
         #expect(throws: IconImageImport.Failure.blankFirstFrame) {
-            _ = try IconImageImport.prepare(gif)
+            _ = try IconImageImport.prepare(blank)
         }
     }
 
     @Test func anAnimatedImageOverTheCapIsRefused() throws {
-        let gif = try imageIOHEIFFixture(width: 400, height: 400, visible: true, type: .gif, frames: 12, noise: true)
-        #expect(gif.count > IconImageImport.maxUploadBytes)
+        let webp = IconWebPFixtures.overCap
+        #expect(webp.count > IconImageImport.maxUploadBytes)
         #expect(throws: IconImageImport.Failure.animatedTooLarge) {
-            _ = try IconImageImport.prepare(gif)
+            _ = try IconImageImport.prepare(webp)
         }
     }
 

@@ -1,4 +1,5 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -155,17 +156,52 @@ describe("IconAssetStore", () => {
 
   it.each([
     ["PNG", pngFixture(), "image/png"],
-    ["GIF", gifFixture(), "image/gif"],
     ["lossless WebP", webpFixture("VP8L"), "image/webp"],
     ["lossy WebP", webpFixture("VP8 "), "image/webp"],
     ["animated WebP", webpFixture("VP8X"), "image/webp"],
     // A decoder tolerates trailing bytes, so the store does too.
-    ["GIF with trailing bytes", Buffer.concat([gifFixture(), Buffer.alloc(3)]), "image/gif"],
+    ["PNG with trailing bytes", Buffer.concat([pngFixture(), Buffer.alloc(3)]), "image/png"],
   ])("stores an imported %s as an image asset typed by its bytes", (_, bytes, contentType) => {
     const record = store.put(bytes);
     expect(record.contentType).toBe(contentType);
     expect(store.kind(record.assetId)).toBe("image");
     expect(store.read(record.assetId).bytes).toEqual(bytes);
+  });
+
+  it("refuses a GIF and names WebP as the animated format", () => {
+    expect(() => store.put(gifFixture())).toThrow(
+      expect.objectContaining({ code: "unsupported", status: 415 }),
+    );
+    expect(() => store.put(gifFixture())).toThrow("use WebP for an animated icon");
+    expect(readdirSync(join(dataDir, "icon-assets", "blobs"))).toEqual([]);
+  });
+
+  it("still reads a GIF stored before WebP was the only animated icon", () => {
+    // No upload path makes this asset any more; an older server left it, so its
+    // bytes must keep serving rather than fail the read.
+    const bytes = gifFixture({ width: 3, height: 3 });
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const assetId = `ia_${Buffer.from(sha256, "hex").toString("base64url")}`;
+    const blobs = join(dataDir, "icon-assets", "blobs");
+    const metadata = join(dataDir, "icon-assets", "metadata");
+    mkdirSync(blobs, { recursive: true });
+    mkdirSync(metadata, { recursive: true });
+    writeFileSync(join(blobs, `${assetId}.heic`), bytes);
+    writeFileSync(
+      join(metadata, `${assetId}.json`),
+      JSON.stringify({
+        assetId,
+        sha256,
+        sizeBytes: bytes.length,
+        contentType: "image/gif",
+        createdAt: 1_000,
+        lastUploadedAt: 1_000,
+      }),
+    );
+
+    expect(store.read(assetId).record.contentType).toBe("image/gif");
+    expect(store.read(assetId).bytes).toEqual(bytes);
+    expect(store.kind(assetId)).toBe("image");
   });
 
   it("backs Genmoji with HEIC and images with everything else", () => {
@@ -187,7 +223,7 @@ describe("IconAssetStore", () => {
     ["random bytes", Buffer.from("definitely not an image, just text"), "unsupported"],
     ["a PNG cut before its header", pngFixture().subarray(0, 16), "corrupt"],
     ["a PNG wider than 1024 px", pngFixture({ width: 1025, height: 1 }), "unsupported"],
-    ["a GIF taller than 1024 px", gifFixture({ width: 1, height: 1025 }), "unsupported"],
+    ["a GIF", gifFixture({ width: 1, height: 1 }), "unsupported"],
     ["a WebP wider than 1024 px", webpFixture("VP8X", { width: 1025, height: 1 }), "unsupported"],
   ])("rejects %s by its content", (_, bytes, code) => {
     expect(() => store.put(bytes)).toThrow(

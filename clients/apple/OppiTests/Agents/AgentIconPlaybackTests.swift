@@ -1,8 +1,6 @@
 import Foundation
-import ImageIO
 import Testing
 import UIKit
-import UniformTypeIdentifiers
 @testable import Oppi
 
 /// An Agent's icon where it is its own: the circle at the top of its page, which
@@ -284,30 +282,10 @@ private final class AgentIconFixtureURLProtocol: URLProtocol, @unchecked Sendabl
         archivedAt: nil
     )
 
-    /// A looping GIF of solid frames, 100 ms each: every frame is a different
-    /// image, so a playing icon and a still one are told apart by what they draw.
+    /// The three-colour animated WebP every playing icon here draws: each frame is
+    /// a different image, so a playing icon and a still one are told apart by what
+    /// they show.
     static func iconData() throws -> Data {
-        let output = NSMutableData()
-        let colors: [UIColor] = [.systemRed, .systemGreen, .systemBlue]
-        let destination = try #require(CGImageDestinationCreateWithData(
-            output, UTType.gif.identifier as CFString, colors.count, nil
-        ))
-        CGImageDestinationSetProperties(destination, [
-            kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0],
-        ] as CFDictionary)
-        let frameProperties = [
-            kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 0.1],
-        ] as CFDictionary
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        for color in colors {
-            let frame = UIGraphicsImageRenderer(size: CGSize(width: 64, height: 64), format: format).image { context in
-                color.setFill()
-                context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
-            }
-            CGImageDestinationAddImage(destination, try #require(frame.cgImage), frameProperties)
-        }
-        #expect(CGImageDestinationFinalize(destination))
-        return output as Data
+        IconWebPFixtures.threeColour
     }
 }

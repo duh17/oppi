@@ -184,7 +184,7 @@ With a trackpad or mouse, a secondary click on a row with swipe actions, such as
 
 The sidebar holds saved **Agents** and **Schedules**.
 
-- Agents store reusable definitions. An Agent's icon can be one Unicode emoji, an SF Symbol, a Genmoji, or an image (PNG, GIF, or WebP of up to 1 MB, still or animated). Every icon sits on the same rounded tile in your theme's colour, and an image fills its tile. A symbol icon can animate (**Bounce**, **Pulse**, **Breathe**, **Wiggle**, or **Rotate**, chosen under **Animation** in the icon picker). Animations play only on the Agent's page and in the icon picker; Reduce Motion or Low Power Mode keeps them still. Workspace icons work the same way ([Workspace settings](#workspace-settings)). To set an image icon from the server, without the app, run `oppi agent update <agent> --icon-image <file>` with a file on the server (`oppi agent create` and `oppi workspace create|update` take the same flag).
+- Agents store reusable definitions. An Agent's icon can be one Unicode emoji, an SF Symbol, a Genmoji, or an image: a PNG or an animated WebP of up to 1 MB. Every icon sits on the same rounded tile in your theme's colour, and an image fills its tile. A symbol icon can animate (**Bounce**, **Pulse**, **Breathe**, **Wiggle**, or **Rotate**, chosen under **Animation** in the icon picker). An icon plays on the Agent's page, on its row in the Agents list, and in the icon picker; a session row whose session needs you plays it for a moment too, and everywhere else it holds still. Reduce Motion, Low Power Mode, or **Auto-Play Animated Images** keeps it still. Workspace icons work the same way ([Workspace settings](#workspace-settings), and the icon plays in your workspace's settings). To set an image icon from the server, without the app, run `oppi agent update <agent> --icon-image <file>` with a file on the server (`oppi agent create` and `oppi workspace create|update` take the same flag). See [Animated icons](#animated-icons) for limits and for making one.
 - **Edit Agent → Chat Style** picks how that Agent's sessions look on this device: **Full**, **Compact**, **Chat**, or **Settings** to follow **Settings → Chat → Style**. The choice is per device and restyles the Agent's open sessions too.
 - **Edit Agent → Tools** is what that Agent may do. **Pi Tools** opens the same page as Pi's own Tools page ([Pi's tools](server-configuration.md#mcp-servers-codemode-and-tool-search)): the same built-in tools, **codemode**, **tool_search**, and the tools extensions register off, with **Pi defaults** (the server's Pi Tools setting) or an exact set for this Agent. An Agent whose set leaves out **edit** and **write** cannot change files, and it then names the **Plugins** and **MCP servers** it may use; an MCP server that needs codemode still brings it. **Ask me**, **Notify me**, and **Delegate** decide whether it can ask you a question, send a push when a result is ready, and start child sessions. **Plugins**, **MCP Servers**, and **Skills** each read **All** (everything, including what you add later) or a list you choose; a chosen MCP server can be narrowed to some of its tools, so a mail Agent might keep seven of Gmail's twelve. **Context** decides what its sessions read besides its own prompt: **Read AGENTS.md** and **Read past sessions**. An Agent's page shows the same choices, read-only. Agents saved before this change were rewritten once, when the server started, into the capabilities they could reach then.
 - Schedules support `at`, `every`, and `cron` triggers. A one-time `at` schedule moves to Archived after its run succeeds; a failed run keeps it active. A `cron` time inside the hour that repeats when daylight saving time ends runs on its first occurrence only. A schedule targets a workspace, a saved Agent, or an existing session. For an existing session, **Delivery** decides what happens when the session is mid-turn: **Automatic** (the default) sends a prompt when it is idle and queues a follow-up when it is busy; **Follow-up** does the same; **Steer** redirects the current turn instead. A run never fails because the session is busy. Oppi keeps run history for manual and approved automatic runs.
@@ -195,6 +195,38 @@ The sidebar holds saved **Agents** and **Schedules**.
 - **Week**, on iPad, lays the week out by hour, with the night folded into a short band. Each day's header shows what it cost and whether a run failed or waits on you; tap it to open that day. Runs at the same time sit side by side, or fold into one block on a narrow column; tap the block to list them.
 - Runs between midnight and 6 AM sit in an **Overnight** band, where runs that finished cleanly fold into one row; tap it to see each. Failed runs, runs waiting on you (with **Answer**), and running runs (with their time and cost so far) are tinted. A blue line marks now, and runs still to come count down. A run's cost includes the subagents its session launched, and their subagents; so do the Overnight row's total and the day's. Under a run that launched subagents, a strip shows how many, what they cost, and their Agents, with a dot for each one still working. Tap the strip to open the run's thread in All Sessions. Tap a past or running run to open its session, or a run still to come to open its schedule. Touch and hold a run for **Run Now**, **Pause Schedule**, **Show Schedule**, and **Last Run's Session**. The calendar needs a server that offers it; an older server shows only the list.
 - **Calendar Events** is an experiment, off by default. Turn it on under **Settings → Experiments → Calendar Events** and allow calendar access; **Calendars** there picks which calendars show. Your events then sit between the runs in the day view, with all-day events at the top, behind the runs in **Week**, and in **Month**'s day list. They wear a grey calendar mark, never an outcome colour. Tap or touch and hold an event for **Schedule Agent…**: a one-time schedule 30 minutes before the event (or at its start, 5, 15 or 60 minutes before, or at its end), with the event's details in its prompt. Events stay on this device until you save such a schedule ([Privacy](privacy.md#calendar)). If access was refused, the day view says so and opens Settings.
+
+### Animated icons
+
+A PNG icon holds still. To animate one, use a WebP: it is the only animated format Oppi stores, and a GIF is refused with a message saying so. Pick one in the icon picker under **Image**, or set it from the server:
+
+```bash
+oppi agent update <agent> --icon-image icon.webp
+```
+
+An animated icon can be up to 1 MiB, 1,024 pixels on a side, and 600 frames. 256 × 256 is enough for every place it shows.
+
+Make the artwork:
+
+- Draw a full-bleed square with no border or rounded corners of its own. Oppi clips it: rounded corners in lists and a circle on the Agent's page, so anything at the edges is cut.
+- Keep the subject inside the middle 80% of the square.
+- Make frame 0 the sharpest frame. It is the icon everywhere an icon holds still: a chat's avatar, Quick Session, schedules.
+- Check it at 32–44 pt in dark mode; most icons are that small.
+- Loop it over 1.5–2.2 s at 12–14 fps. A session row that needs you plays the icon for 2.4 s, a little over two loops.
+- Avoid alpha crossfades on outlined art: at icon size the outline fades into a smudge.
+
+WebP's tools convert frames and existing GIFs:
+
+```bash
+# Pixel art: lossless, 12 fps
+img2webp -loop 0 -lossless -m 6 -d 83 frame_*.png -o icon.webp
+
+# Cel or video frames: mixed lossy and lossless, 13 fps
+img2webp -loop 0 -mixed -q 85 -m 6 -d 75 frame_*.png -o icon.webp
+
+# An existing GIF
+gif2webp -mixed -q 85 -m 6 old.gif -o icon.webp
+```
 
 ## Edit with Oppi
 

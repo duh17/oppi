@@ -60,9 +60,7 @@ export async function iconChoiceFromImageFile(
     });
   }
   if (iconAssetKind(asset.contentType) !== "image") {
-    throw new Error(
-      `--icon-image ${file}: a Genmoji HEIC is not an image icon; use PNG, GIF, or WebP`,
-    );
+    throw new Error(`--icon-image ${file}: a Genmoji HEIC is not an image icon; use PNG or WebP`);
   }
   return { kind: "image", assetId: asset.assetId };
 }

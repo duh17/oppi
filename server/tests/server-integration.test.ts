@@ -357,16 +357,16 @@ describe("icon asset global auth shell", () => {
 // ── Image icons round trip through upload, Agent save, and fetch ──
 
 describe("Agent image icon round trip", () => {
-  it("saves an uploaded GIF as an Agent's image icon and serves it back", async () => {
-    const gif = gifFixture();
+  it("saves an uploaded WebP as an Agent's image icon and serves it back", async () => {
+    const webp = webpFixture("VP8X");
     const upload = await fetch(`${baseUrl}/icon-assets`, {
       method: "POST",
       headers: { "Content-Type": "application/octet-stream", Authorization: `Bearer ${token}` },
-      body: gif,
+      body: webp,
     });
     expect(upload.status).toBe(201);
     const { asset } = (await upload.json()) as { asset: { assetId: string; contentType: string } };
-    expect(asset.contentType).toBe("image/gif");
+    expect(asset.contentType).toBe("image/webp");
 
     const icon = { kind: "image", assetId: asset.assetId };
     const created = await post("/agents", { name: "Orbit", icon });
@@ -379,8 +379,8 @@ describe("Agent image icon round trip", () => {
     ).toEqual(icon);
 
     const served = await get(`/icon-assets/${asset.assetId}`);
-    expect(served.headers.get("content-type")).toBe("image/gif");
-    expect(Buffer.from(await served.arrayBuffer())).toEqual(gif);
+    expect(served.headers.get("content-type")).toBe("image/webp");
+    expect(Buffer.from(await served.arrayBuffer())).toEqual(webp);
 
     // The same asset cannot pose as a Genmoji, and a missing asset is refused.
     const asGenmoji = await post("/agents", {
@@ -403,7 +403,7 @@ describe("Workspace image and animated symbol icons", () => {
     const upload = await fetch(`${baseUrl}/icon-assets`, {
       method: "POST",
       headers: { "Content-Type": "application/octet-stream", Authorization: `Bearer ${token}` },
-      body: gifFixture({ width: 4, height: 4 }),
+      body: webpFixture("VP8X", { width: 4, height: 4 }),
     });
     const { asset } = (await upload.json()) as { asset: { assetId: string } };
     const image = { kind: "image", assetId: asset.assetId };
@@ -465,14 +465,14 @@ describe("--icon-image", () => {
   };
 
   it("stores a host image through the upload route, sets it, and keeps it while referenced", async () => {
-    const gif = gifFixture({ width: 3, height: 3 });
+    const webp = webpFixture("VP8X");
     const created = await oppi([
       "agent",
       "create",
       "--name",
       "Fox",
       "--icon-image",
-      hostFile("fox.gif", gif),
+      hostFile("fox.webp", webp),
     ]);
     expect(created.ok, JSON.stringify(created.error)).toBe(true);
     const agentId = (created.data?.agent as { id: string }).id;
@@ -480,8 +480,8 @@ describe("--icon-image", () => {
     expect(icon.kind).toBe("image");
 
     const served = await get(`/icon-assets/${icon.assetId}`);
-    expect(served.headers.get("content-type")).toBe("image/gif");
-    expect(Buffer.from(await served.arrayBuffer())).toEqual(gif);
+    expect(served.headers.get("content-type")).toBe("image/webp");
+    expect(Buffer.from(await served.arrayBuffer())).toEqual(webp);
 
     // A day and more later, the sweep removes an unreferenced upload and keeps the Agent's icon.
     const orphan = storage.putIconAsset(pngFixture()).assetId;
@@ -521,7 +521,8 @@ describe("--icon-image", () => {
     const created = await oppi(["agent", "create", "--name", "Badger", "--icon", "🦡"]);
     const agentId = (created.data?.agent as { id: string }).id;
     const cases: Array<[string, string]> = [
-      [hostFile("big.gif", Buffer.alloc(1024 * 1024 + 1, 0x47)), "exceeds the 1 MiB maximum"],
+      [hostFile("big.webp", Buffer.alloc(1024 * 1024 + 1, 0x47)), "exceeds the 1 MiB maximum"],
+      [hostFile("fox.gif", gifFixture()), "use WebP for an animated icon"],
       [hostFile("notes.txt", "not an image"), "Unsupported icon asset"],
       [join(dataDir, "host-files", "missing.png"), "ENOENT"],
     ];

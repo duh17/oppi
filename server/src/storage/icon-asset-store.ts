@@ -17,10 +17,11 @@ import { ICON_ASSET_ID_PATTERN, type IconAssetKind } from "../icon-choice.js";
 import { syncDirectory, writeFileAtomic } from "./atomic-file.js";
 import {
   detectIconImageFormat,
+  GIF_ICON_REFUSED,
   ICON_IMAGE_MAX_BYTES,
   IconImageFormatError,
   sniffIconImage,
-  type IconImageContentType,
+  type IconImageFormat,
 } from "./icon-image-formats.js";
 
 export const ICON_ASSET_MAX_BYTES = 2 * 1024 * 1024;
@@ -58,8 +59,8 @@ export class IconAssetStoreError extends HttpStatusError {
   }
 }
 
-/** A Genmoji is HEVC HEIF; an imported image icon is PNG (or APNG), GIF, or WebP. */
-export type IconAssetContentType = "image/heic" | IconImageContentType;
+/** A Genmoji is HEVC HEIF; an imported image icon is PNG or WebP, or a GIF stored before WebP. */
+export type IconAssetContentType = "image/heic" | IconImageFormat;
 const ICON_ASSET_CONTENT_TYPES = new Set<string>([
   "image/heic",
   "image/png",
@@ -123,6 +124,11 @@ export class IconAssetStore {
 
   put(bytes: Buffer, now = Date.now()): IconAssetRecord {
     const contentType = sniffIconAsset(bytes);
+    // WebP is the one animated icon: a GIF still reads (an older server stored
+    // some), but nothing stores a new one.
+    if (contentType === "image/gif") {
+      throw new IconAssetStoreError("unsupported", GIF_ICON_REFUSED, 415);
+    }
 
     const sha256 = createHash("sha256").update(bytes).digest("hex");
     const assetId = `ia_${Buffer.from(sha256, "hex").toString("base64url")}`;
@@ -341,7 +347,8 @@ export class IconAssetStore {
 
 /**
  * The content type of an icon asset, from its bytes alone: an imported image
- * (PNG, GIF, WebP, at most 1 MiB) or else a Genmoji's HEVC HEIF (at most 2 MiB).
+ * (PNG or WebP, at most 1 MiB) or else a Genmoji's HEVC HEIF (at most 2 MiB).
+ * A GIF is typed for a stored asset's read; `put` refuses to store one.
  */
 export function sniffIconAsset(bytes: Buffer): IconAssetContentType {
   if (bytes.length > ICON_ASSET_MAX_BYTES) {
@@ -349,7 +356,7 @@ export function sniffIconAsset(bytes: Buffer): IconAssetContentType {
   }
   if (!detectIconImageFormat(bytes)) {
     if (bytes.toString("latin1", 4, 8) !== "ftyp") {
-      unsupported("Unsupported icon asset; expected PNG, GIF, WebP, or a Genmoji HEIC");
+      unsupported("Unsupported icon asset; expected PNG, WebP, or a Genmoji HEIC");
     }
     return sniffHeicIconContainer(bytes).contentType;
   }

@@ -8,7 +8,7 @@ enum IconChoice: Sendable, Equatable, Hashable {
     /// An SF Symbol, with the effect it plays where icons animate.
     case symbol(String, effect: IconSymbolEffect? = nil)
     case genmoji(assetId: String, contentDescription: String)
-    /// An image the person imported (PNG, APNG, GIF, or WebP), stored on the server.
+    /// An image the person imported (WebP, still or animated, or PNG), stored on the server.
     case image(assetId: String)
 
     var assetId: String? {

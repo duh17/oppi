@@ -10,5 +10,5 @@ export type IconChoice =
       assetId: string;
       contentDescription: string;
     }
-  /** An image the person imported (PNG, APNG, GIF, or WebP), stored as an icon asset. */
+  /** An image the person imported (WebP, still or animated, or PNG), stored as an icon asset. */
   | { kind: "image"; assetId: string };

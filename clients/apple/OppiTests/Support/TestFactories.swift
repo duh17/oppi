@@ -531,3 +531,30 @@ func testDefaults(suite: String) -> UserDefaults {
     }
     return defaults
 }
+
+/// Animated WebP icon bytes. WebP is the only animated icon format, and ImageIO
+/// cannot encode one, so these are made once with `img2webp` and embedded: three
+/// solid frames of red, green, and blue at 100 ms tell a playing icon from a still.
+enum IconWebPFixtures {
+    /// 64 × 64, three frames: red, green, then blue.
+    static let threeColour = decode("""
+    UklGRsYAAABXRUJQVlA4WAoAAAACAAAAPwAAPwAAQU5JTQYAAAD/////AABBTk1GLgAAAAAAAAAAAD8AAD8AAGQAAAJWUDhMFQAAAC8/wA8ABxD9j/4HgITw/70W0f/UDwBBTk1GLgAAAAAAAAAAAD8AAD8AAGQAAABWUDhMFQAAAC8/wA8AB9D/iP4HgITw/70W0f/UDwBBTk1GLgAAAAAAAAAAAD8AAD8AAGQAAABWUDhMFQAAAC8/wA8ABxDR//4HgITw/70W0f/UDwA=
+    """)
+
+    /// 1100 × 8, two frames: wider than the server's 1,024 px cap.
+    static let tooWide = decode("""
+    UklGRpAAAABXRUJQVlA4WAoAAAACAAAASwQABwAAQU5JTQYAAAD/////AABBTk1GLgAAAAAAAAAAAEsEAAcAAGQAAAJWUDhMFgAAAC9LxAEABxD9j/6HAUgI//dLEf1PnQBBTk1GLgAAAAAAAAAAAEsEAAcAAGQAAABWUDhMFgAAAC9LxAEAB9D/iP6HAUgI//dLEf1PnQA=
+    """)
+
+    /// The three-colour animation padded past the 1 MiB cap a decoder ignores.
+    static var overCap: Data {
+        threeColour + Data(repeating: 0, count: 1024 * 1024)
+    }
+
+    private static func decode(_ text: String) -> Data {
+        guard let data = Data(base64Encoded: text.replacingOccurrences(of: "\n", with: "")) else {
+            preconditionFailure("The embedded WebP fixture is not valid base64")
+        }
+        return data
+    }
+}

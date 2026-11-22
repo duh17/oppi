@@ -1,17 +1,24 @@
 /**
- * The image icons a person imports (PNG and APNG, GIF, WebP). The format comes
- * from the bytes, never a file name or a declared type, and the pixel size from
- * fixed header positions. The server never decodes or draws these bytes: the
- * app decodes every image with ImageIO before it uploads one and again before
- * it draws one, so anything a decoder tolerates (trailing bytes, a missing
- * GIF trailer) is left to it.
+ * The image icons a person imports: WebP, still or animated, and PNG, which is
+ * always still. The format comes from the bytes, never a file name or a
+ * declared type, and the pixel size from fixed header positions. The server
+ * never decodes or draws these bytes: the app decodes every image with ImageIO
+ * before it uploads one and again before it draws one, so anything a decoder
+ * tolerates (trailing bytes, a missing trailer) is left to it.
+ *
+ * A GIF still reads, because servers stored GIF icons before WebP became the
+ * animated format, and those assets keep serving their bytes. Nothing stores a
+ * new one: `IconAssetStore.put` refuses it and names WebP.
  */
 
-export type IconImageContentType = "image/png" | "image/gif" | "image/webp";
+export type IconImageFormat = "image/png" | "image/webp" | "image/gif";
 
 /** An imported icon is small: the app sends stills at about 128 px. */
 export const ICON_IMAGE_MAX_BYTES = 1024 * 1024;
 export const ICON_IMAGE_MAX_DIMENSION = 1_024;
+
+/** What a new icon image may not be, in the words the person reads. */
+export const GIF_ICON_REFUSED = "GIF icons are not supported; use WebP for an animated icon";
 
 export class IconImageFormatError extends Error {
   constructor(
@@ -25,7 +32,7 @@ export class IconImageFormatError extends Error {
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 /** The image format of `bytes`, or undefined when they are none of PNG, GIF, or WebP. */
-export function detectIconImageFormat(bytes: Buffer): IconImageContentType | undefined {
+export function detectIconImageFormat(bytes: Buffer): IconImageFormat | undefined {
   if (bytes.length >= 8 && bytes.subarray(0, 8).equals(PNG_SIGNATURE)) return "image/png";
   const head6 = bytes.toString("latin1", 0, 6);
   if (head6 === "GIF87a" || head6 === "GIF89a") return "image/gif";
@@ -40,9 +47,9 @@ export function detectIconImageFormat(bytes: Buffer): IconImageContentType | und
 }
 
 /** The format of an imported icon, after checking its header's pixel size. */
-export function sniffIconImage(bytes: Buffer): IconImageContentType {
+export function sniffIconImage(bytes: Buffer): IconImageFormat {
   const contentType = detectIconImageFormat(bytes);
-  if (!contentType) unsupported("Unsupported icon image; expected PNG, GIF, or WebP");
+  if (!contentType) unsupported("Unsupported icon image; expected PNG or WebP");
   const { width, height } = headerSize(contentType, bytes);
   if (width < 1 || height < 1) corrupt("Icon image has no pixels");
   if (width > ICON_IMAGE_MAX_DIMENSION || height > ICON_IMAGE_MAX_DIMENSION) {
@@ -51,7 +58,7 @@ export function sniffIconImage(bytes: Buffer): IconImageContentType {
   return contentType;
 }
 
-function headerSize(type: IconImageContentType, bytes: Buffer): { width: number; height: number } {
+function headerSize(type: IconImageFormat, bytes: Buffer): { width: number; height: number } {
   switch (type) {
     case "image/png":
       // Signature, then the IHDR chunk: length, "IHDR", width, height.

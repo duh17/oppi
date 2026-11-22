@@ -1,5 +1,6 @@
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
-import { mkdtempSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,7 +11,7 @@ import { createRouteHelpers } from "../src/routes/http.js";
 import type { RouteContext } from "../src/routes/types.js";
 import { Storage } from "../src/storage.js";
 import { structuralHeifFixture } from "./harness/heic-fixture.js";
-import { gifFixture } from "./harness/image-fixtures.js";
+import { gifFixture, pngFixture } from "./harness/image-fixtures.js";
 import { makeRawRequest, makeResponse } from "./harness/route-test-helpers.js";
 
 function sample(): Buffer {
@@ -103,20 +104,20 @@ describe("icon asset routes", () => {
       { storage } as unknown as RouteContext,
       createRouteHelpers(),
     );
-    const gif = gifFixture();
+    const png = pngFixture();
     const upload = makeResponse();
     await dispatch({
       method: "POST",
       path: "/icon-assets",
       url: new URL("http://localhost/icon-assets"),
-      req: request(gif, { "content-type": "image/heic" }),
+      req: request(png, { "content-type": "image/heic" }),
       res: upload as unknown as ServerResponse,
     });
     expect(upload.statusCode).toBe(201);
     const { asset } = JSON.parse(upload.body) as {
       asset: { assetId: string; contentType: string };
     };
-    expect(asset.contentType).toBe("image/gif");
+    expect(asset.contentType).toBe("image/png");
 
     const get = binaryResponse();
     await dispatch({
@@ -126,8 +127,63 @@ describe("icon asset routes", () => {
       req: request(Buffer.alloc(0)),
       res: get,
     });
+    expect(get.headers["Content-Type"]).toBe("image/png");
+    expect(get.body).toEqual(png);
+  });
+
+  it("refuses a GIF upload with a message naming WebP", async () => {
+    const dispatch = createIconAssetRoutes(
+      { storage } as unknown as RouteContext,
+      createRouteHelpers(),
+    );
+    const refused = makeResponse();
+    await dispatch({
+      method: "POST",
+      path: "/icon-assets",
+      url: new URL("http://localhost/icon-assets"),
+      req: request(gifFixture(), { "content-type": "image/gif" }),
+      res: refused as unknown as ServerResponse,
+    });
+    expect(refused.statusCode).toBe(415);
+    expect(refused.body).toContain("use WebP for an animated icon");
+  });
+
+  it("serves a GIF stored before WebP was the only animated icon", async () => {
+    const dispatch = createIconAssetRoutes(
+      { storage } as unknown as RouteContext,
+      createRouteHelpers(),
+    );
+    const bytes = gifFixture({ width: 3, height: 3 });
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const assetId = `ia_${Buffer.from(sha256, "hex").toString("base64url")}`;
+    const blobs = join(dataDir, "icon-assets", "blobs");
+    const metadata = join(dataDir, "icon-assets", "metadata");
+    mkdirSync(blobs, { recursive: true });
+    mkdirSync(metadata, { recursive: true });
+    writeFileSync(join(blobs, `${assetId}.heic`), bytes);
+    writeFileSync(
+      join(metadata, `${assetId}.json`),
+      JSON.stringify({
+        assetId,
+        sha256,
+        sizeBytes: bytes.length,
+        contentType: "image/gif",
+        createdAt: 1_000,
+        lastUploadedAt: 1_000,
+      }),
+    );
+
+    const get = binaryResponse();
+    await dispatch({
+      method: "GET",
+      path: `/icon-assets/${assetId}`,
+      url: new URL(`http://localhost/icon-assets/${assetId}`),
+      req: request(Buffer.alloc(0)),
+      res: get,
+    });
+    expect(get.statusCode).toBe(200);
     expect(get.headers["Content-Type"]).toBe("image/gif");
-    expect(get.body).toEqual(gif);
+    expect(get.body).toEqual(bytes);
   });
 
   it("returns deterministic errors for unsupported, missing, and traversal input", async () => {

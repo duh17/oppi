@@ -483,8 +483,8 @@ final class IconAssetCache {
         return decodedByteCost(bytesPerRow: raster.bytesPerRow, height: raster.height)
     }
 
-    /// The formats an icon asset may be: a Genmoji's HEIF, or an imported
-    /// PNG (APNG), GIF, or WebP.
+    /// The formats an icon asset may be: a Genmoji's HEIF, or an imported PNG or
+    /// WebP. A GIF stored before WebP became the animated icon still draws.
     static let assetTypes: [UTType] = [.heic, .heif, .png, .gif, .webP]
 
     // Internal for focused malformed-input tests. This validates only a bounded,

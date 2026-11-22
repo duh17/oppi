@@ -181,7 +181,7 @@ final class IconPickerViewController: ListScreenController<IconPickerViewControl
         sections.append(ListSection(
             .image,
             header: "Image",
-            footer: String(localized: "Any photo works. An animated PNG, GIF, or WebP can be up to 1 MB; it plays here and on \(ownPage)."),
+            footer: String(localized: "Any photo works. An animated WebP can be up to 1 MB; it plays here and on \(ownPage)."),
             items: [.importPhotos, .importFiles]
         ))
         sections.append(ListSection(

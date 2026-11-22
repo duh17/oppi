@@ -1,6 +1,7 @@
 import Accessibility
 import ImageIO
 import UIKit
+import UniformTypeIdentifiers
 
 /// A saved workspace or Agent icon on its tile (`EntityIcon`): an SF Symbol in
 /// the theme blue, an emoji, a Genmoji, or an imported image the server stores,
@@ -8,15 +9,16 @@ import UIKit
 /// other pills. `EntityIcon` owns the pixels; this view places them in its
 /// frame, which the tile fills, and redraws when artwork lands.
 ///
-/// An animated image loops and a symbol's effect plays on the icon's own page
+/// An animated WebP loops and a symbol's effect plays on the icon's own page
 /// (the Agent's, which shows it in a circle, and a workspace's form), in the
 /// icon picker, and in an Agent's row in the Agents list; everywhere else the
-/// first frame draws still. A playing view stops when it leaves its window and
-/// whenever Reduce Motion, Low Power Mode, or the system's Auto-Play Animated
-/// Images takes it away, with a sandbox workspace's lock mark kept over it. A
-/// view that never animates can still play one short `playBurst()` — a session
-/// row's icon when its session needs the person — and rests on its still drawing
-/// after it. Only the chat timeline animates anything else.
+/// first frame draws still. WebP is the only animated image format, so a PNG and
+/// a stored GIF draw still. A playing view stops when it leaves its
+/// window and whenever Reduce Motion, Low Power Mode, or the system's Auto-Play
+/// Animated Images takes it away, with a sandbox workspace's lock mark kept over
+/// it. A view that never animates can still play one short `playBurst()` — a
+/// session row's icon when its session needs the person — and rests on its still
+/// drawing after it. Only the chat timeline animates anything else.
 @MainActor
 final class IconChoiceUIView: UIView {
     enum Content: Equatable {
@@ -370,8 +372,13 @@ final class IconChoiceUIView: UIView {
         isPlaying = false
     }
 
+    /// Whether `data` plays: an animated WebP. A PNG (an APNG included) and a GIF
+    /// stored before WebP became the animated icon draw their first frame.
     private static func isAnimated(_ data: Data) -> Bool {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return false }
-        return CGImageSourceGetCount(source) > 1
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              CGImageSourceGetCount(source) > 1,
+              let identifier = CGImageSourceGetType(source),
+              UTType(identifier as String)?.conforms(to: .webP) == true else { return false }
+        return true
     }
 }

@@ -690,7 +690,7 @@ const HELP_TOPICS: HelpTopic[] = [
       {
         name: "--icon-image",
         value: "<file>",
-        summary: "PNG, GIF, or WebP file on this host (at most 1 MiB); not with --icon",
+        summary: "PNG or WebP file on this host (at most 1 MiB); not with --icon",
       },
       { name: "--system-prompt", value: "<text>", summary: "workspace system prompt text" },
       { name: "--runtime", value: "<host|sandbox>", summary: "workspace runtime mode" },
@@ -719,7 +719,7 @@ const HELP_TOPICS: HelpTopic[] = [
       {
         name: "--icon-image",
         value: "<file>",
-        summary: "PNG, GIF, or WebP file on this host (at most 1 MiB); not with --icon",
+        summary: "PNG or WebP file on this host (at most 1 MiB); not with --icon",
       },
       { name: "--system-prompt", value: "<text>", summary: "workspace system prompt text" },
       { name: "--runtime", value: "<host|sandbox>", summary: "workspace runtime mode" },
@@ -1771,7 +1771,7 @@ const HELP_TOPICS: HelpTopic[] = [
       {
         name: "--icon-image",
         value: "<file>",
-        summary: "PNG, APNG, GIF, or WebP file on this host (at most 1 MiB) as the icon",
+        summary: "PNG or WebP file on this host (at most 1 MiB) as the icon",
       },
       {
         name: "--instructions",
@@ -1883,8 +1883,8 @@ const HELP_TOPICS: HelpTopic[] = [
       "--required-engine durable writes launchConstraints.requiredEngine: every launch of the Agent (session create, Quick Session, schedules, subagents) runs durable; an omitted --engine becomes durable, --engine classic is refused, and launches fail while durable sessions are off on the server.",
       "Explicit flags override corresponding JSON keys without dropping sibling nested fields. Instructions replace as a whole.",
       "--instructions and --instructions-file are mutually exclusive. --instructions-mode is append or replace and defaults to append when creating from text or file; it requires --instructions, --instructions-file, or instructions.text in the definition JSON.",
-      '--icon is default, one Unicode emoji, or an SF Symbol name. --icon-image <file> reads a PNG, APNG, GIF, or WebP of at most 1 MiB from this host, stores it in the server\'s icon store (POST /icon-assets, which checks the bytes), and sets {"kind":"image","assetId":"ia_…"}; a relative path is from the current directory, and ~/ is expanded. --icon and --icon-image are mutually exclusive. A Genmoji has no flag: after POST /icon-assets stores its HEIC, set {"kind":"genmoji","assetId":"ia_…","contentDescription":"…"} in definition JSON.',
-      'A symbol icon can carry an animation in definition JSON: {"kind":"symbol","name":"sparkles","effect":"bounce"}, where effect is bounce, pulse, breathe, wiggle, or rotate. The app plays it only on the Agent\'s page and in the icon picker.',
+      '--icon is default, one Unicode emoji, or an SF Symbol name. --icon-image <file> reads a PNG or WebP of at most 1 MiB from this host, stores it in the server\'s icon store (POST /icon-assets, which checks the bytes), and sets {"kind":"image","assetId":"ia_…"}; a relative path is from the current directory, and ~/ is expanded. WebP may be animated, the only animated icon format; a GIF is refused with a message naming WebP. --icon and --icon-image are mutually exclusive. A Genmoji has no flag: after POST /icon-assets stores its HEIC, set {"kind":"genmoji","assetId":"ia_…","contentDescription":"…"} in definition JSON.',
+      'A symbol icon can carry an animation in definition JSON: {"kind":"symbol","name":"sparkles","effect":"bounce"}, where effect is bounce, pulse, breathe, wiggle, or rotate. The app plays it on the Agent\'s page, in the Agents list, and in the icon picker.',
       'A session has what the Agent names: its Pi tools, its plugins, and its MCP servers. A tool subset of one MCP server is written in definition JSON (capabilities.mcp: {"gmail": ["search", "read"]}).',
     ],
     examples: [
@@ -1929,7 +1929,7 @@ const HELP_TOPICS: HelpTopic[] = [
       {
         name: "--icon-image",
         value: "<file>",
-        summary: "PNG, APNG, GIF, or WebP file on this host (at most 1 MiB) as the icon",
+        summary: "PNG or WebP file on this host (at most 1 MiB) as the icon",
       },
       { name: "--clear-icon", summary: "sets icon null" },
       {
@@ -2073,7 +2073,7 @@ const HELP_TOPICS: HelpTopic[] = [
           'oppi agent update Reviewer --instructions "Review risky diffs" --expected-version 3 --json',
       },
       { command: "oppi agent update Reviewer --definition ./agent-update.json --json" },
-      { command: "oppi agent update Reviewer --icon-image ./fox.gif --json" },
+      { command: "oppi agent update Reviewer --icon-image ./fox.webp --json" },
       {
         command: `oppi agent update Reviewer --tools read,bash --plugins none --mcp none --expected-version 3 --json`,
       },
