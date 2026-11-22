@@ -56,6 +56,8 @@ struct ExtensionSurfaceReaderContent {
     var server: ExtensionSurfaceServer? = nil
     /// Opens a linked node's URL through the chat's link handling; nil draws links without a tap.
     var openURL: ((URL) -> Bool)? = nil
+    /// The menu a linked row or stack offers on touch-and-hold; nil offers none.
+    var sessionMenu: (@MainActor (_ sessionId: String, _ url: URL, _ rowState: String?) -> UIMenu?)? = nil
 }
 
 /// Timeline/chat reader body. Only the ``ChatReaderNavTarget`` id rides the path.

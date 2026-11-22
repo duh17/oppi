@@ -256,7 +256,8 @@ final class ExtensionPanelViewController: UIViewController {
                     pendingAction: actions.pendingAction,
                     sendAction: actions.sendAction,
                     server: actions.server,
-                    openURL: actions.onOpenURL
+                    openURL: actions.onOpenURL,
+                    sessionMenu: actions.sessionMenu
                 ),
                 showsHeader: false,
                 onLeave: {}

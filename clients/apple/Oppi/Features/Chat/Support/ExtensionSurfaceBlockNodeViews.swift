@@ -13,10 +13,19 @@ class BlocksTapControl: UIControl {
     private var onTap: (() -> Void)?
     /// The region's words, read each time VoiceOver asks; nil while the region is no button.
     private var spokenLabel: (() -> String?)?
+    /// The region's menu as accessibility actions, read each time VoiceOver asks rather than
+    /// copied when the region drew: a row that opens a session offers that session's menu both
+    /// ways, and the menu follows the session as it is now.
+    var accessibilityActionsProvider: () -> [UIAccessibilityCustomAction] = { [] }
 
     override var accessibilityLabel: String? {
         get { spokenLabel.map { $0() } ?? super.accessibilityLabel }
         set { super.accessibilityLabel = newValue }
+    }
+
+    override var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
+        get { accessibilityActionsProvider() }
+        set { super.accessibilityCustomActions = newValue }
     }
 
     override init(frame: CGRect) {
@@ -114,6 +123,14 @@ class BlocksTapControl: UIControl {
 /// children to both edges.
 final class BlocksLayoutView: BlocksTapControl, BlocksColumnFillable {
     private let stack = UIStackView()
+    /// The session this region opens, while its node has a session `link`: the host's menu for it,
+    /// built when the menu opens. `rowState` is nil because a tree node carries no state of its
+    /// own; the host's menu reads the session itself.
+    private var linkedSession: (
+        id: String,
+        url: URL,
+        menu: @MainActor (_ sessionId: String, _ url: URL, _ rowState: String?) -> UIMenu?
+    )?
     private var stackLeading: NSLayoutConstraint?
     private var stackTrailing: NSLayoutConstraint?
     private var stackCenter: NSLayoutConstraint?
@@ -182,6 +199,51 @@ final class BlocksLayoutView: BlocksTapControl, BlocksColumnFillable {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    // MARK: Session menu
+
+    /// The host's menu for the session this region opens, built when someone asks for it: what a
+    /// touch-and-hold shows, and what the region offers as accessibility actions.
+    func sessionMenu() -> UIMenu? {
+        guard let linkedSession else { return nil }
+        return linkedSession.menu(linkedSession.id, linkedSession.url, nil)
+    }
+
+    override func contextMenuInteraction(
+        _ interaction: UIContextMenuInteraction,
+        configurationForMenuAtLocation location: CGPoint
+    ) -> UIContextMenuConfiguration? {
+        guard let menu = sessionMenu() else { return nil }
+        let id = linkedSession?.id as NSString?
+        return UIContextMenuConfiguration(identifier: id, previewProvider: nil) { _ in menu }
+    }
+
+    /// The menu's actions as accessibility actions: the same items run the same owner actions.
+    private func menuActions() -> [UIAccessibilityCustomAction] {
+        menuAccessibilityActions(of: sessionMenu()) { [weak self] in self }
+    }
+
+    /// The session menu a node's link names, or none: only a session link offers one, the rule an
+    /// activity row follows. A region reused for a node without one offers neither the menu nor
+    /// the actions its last node had.
+    private func applySessionLink(_ link: String?, environment: ExtensionSurfaceBlocksEnvironment) {
+        guard
+            let link, let url = URL(string: link),
+            case .success(let decoded)? = PaneLinkCodec.decode(url),
+            case .session(let id) = decoded.route,
+            let menu = environment.sessionMenu
+        else {
+            linkedSession = nil
+            // No session, no touch-and-hold: `UIControl` only builds the interaction for a row that
+            // answers the delegate call, and this one has nothing to offer.
+            isContextMenuInteractionEnabled = false
+            accessibilityActionsProvider = { [] }
+            return
+        }
+        linkedSession = (id, url, menu)
+        isContextMenuInteractionEnabled = true
+        accessibilityActionsProvider = { [weak self] in self?.menuActions() ?? [] }
+    }
+
     func apply(
         children: [UIView],
         node: ExtensionUISurfaceNode,
@@ -249,6 +311,7 @@ final class BlocksLayoutView: BlocksTapControl, BlocksColumnFillable {
             enabled: !disabled && (action.map { !environment.isDisabled($0, nodeId: node.id) } ?? true),
             selected: paintsSelection
         )
+        applySessionLink(layout.link, environment: environment)
         for entry in childWidths { entry.1.isActive = true }
     }
 

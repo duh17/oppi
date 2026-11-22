@@ -17,6 +17,13 @@ struct ExtensionSurfaceBlocksEnvironment {
     /// Whether the node is a direct child of a row that holds more than controls: a control there is
     /// an accessory of that line, so it draws compact instead of as a block of its own.
     var isRowAccessory = false
+    /// The host's menu for a session a linked row or stack opens, read when someone asks for it:
+    /// the same menu an activity row offers on touch-and-hold (`ExtensionNativeBlockContext`), so
+    /// one session opens the same way wherever a surface draws it.
+    var sessionMenu: (@MainActor (_ sessionId: String, _ url: URL, _ rowState: String?) -> UIMenu?)? {
+        context.sessionMenu
+    }
+
     /// The card's own gap between the body's top-level children. A tree's spacing step is the
     /// protocol's; the card's rhythm is the host's, so only the body root carries it.
     var topLevelSpacing: CGFloat?

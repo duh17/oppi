@@ -30,6 +30,30 @@ struct ExtensionSurfaceDrawerActions {
     var server: ExtensionSurfaceServer?
 }
 
+/// A menu's items as accessibility actions: the same items run the same owner actions, so assistive
+/// activation does what a touch-and-hold's item does. Items a menu loads later (a deferred element)
+/// are left to the menu itself, and `sender` is what an item acts on — the control that showed the
+/// menu, as UIKit hands it to a menu's own actions.
+@MainActor
+func menuAccessibilityActions(
+    of menu: UIMenu?,
+    sender: @escaping () -> UIView?
+) -> [UIAccessibilityCustomAction] {
+    func leaves(_ elements: [UIMenuElement]) -> [UIAction] {
+        elements.flatMap { element -> [UIAction] in
+            if let action = element as? UIAction { return [action] }
+            if let menu = element as? UIMenu { return leaves(menu.children) }
+            return []
+        }
+    }
+    return leaves(menu?.children ?? []).map { action in
+        UIAccessibilityCustomAction(name: action.title, image: action.image) { _ in
+            action.performWithSender(sender(), target: nil)
+            return true
+        }
+    }
+}
+
 /// The server a surface's session lives on, as the chat that shows the surface holds it: where a
 /// `tiles` node reads its places' previews and opens them.
 struct ExtensionSurfaceServer {

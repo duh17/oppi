@@ -6,7 +6,7 @@
  * the model. There is no children list API.
  */
 
-export interface Subagent {
+export type Subagent = {
   id: string;
   parentId?: string;
   title: string;
@@ -19,6 +19,11 @@ export interface Subagent {
   state: "running" | "success" | "warning" | "error";
   /** Finished by a stop: its run was aborted, or its failure dismissed with Stop. */
   stopped?: boolean;
+  /**
+   * A failure the owner dismissed from the pill: the child is untouched, the row no longer needs
+   * you, and it comes back only when a later run of the child fails again.
+   */
+  dismissed?: boolean;
   model?: string;
   thinking?: string;
   /** What the row says on its second line: the step, the question, the wait, the error, the answer. */
@@ -41,7 +46,7 @@ export interface Subagent {
    * `ANSWER_EXCERPT_MAX` characters: what its row's disclosure shows.
    */
   answer?: string;
-}
+};
 
 export interface SubagentRow {
   id: string;
@@ -365,6 +370,56 @@ export function selectPillRows(subagents: Subagent[], max = MAX_PILL_ROWS): Suba
   return [...live, ...recent];
 }
 
+/** The children of one parent, grouped by which section of the pill draws them. */
+export interface SubagentGroups {
+  /** Asking a question or failed: they wait on you, the oldest first. */
+  "needs-you": Subagent[];
+  /** Working, the oldest run first, so a row does not move while it works. */
+  working: Subagent[];
+  /** The `MAX_RECENT_ROWS` newest finished children, newest first. */
+  recent: Subagent[];
+  /** Every other finished child, newest first. */
+  earlier: Subagent[];
+}
+
+/**
+ * One child's place in the pill: Needs You (the oldest question or failure first), Working (the
+ * oldest run first), Recent (the newest finished), and Earlier (the rest). Both the version 1
+ * widget and the composable surface order their rows by this, so the two never disagree.
+ */
+export function subagentGroups(subagents: Subagent[]): SubagentGroups {
+  const oldestFirst = (a: Subagent, b: Subagent): number =>
+    (a.since ?? Number.POSITIVE_INFINITY) - (b.since ?? Number.POSITIVE_INFINITY);
+  // Array.prototype.sort is stable: children without a time keep their order.
+  const finished = subagents
+    .filter((item) => !isLive(item))
+    .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0));
+  return {
+    "needs-you": subagents.filter(needsYou).sort(oldestFirst),
+    working: subagents.filter((item) => item.state === "running").sort(oldestFirst),
+    recent: finished.slice(0, MAX_RECENT_ROWS),
+    earlier: finished.slice(MAX_RECENT_ROWS),
+  };
+}
+
+/**
+ * `rows` with the failures the owner dismissed no longer needing you: a dismissed child reads as
+ * finished, under Recent or Earlier, and its Session is untouched. Its error stays on the row, as
+ * it does for any failure, and its time stops: a finished row has no count to tick. A run that
+ * ended after the dismissal failed again, so that row needs you again.
+ */
+export function applyDismissals(
+  rows: readonly Subagent[],
+  dismissed: Readonly<Record<string, number>>,
+): Subagent[] {
+  return rows.map((row) => {
+    const at = dismissed[row.id];
+    if (at === undefined || row.state !== "error" || (row.finishedAt ?? 0) > at) return row;
+    const { since: _since, ...finished } = row;
+    return { ...finished, state: "success" as const, dismissed: true };
+  });
+}
+
 /**
  * The pill's body, every child: Needs You (the oldest question or failure first), Working (the
  * oldest run first), Recent (the `MAX_RECENT_ROWS` newest finished), and Earlier (every other
@@ -378,18 +433,7 @@ export function selectPillRows(subagents: Subagent[], max = MAX_PILL_ROWS): Suba
  * not fit are counted in a last row, `N more in Thread`, that opens the whole thread.
  */
 export function subagentPanel(subagents: Subagent[], threadSessionId?: string): SubagentPanel {
-  const oldestFirst = (a: Subagent, b: Subagent): number =>
-    (a.since ?? Number.POSITIVE_INFINITY) - (b.since ?? Number.POSITIVE_INFINITY);
-  // Array.prototype.sort is stable: children without a time keep their order.
-  const finished = subagents
-    .filter((item) => !isLive(item))
-    .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0));
-  const groups = {
-    "needs-you": subagents.filter(needsYou).sort(oldestFirst),
-    working: subagents.filter((item) => item.state === "running").sort(oldestFirst),
-    recent: finished.slice(0, MAX_RECENT_ROWS),
-    earlier: finished.slice(MAX_RECENT_ROWS),
-  };
+  const groups = subagentGroups(subagents);
 
   // The fallback is the terminal band's rows: it does not grow with the thread.
   const fallback = subagentRows(selectPillRows(subagents)).map(rowFallback);
@@ -525,7 +569,7 @@ function disclosureRow(item: Subagent, excerpt: string | undefined): SubagentRow
   if (item.state === "running" && item.activity) parts.push(`**Now:** ${item.activity}`);
   if (excerpt) parts.push(excerpt);
   else if (item.answer) parts.push("_Open the session to read its answer._");
-  const meta = metaLine(item);
+  const meta = rowMetaLine(item);
   if (meta) parts.push(meta);
   if (parts.length === 0) parts.push("_Open the session for its details._");
   return {
@@ -535,7 +579,7 @@ function disclosureRow(item: Subagent, excerpt: string | undefined): SubagentRow
 }
 
 /** The full model and thinking level, the exact spend, the worktree, and the run time. */
-function metaLine(item: Subagent): string | undefined {
+export function rowMetaLine(item: Subagent): string | undefined {
   const tree = item.worktree;
   const parts = [
     item.model ? `\`${item.model}\`` : undefined,
@@ -568,7 +612,7 @@ export function cutMarkdown(markdown: string, max: number): string {
 const encoder = new TextEncoder();
 
 /** Every string in `value`, in UTF-8 bytes: at least what the server counts as surface text. */
-function textBytes(value: unknown): number {
+export function textBytes(value: unknown): number {
   if (typeof value === "string") return encoder.encode(value).length;
   if (Array.isArray(value)) return value.reduce((sum: number, item) => sum + textBytes(item), 0);
   if (value && typeof value === "object")
@@ -577,7 +621,7 @@ function textBytes(value: unknown): number {
 }
 
 /** `value` as JSON, in UTF-8 bytes, with the comma that follows it in a list. */
-function jsonBytes(value: unknown): number {
+export function jsonBytes(value: unknown): number {
   return encoder.encode(JSON.stringify(value)).length + 1;
 }
 
@@ -598,6 +642,24 @@ export function subagentRows(subagents: Subagent[]): SubagentRow[] {
 }
 
 function subagentRow(item: Subagent): SubagentRow {
+  const detail = rowDetail(item);
+  const activity = rowNote(item);
+  return {
+    id: item.id,
+    title: item.title,
+    ...(activity ? { subtitle: activity } : {}),
+    ...(detail ? { detail } : {}),
+    state: item.stopped && !isLive(item) ? "inactive" : item.state,
+    link: item.link,
+    ...(isLive(item) && item.since !== undefined ? { since: item.since } : {}),
+  };
+}
+
+/**
+ * The row's quiet third line: the short model name and thinking level, the spend, the worktree's
+ * progress, and how long a finished run took.
+ */
+export function rowDetail(item: Subagent): string | undefined {
   const detail = [
     [shortModelName(item.model), item.thinking === "off" ? undefined : item.thinking]
       .filter(Boolean)
@@ -608,16 +670,15 @@ function subagentRow(item: Subagent): SubagentRow {
   ]
     .filter(Boolean)
     .join(" \u00b7 ");
-  const activity = item.activity ?? (item.stopped ? "Stopped" : undefined);
-  return {
-    id: item.id,
-    title: item.title,
-    ...(activity ? { subtitle: activity } : {}),
-    ...(detail ? { detail } : {}),
-    state: item.stopped && !isLive(item) ? "inactive" : item.state,
-    link: item.link,
-    ...(isLive(item) && item.since !== undefined ? { since: item.since } : {}),
-  };
+  return detail.length > 0 ? detail : undefined;
+}
+
+/**
+ * The row's second line: what changed (the step, the question, the error, the answer), or how the
+ * child finished. The section says the state, so the line never repeats it.
+ */
+export function rowNote(item: Subagent): string | undefined {
+  return item.activity ?? (item.stopped ? "Stopped" : undefined);
 }
 
 /** The worktree's progress: its branch when the spawn did not name it, commits ahead, dirty. */

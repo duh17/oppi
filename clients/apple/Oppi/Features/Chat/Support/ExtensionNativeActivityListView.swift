@@ -178,7 +178,7 @@ final class ExtensionNativeActivityRowView: UIView, UIContextMenuInteractionDele
         control.addInteraction(UIContextMenuInteraction(delegate: self))
         // A pointer (iPad, Mac) highlights the row as it does a list cell.
         control.hoverStyle = UIHoverStyle(effect: .highlight, shape: .rect(cornerRadius: 10))
-        control.accessibilityActionsProvider = { [weak self] in self?.menuAccessibilityActions() ?? [] }
+        control.accessibilityActionsProvider = { [weak self] in self?.accessibilityActions() ?? [] }
         control.accessibilityValueProvider = { [weak self] in self?.liveAccessibilityValue() }
 
         detailContainer.isHidden = true
@@ -509,21 +509,8 @@ final class ExtensionNativeActivityRowView: UIView, UIContextMenuInteractionDele
     }
 
     /// The menu's actions as accessibility actions: the same items run the same owner actions.
-    /// Items the menu loads later (a deferred element) are left to the menu itself.
-    private func menuAccessibilityActions() -> [UIAccessibilityCustomAction] {
-        func leaves(_ elements: [UIMenuElement]) -> [UIAction] {
-            elements.flatMap { element -> [UIAction] in
-                if let action = element as? UIAction { return [action] }
-                if let menu = element as? UIMenu { return leaves(menu.children) }
-                return []
-            }
-        }
-        return leaves(sessionMenu()?.children ?? []).map { action in
-            UIAccessibilityCustomAction(name: action.title, image: action.image) { [weak control] _ in
-                action.performWithSender(control, target: nil)
-                return true
-            }
-        }
+    private func accessibilityActions() -> [UIAccessibilityCustomAction] {
+        menuAccessibilityActions(of: sessionMenu()) { [weak control] in control }
     }
 
     /// A running row draws `workingMark` instead.

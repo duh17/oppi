@@ -1280,6 +1280,98 @@ struct ExtensionSurfaceBlocksViewsTests {
         #expect(!ElapsedLabelTicker.shared.isRunning, "no label is on screen, so the clock stops")
     }
 
+    // MARK: - Session menu
+
+    /// The panel with its `headline` row opening a session: the row a menu is offered on.
+    private func panelWithLinkedRow(_ link: String) throws -> ExtensionUISurface {
+        try surface("blocks-panel.json") { object in
+            var sections = testUnwrap(object["sections"] as? [[String: Any]])
+            var body = testUnwrap(sections[0]["body"] as? [String: Any])
+            var children = testUnwrap(body["children"] as? [[String: Any]])
+            let index = try #require(children.firstIndex { $0["id"] as? String == "headline" })
+            var row = try #require(children[index] as? [String: Any])
+            row["link"] = link
+            children[index] = row
+            body["children"] = children
+            sections[0]["body"] = body
+            object["sections"] = sections
+        }
+    }
+
+    /// A session-linked row offers that session's menu on touch-and-hold, and the same items as
+    /// accessibility actions; a row that opens no session — or one reused for it — offers neither.
+    @Test func aLinkedRowOffersItsSessionsMenuOnHoldAndByAccessibility() throws {
+        let link = "oppi://session/child-session-1"
+        var asked: [(String, URL)] = []
+        // One menu for every request, as the host's own provider builds it when asked.
+        let menu = UIMenu(children: [
+            UIAction(title: "Open") { _ in },
+            UIAction(title: "Stop", attributes: .destructive) { _ in },
+        ])
+        let view = composites(try panelWithLinkedRow(link), sessionMenu: { sessionId, url, rowState in
+            asked.append((sessionId, url))
+            #expect(rowState == nil, "a tree node carries no row state")
+            return menu
+        })
+        let region = try #require(
+            control(node("blocks-panel", "panel", "headline"), in: view) as? BlocksLayoutView
+        )
+
+        // The hold: a configuration for this row, whose menu is the host's menu for the child.
+        let interaction = try #require(region.contextMenuInteraction, "the row has no context menu interaction")
+        let configuration = try #require(
+            region.contextMenuInteraction(interaction, configurationForMenuAtLocation: .zero),
+            "a touch-and-hold offers no menu"
+        )
+        #expect(configuration.identifier as? String == "child-session-1", "the menu is the child's")
+        let offered = try #require(region.sessionMenu())
+        #expect(offered.children.compactMap { ($0 as? UIAction)?.title } == ["Open", "Stop"])
+
+        // VoiceOver: the same items, in the same order.
+        let spoken = region.accessibilityCustomActions?.map { $0.name }
+        #expect(spoken == ["Open", "Stop"], "the menu's items are the row's accessibility actions")
+
+        // The host is asked for this child's menu, by its id and link.
+        #expect(asked.contains { $0.0 == "child-session-1" && $0.1.absoluteString == link })
+    }
+
+    /// A row without a session link, a host without a menu, and a row view reused for a node that
+    /// opens no session: each offers nothing on hold and nothing to VoiceOver.
+    @Test func aRowThatOpensNoSessionOffersNoMenuAndAHostWithoutOneOffersNoneEither() throws {
+        let only = UIMenu(children: [UIAction(title: "Open") { _ in }])
+        let linked = try panelWithLinkedRow("oppi://session/child-session-1")
+        let unlinked = try surface("blocks-panel.json")
+        let identifier = node("blocks-panel", "panel", "headline")
+
+        // A row with no link, while the host would offer a menu.
+        let plain = try #require(
+            control(identifier, in: composites(unlinked, sessionMenu: { _, _, _ in only }))
+                as? BlocksLayoutView
+        )
+        #expect(plain.sessionMenu() == nil, "a row without a link offered a menu")
+        #expect(!plain.isContextMenuInteractionEnabled, "a row without a link armed a touch-and-hold")
+        #expect(plain.accessibilityCustomActions?.isEmpty ?? true)
+
+        // A session link, and a host that offers no menu: the row only opens.
+        let unhosted = try #require(control(identifier, in: composites(linked)) as? BlocksLayoutView)
+        #expect(unhosted.sessionMenu() == nil, "a host without a menu still offered one")
+        #expect(!unhosted.isContextMenuInteractionEnabled, "a host without a menu armed a touch-and-hold")
+        #expect(unhosted.accessibilityCustomActions?.isEmpty ?? true)
+
+        // The same row view, reused for a node that opens no session, keeps neither.
+        let view = composites(linked, sessionMenu: { _, _, _ in only })
+        let reused = try #require(control(identifier, in: view) as? BlocksLayoutView)
+        #expect(reused.sessionMenu()?.children.count == 1)
+        #expect(reused.isContextMenuInteractionEnabled, "the linked row answers a touch-and-hold")
+        view.apply(surface: unlinked, pending: nil, themeID: themeID, onAction: nil)
+        view.layoutIfNeeded()
+        let after = try #require(control(identifier, in: view) as? BlocksLayoutView)
+        #expect(after === reused, "the row was replaced instead of reused")
+        #expect(after.sessionMenu() == nil, "the reused row kept its menu")
+        #expect(!after.isContextMenuInteractionEnabled, "the reused row kept its touch-and-hold")
+        #expect(after.accessibilityCustomActions?.isEmpty ?? true, "the reused row kept its actions")
+    }
+
     // MARK: - Helpers
 
     private func composites(
@@ -1287,10 +1379,12 @@ struct ExtensionSurfaceBlocksViewsTests {
         pending: ExtensionSurfacePendingAction? = nil,
         sizeCategory: UIContentSizeCategory = .large,
         onAction: ((ExtensionSurfaceActionIntent) -> Void)? = nil,
-        openURL: ((URL) -> Void)? = nil
+        openURL: ((URL) -> Void)? = nil,
+        sessionMenu: (@MainActor (_ sessionId: String, _ url: URL, _ rowState: String?) -> UIMenu?)? = nil
     ) -> ExtensionSurfaceCompositesView {
         let view = ExtensionSurfaceCompositesView()
         view.openURL = openURL
+        view.sessionMenu = sessionMenu
         view.traitOverrides.preferredContentSizeCategory = sizeCategory
         show(view)
         // Fonts are built while the views are created, so the category is current for `apply`.

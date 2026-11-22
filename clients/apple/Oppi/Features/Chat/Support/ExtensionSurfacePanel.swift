@@ -1176,7 +1176,8 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
                 title: entry.title, subtitle: entry.subtitle,
                 liveSurface: liveSurface,
                 pendingAction: actions.pendingAction,
-                sendAction: actions.sendAction, server: actions.server, openURL: actions.onOpenURL
+                sendAction: actions.sendAction, server: actions.server, openURL: actions.onOpenURL,
+                sessionMenu: actions.sessionMenu
             )))
         case .title, .status, .messageQueue:
             break

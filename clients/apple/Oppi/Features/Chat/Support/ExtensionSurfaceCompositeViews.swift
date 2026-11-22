@@ -86,6 +86,9 @@ struct ExtensionSurfaceCompositeContext {
     /// Opens a node's `link` through the chat's link handling. Nil where links have nowhere to
     /// go: a linked node then draws without a tap.
     var openURL: ((URL) -> Void)?
+    /// The host's menu for a session a linked row or stack opens, drawn on touch-and-hold and as
+    /// accessibility actions. Nil where the host offers no menu: a linked node then only opens.
+    var sessionMenu: (@MainActor (_ sessionId: String, _ url: URL, _ rowState: String?) -> UIMenu?)?
 
     var palette: ThemePalette { themeID.palette }
 
@@ -194,6 +197,8 @@ final class ExtensionSurfaceCompositesView: UIView {
     var server: ExtensionSurfaceServer?
     /// Where a linked node's tap sends its URL. Set before the first `apply`.
     var openURL: ((URL) -> Void)?
+    /// The host's menu for a session a linked node opens. Set before the first `apply`.
+    var sessionMenu: (@MainActor (_ sessionId: String, _ url: URL, _ rowState: String?) -> UIMenu?)?
 
     /// A code block's expand opens its text in the chat's reader, and a linked node's tap goes
     /// through the chat's link handling. `actions` is read at each tap, so a drawer that
@@ -205,6 +210,9 @@ final class ExtensionSurfaceCompositesView: UIView {
             ))
         }
         openURL = { url in _ = actions()?.onOpenURL?(url) }
+        sessionMenu = { sessionId, url, rowState in
+            actions()?.sessionMenu?(sessionId, url, rowState)
+        }
     }
 
     override init(frame: CGRect) {
@@ -253,6 +261,15 @@ final class ExtensionSurfaceCompositesView: UIView {
         )
         if drawn == inputs { return }
         drawn = inputs
+        // A drawer without a menu offers none, and a row that finds none does not arm its
+        // touch-and-hold. Read at each request, so a later provider is still found.
+        let menuForward:
+            (@MainActor (_ sessionId: String, _ url: URL, _ rowState: String?) -> UIMenu?)? =
+            sessionMenu == nil
+            ? nil
+            : { @MainActor [weak self] sessionId, url, rowState in
+                self?.sessionMenu?(sessionId, url, rowState)
+            }
         // The cards send through this view, so an unchanged card still reaches the latest host.
         let context = ExtensionSurfaceCompositeContext(
             themeID: themeID,
@@ -261,7 +278,8 @@ final class ExtensionSurfaceCompositesView: UIView {
             onAction: sendsActions ? { [weak self] in self?.onAction?($0) } : nil,
             openText: opensText ? { [weak self] in self?.openText?($0, $1) } : nil,
             server: server,
-            openURL: opensLinks ? { [weak self] in self?.openURL?($0) } : nil
+            openURL: opensLinks ? { [weak self] in self?.openURL?($0) } : nil,
+            sessionMenu: menuForward
         )
         var kept: [String: UIView] = [:]
         var nextKinds: [String: String] = [:]

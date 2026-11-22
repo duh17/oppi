@@ -39,6 +39,7 @@ import { DurableJobs, endsOnItsOwn } from "../background-jobs/contract.js";
 import { agentMessageEntry, type MessageOrigin } from "./agent-message.js";
 import { Subagents, ensureSubagentWidget, type Child, type SubagentWorktree } from "./contract.js";
 import { isLive, liveTasks } from "./wakers.js";
+import { panel } from "./panel.js";
 import { SubagentWidget } from "./widget.js";
 
 type Sender = SessionSender;
@@ -1278,6 +1279,8 @@ export function createDurableSessions(
     runtimes: ["host", "sandbox"],
     tools: [subagent],
     tasks: [Anchor, Reporter, SubagentWidget],
+    // Drawn again when a chat with rows attaches, a server restart included.
+    surfaces: [panel],
     sections: [section("sessions", () => GUIDANCE)],
   });
 }

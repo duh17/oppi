@@ -9,7 +9,6 @@ import {
   type ConversationId,
   type DocumentWatch,
   type EntryId,
-  type JsonObject,
   type LiveState,
   type RunFailure,
   type TaskId,
@@ -19,36 +18,35 @@ import {
   DurableSessionDoc,
   DurableUI,
   SESSION_REPORTER_TASK,
+  oppiHost,
   wakingTasks,
-  type UINotification,
   type UIState,
 } from "oppi/v1";
 import type { UsageState } from "@earendil-works/pi-durable";
-import { SUBAGENT_WIDGET_TASK, Subagents, type Child } from "./contract.js";
+import { SUBAGENT_WIDGET_TASK, SubagentPill, Subagents, type Child } from "./contract.js";
 import { DurableJobs } from "../background-jobs/contract.js";
+import { panel, subagentView } from "./panel.js";
 import { liveTasks, wakingReporters } from "./wakers.js";
 import {
   ANSWER_EXCERPT_MAX,
   EARLIER_EXCERPT_MAX,
   cutMarkdown,
-  isLive,
-  renderSubagentTerminal,
   sessionLink,
-  subagentPanel,
   titledWithAgent,
   type Subagent,
-  type SubagentPanel,
 } from "./subagents.js";
 
-// The durable form of the reference `subagents` extension's pill: the same activity rows, built by
-// the same helpers, published through the `oppi.extension-ui` notification slots. Rows link to
-// `oppi://session/<id>`, which the app already opens; when the surface limits leave children
+// The durable form of the reference `subagents` extension's pill: the same rows, built by the same
+// helpers, drawn by the composable surface in `panel.ts`. This task follows the children and writes
+// what it read to `oppi.subagents.pill`, then publishes the panel from that document; the owner's
+// dismissals are the panel's own document, so a tap and this watch never write the same one. Rows
+// link to `oppi://session/<id>`, which the app already opens; when the surface limits leave children
 // without a row, a last row links to `oppi://thread/<this session>`, the whole thread.
 //
-// The pill shows while a child needs you or works; its subtitle counts those, and the rows
-// (`subagentPanel`) are every child: those that need you (a dialog, or a failure not stopped
-// since), the working ones, the newest finished ones under Recent, and the rest under Earlier. A
-// row discloses the child's answer, kept from the same read as its first line.
+// The pill shows while a child needs you or works; its subtitle counts those, and the rows are
+// every child: those that need you (a dialog, or a failure not stopped since), the working ones, the
+// newest finished ones under Recent, and the rest under Earlier. A row discloses the child's answer,
+// kept from the same read as its first line.
 // So every child's state is followed, not only the shown ones: a child that was done and starts
 // again, or opens a dialog, takes a row at once. Each child's `pi.live` (busy, its current
 // activity, and why its newest run failed) and `oppi.extension-ui` (an open dialog, and when the
@@ -109,10 +107,7 @@ const WAITING_ACTIVITY = "Waiting on background work";
 /** How long one watch invocation runs before its next pass ends it, releasing its registry snapshot. */
 export const WATCH_INVOCATION_MS = 5 * 60_000;
 
-const PROVENANCE = {
-  extensionScopeId: "repo:subagents",
-  extensionDisplayName: "Subagents",
-} as const;
+/** The version 1 widget's key, whose slots the first pass after an upgrade clears. */
 const WIDGET_KEY = "subagents";
 
 /** What a child's newest assistant entry says. */
@@ -426,40 +421,6 @@ function shortId(sessionId: string): string {
   return sessionId.replace(/-/g, "").slice(0, 8);
 }
 
-function notifications(children: Subagent[], panel: SubagentPanel): Record<string, UINotification> {
-  const status: UINotification = {
-    id: "subagents:status",
-    method: "setStatus",
-    statusKey: WIDGET_KEY,
-    ...PROVENANCE,
-  };
-  const widget: UINotification = {
-    id: "subagents:widget",
-    method: "setWidget",
-    widgetKey: WIDGET_KEY,
-    ...PROVENANCE,
-  };
-  // The pill shows while a child needs you or works; finished children alone do not keep it.
-  if (children.some(isLive)) {
-    const { chrome, sections, fallback } = panel;
-    if (chrome.subtitle) status.statusText = chrome.subtitle;
-    widget.widgetLines = renderSubagentTerminal(children);
-    widget.nativeSurface = {
-      version: 1,
-      id: `widget:${WIDGET_KEY}`,
-      source: "widget",
-      presentation: {
-        style: "surfacePanel",
-        title: chrome.title,
-        ...(chrome.subtitle ? { subtitle: chrome.subtitle } : {}),
-      },
-      blocks: sections,
-      fallback: { lines: fallback },
-    } as unknown as JsonObject;
-  }
-  return { [`status:${WIDGET_KEY}`]: status, [`widget:${WIDGET_KEY}`]: widget };
-}
-
 export const SubagentWidget = defineTask<null, WatchCheckpoint, null>({
   name: SUBAGENT_WIDGET_TASK,
   version: 1,
@@ -716,6 +677,8 @@ export const SubagentWidget = defineTask<null, WatchCheckpoint, null>({
 
           let shownIds = new Set<string>();
           let carry: Record<string, Carried> = {};
+          /** The commit changed the rows the panel draws: publish it now. */
+          let publish = false;
           let rereadWakers = false;
           await runtime.commit(async (tx) => {
             const rows: Subagent[] = [];
@@ -790,14 +753,14 @@ export const SubagentWidget = defineTask<null, WatchCheckpoint, null>({
                 ...(answer?.text ? { answer: answer.text } : {}),
               });
             }
-            const panel = subagentPanel(rows, threadSessionId);
-            shownIds = panel.shown;
-            // Live and Recent rows show a long answer; the rest, Earlier, a short one.
-            const fullAnswers = new Set(
-              panel.sections
-                .filter((section) => section.id !== "subagents:earlier")
-                .flatMap((section) => section.blocks[0].rows.map((row) => row.id)),
-            );
+            const view = subagentView({ rows, ...(threadSessionId ? { threadSessionId } : {}) });
+            shownIds = view.shown;
+            // Needs You, Working, and Recent rows keep a long answer; the rest, Earlier, a glance:
+            // the document saves what the drawer can show, not the whole answer of every century.
+            const fullAnswers = view.full;
+            for (const row of rows)
+              if (row.answer && !fullAnswers.has(row.id))
+                row.answer = cutMarkdown(row.answer, EARLIER_EXCERPT_MAX);
             carry = {};
             for (const { child, entry } of rowsOf)
               if (entry.live && entry.read && entry.head !== undefined)
@@ -822,12 +785,21 @@ export const SubagentWidget = defineTask<null, WatchCheckpoint, null>({
                   ...(entry.ended !== undefined ? { ended: entry.ended } : {}),
                   ...(entry.cost !== undefined ? { cost: entry.cost } : {}),
                 };
+            // The pill is this Session's own surface now. A Session that ran the version 1 widget
+            // keeps its strip entry until it is cleared here: absent slots are not written again.
             const ui = await tx.doc(DurableUI, parent);
-            for (const [slot, next] of Object.entries(notifications(rows, panel))) {
-              const current = ui.notifications[slot];
-              // Nothing shown yet: no clear to publish.
-              if (current === undefined && !rows.some(isLive)) continue;
-              if (JSON.stringify(current) !== JSON.stringify(next)) ui.notifications[slot] = next;
+            for (const slot of [`status:${WIDGET_KEY}`, `widget:${WIDGET_KEY}`])
+              if (slot in ui.notifications) delete ui.notifications[slot];
+            // What `load` draws when the chat attaches, after a restart too. Only a change is
+            // written, and only a change republishes the surface.
+            const saved = await tx.doc(SubagentPill, parent);
+            const key = (value: { rows: Subagent[]; threadSessionId?: string }): string =>
+              JSON.stringify([value.rows, value.threadSessionId ?? null]);
+            publish = key(saved) !== key({ rows, ...(threadSessionId ? { threadSessionId } : {}) });
+            if (publish) {
+              saved.rows = rows;
+              if (threadSessionId) saved.threadSessionId = threadSessionId;
+              else delete saved.threadSessionId;
             }
             // A sleep that is already due, not a running checkpoint: only a new invocation takes
             // a new snapshot (one that goes on to the next phase keeps the one it was reserved with).
@@ -848,6 +820,12 @@ export const SubagentWidget = defineTask<null, WatchCheckpoint, null>({
           writtenKey = carryKey(carry);
           if (rereadWakers) mark();
           for (const { child, entry } of rowsOf) entry.visible = shownIds.has(child.sessionId);
+          // What the panel draws from the documents just committed, now. Undefined where the chat
+          // has no live Session: its attach draws the panel instead.
+          if (publish) {
+            const surfaces = await oppiHost().sessionSurfaces(runtime, context);
+            if (surfaces) await panel.sync({ surfaces }, context);
+          }
           if (ending) return;
           // After the commit that read them live: one that ended since resolves at once.
           for (const { entry } of rowsOf) for (const id of entry.wakers) watchWaker(entry, id);

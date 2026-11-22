@@ -7,6 +7,7 @@ import {
   type TaskId,
   type Tx,
 } from "@earendil-works/pi-durable";
+import type { Subagent } from "./subagents.js";
 
 // What the Oppi server needs of `oppi.sessions`: the children list, to restart the subagent
 // pill's watcher when a conversation with children attaches. Shared by the server and the
@@ -69,6 +70,39 @@ export const Subagents = defineDoc<{
   initial: () => ({ children: {}, calls: {} }),
   // Written by every spawn, send, and report for the conversation's lifetime, and `reported`
   // and `reporters` only grow; a base bounds its replay.
+  checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
+});
+
+/**
+ * The pill's rows as the watcher last derived them, and where its overflow opens. A Session's
+ * surfaces live in memory, so these are what the panel's `load` reads to draw it again: when the
+ * chat attaches, and after a server restart.
+ */
+export const SubagentPill = defineDoc<{ rows: Subagent[]; threadSessionId?: string }>({
+  kind: "oppi.subagents.pill",
+  version: 1,
+  scope: "conversation",
+  history: "latest",
+  fork: "initial",
+  initial: () => ({ rows: [] }),
+  // Rewritten whenever a child's row changes, for the conversation's lifetime: a base bounds its
+  // replay.
+  checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
+});
+
+/**
+ * The failures the owner dismissed from the pill, by the child's Session id and when (epoch ms).
+ * A dismissal hides a failure without touching the child's Session; it lasts until a later run of
+ * that child fails again, which is a run that ends after this time.
+ */
+export const SubagentDismissals = defineDoc<{ dismissed: Record<string, number> }>({
+  kind: "oppi.subagents.dismissals",
+  version: 1,
+  scope: "conversation",
+  history: "latest",
+  // A fork of the parent starts with nothing dismissed.
+  fork: "initial",
+  initial: () => ({ dismissed: {} }),
   checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 });
 
