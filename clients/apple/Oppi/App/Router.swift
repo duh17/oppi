@@ -216,8 +216,10 @@ final class RouterNavigationController: UINavigationController, RouterModalConta
 /// The bar's hidden state follows the screen in front and nothing else sets
 /// it: no other code calls `setNavigationBarHidden`, which the UIKit structure
 /// guard enforces. A stack's delegate calls `applyNavigationBar(forIncoming:)`
-/// as each screen comes forward. A screen whose answer changes while it is on
-/// top (a file finishing its load, a lock cover replacing a page) calls
+/// as each screen comes forward, and the stack asks for the bar of a screen it
+/// is given while it is off screen, so a column is not left waiting for its
+/// appearance to know it. A screen whose answer changes while it is on top (a
+/// file finishing its load, a lock cover replacing a page) calls
 /// `updateNavigationBar(for:animated:)`. A screen that only wraps one of these
 /// (a screen that embeds a file viewer) need not conform: the policy asks its
 /// child controllers.
@@ -233,9 +235,10 @@ private func screenHidesNavigationBar(_ screen: UIViewController) -> Bool {
 }
 
 extension UINavigationController {
-    /// Call from `navigationController(_:willShow:animated:)`: the incoming
-    /// screen's bar state replaces the outgoing one's, so the screen below a
-    /// reader gets its Back button, title, items, and search bar back when the
+    /// Call from `navigationController(_:willShow:animated:)`, or with the screen a
+    /// stack is given while it is off screen: the incoming screen's bar state replaces
+    /// the outgoing one's, so the screen below a reader gets its Back button, title,
+    /// items, and search bar back when the
     /// reader pops. A cancelled back swipe leaves the old screen on top, so its
     /// bar state comes back.
     func applyNavigationBar(forIncoming incoming: UIViewController, animated: Bool) {

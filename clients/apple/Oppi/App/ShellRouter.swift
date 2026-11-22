@@ -160,6 +160,20 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
         }
     }
 
+    /// A stack is handed its screens before it is on screen: the split builds
+    /// its sidebar column with the sidebar in `init`, and a pane leaf is built
+    /// with its routes. The bar those screens ask for is decided now. Left to
+    /// the delegate's `willShow`, it waits for the appearance UIKit sends the
+    /// stack, which is a turn away at best: until it comes, the column reserves
+    /// the bar its screen says it never draws.
+    override func setViewControllers(_ viewControllers: [UIViewController], animated: Bool) {
+        super.setViewControllers(viewControllers, animated: animated)
+        // A stack on screen keeps its own transitions: its delegate applies the
+        // bar as each screen comes forward and the animation carries it.
+        guard viewIfLoaded?.window == nil, let top = topViewController else { return }
+        applyNavigationBar(forIncoming: top, animated: false)
+    }
+
     /// Shows `routes`, the first as the root.
     func setRoutes(_ routes: [WorkspaceStackRouteElement]) {
         precondition(!routes.isEmpty, "A shell stack needs a root route")

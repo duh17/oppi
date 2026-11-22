@@ -62,7 +62,7 @@ UIKit owns every iOS view and all app structure; `scripts/uikit-structure-guard.
 
 ### Navigation bar
 
-`Oppi/App/Router.swift` alone decides whether a stack's bar is hidden. A screen that draws its own Back and actions conforms to `NavigationBarHiding`; the stack delegates (`ShellNavigationController`, `RouterNavigationController`) call `applyNavigationBar(forIncoming:animated:)` per incoming screen, which also restores state after a cancelled back swipe. A screen whose answer changes while in front calls `navigationController?.updateNavigationBar(for:animated:)` (acts only on the top screen). An embedding screen does not conform; the policy asks its children. The guard disallows `setNavigationBarHidden(` except in `FullScreenCodeViewController` (its private navigation controller).
+`Oppi/App/Router.swift` alone decides whether a stack's bar is hidden. A screen that draws its own Back and actions conforms to `NavigationBarHiding`; the stack delegates (`ShellNavigationController`, `RouterNavigationController`) call `applyNavigationBar(forIncoming:animated:)` per incoming screen, and `ShellNavigationController` also calls it for a screen it is given off screen (the split's sidebar column); that form also restores state after a cancelled back swipe. A screen whose answer changes while in front calls `navigationController?.updateNavigationBar(for:animated:)` (acts only on the top screen). An embedding screen does not conform; the policy asks its children. The guard disallows `setNavigationBarHidden(` except in `FullScreenCodeViewController` (its private navigation controller).
 
 ### Load states
 

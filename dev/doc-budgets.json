@@ -6,8 +6,8 @@
       "reason": "Doc diet 2026-11-02: rewritten to the dev/README.md standard at 300 words; headroom max(15%, 100 words)."
     },
     "dev/architecture-client.md": {
-      "words": 6015,
-      "reason": "Client owners and rules: forked syntax grammars, ServerConnection's state-machine owners, UIKit ownership and the guard-named sections (navigation bar, load states, alerts, settings pages, document editing), shell, the server-feature and Experiment rule, Live Voice, SSH/Rex, and the boundary rules the architecture check links to. 4974 words, plus 180 for server features (2026-11-15), plus 30 for the main pane's sidebar button owner (2026-11-20), plus 25 for the Agent editor's draft and capability pages (2026-11-21); headroom max(15%, 100 words)."
+      "words": 6030,
+      "reason": "Client owners and rules: forked syntax grammars, ServerConnection's state-machine owners, UIKit ownership and the guard-named sections (navigation bar, load states, alerts, settings pages, document editing), shell, the server-feature and Experiment rule, Live Voice, SSH/Rex, and the boundary rules the architecture check links to. 4974 words, plus 180 for server features (2026-11-15), plus 30 for the main pane's sidebar button owner (2026-11-20), plus 25 for the Agent editor's draft and capability pages (2026-11-21), plus 20 for the bar a stack decides when it is given its screens off screen (2026-11-22); headroom max(15%, 100 words)."
     },
     "dev/architecture-client/blocks.md": {
       "words": 1290,
