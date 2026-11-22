@@ -437,8 +437,8 @@ enum AppPreferenceStore {
 
     // MARK: - Appearance
 
-    /// Motion, spinner, dictation indicator, and Pi icon styles. Spinner key
-    /// matches iOS `AppPreferences.Appearance`.
+    /// Motion, spinner, dictation indicator, Pi icon, and session icon size.
+    /// Spinner key matches iOS `AppPreferences.Appearance`.
     enum Appearance {
         static let spinnerStyleKey = "spinnerStyle"
         static let dictationIndicatorStyleKey =
@@ -508,5 +508,22 @@ enum AppPreferenceStore {
             NotificationCenter.default.post(name: dictationIndicatorDidChangeNotification, object: nil)
         }
 
+        // MARK: Session icons
+
+        static let sessionIconSizeKey = "\(AppIdentifiers.subsystem).appearance.sessionIconSize"
+        /// Posted by `SettingsStore` when Settings › Session Rows › Session
+        /// Icons saves, so rows on screen redraw at the new size in place.
+        static let sessionIconSizeDidChangeNotification = Notification.Name(
+            "\(AppIdentifiers.subsystem).appearance.sessionIconSizeDidChange"
+        )
+        /// Nothing stored is the 32 pt circle rows drew before the size was a
+        /// setting, so an update never resizes a list.
+        static let sessionIconSizeDefault = SessionIconSize.small
+
+        static var sessionIconSize: SessionIconSize { sessionIconSize(in: .standard) }
+
+        static func sessionIconSize(in defaults: UserDefaults) -> SessionIconSize {
+            defaults.string(forKey: sessionIconSizeKey).flatMap(SessionIconSize.init(rawValue:)) ?? sessionIconSizeDefault
+        }
     }
 }

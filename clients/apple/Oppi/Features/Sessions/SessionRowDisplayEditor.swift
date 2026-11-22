@@ -141,6 +141,7 @@ final class SessionRowDisplayEditorViewController: ListScreenController<
     SessionRowDisplayEditorViewController.Item
 > {
     enum Section: Hashable, Sendable {
+        case icons
         case density
         case details
         case thread
@@ -148,6 +149,7 @@ final class SessionRowDisplayEditorViewController: ListScreenController<
     }
 
     enum Item: Hashable, Sendable {
+        case iconSize
         case density
         case toggle(Toggle)
         case restore
@@ -222,6 +224,8 @@ final class SessionRowDisplayEditorViewController: ListScreenController<
         super.init(
             title: String(localized: "Session Rows"),
             listIdentifier: "sessionRows.form",
+            scope: .device,
+            settings: root.settings,
             headers: true,
             footers: true,
             dismissesKeyboardOnDrag: true
@@ -364,11 +368,14 @@ final class SessionRowDisplayEditorViewController: ListScreenController<
     // MARK: - Rows
 
     /// The switches and Restore Defaults are the kit's theme cards; the Density
-    /// picker is the page's own cell (`dequeue(_:at:)`).
+    /// picker is the page's own cell and Session Icons the kit's menu row
+    /// (`dequeue(_:at:)`).
     override var rowStyle: ListRowStyle { .card }
 
     override func sections() -> [ListSection<Section, Item>] {
-        [
+        _ = settingInputs(SettingsCatalog.sessionIconSize)
+        return [
+            ListSection(.icons, footer: SettingsCatalog.sessionIconSize.copy.footer, items: [.iconSize]),
             ListSection(.density, footer: densityFooter, items: [.density]),
             ListSection(
                 .details,
@@ -390,7 +397,7 @@ final class SessionRowDisplayEditorViewController: ListScreenController<
     override func showsHeader(for section: Section) -> Bool {
         switch section {
         case .details, .thread: true
-        case .density, .restore: false
+        case .icons, .density, .restore: false
         }
     }
 
@@ -399,6 +406,7 @@ final class SessionRowDisplayEditorViewController: ListScreenController<
     /// beside it.
     override func inputs(of item: Item) -> AnyHashable {
         switch item {
+        case .iconSize: AnyHashable(settingInputs(SettingsCatalog.sessionIconSize))
         case .density: AnyHashable(draft.density)
         case .toggle(let toggle): AnyHashable(draft[keyPath: toggle.keyPath])
         case .restore: AnyHashable(draft != .standard)
@@ -412,18 +420,29 @@ final class SessionRowDisplayEditorViewController: ListScreenController<
     }
 
     /// The Density picker is the page's own cell; every other row is the kit's
-    /// card row. The kit paints its card like any list cell it dequeues.
+    /// card row, except Session Icons, which is the kit's menu row. The kit
+    /// paints its card like any list cell it dequeues.
     private lazy var densityCell = UICollectionView.CellRegistration<SessionRowsDensityCell, Item> { [weak self] cell, _, _ in
         guard let self else { return }
         cell.configure(selected: draft.density) { [weak self] density in self?.draft.density = density }
     }
+    /// Three tested sizes rather than a slider, so every row a list draws is one
+    /// of them and each was laid out for.
+    private lazy var iconSizeCell = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, _ in
+        guard let self else { return }
+        settingChoiceRow(cell, SettingsCatalog.sessionIconSize, choices: SessionIconSize.allCases.map {
+            SettingChoice(value: $0, title: $0.displayName)
+        })
+    }
 
     override func prepareRegistrations() {
-        _ = densityCell
+        _ = (densityCell, iconSizeCell)
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
         switch item {
+        case .iconSize:
+            collectionView.dequeueConfiguredReusableCell(using: iconSizeCell, for: indexPath, item: item)
         case .density:
             collectionView.dequeueConfiguredReusableCell(using: densityCell, for: indexPath, item: item)
         case .toggle, .restore:
@@ -433,7 +452,7 @@ final class SessionRowDisplayEditorViewController: ListScreenController<
 
     override func configureCard(_ cell: SidebarListCell, item: Item) {
         switch item {
-        case .density:
+        case .iconSize, .density:
             break
         case .toggle(let toggle):
             configureToggleRow(cell, toggle: toggle)

@@ -86,6 +86,14 @@ extension SettingsStore {
             case SettingsCatalog.experimentLiveActivity.id:
                 // Server Settings redraws from the store; the cards and servers follow here.
                 coordinator?.liveActivityExperimentChanged()
+            case SettingsCatalog.sessionIconSize.id:
+                // Every session row asks the size again on this signal: the rows
+                // on screen redraw at the new size where they are, and a row
+                // built later reads the same value.
+                NotificationCenter.default.post(
+                    name: AppPreferenceStore.Appearance.sessionIconSizeDidChangeNotification,
+                    object: nil
+                )
             default:
                 break
             }

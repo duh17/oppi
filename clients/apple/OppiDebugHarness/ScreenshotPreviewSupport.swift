@@ -77,14 +77,27 @@ enum ScreenshotVolatileDefaults {
 
 // MARK: - Previews
 
-/// `SCREENSHOT_SCREEN=settings-chat`: the Chat settings page as the root of a router stack, over fixture services.
-/// The page shares the app's `ThemeStore`. Nothing here calls a server.
+/// `SCREENSHOT_SCREEN=settings-chat` / `settings-session-rows`: an App
+/// Settings page as the root of a router stack, over fixture services. The
+/// page shares the app's `ThemeStore`. Nothing here calls a server.
 @MainActor
 final class SettingsPagePreviewController: PreviewRootController {
+    enum Page {
+        case chat
+        case sessionRows
+
+        @MainActor func make(root: AppRootEnvironment) -> UIViewController {
+            switch self {
+            case .chat: SettingsChatViewController(root: root)
+            case .sessionRows: SessionRowDisplayEditorViewController(root: root)
+            }
+        }
+    }
+
     /// The page shares the app's own `ThemeStore`, the one that owns the window:
     /// a theme chosen on the page then re-themes the window, as in the app. A
     /// store of its own would change only itself.
-    init(themeStore: ThemeStore) {
+    init(themeStore: ThemeStore, page: Page = .chat) {
         // Every settings page can be captured in an imported theme
         // (`SCREENSHOT_COLOR_SCHEME=custom:Paper`), not only Appearance.
         ScreenshotVolatileDefaults.applyImportedThemes()
@@ -100,9 +113,7 @@ final class SettingsPagePreviewController: PreviewRootController {
         super.init(
             root: root,
             themeStore: themeStore,
-            content: PreviewHost.screenStack(root: root) {
-                SettingsChatViewController(root: root)
-            }
+            content: PreviewHost.screenStack(root: root) { page.make(root: root) }
         )
     }
 

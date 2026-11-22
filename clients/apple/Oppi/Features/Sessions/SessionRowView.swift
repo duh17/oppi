@@ -1,19 +1,49 @@
 import UIKit
 
 /// The session row's identity column: the session's icon beside its title and
-/// details, on the circle an Agent's own page shows its icon in. Every width
-/// draws it at 32 pt: at the 20-pt tile a phone used to draw, a saved Agent's
-/// icon was too small to tell from the next row's.
-enum SessionRowIdentity {
+/// details, on the circle an Agent's own page shows its icon in. The size is the
+/// person's choice (Settings › Session Rows › Session Icons), and the column and
+/// the text's start follow it, so a thread's strip and child rows line up on the
+/// same text block at any size.
+struct SessionRowIdentity: Equatable {
+    let size: SessionIconSize
+
+    /// The gap between the column and the text.
     static let spacing: CGFloat = 8
-    /// The circle's side.
-    static let side: CGFloat = 32
     /// The column's slack around the circle, per side.
     private static let slack: CGFloat = 2
+    /// Thread children stop indenting at this depth, so a deep thread keeps its width.
+    static let maxIndentLevels = 4
+
+    /// The size Settings holds now.
+    static var current: Self { Self(size: AppPreferenceStore.Appearance.sessionIconSize) }
+
+    /// The circle's side.
+    var side: CGFloat {
+        switch size {
+        case .small: 32
+        case .medium: 44
+        case .large: 56
+        }
+    }
 
     /// The column holding the circle, and where the text starts past it.
-    static let columnWidth = side + slack * 2
-    static let textInset = columnWidth + spacing
+    var columnWidth: CGFloat { side + Self.slack * 2 }
+    var textInset: CGFloat { columnWidth + Self.spacing }
+
+    /// The furthest a thread's child row indents: four title columns of the
+    /// smallest size, which is as deep as a thread has ever indented. A larger
+    /// icon stops adding a column here, so no child row is narrower than a deep
+    /// one is with small icons: beyond that, the deepest children share an
+    /// indent as they already did past `maxIndentLevels`.
+    static let deepestIndent = Self(size: .small).textInset * CGFloat(maxIndentLevels)
+
+    /// Where a thread's child row at `depth` starts: one title column per level,
+    /// so its icon sits where its parent's title starts, and never past
+    /// `deepestIndent`.
+    func indent(forDepth depth: Int) -> CGFloat {
+        min(CGFloat(min(depth, Self.maxIndentLevels)) * textInset, Self.deepestIndent)
+    }
 }
 
 // MARK: - Session Row
@@ -48,7 +78,7 @@ final class SessionRowView: UIView {
     /// Where the title and details start, past the identity icon, and how far in
     /// that is: a thread's child rows take their indent from it.
     var textLeadingAnchor: NSLayoutXAxisAnchor { column.leadingAnchor }
-    var textInset: CGFloat { SessionRowIdentity.textInset }
+    var textInset: CGFloat { identity.textInset }
     /// Where the row's text ends: the time in the title row, the status under the details.
     var textTrailingAnchor: NSLayoutXAxisAnchor { column.trailingAnchor }
 
@@ -56,9 +86,16 @@ final class SessionRowView: UIView {
     private var content: Content?
     private var display = SessionRowDisplay.standard
     private var style = SessionRowStyle.for(ThemeRuntimeState.currentThemeID())
+    /// The icon size this row draws now, and the constraints the next one moves.
+    private var identity = SessionRowIdentity.current
+    private var identityObserver: NSObjectProtocol?
 
     private let iconContainer = UIView()
-    private let icon = SessionGridBadgeView(iconSize: SessionRowIdentity.side, shape: .circle)
+    private var icon = SessionGridBadgeView(iconSize: SessionRowIdentity.current.side, shape: .circle)
+    private var iconColumnWidth: NSLayoutConstraint?
+    private var iconColumnHeight: NSLayoutConstraint?
+    private var iconWidth: NSLayoutConstraint?
+    private var iconHeight: NSLayoutConstraint?
     private let attentionDot = UIView()
     private let column = UIStackView()
 
@@ -117,12 +154,20 @@ final class SessionRowView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    isolated deinit {
+        if let identityObserver {
+            NotificationCenter.default.removeObserver(identityObserver)
+        }
+    }
+
     // MARK: Apply
 
     func apply(_ content: Content, display: SessionRowDisplay, themeID: ThemeID, iconAssetCache: IconAssetCache?) {
         style = SessionRowStyle.for(themeID)
         self.content = content
         self.display = display
+        // A reused row takes the size Settings holds now, not the one it was built with.
+        applyIdentity(.current)
         let presentation = content.presentation
         let session = presentation.session
         let status = presentation.statusKind
@@ -170,6 +215,22 @@ final class SessionRowView: UIView {
         _ = prepareLayout(width: bounds.width)
         setNeedsLayout()
         if window != nil { startClock() }
+    }
+
+    /// Draws the circle, its column, and the text past it at `next`. A row on
+    /// screen takes the new size in place, so the list under Settings redraws as
+    /// the person chooses instead of waiting for a reload; the collection
+    /// re-measures the cell because its constraints changed
+    /// (`selfSizingInvalidation`), so the row is only as tall as the size needs.
+    func applyIdentity(_ next: SessionRowIdentity) {
+        guard next != identity else { return }
+        identity = next
+        icon.setIconSize(next.side)
+        iconColumnWidth?.constant = next.columnWidth
+        iconColumnHeight?.constant = next.columnWidth
+        iconWidth?.constant = next.side
+        iconHeight?.constant = next.side
+        setNeedsLayout()
     }
 
     private func applyLocked(status: SessionStatusKind, isIncognito: Bool) {
@@ -353,7 +414,7 @@ final class SessionRowView: UIView {
         guard let content, display.isCompact, !content.hidesDetails, width > 0 else {
             return arrangeDetailRows(joined: false)
         }
-        let available = width - SessionRowIdentity.columnWidth - SessionRowIdentity.spacing - Self.trailingInset
+        let available = width - identity.columnWidth - SessionRowIdentity.spacing - Self.trailingInset
         return arrangeDetailRows(joined: joinedRowWidth() <= available)
     }
 
@@ -650,14 +711,24 @@ final class SessionRowView: UIView {
         topPadding = top
         bottomPadding = bottom
         self.iconTop = iconTop
+        // The circle's column and the text past it: `applyIdentity` moves these
+        // when the person changes the size while this row is on screen.
+        let columnWidth = iconContainer.widthAnchor.constraint(equalToConstant: identity.columnWidth)
+        let columnHeight = iconContainer.heightAnchor.constraint(equalToConstant: identity.columnWidth)
+        let side = icon.widthAnchor.constraint(equalToConstant: identity.side)
+        let height = icon.heightAnchor.constraint(equalToConstant: identity.side)
+        iconColumnWidth = columnWidth
+        iconColumnHeight = columnHeight
+        iconWidth = side
+        iconHeight = height
         NSLayoutConstraint.activate([
             iconContainer.leadingAnchor.constraint(equalTo: leadingAnchor),
             iconTop,
-            iconContainer.widthAnchor.constraint(equalToConstant: SessionRowIdentity.columnWidth),
-            iconContainer.heightAnchor.constraint(equalToConstant: SessionRowIdentity.columnWidth),
+            columnWidth,
+            columnHeight,
             bottomAnchor.constraint(greaterThanOrEqualTo: iconContainer.bottomAnchor),
-            icon.widthAnchor.constraint(equalToConstant: SessionRowIdentity.side),
-            icon.heightAnchor.constraint(equalToConstant: SessionRowIdentity.side),
+            side,
+            height,
             icon.centerXAnchor.constraint(equalTo: iconContainer.centerXAnchor),
             icon.centerYAnchor.constraint(equalTo: iconContainer.centerYAnchor),
             attentionDot.widthAnchor.constraint(equalToConstant: 9),
@@ -674,6 +745,15 @@ final class SessionRowView: UIView {
             worktreeIcon.heightAnchor.constraint(equalToConstant: 16),
         ])
         arrangeDetailRows(joined: false)
+        // Settings › Session Rows › Session Icons: every row on screen follows the
+        // size where it is, and the list re-measures the cell for the height it needs.
+        identityObserver = NotificationCenter.default.addObserver(
+            forName: AppPreferenceStore.Appearance.sessionIconSizeDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.applyIdentity(.current) }
+        }
         // Glyphs and spacing are drawn at the text size they were applied with.
         registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (row: Self, _) in
             guard let content = row.content, let applied = row.lastApplied else { return }

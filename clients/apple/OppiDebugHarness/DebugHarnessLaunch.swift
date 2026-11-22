@@ -82,6 +82,8 @@ enum DebugHarnessLaunch {
         case "settings-sweep": return SettingsSweepPreviewController()
         case "workspace-settings": return WorkspaceSettingsPreviewController()
         case "settings-chat": return SettingsPagePreviewController(themeStore: root.themeStore)
+        case "settings-session-rows":
+            return SettingsPagePreviewController(themeStore: root.themeStore, page: .sessionRows)
         // The router family: its routes, the modal sites behind it, and the
         // shell those routes are drawn in.
         case "router-routes": return RouterRoutesPreviewController()

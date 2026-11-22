@@ -273,7 +273,7 @@ struct SessionRowRelayoutTests {
     /// without the indent would settle one detail line, be drawn with two, and
     /// keep the shorter height.
     @Test func indentedChildRowIsSizedForItsIndentedWidth() throws {
-        let indent = CGFloat(SessionListEntryContentView.maxIndentLevels) * SessionRowIdentity.textInset
+        let indent = SessionRowIdentity.current.indent(forDepth: SessionRowIdentity.maxIndentLevels)
         func height(depth: Int, width: CGFloat) -> CGFloat {
             let session = richSession()
             let content = SessionListRowContent(
@@ -306,7 +306,7 @@ struct SessionRowRelayoutTests {
         let oneLine = height(depth: 0, width: width)
         let twoLines = height(depth: 0, width: width - indent)
 
-        let child = height(depth: SessionListEntryContentView.maxIndentLevels, width: width)
+        let child = height(depth: SessionRowIdentity.maxIndentLevels, width: width)
         #expect(
             abs(child - twoLines) < 0.5,
             "The indented row was sized as if it had the full width: \(child) vs \(twoLines) (one line is \(oneLine))"

@@ -204,6 +204,23 @@ enum SettingsCatalog {
         )
     )
 
+    // MARK: - Session Rows (this device)
+
+    /// How big a session list draws its icon: 32 pt, 44 pt, or 56 pt on the
+    /// session's circle. A device setting on the `AppPreferenceStore` key
+    /// `SessionRowIdentity` reads, so every session list and this row show one
+    /// value.
+    static let sessionIconSize = SettingDeclaration<SessionIconSize>(
+        id: "settings.sessionRows.iconSize",
+        key: AppPreferenceStore.Appearance.sessionIconSizeKey,
+        storage: .device(perServer: false),
+        default: AppPreferenceStore.Appearance.sessionIconSizeDefault,
+        copy: SettingCopy(
+            title: String(localized: "Session Icons"),
+            footer: String(localized: "Small draws a session's icon on a 32 pt circle, Medium 44 pt, and Large 56 pt, in every session list. A larger icon takes a wider column, so titles start further in and a thread's children indent further.")
+        )
+    )
+
     // MARK: - Appearance (this device)
 
     /// How the Pi mark is drawn everywhere: the official colors, or the theme
@@ -459,6 +476,7 @@ enum SettingsCatalog {
         keepAwakeAfterActivity.descriptor,
         openLinks.descriptor,
         motion.descriptor,
+        sessionIconSize.descriptor,
         piIcon.descriptor,
         terminalTapMode.descriptor,
         terminalFindsTailnetRex.descriptor,

@@ -6,10 +6,10 @@ import UIKit
 /// places it at the badge's size and shape and passes on the row's burst
 /// (`playBurst()`, `stopBurst()`) when the session needs the person.
 final class SessionGridBadgeView: UIView {
-    private let icon: IconChoiceUIView
+    private var icon: IconChoiceUIView
     /// The badge's side in points, and the shape it draws the icon in: the
     /// rounded tile, or the circle a session row draws it as.
-    let iconSize: CGFloat
+    private(set) var iconSize: CGFloat
     let shape: IconShape
 
     var sessionId: String = "" {
@@ -69,6 +69,21 @@ final class SessionGridBadgeView: UIView {
     func prepareForReuse() {
         lastApplied = nil
         icon.clear()
+    }
+
+    /// Draws the icon at a new side. A session row calls this when the person
+    /// changes Settings › Session Rows › Session Icons while the row is on
+    /// screen: `IconChoiceUIView` draws at its own size, so it is replaced and
+    /// given the badge's identity again. The holder lays the badge out at
+    /// `iconSize`, so it is the caller's to resize too.
+    func setIconSize(_ side: CGFloat) {
+        guard side != iconSize else { return }
+        iconSize = side
+        icon.removeFromSuperview()
+        icon = IconChoiceUIView(frameSize: side, shape: shape)
+        placeIcon()
+        lastApplied = nil
+        updateIfNeeded()
     }
 
     /// Applies one session identity atomically. SwiftUI and collection rows use

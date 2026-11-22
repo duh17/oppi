@@ -73,6 +73,29 @@ struct SettingsStoreTests {
         #expect(written == [SettingsCatalog.keepAwakeAfterActivity.id, label.id])
     }
 
+    @Test("Saving the session icon size posts the change every session row follows")
+    func sessionIconSizeWritePostsTheChange() async throws {
+        // The app's own hook, on a defaults suite of its own: the write goes to the
+        // suite, the notification is the one rows and lists listen for.
+        let store = SettingsStore(
+            serverId: nil,
+            device: DeviceAdapter(defaults: try makeSettingsDefaults()),
+            server: ServerAdapter { _ in nil },
+            afterWrite: SettingsStore.liveAfterWrite(screenAwake: .shared)
+        )
+        await confirmation("rows hear the new size", expectedCount: 1) { confirm in
+            let token = NotificationCenter.default.addObserver(
+                forName: AppPreferenceStore.Appearance.sessionIconSizeDidChangeNotification,
+                object: nil,
+                queue: nil
+            ) { _ in confirm() }
+            defer { NotificationCenter.default.removeObserver(token) }
+
+            _ = await store.set(SettingsCatalog.sessionIconSize, .large).value
+        }
+        #expect(store.read(SettingsCatalog.sessionIconSize) == .value(.large, revision: nil))
+    }
+
     @Test("A refused value is not written, and the row says why")
     func validationRefusesBeforeAnyWrite() async {
         let transport = FakeSettingsTransport()

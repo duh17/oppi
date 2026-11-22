@@ -108,6 +108,7 @@ final class SessionListEntryContentView: UIView, UIContentView {
     private var applied: SessionListEntryConfiguration
     /// Where the row starts: the list's margin plus the indent of a thread's child row.
     private var leadingConstraint: NSLayoutConstraint?
+    private var identityObserver: NSObjectProtocol?
 
     var configuration: UIContentConfiguration {
         get { applied }
@@ -150,7 +151,22 @@ final class SessionListEntryContentView: UIView, UIContentView {
             stack.trailingAnchor.constraint(equalTo: margins.trailingAnchor),
         ])
         rowView.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        // A thread's children move in past the wider column where they are, so a
+        // deepened icon never leaves a child row hanging off its parent's grid.
+        identityObserver = NotificationCenter.default.addObserver(
+            forName: AppPreferenceStore.Appearance.sessionIconSizeDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.applyIndent() }
+        }
         apply(configuration)
+    }
+
+    isolated deinit {
+        if let identityObserver {
+            NotificationCenter.default.removeObserver(identityObserver)
+        }
     }
 
     /// A Thread row under the row, on the row's grid: the control starts on the row's title column and
@@ -179,11 +195,6 @@ final class SessionListEntryContentView: UIView, UIContentView {
     }
 
     static let verticalInset: CGFloat = 15
-    /// Indent per thread level: one title column, so a child row's icon sits where its parent's title
-    /// starts. Deeper threads stop indenting at `maxIndentLevels` so rows keep their width.
-    /// One title column of the row this list draws, at the width the list has.
-    private var indentPerLevel: CGFloat { rowView.textInset }
-    static let maxIndentLevels = 4
 
     /// The separator starts under the title, past the identity icon.
     override func didMoveToSuperview() {
@@ -195,14 +206,20 @@ final class SessionListEntryContentView: UIView, UIContentView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    /// A child row starts where its depth and the current icon size put it.
+    private func applyIndent() {
+        leadingConstraint?.constant = SessionRowIdentity.current.indent(forDepth: applied.row.entry.depth)
+        setNeedsLayout()
+    }
+
     private func apply(_ configuration: SessionListEntryConfiguration) {
         applied = configuration
+        applyIndent()
         let row = configuration.row
         let entry = row.entry
         let session = entry.session
         let style = SessionRowStyle.for(configuration.themeID)
         let status = row.status(of: session)
-        leadingConstraint?.constant = CGFloat(min(entry.depth, Self.maxIndentLevels)) * indentPerLevel
 
         rowView.apply(
             SessionRowView.Content(

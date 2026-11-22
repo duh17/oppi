@@ -36,6 +36,7 @@ final class SessionThreadStoppedFoldContentView: UIView, UIContentView {
     private let titleLabel = UILabel()
     private var applied: SessionThreadStoppedFoldConfiguration
     private var leadingConstraint: NSLayoutConstraint?
+    private var identityObserver: NSObjectProtocol?
 
     var configuration: UIContentConfiguration {
         get { applied }
@@ -86,7 +87,27 @@ final class SessionThreadStoppedFoldContentView: UIView, UIContentView {
             stack.leadingAnchor.constraint(equalTo: control.leadingAnchor, constant: 8),
             control.trailingAnchor.constraint(greaterThanOrEqualTo: stack.trailingAnchor, constant: 8),
         ])
+        // A bigger icon widens the column the fold indents by, where the row is.
+        identityObserver = NotificationCenter.default.addObserver(
+            forName: AppPreferenceStore.Appearance.sessionIconSizeDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.applyIndent() }
+        }
         apply(configuration)
+    }
+
+    isolated deinit {
+        if let identityObserver {
+            NotificationCenter.default.removeObserver(identityObserver)
+        }
+    }
+
+    /// The fold starts where the thread's member rows at its depth do.
+    private func applyIndent() {
+        leadingConstraint?.constant = SessionRowIdentity.current.indent(forDepth: applied.depth)
+        setNeedsLayout()
     }
 
     @available(*, unavailable)
@@ -98,8 +119,7 @@ final class SessionThreadStoppedFoldContentView: UIView, UIContentView {
         applied = configuration
         let fold = configuration.fold
         let colors = SessionRowStyle.for(configuration.themeID).colors
-        leadingConstraint?.constant = CGFloat(min(configuration.depth, SessionListEntryContentView.maxIndentLevels))
-            * SessionRowIdentity.textInset
+        applyIndent()
         control.backgroundColor = colors.bgHighlight.withAlphaComponent(0.45)
         chevron.image = UIImage.scaledSymbol(
             fold.isOpen ? "chevron.down" : "chevron.right", style: .caption1, weight: .semibold
