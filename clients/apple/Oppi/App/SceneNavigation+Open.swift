@@ -111,29 +111,74 @@ extension SceneNavigation {
             return .stay
         }
         if origin != .external { mediaOverlayYieldsToUserNavigation() }
+        // One session shows in one leaf (D7): an open for a chat a leaf already
+        // shows — a row, a link, a notification — focuses that leaf, over the
+        // pages opened from it, and pushes no second copy.
+        if case .chat(let chat) = destination, focusShownChat(chat.sessionId, serverId: chat.serverId) {
+            return .stay
+        }
         if let kind, let route = destination.screen,
            let beside = paneArea?.sidePlacement(of: kind, showing: route, from: origin),
            let pane = paneArea, pane.showBeside(route, kind: kind, beside) {
             return beside
         }
         let placement = fallback(of: destination, from: origin)
+        // One chat per server (Stage 4a): a server's one connection, claim and
+        // stream show one chat, so a chat for a server that already shows one
+        // takes that leaf, in place of the chat there — whichever origin the
+        // open came from (a row, a link, a notification, QuickSession, the
+        // context inspector, a key). A chat already in the destination's own
+        // leaf follows the placement, which is how a chat takes the place of
+        // the one above it there.
+        if case .chat(let chat) = destination,
+           let leaf = panes.otherChatLeaf(
+               ofServer: chat.serverId, not: chat.sessionId, excluding: Self.leaf(of: placement)
+           ) {
+            guard opensInMainPane else { return .reuse(leaf) }
+            if leaf == panes.mainLeafID { beforeMain() }
+            return showChat(chat, inServerLeaf: leaf)
+        }
         // A caller that shows its own fallback (Safari's sheet for a web link)
         // reads the placement instead of opening anything.
         guard opensInMainPane else { return placement }
-        beforeMain()
+        if Self.leaf(of: placement) == panes.mainLeafID { beforeMain() }
         apply(placement, destination)
         return placement
     }
 
+    /// The leaf a placement shows its screen in; nil for a new pane or a stay.
+    private static func leaf(of placement: PanePlacement) -> PaneID? {
+        switch placement {
+        case .root(let pane, _), .onPlace(let pane, _), .push(let pane),
+             .replacingServerPages(let pane), .reuse(let pane):
+            return pane
+        case .split, .stay:
+            return nil
+        }
+    }
+
     /// Where the open lands when no pane beside takes it: over the pane that
     /// opened it (a screen's own row), else where the main pane's rule puts it.
+    /// A chat is the exception among screens: a row of a side pane's list
+    /// opens its chat in that pane (Stage 4a), which is where that server's
+    /// stream lives. One chat per server is `open(_:from:)`'s rule above, which
+    /// has already sent a chat for a server that shows one to that leaf.
     private func fallback(of destination: NavigationDestination, from origin: OpenOrigin) -> PanePlacement {
-        if case .row(let pane, _) = origin, case .page(let page) = destination, !page.isChat, pane != panes.mainLeafID {
-            return .push(pane)
-        }
         let main = panes.mainLeafID
+        if case .row(let pane, _) = origin, pane != main, let route = panes.stack(of: pane) {
+            switch destination {
+            case .page(let page) where !page.isChat:
+                return .push(pane)
+            case .chat:
+                return route.placement(
+                    of: destination, from: origin, in: pane, split: isSplit, mainLeaf: pane == main
+                )
+            default:
+                break
+            }
+        }
         guard let route = panes.stack(of: main) else { return .push(main) }
-        return route.placement(of: destination, from: origin, in: main, split: isSplit)
+        return route.placement(of: destination, from: origin, in: main, split: isSplit, mainLeaf: true)
     }
 
     /// `isSplit` reads the window's shell.

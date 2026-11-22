@@ -154,6 +154,14 @@ final class WorkspaceDetailViewController: UIViewController {
         lockTarget: { [serverId] session in .session(session, serverId: serverId) },
         pin: { [weak self] session in
             PinMenu.sessionRowToggle(session, connection: self?.connection, view: self?.viewIfLoaded)
+        },
+        paneItems: { [weak self] session in
+            guard let self, let chat = chatTarget(session) else { return [] }
+            return SessionListRowActions.paneMenuItems(near: view, chat: chat)
+        },
+        dragItem: { [weak self] session in
+            guard let self, let chat = chatTarget(session) else { return nil }
+            return SessionListRowActions.sessionDragItem(near: view, chat: chat, name: session.displayTitle)
         }
     )
 

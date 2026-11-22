@@ -221,7 +221,13 @@ extension PaneStack {
     /// over the screen the link is in; from outside, on the list the window
     /// shows. A page (a terminal too) sits over its opener. Workspace Settings
     /// sits on its workspace's list.
-    func placement(of destination: NavigationDestination, from origin: OpenOrigin, in pane: PaneID, split: Bool) -> PanePlacement {
+    func placement(
+        of destination: NavigationDestination,
+        from origin: OpenOrigin,
+        in pane: PaneID,
+        split: Bool,
+        mainLeaf: Bool = false
+    ) -> PanePlacement {
         // A leaf rooted at its content has no place, and the main leaf's is All
         // Sessions when it has none: both read as the window's list.
         let place = place ?? .allSessions
@@ -235,6 +241,10 @@ extension PaneStack {
             case .here, .external:
                 return .onPlace(pane, split ? .sessions(place.workspace) : .allSessions)
             case .row(_, let workspace):
+                // A side leaf's list has no place of its own: its rows' chats sit
+                // over it, so Back returns to the list that opened them. The main
+                // leaf reads a nil place as All Sessions, so it is tested by name.
+                if !mainLeaf, self.place == nil { return .push(pane) }
                 if split {
                     switch place {
                     case .utility: return .push(pane)

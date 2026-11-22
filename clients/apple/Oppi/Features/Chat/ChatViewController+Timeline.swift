@@ -180,7 +180,7 @@ extension ChatViewController {
         if opensPanelsBeside {
             showPanel(.reader(target))
         } else {
-            appNavigation.open(.page(.chatReader(target)))
+            appNavigation.open(.page(.chatReader(target)), from: .row(paneLeaf ?? appNavigation.panes.mainLeafID))
         }
     }
 
@@ -247,7 +247,7 @@ extension ChatViewController {
             object: sessionId,
             userInfo: [Notification.Name.workspaceLinkedFileSourceServerIDKey: serverId]
         )
-        appNavigation.open(.page(.linkedFile(target)), from: .link)
+        appNavigation.open(.page(.linkedFile(target)), from: .row(paneLeaf ?? appNavigation.panes.mainLeafID))
     }
 
     // MARK: - Timeline

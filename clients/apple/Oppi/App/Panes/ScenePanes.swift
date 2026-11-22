@@ -313,6 +313,84 @@ final class ScenePanes {
         return true
     }
 
+    // MARK: Chats in the leaves
+
+    /// The leaf whose route holds the chat of `sessionId` on `serverId`,
+    /// under anything opened over it; nil when no leaf does. One session shows
+    /// in one leaf (D7), so this is the leaf an open for it focuses.
+    func leaf(showingChatOf sessionId: String, serverId: String) -> PaneID? {
+        tree.leaves.first { leaf in
+            stacks[leaf.id]?.elements.contains { element in
+                guard let chat = element.chatSession else { return false }
+                return chat.serverId == serverId && chat.sessionId == sessionId
+            } ?? false
+        }?.id
+    }
+
+    /// The leaf that shows a chat of `serverId` which is not `sessionId`'s,
+    /// skipping `excluding`: one chat per server (Stage 4a), so this is the
+    /// leaf a new chat of that server takes, in place of the chat there. A
+    /// server's connection has one focused-session claim and one stream
+    /// (§1.1); a second chat of it needs the session lane (Stage 4b).
+    ///
+    /// A page under a chat is the history that opened it, not a chat on screen:
+    /// only a `.session` screen counts, and an entry whose session its server
+    /// has not listed is a leaf state, not a live chat.
+    func otherChatLeaf(ofServer serverId: String, not sessionId: String, excluding leaf: PaneID? = nil) -> PaneID? {
+        tree.leaves.first { candidate in
+            guard candidate.id != leaf else { return false }
+            return stacks[candidate.id]?.elements.contains { element in
+                guard case .session(let chat) = element else { return false }
+                return chat.serverId == serverId && chat.sessionId != sessionId
+            } ?? false
+        }?.id
+    }
+
+    /// The leaf's route with the pages above the chat of `sessionId` on
+    /// `serverId` taken off, so the chat itself shows; nil when the chat is its
+    /// top already or no leaf holds it. The pages were opened from that chat (a
+    /// reader, a panel), so the leaf comes back to the chat rather than a second
+    /// copy of it. The caller writes the route: the main leaf's through its one
+    /// owner.
+    func stackShowingChat(_ sessionId: String, serverId: String) -> (leaf: PaneID, stack: PaneStack)? {
+        guard let id = leaf(showingChatOf: sessionId, serverId: serverId),
+              var stack = stacks[id], let index = stack.stack.lastIndex(where: { element in
+                  guard let chat = element.chatSession else { return false }
+                  return chat.serverId == serverId && chat.sessionId == sessionId
+              }), index < stack.stack.count - 1 else { return nil }
+        stack.stack.removeSubrange((index + 1)...)
+        return (id, stack)
+    }
+
+    /// `leaf`'s route with `chat` in place of the chat of `chat.serverId` it
+    /// holds, keeping everything below that chat (the main leaf's place and any
+    /// screens under it, a side leaf's list) and dropping the old chat and any
+    /// pages pushed above it. When `leaf` holds no live chat of that server,
+    /// pushes `chat` onto its existing stack.
+    func stackReplacingChat(_ chat: WorkspaceSessionNavTarget, in leaf: PaneID) -> PaneStack {
+        var stack = stacks[leaf] ?? PaneStack(place: leaf == mainLeafID ? .allSessions : nil)
+        if let index = stack.stack.lastIndex(where: { element in
+            if case .session(let shown) = element { return shown.serverId == chat.serverId }
+            return false
+        }) {
+            stack.stack.removeSubrange(index...)
+        }
+        stack.stack.append(.session(chat))
+        return stack
+    }
+
+    /// Whether another leaf (`!= leaf`) already holds a live `.session` chat of
+    /// `serverId` (same session or another).
+    private func anotherLeafHoldsLiveChat(ofServer serverId: String, excluding leaf: PaneID) -> Bool {
+        tree.leaves.contains { candidate in
+            guard candidate.id != leaf else { return false }
+            return stacks[candidate.id]?.elements.contains { element in
+                if case .session(let chat) = element { return chat.serverId == serverId }
+                return false
+            } ?? false
+        }
+    }
+
     /// A leaf the window no longer has keeps no route and no list search.
     private func forgetClosedLeaves() {
         let live = Set(tree.leaves.map(\.id))
@@ -328,7 +406,9 @@ final class ScenePanes {
 
     /// Splits `id` along `axis`. The new leaf copies a Files, Git, file or
     /// terminal pane; anything else (a chat, a session list, the launcher)
-    /// gets the launcher, since one server streams one chat at a time.
+    /// gets the launcher. A chat's split opens the launcher because its own
+    /// chat cannot show twice and another server's chat is a row's open (the
+    /// launcher's Sessions list opens its rows in the leaf).
     /// Returns the new leaf's id; focus stays where it was.
     @discardableResult
     func split(_ id: PaneID, axis: PaneAxis) -> PaneID? {
@@ -510,9 +590,26 @@ final class ScenePanes {
 
     /// The entry's content can open: its screen takes that entry's place in the
     /// leaf's route, and the pages over and under it stay.
+    ///
+    /// One chat per server (Stage 4a): when a restored placeholder chat entry
+    /// resolves in a side leaf while another leaf already holds a live chat of
+    /// that server, the side leaf gives up the entry (and any pages pushed
+    /// above it, up to a later chat), closing when nothing stays under it.
     func replace(_ entry: PaneStackEntry, with element: WorkspaceStackRouteElement, in id: PaneID) {
         guard var stack = stacks[id], let index = stack.stack.lastIndex(of: .entry(entry)) else { return }
         guard stack.stack[index] != element else { return }
+        if case .session(let chat) = element,
+           anotherLeafHoldsLiveChat(ofServer: chat.serverId, excluding: id) {
+            var end = index + 1
+            while end < stack.stack.count, stack.stack[end].chatSession == nil { end += 1 }
+            stack.stack.removeSubrange(index..<end)
+            guard !stack.stack.isEmpty || id == mainLeafID else {
+                close(id, undoable: false)
+                return
+            }
+            setStack(stack, for: id)
+            return
+        }
         stack.stack[index] = element
         setStack(stack, for: id)
     }
@@ -537,10 +634,15 @@ final class ScenePanes {
     }
 
     /// Closes a split leaf. The main leaf holds the window's route and does
-    /// not close.
-    func close(_ id: PaneID) {
+    /// not close. Pass `undoable: false` for invariant repairs (such as
+    /// dropping a duplicate same-server chat) that Undo must not resurrect.
+    func close(_ id: PaneID, undoable isUndoable: Bool = true) {
         guard id != mainLeafID, tree.leaf(id)?.attachedTo == nil else { return }
-        undoable(Self.closeAction, restoring: stacks[id].map { [id: $0] } ?? [:]) { try $0.close(id) }
+        if isUndoable {
+            undoable(Self.closeAction, restoring: stacks[id].map { [id: $0] } ?? [:]) { try $0.close(id) }
+        } else {
+            changeCells { try $0.close(id) }
+        }
     }
 
     /// Every split leaf closes; the main leaf and its companion stay.
@@ -896,6 +998,8 @@ final class ScenePanes {
         navigation.restoreMainRoute(route)
         restoredMainStack = route.elements
         stacks.merge(routes.filter { $0.key != main.id }) { _, new in new }
+        // A tree an older build wrote can hold two chats of one server.
+        navigation.repairChatsPerServer()
 
         guard case .session(let sessionId)? = main.stack.last?.route else { return }
         handoff.scroll = archive.chatScroll[main.id].flatMap { $0.sessionId == sessionId ? $0 : nil }

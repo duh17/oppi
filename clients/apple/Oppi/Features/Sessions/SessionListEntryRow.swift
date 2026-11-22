@@ -18,6 +18,40 @@ struct SessionListRowActions {
     /// The row's Pin or Unpin, read when the swipe or menu opens; nil where
     /// the list's server keeps no session pins.
     var pin: (Session) -> PinMenu.Toggle? = { _ in nil }
+    /// The row's pane items (Open in New Pane ▸ Right / Below), read when its
+    /// menu opens; empty where the window shows one pane or the chat cannot
+    /// be named.
+    var paneItems: (Session) -> [PaneMenuItem] = { _ in [] }
+    /// The row's drag as its chat, so a drop on a pane's edge opens it there;
+    /// nil where the window shows one pane.
+    var dragItem: (Session) -> UIDragItem? = { _ in nil }
+}
+
+@MainActor
+extension SessionListRowActions {
+    /// Open in New Pane ▸ Right / Below for a session row: the chat opens
+    /// beside the pane the list is drawn in (Stage 4a), as the row's tap opens
+    /// it in that pane. Nothing on a compact window, where the window holds one
+    /// pane. `view` is inside the list, so the items read the window's width
+    /// and the pane it is in as its rows do.
+    static func paneMenuItems(near view: UIView, chat: WorkspaceSessionNavTarget) -> [PaneMenuItem] {
+        PaneOpenMenu.items(near: view, includesOpenHere: false, offersOtherPanes: false) { placement in
+            PaneOpenMenu.place(placement, from: view) { PaneOpenContent(session: chat) }
+        }
+    }
+
+    /// A session row lifts as its chat: dropped on a pane's edge it opens in a
+    /// new pane there (`PaneHostController.place`, whose chat rules decide
+    /// whether that is beside, in the main pane, or the leaf showing it).
+    static func sessionDragItem(near view: UIView, chat: WorkspaceSessionNavTarget, name: String?) -> UIDragItem? {
+        guard AdaptiveWidth.isWide(view.traitCollection),
+              view.nearestViewController.map({ PaneHostController.containing($0) != nil }) == true else { return nil }
+        let provider = NSItemProvider()
+        provider.suggestedName = name
+        let item = UIDragItem(itemProvider: provider)
+        item.localObject = PaneDragPayload(chat: chat)
+        return item
+    }
 }
 
 extension Confirmation {

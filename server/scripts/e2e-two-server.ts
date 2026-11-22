@@ -151,6 +151,9 @@ try {
   await run("node", ["dist/src/cli.js", "config", "set", "host", "0.0.0.0"], env);
   await run("node", ["dist/src/cli.js", "config", "set", "tls", '{"mode":"self-signed"}'], env);
   await run("node", ["--input-type=module", "-e", 'import { Storage } from "./dist/src/storage.js"; new Storage(process.env.OPPI_DATA_DIR).ensurePaired();'], env);
+  // The model lane the first server gets: a chat on the second server answers a
+  // turn from the same provider, so a two-server test has a live chat on each.
+  await run("node", ["e2e/model-lane.ts", "write", join(dataDir, "pi-agent")], { ...env, E2E_SOURCE_PI_AGENT_DIR: process.env.E2E_SOURCE_PI_AGENT_DIR });
   const logPath = join(dataDir, "server.log");
   const logFD = openSync(logPath, "a");
   second = spawn("node", ["dist/src/cli.js", "serve"], {
@@ -201,7 +204,13 @@ try {
   if (!address || typeof address === "string") throw Error("Missing control port");
   const controlURL = `http://127.0.0.1:${address.port}${controlPath}`;
   // Its own file per run, named to the test in the environment: concurrent runs cannot meet.
-  await writeFile(fixturePath, JSON.stringify({ inviteURL: `${controlURL}/invite`, stopURL: `${controlURL}/stop` }), { mode: 0o600 });
+  // `baseURL` and `token` are the second server's own API as its bootstrap
+  // device: a test makes the session only that server has. They live in the
+  // run's own 0600 file beside the invite, and go with it.
+  await writeFile(fixturePath, JSON.stringify({
+    inviteURL: `${controlURL}/invite`, stopURL: `${controlURL}/stop`,
+    baseURL: `https://127.0.0.1:${secondPort}`, token: access,
+  }), { mode: 0o600 });
   // e2e.sh binds this port a short while from now; claim it as late as possible.
   const firstPort = await freePort();
   console.log(`[two-server] isolated first port=${firstPort} second port=${secondPort} second PID=${second.pid} data=${dataDir}`);

@@ -534,7 +534,9 @@ final class OppiApp {
         MetricKitCrashContextStore.recordAppContext(
             sessionId: diagnosticVisibleSessionId(),
             workspaceId: diagnosticVisibleWorkspaceId(),
-            activeServerId: coordinator.activeServerId,
+            // The chat's own server when a chat is on screen (a chat beside a
+            // chat can be another server's), else the transport's focus.
+            activeServerId: navigation.visibleDiagnosticServerId ?? coordinator.activeServerId,
             screen: diagnosticScreenLabel(),
             scenePhase: diagnosticScenePhase(phase ?? scenePhase),
             lifecycleEvent: lifecycleEvent,
@@ -551,10 +553,14 @@ final class OppiApp {
 
     @MainActor
     private func activeComposerDraftRecord() -> ComposerDraftRecord? {
-        guard let serverID = coordinator.activeServerId,
-              let sessionID = diagnosticVisibleSessionId() ?? connection.sessionStore.activeSessionId,
+        // The chat on screen names its own server: the transport's focus can be
+        // the other server while two chats show (Stage 4a). The last opened
+        // session of the transport's server is the fallback with no chat.
+        let serverID = navigation.visibleDiagnosticServerId ?? coordinator.activeServerId
+        let sessionID = diagnosticVisibleSessionId() ?? connection.sessionStore.activeSessionId
+        guard let serverID, let sessionID,
               let workspaceID = diagnosticVisibleWorkspaceId()
-                ?? connection.sessionStore.workspaceId(for: sessionID),
+                ?? coordinator.connectionOrStandIn(for: serverID).sessionStore.workspaceId(for: sessionID),
               let key = ComposerDraftKey(
                   serverID: serverID,
                   workspaceID: workspaceID,

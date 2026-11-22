@@ -392,10 +392,6 @@ final class IOSChatSessionRuntimeAdapter:
         connection?.applyFetchedSessionState(session)
     }
 
-    func setTimelineActiveSessionId(_ sessionId: String) {
-        ChatTimelinePerf.activeSessionId = sessionId
-    }
-
     func currentMemoryFootprintMB() -> Int? {
         AppDiagnosticsService.currentFootprintMB()
     }

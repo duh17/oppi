@@ -854,7 +854,6 @@ final class ChatSessionManager {
         toolCallCorrelator.reset()
 
         effectsStatePort.setActiveSessionId(sessionId)
-        effectsStatePort.setTimelineActiveSessionId(sessionId)
         telemetry.cancelTTFT()
         telemetry.startSessionSwitch()
         telemetry.startSessionLoad()

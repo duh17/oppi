@@ -311,7 +311,6 @@ protocol ChatSessionEffectsStatePort: AnyObject {
     ) async throws -> Session
     func applyFetchedSessionState(_ session: Session)
 
-    func setTimelineActiveSessionId(_ sessionId: String)
     func currentMemoryFootprintMB() -> Int?
     func recordTelemetry(_ event: ChatSessionRuntimeTelemetry, sessionId: String)
     func telemetryErrorKind(for error: any Error) -> String

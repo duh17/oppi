@@ -29,6 +29,14 @@ import UIKit
 /// `PANE_RESTORE_SEED=sessions-below` saves the home folder's `notebook` in a
 /// pane above the sessions, so a chat opened there and its Git panel sit in
 /// the lower pane.
+/// `PANE_RESTORE_SEED=cross-server` saves the offline `mac-mini`'s chat in the
+/// main pane and this server's workspace list beside it: two chats on two
+/// servers can show at once (Stage 4a), and the list's rows open their chats
+/// in its own pane or, from their menu, in a new one.
+/// `PANE_RESTORE_SEED=chat-beside-list` saves this workspace's session list in
+/// the main pane and its first chat in a pane beside it, the window Open in
+/// New Pane leaves: a row for the chat already on screen focuses that pane, and
+/// a second chat of one server opens in the main pane.
 /// `PANE_RESTORE_PINS=1` makes the server keep pins: the sidebar offers
 /// Pinned, which lists the fixture chat, a folder, and a PDF.
 /// `PANE_RESTORE_REX=1` saves one SSH host whose Rex is a fake one in process
@@ -40,6 +48,12 @@ import UIKit
 final class PaneRestorePreviewController: PreviewRootController {
     static let serverId = "sha256:pane-restore"
     static let offlineServerId = "sha256:pane-restore-mini"
+    /// The chat the offline server shows in the cross-server seed.
+    static let miniSessionId = "pane-restore-mini-chat"
+    /// A second session of this server, so a menu open can ask for a chat of a
+    /// server that already shows one (one chat per server, Stage 4b).
+    static let otherSessionId = "chat-routes-other"
+    static let miniWorkspaceId = "pane-restore-mini-ws"
 
     private let root: AppRootEnvironment
     private var connected = false
@@ -97,6 +111,8 @@ final class PaneRestorePreviewController: PreviewRootController {
         case "chat-over-pdf": PaneTreeStore().save(Self.chatOverPDFTree(), scene: scene)
         case "git-below": PaneTreeStore().save(Self.gitBelowTree(), scene: scene)
         case "sessions-below": PaneTreeStore().save(Self.sessionsBelowTree(), scene: scene)
+        case "cross-server": PaneTreeStore().save(Self.crossServerTree(), scene: scene)
+        case "chat-beside-list": PaneTreeStore().save(Self.chatBesideListTree(), scene: scene)
         default: break
         }
         panes.connect(scene: scene)
@@ -132,13 +148,16 @@ final class PaneRestorePreviewController: PreviewRootController {
     }
 
     /// The shell builds its own chats; each gets the fixture timeline, which
-    /// the connect loop would otherwise clear (no server answers it).
-    private func keepChatsSeeded() {
+    /// the connect loop would otherwise clear (no server answers it). It runs
+    /// for the first seconds only: a loop that keeps publishing would leave the
+    /// app busy for a test's whole run (a context menu open never settles).
+    private func keepChatsSeeded(rounds: Int = 20) {
         for chat in Self.chats(in: self) {
             ChatRoutesFixture.seedTimelineIfNeeded(into: chat.reducer)
         }
+        guard rounds > 1 else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            MainActor.assumeIsolated { self?.keepChatsSeeded() }
+            MainActor.assumeIsolated { self?.keepChatsSeeded(rounds: rounds - 1) }
         }
     }
 
@@ -233,6 +252,47 @@ final class PaneRestorePreviewController: PreviewRootController {
         ))
     }
 
+    /// The offline mini's chat in the main pane, over All Sessions, and this
+    /// server's workspace list beside it: two chats on two servers can show at
+    /// once, each stream on its own connection (Stage 4a).
+    private static func crossServerTree() -> PaneLayoutArchive? {
+        let workspace = ChatRoutesFixture.workspace.id
+        let routed = ScenePanes().mainLeafID
+        guard let sessions = PaneID("leaf-sessions") else { return nil }
+        return PaneLayoutArchive(restorable: PaneLayout(
+            root: .split(axis: .row, children: [
+                .leaf(PaneLeaf(id: routed, name: nil, stack: [
+                    PaneStackEntry(serverId: serverId, route: .sessions(workspace: nil)),
+                    PaneStackEntry(serverId: offlineServerId, route: .session(miniSessionId)),
+                ], attachedTo: nil, origin: .split)),
+                .leaf(PaneLeaf(id: sessions, name: nil, stack: [
+                    PaneStackEntry(serverId: serverId, route: .sessions(workspace: workspace)),
+                ], attachedTo: nil, origin: .split)),
+            ], weights: [0.55, 0.45]),
+            focus: routed
+        ))
+    }
+
+    /// This workspace's session list in the main pane, its first chat beside
+    /// it: the window Open in New Pane leaves, where a row for the chat already
+    /// on screen focuses that pane (D7).
+    private static func chatBesideListTree() -> PaneLayoutArchive? {
+        let workspace = ChatRoutesFixture.workspace.id
+        let routed = ScenePanes().mainLeafID
+        guard let chat = PaneID("leaf-chat") else { return nil }
+        return PaneLayoutArchive(restorable: PaneLayout(
+            root: .split(axis: .row, children: [
+                .leaf(PaneLeaf(id: routed, name: nil, stack: [
+                    PaneStackEntry(serverId: serverId, route: .sessions(workspace: workspace)),
+                ], attachedTo: nil, origin: .split)),
+                .leaf(PaneLeaf(id: chat, name: nil, stack: [
+                    PaneStackEntry(serverId: serverId, route: .session(ChatRoutesFixture.sessionId)),
+                ], attachedTo: nil, origin: .split)),
+            ], weights: [0.5, 0.5]),
+            focus: routed
+        ))
+    }
+
     private static func gitBelowTree() -> PaneLayoutArchive? {
         let workspace = ChatRoutesFixture.workspace.id
         let routed = ScenePanes().mainLeafID
@@ -275,9 +335,44 @@ final class PaneRestorePreviewController: PreviewRootController {
         let busy = ProcessInfo.processInfo.environment["CHAT_ROUTES_STATUS"] == "busy"
         connection.sessionStore.sessions = [
             ChatRoutesFixture.session(id: ChatRoutesFixture.sessionId, status: busy ? .busy : .ready),
+            ChatRoutesFixture.session(id: otherSessionId, status: .ready),
         ]
+        // The cross-server seed shows the offline mini's chat in a pane while
+        // this server is the window's, so the mini needs a connection of its
+        // own — and only that seed: its connection inherits this server's
+        // in-process API client, and a mini that answers would no longer be the
+        // offline server the `missing` seed's leaf state is about.
+        if ProcessInfo.processInfo.environment["PANE_RESTORE_SEED"] == "cross-server",
+           let mini = coordinator.serverStore.server(for: offlineServerId) {
+            let offline = coordinator.activatePreviewServer(mini)
+            offline.workspaceStore.upsert(Self.miniWorkspace, serverId: offlineServerId)
+            offline.sessionStore.switchServer(to: offlineServerId)
+            var chat = ChatRoutesFixture.session(id: miniSessionId, status: .ready)
+            chat.name = "Mini routes"
+            chat.workspaceId = miniWorkspaceId
+            chat.workspaceName = Self.miniWorkspace.name
+            offline.sessionStore.sessions = [chat]
+            // The window's server is this one, whatever the mini's connection
+            // did on its way in.
+            _ = coordinator.activatePreviewServer(server, apiClient: ChatRoutesFixture.api)
+        }
         return coordinator
     }
+
+    private static let miniWorkspace = Workspace(
+        id: miniWorkspaceId,
+        name: "Mini workspace",
+        description: nil,
+        icon: .symbol("desktopcomputer"),
+        systemPrompt: nil,
+        hostMount: "/tmp/oppi-pane-restore-mini",
+        tools: nil,
+        gitStatusEnabled: false,
+        runtime: .host,
+        sandboxConfig: nil,
+        createdAt: Date(timeIntervalSince1970: 1_770_000_000),
+        updatedAt: Date(timeIntervalSince1970: 1_770_000_000)
+    )
 
     private static func pairedServer(name: String, host: String, fingerprint: String) -> PairedServer {
         guard let server = PairedServer(from: ServerCredentials(

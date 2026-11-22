@@ -31,6 +31,13 @@ struct PaneOpenContent {
         screenServerId = nil
     }
 
+    /// A session row's chat: its pane shows the chat itself, not a leaf state
+    /// that would wait for the session's store to resolve it.
+    init(session: WorkspaceSessionNavTarget) {
+        route = .session(session)
+        screenServerId = nil
+    }
+
     init(file target: WorkspaceLinkedFileNavTarget) {
         route = .linkedFile(target)
         screenServerId = nil
@@ -71,6 +78,7 @@ struct PaneOpenContent {
     /// leaf state, which turns into the content when it can.
     @MainActor
     func mainPaneDestination(coordinator: ConnectionCoordinator) -> NavigationDestination {
+        if case .session(let chat) = route { return .chat(chat) }
         guard case .entry(let entry) = route else { return .page(route) }
         return switch PaneEntries.element(for: entry, coordinator: coordinator) {
         case .workspace(let target)?: .place(.sessions(target))
@@ -84,6 +92,10 @@ struct PaneOpenContent {
     @MainActor
     var lockTarget: ScopedLockTarget {
         switch route {
+        case .session(let chat):
+            ScopedLockService.shared.sessionTarget(
+                serverId: chat.serverId, sessionId: chat.sessionId, workspaceId: chat.workspaceId
+            )
         case .linkedFile(let target):
             WorkspaceLinkedFileViewController.lockTarget(for: target)
         case .fileBrowser(let target):
@@ -443,8 +455,26 @@ extension PaneHostController {
     /// Places `content` from cell `source` where `placement` says, if the
     /// window still offers it there. A new pane takes focus and, when it
     /// cannot sit beside its pane, fills the window; both opens offer Undo.
+    /// A chat first follows the window's chat rules: the leaf that already
+    /// shows its session takes the open (D7), and a chat of a server that
+    /// already shows one takes that leaf, in place of the chat there (Stage
+    /// 4a).
     func place(_ content: PaneOpenContent, at placement: PaneOpenPlacement, from source: PaneID) {
-        guard let choices = openChoices(from: source), let root = AppRootEnvironment.near(self) else { return }
+        guard let root = AppRootEnvironment.near(self) else { return }
+        if case .session(let chat) = content.route, placement != .here {
+            let navigation = root.navigation
+            guard !navigation.focusShownChat(chat.sessionId, serverId: chat.serverId) else { return }
+            // The leaf the chat lands in: the pane it replaces (which holds one
+            // chat at a time), or none for a new pane, which counts every leaf.
+            let destination: PaneID? = if case .pane(let id) = placement { id } else { nil }
+            if let leaf = panes.otherChatLeaf(ofServer: chat.serverId, not: chat.sessionId, excluding: destination) {
+                // One chat per server: the new chat takes the leaf that shows
+                // that server's chat, in place of the chat there.
+                navigation.showChat(chat, inServerLeaf: leaf)
+                return
+            }
+        }
+        guard let choices = openChoices(from: source) else { return }
         switch placement {
         case .here:
             return

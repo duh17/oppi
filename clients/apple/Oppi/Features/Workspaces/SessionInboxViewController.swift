@@ -123,6 +123,14 @@ final class SessionInboxViewController: UIViewController {
         pin: { [weak self] session in
             guard let self else { return nil }
             return PinMenu.sessionRowToggle(session, connection: item(for: session)?.connection, view: viewIfLoaded)
+        },
+        paneItems: { [weak self] session in
+            guard let self, let item = item(for: session), let chat = chatTarget(item) else { return [] }
+            return SessionListRowActions.paneMenuItems(near: view, chat: chat)
+        },
+        dragItem: { [weak self] session in
+            guard let self, let item = item(for: session), let chat = chatTarget(item) else { return nil }
+            return SessionListRowActions.sessionDragItem(near: view, chat: chat, name: session.displayTitle)
         }
     )
 
@@ -849,26 +857,44 @@ final class SessionInboxViewController: UIViewController {
     }
 
     private func open(_ item: InboxItem) {
-        var normalized = item.session
-        if normalized.control == nil,
-           !normalized.isControlConversation,
-           normalized.workspaceId == nil || normalized.workspaceId?.isEmpty == true {
-            normalized.workspaceId = item.workspace?.id
-        }
-        if normalized.workspaceName == nil || normalized.workspaceName?.isEmpty == true {
-            normalized.workspaceName = item.workspace?.name
-        }
-        guard let routeScope = SessionInboxSessionRouting.routeScope(for: normalized) else {
+        guard let chat = chatTarget(item) else {
             showError(String(localized: "Session route is unavailable"))
             return
         }
         applySearchNavigation(.willOpenDestination)
-        item.connection.sessionStore.cacheSessionForNavigation(normalized)
-
+        item.connection.sessionStore.cacheSessionForNavigation(normalized(item))
         let workspaceTarget = item.workspace.map { WorkspaceNavTarget(serverId: item.serverId, workspace: $0) }
+        // A list in a side pane opens its rows there; the window's own pane is
+        // the main leaf, as every row opened before panes could hold a chat.
         navigation.open(
-            .chat(WorkspaceSessionNavTarget(serverId: item.serverId, sessionId: item.session.id, routeScope: routeScope)),
-            from: .row(navigation.panes.mainLeafID, workspace: workspaceTarget)
+            .chat(chat),
+            from: .row(paneLeaf ?? navigation.panes.mainLeafID, workspace: workspaceTarget)
+        )
+    }
+
+    /// The row's record with its workspace filled from the row when it has
+    /// none, so its lock and its list are its own.
+    private func normalized(_ item: InboxItem) -> Session {
+        var session = item.session
+        if session.control == nil,
+           !session.isControlConversation,
+           session.workspaceId == nil || session.workspaceId?.isEmpty == true {
+            session.workspaceId = item.workspace?.id
+        }
+        if session.workspaceName == nil || session.workspaceName?.isEmpty == true {
+            session.workspaceName = item.workspace?.name
+        }
+        return session
+    }
+
+    /// The row's chat as the open names it; nil when its route cannot be
+    /// scoped. Reading it caches nothing: a menu or a drag asks for it too.
+    private func chatTarget(_ item: InboxItem) -> WorkspaceSessionNavTarget? {
+        let session = normalized(item)
+        guard let routeScope = SessionInboxSessionRouting.routeScope(for: session) else { return nil }
+        return WorkspaceSessionNavTarget(
+            serverId: item.serverId, sessionId: item.session.id,
+            workspaceId: session.workspaceId, routeScope: routeScope
         )
     }
 

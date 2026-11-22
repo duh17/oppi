@@ -140,7 +140,7 @@ final class SessionListCollection<
     Item: Hashable & Sendable,
     Row: Equatable,
     Toggle: Equatable
->: NSObject, UICollectionViewDelegate {
+>: NSObject, UICollectionViewDelegate, UICollectionViewDragDelegate {
     typealias Header = SessionListSectionHeader<Toggle>
 
     /// One pass's sections and items and what each draws.
@@ -261,6 +261,7 @@ final class SessionListCollection<
         super.init()
         collectionView.setCollectionViewLayout(makeLayout(appearance), animated: false)
         collectionView.delegate = self
+        collectionView.dragDelegate = self
         // A row's height follows its content: Compact rejoins its details at a
         // narrower width, a search snippet, Thread strip, or lock appears, and
         // the row rearranges its stacks for all of those without the list
@@ -489,6 +490,17 @@ final class SessionListCollection<
         }
     }
 
+    /// A session row lifts as its chat (`SessionListRowActions.dragItem`), so a
+    /// drop on a pane's edge opens that chat there, as the row's pane menu does.
+    func collectionView(
+        _ collectionView: UICollectionView,
+        itemsForBeginning session: UIDragSession,
+        at indexPath: IndexPath
+    ) -> [UIDragItem] {
+        guard let row = self.session(at: indexPath), let item = actions.dragItem(row) else { return [] }
+        return [item]
+    }
+
     func collectionView(
         _ collectionView: UICollectionView,
         contextMenuConfigurationForItemsAt indexPaths: [IndexPath],
@@ -715,21 +727,26 @@ enum SessionListRowMenus {
         if let pin = actions.pin(session) {
             main.append(pin.action)
         }
-        main.append(menuAction("Copy Session ID", symbol: "doc.on.doc", id: "session.copyId.\(session.id)") {
+        let panes = actions.paneItems(session)
+        let copy = menuAction("Copy Session ID", symbol: "doc.on.doc", id: "session.copyId.\(session.id)") {
             UIPasteboard.general.string = session.id
             AppHaptics.impact(style: .light, intensity: 0.8)
             TransientConfirmationPill.show(String(localized: "Session ID Copied"), in: list)
-        })
-        guard session.status == .stopped, let delete = actions.delete(session) else {
-            return UIMenu(children: main)
         }
-        let deleteAction = menuAction("Delete", symbol: "trash", id: "session.menuDelete.\(session.id)", action: delete)
-        deleteAction.attributes = .destructive
-        // Two inline groups draw the divider above Delete.
-        return UIMenu(children: [
-            UIMenu(options: .displayInline, children: main),
-            UIMenu(options: .displayInline, children: [deleteAction]),
-        ])
+        // Inline groups draw a divider between them: the chat's own actions,
+        // the panes it can open in, then Copy and Delete.
+        var groups: [UIMenu] = [UIMenu(options: .displayInline, children: main)]
+        if !panes.isEmpty {
+            groups.append(UIMenu(options: .displayInline, children: panes.map(\.element)))
+        }
+        var last: [UIMenuElement] = [copy]
+        if session.status == .stopped, let delete = actions.delete(session) {
+            let deleteAction = menuAction("Delete", symbol: "trash", id: "session.menuDelete.\(session.id)", action: delete)
+            deleteAction.attributes = .destructive
+            last.append(deleteAction)
+        }
+        groups.append(UIMenu(options: .displayInline, children: last))
+        return UIMenu(children: groups)
     }
 
     /// Incognito sessions cannot resume.

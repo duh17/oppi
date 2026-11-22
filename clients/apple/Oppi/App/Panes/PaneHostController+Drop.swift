@@ -2,12 +2,15 @@ import UIKit
 import UniformTypeIdentifiers
 
 /// What a pane drag carries inside the app: an entry a dragged row opens (a
-/// File Browser row), or a pane its grip moves (`gripPanned`). A drag with
-/// one of these lights the pane zones; anything else (a file from Files, a
-/// photo) can only drop on a chat.
+/// File Browser row), a session row's chat, or a pane its grip moves
+/// (`gripPanned`). A drag with one of these lights the pane zones; anything
+/// else (a file from Files, a photo) can only drop on a chat.
 final class PaneDragPayload: NSObject {
     enum Content: Equatable {
         case entry(PaneStackEntry)
+        /// A session row's chat, with the workspace and route scope its open
+        /// needs: a chat opens the pane menu's way, not as a leaf state.
+        case chat(WorkspaceSessionNavTarget)
         case pane(PaneID)
     }
 
@@ -15,6 +18,10 @@ final class PaneDragPayload: NSObject {
 
     init(entry: PaneStackEntry) {
         content = .entry(entry)
+    }
+
+    init(chat: WorkspaceSessionNavTarget) {
+        content = .chat(chat)
     }
 }
 
@@ -92,6 +99,9 @@ extension PaneHostController: UIDropInteractionDelegate {
             return (target, landingFrame(of: target, payload: payload))
         }
         let entry: PaneStackEntry? = if case .entry(let entry)? = payload { entry } else { nil }
+        // A session row's chat opens in a new pane beside (Stage 4a's other way
+        // in), never in place of a pane's screen, so it offers the edges only.
+        let droppedChat: WorkspaceSessionNavTarget? = if case .chat(let chat)? = payload { chat } else { nil }
         let chat = id == panes.mainLeafID && primary.view.frame.contains(point) ? shownChat : nil
         let chatTakes = chat.map { chat in entry.map(chat.canReference) ?? true } ?? false
         // The composer always takes a drop: it sits in the chat's bottom
@@ -99,13 +109,14 @@ extension PaneHostController: UIDropInteractionDelegate {
         if chatTakes, let chat, let bar = chat.composerDropArea(in: view), bar.contains(point) {
             return (.chat, primary.view.frame)
         }
-        // Only pane entries make or fill panes (G1); a file from outside
-        // never lights a pane zone.
-        if entry != nil, let edge, canSplit {
+        // Only pane entries and session rows make panes (G1); a file from
+        // outside never lights a pane zone. A chat opens to the right of or
+        // below a pane, as its row menu offers.
+        if let edge, canSplit, entry != nil || (droppedChat != nil && edge.isTrailing) {
             let target = PaneDropTarget.split(id, edge)
             return (target, landingFrame(of: target, payload: payload))
         }
-        if chatTakes, edge == nil || entry == nil {
+        if chatTakes, droppedChat == nil, edge == nil || entry == nil {
             return (.chat, primary.view.frame)
         }
         if entry != nil, edge == nil, splitLeaves[id] != nil {
@@ -134,6 +145,13 @@ extension PaneHostController: UIDropInteractionDelegate {
         switch (target, payload) {
         case (.split(let id, let edge), .entry(let entry)?):
             let leaf = PaneLeaf(id: Self.droppedLeafID, name: nil, stack: [entry], attachedTo: nil, origin: .split)
+            landed = (try? cells.split(id, edge: edge, inserting: leaf)).map { ($0, leaf.id) }
+        case (.split(let id, let edge), .chat(let chat)?):
+            let leaf = PaneLeaf(
+                id: Self.droppedLeafID, name: nil,
+                stack: [PaneStackEntry(serverId: chat.serverId, route: .session(chat.sessionId))],
+                attachedTo: nil, origin: .split
+            )
             landed = (try? cells.split(id, edge: edge, inserting: leaf)).map { ($0, leaf.id) }
         case (.open(let id), .entry(let entry)?):
             landed = (try? cells.showing(entry, in: id).focusing(id)).map { ($0, id) }
@@ -184,6 +202,11 @@ extension PaneHostController: UIDropInteractionDelegate {
         switch (target, payload) {
         case (.split(let id, let edge), .entry(let entry)?):
             split(id, edge: edge, showing: entry)
+        case (.split(let id, let edge), .chat(let chat)?):
+            // A session row: the pane menu's rule places it, so one server's
+            // one chat stays in the main pane and a leaf that already shows
+            // the session takes the open (D7).
+            place(PaneOpenContent(session: chat), at: .newPane(edge), from: id)
         case (.open(let id), .entry(let entry)?):
             panes.show(entry, in: id)
             focus(cell: id)

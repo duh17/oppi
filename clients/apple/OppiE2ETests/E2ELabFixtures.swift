@@ -757,6 +757,9 @@ struct TwoServerFixture {
     private let inviteURL: URL
     /// POST here to stop the second server; the reply comes after it exited.
     let stopURL: URL
+    /// The second server's own API and the token its bootstrap device was
+    /// issued, for a session only that server has.
+    private let api: (baseURL: URL, token: String)?
 
     static func load() throws -> TwoServerFixture {
         guard let path = E2ELabServerContext.environmentValue(for: ["OPPI_TWO_SERVER_FIXTURE"]) else {
@@ -768,7 +771,75 @@ struct TwoServerFixture {
               let stop = fields["stopURL"].flatMap(URL.init(string:)) else {
             throw Unavailable(description: "Two-server fixture \(path) is missing or malformed")
         }
-        return TwoServerFixture(inviteURL: invite, stopURL: stop)
+        let api = fields["baseURL"].flatMap(URL.init(string:))
+            .flatMap { url in fields["token"].map { (baseURL: url, token: $0) } }
+        return TwoServerFixture(inviteURL: invite, stopURL: stop, api: api)
+    }
+
+    /// A session on the second server's one workspace, made over its own API:
+    /// the app lists it once that server's list is on screen, as any session.
+    func createSession(named name: String) async throws -> String {
+        guard let api else {
+            throw Unavailable(description: "the fixture names no second-server API")
+        }
+        let workspaces = try Self.request(api, method: "GET", path: "/workspaces")
+        guard let list = workspaces["workspaces"] as? [[String: Any]],
+              let workspaceId = list.first?["id"] as? String else {
+            throw Unavailable(description: "the second server listed no workspace")
+        }
+        let created = try Self.request(
+            api, method: "POST", path: "/workspaces/\(workspaceId)/sessions", body: ["name": name]
+        )
+        guard let session = created["session"] as? [String: Any], let id = session["id"] as? String else {
+            throw Unavailable(description: "the second server did not answer with the session it made")
+        }
+        return id
+    }
+
+    /// One call on the second server, which serves a self-signed certificate of
+    /// its own and asks for the token it was paired with.
+    nonisolated private static func request(
+        _ api: (baseURL: URL, token: String),
+        method: String,
+        path: String,
+        body: [String: Any] = [:]
+    ) throws -> [String: Any] {
+        guard let url = URL(string: path, relativeTo: api.baseURL) else {
+            throw Unavailable(description: "\(api.baseURL) does not take \(path)")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue("Bearer \(api.token)", forHTTPHeaderField: "Authorization")
+        if !body.isEmpty {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
+        let semaphore = DispatchSemaphore(value: 0)
+        let resultBox = E2ELabHTTPResultBox()
+        let session = URLSession(configuration: .ephemeral, delegate: E2ELabHTTPSDelegate(), delegateQueue: nil)
+        session.dataTask(with: request) { data, response, error in
+            defer { semaphore.signal() }
+            if let error {
+                resultBox.set(.failure(error))
+                return
+            }
+            guard let httpResponse = response as? HTTPURLResponse else {
+                resultBox.set(.failure(Unavailable(description: "no HTTP response from \(path)")))
+                return
+            }
+            resultBox.set(.success(E2ELabHTTPResponse(statusCode: httpResponse.statusCode, body: data ?? Data())))
+        }.resume()
+        guard semaphore.wait(timeout: .now() + 60) == .success else {
+            session.invalidateAndCancel()
+            throw Unavailable(description: "\(method) \(path) timed out")
+        }
+        session.finishTasksAndInvalidate()
+        let answer = try XCTUnwrap(resultBox.result, "\(method) \(path) did not complete").get()
+        guard (200..<300).contains(answer.statusCode),
+              let object = try? JSONSerialization.jsonObject(with: answer.body) as? [String: Any] else {
+            throw Unavailable(description: "\(method) \(path) answered \(answer.statusCode): \(answer.bodyText.prefix(200))")
+        }
+        return object
     }
 
     /// The first server's invite, which `e2e.sh` wrote for this run, after checking it is this run's:

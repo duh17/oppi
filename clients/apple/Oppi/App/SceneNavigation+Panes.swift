@@ -22,6 +22,9 @@ extension SceneNavigation {
         let before = workspaceStackRouteElements
         mainPaneRoute.stack[index] = element
         panes.mainEntryResolved(from: before, to: workspaceStackRouteElements)
+        if case .session = element {
+            repairChatsPerServer()
+        }
     }
 
     /// Close Pane on an entry's leaf state: the entry and what was above it
@@ -39,14 +42,16 @@ extension SceneNavigation {
 
     // MARK: - Removing a session
 
-    /// Takes the session's routes off the window's stack: its chat was
+    /// Takes the session's routes off every leaf of the window: its chat was
     /// deleted, or its lock was refused after its route was pushed, so Back
     /// never reaches it. A session's route goes together with the screens
     /// pushed from that chat (a reader, whose lock origin was fixed when it
     /// opened), up to the next session route: another session's chat is not
     /// under this lock, so it and what is over it stay. A `.entry` for the
-    /// session counts as its route. Returns true when the removed screens
-    /// reached the top, so the person was still in this session's screens.
+    /// session counts as its route. A side leaf that showed only this chat
+    /// closes with it, as a deleted session's pane does. Returns true when the
+    /// removed screens reached the top of a leaf, so the person was still in
+    /// this session's screens.
     @discardableResult
     func removeSessionRoute(serverId: String, sessionId: String) -> Bool {
         func matches(_ target: WorkspaceSessionNavTarget) -> Bool {
@@ -69,17 +74,27 @@ extension SceneNavigation {
                 return nil
             }
         }
-        let elements = mainPaneRoute.stack
-        var removing = false
-        var remaining: [WorkspaceStackRouteElement] = []
-        for element in elements {
-            if let target = session(of: element) { removing = matches(target) }
-            if !removing { remaining.append(element) }
+        var wasVisible = false
+        for id in panes.tree.leaves.map(\.id) {
+            guard var route = panes.stack(of: id) else { continue }
+            let elements = route.stack
+            var removing = false
+            var remaining: [WorkspaceStackRouteElement] = []
+            for element in elements {
+                if let target = session(of: element) { removing = matches(target) }
+                if !removing { remaining.append(element) }
+            }
+            guard remaining.count != elements.count else { continue }
+            wasVisible = wasVisible || removing
+            if remaining.isEmpty, id != panes.mainLeafID {
+                // A side leaf shows its content alone: this chat was all of it.
+                panes.close(id)
+                continue
+            }
+            route.stack = remaining
+            if id == panes.mainLeafID { mediaOverlayYieldsToUserNavigation() }
+            setRoute(route, in: id)
         }
-        if remaining.count != elements.count {
-            mediaOverlayYieldsToUserNavigation()
-            mainPaneRoute.stack = remaining
-        }
-        return removing
+        return wasVisible
     }
 }

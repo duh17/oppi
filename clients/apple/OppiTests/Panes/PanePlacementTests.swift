@@ -430,18 +430,21 @@ struct PaneSideContentPlacementTests {
         #expect(panes.stack(of: list)?.top == .entry(listEntry), "the side pane keeps its folder")
     }
 
-    /// A list's row opens its chat in the main pane, whichever pane the list
-    /// is in (owner answer: one session shows in one pane).
-    @Test func aListsRowOpensItsChatInTheMainPaneFromASidePane() throws {
+    /// A list's row opens its chat in the pane the list is drawn in, over the
+    /// list, and Back returns to it (Stage 4a). The main pane keeps what it
+    /// showed: the list's own pane is where its chat belongs, and a session
+    /// shows in one leaf.
+    @Test func aListsRowOpensItsChatInThePaneTheListIsDrawnIn() throws {
         let host = self.host()
         defer { host.hide() }
         let navigation = host.root.navigation
         let panes = host.scenePanes
-        let list = try #require(panes.split(panes.mainLeafID, edge: .right, showing: .entry(PaneStackEntry(serverId: "s", route: .sessions(workspace: "w")))))
+        let entry = PaneStackEntry(serverId: "s", route: .sessions(workspace: "w"))
+        let list = try #require(panes.split(panes.mainLeafID, edge: .right, showing: .entry(entry)))
 
         let chat = WorkspaceSessionNavTarget(serverId: "s", sessionId: "s-1", workspaceId: "w")
-        navigation.open(.chat(chat), from: .row(list), beside: nil)
-        #expect(navigation.mainPaneRoute.stack.last == .session(chat), "the chat opens in the main pane")
-        #expect(panes.stack(of: list)?.top == .entry(PaneStackEntry(serverId: "s", route: .sessions(workspace: "w"))), "the list stays")
+        #expect(navigation.open(.chat(chat), from: .row(list)) == .push(list))
+        #expect(panes.stack(of: list)?.stack == [.entry(entry), .session(chat)], "the chat opens over the list that stays under it")
+        #expect(navigation.mainPaneRoute.top != .session(chat), "the pane the person was in keeps what it showed")
     }
 }

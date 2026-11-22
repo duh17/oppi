@@ -76,7 +76,9 @@ extension WorkspaceDetailViewController {
         if let session = workspaceSessions(connection).first(where: { $0.id == sessionId }) {
             openSession(session)
         } else {
-            routeToSession(sessionId)
+            routeToSession(WorkspaceSessionNavTarget(
+                serverId: serverId, sessionId: sessionId, workspaceId: routeWorkspace.id
+            ))
         }
     }
 
@@ -120,7 +122,7 @@ extension WorkspaceDetailViewController {
             )
             connection.sessionStore.upsert(response.session)
             state.isCreating = false
-            routeToSession(response.session.id)
+            routeToSession(response.session)
         } catch {
             showError(error.localizedDescription)
             state.isCreating = false
@@ -174,16 +176,38 @@ extension WorkspaceDetailViewController {
             )
             return
         }
+        guard let chat = chatTarget(session) else {
+            showError(String(localized: "Session route is unavailable"))
+            return
+        }
+        connection.sessionStore.cacheSessionForNavigation(normalized(session))
+        routeToSession(chat)
+    }
+
+    /// The row's record with its workspace filled from this list's when it has
+    /// none, so its lock and its list are its own.
+    private func normalized(_ session: Session) -> Session {
+        guard let connection else { return session }
+        var session = session
         let workspace = currentWorkspace(connection)
-        var normalized = session
-        if normalized.workspaceId == nil || normalized.workspaceId?.isEmpty == true {
-            normalized.workspaceId = workspace.id
+        if session.workspaceId == nil || session.workspaceId?.isEmpty == true {
+            session.workspaceId = workspace.id
         }
-        if normalized.workspaceName == nil || normalized.workspaceName?.isEmpty == true {
-            normalized.workspaceName = workspace.name
+        if session.workspaceName == nil || session.workspaceName?.isEmpty == true {
+            session.workspaceName = workspace.name
         }
-        connection.sessionStore.cacheSessionForNavigation(normalized)
-        routeToSession(normalized.id)
+        return session
+    }
+
+    /// The row's chat as the open names it; nil when its route cannot be
+    /// scoped. Reading it caches nothing: a menu or a drag asks for it too.
+    func chatTarget(_ session: Session) -> WorkspaceSessionNavTarget? {
+        let session = normalized(session)
+        guard let routeScope = SessionInboxSessionRouting.routeScope(for: session) else { return nil }
+        return WorkspaceSessionNavTarget(
+            serverId: serverId, sessionId: session.id,
+            workspaceId: session.workspaceId, routeScope: routeScope
+        )
     }
 
     func toggleThread(_ root: Session) {
@@ -192,14 +216,31 @@ extension WorkspaceDetailViewController {
         }
     }
 
+    /// Opens a session this screen just made or resumed; it caches the record
+    /// the chat reads, as a row's open does.
+    private func routeToSession(_ session: Session) {
+        guard let chat = chatTarget(session) else {
+            showError(String(localized: "Session route is unavailable"))
+            return
+        }
+        if let connection { connection.sessionStore.cacheSessionForNavigation(normalized(session)) }
+        routeToSession(chat)
+    }
+
     /// Opens the session's chat through `SceneNavigation`. The screen always
     /// has its server, so the hosted screen's server-less push of a chat on
-    /// the current connection is gone.
-    private func routeToSession(_ sessionId: String) {
-        let workspace = connection.map { currentWorkspace($0) } ?? routeWorkspace
+    /// the current connection is gone. A list in a side pane opens its rows
+    /// there; the window's own pane is the main leaf.
+    private func routeToSession(_ chat: WorkspaceSessionNavTarget) {
         navigation.open(
-            .chat(WorkspaceSessionNavTarget(serverId: serverId, sessionId: sessionId, workspaceId: workspace.id)),
-            from: .row(navigation.panes.mainLeafID, workspace: WorkspaceNavTarget(serverId: serverId, workspace: workspace))
+            .chat(chat),
+            from: .row(
+                paneLeaf ?? navigation.panes.mainLeafID,
+                workspace: WorkspaceNavTarget(
+                    serverId: serverId,
+                    workspace: connection.map { currentWorkspace($0) } ?? routeWorkspace
+                )
+            )
         )
     }
 
@@ -222,7 +263,7 @@ extension WorkspaceDetailViewController {
 
             state.isImportingLocal = false
             applySearchNavigation(.willOpenDestination)
-            routeToSession(session.id)
+            routeToSession(session)
         } catch {
             showError("Resume failed: \(error.localizedDescription)")
             state.isImportingLocal = false

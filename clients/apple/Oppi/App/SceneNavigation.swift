@@ -237,6 +237,23 @@ extension WorkspaceStackRouteElement {
         }
     }
 
+    /// The server and session of the chat this screen shows; nil for anything
+    /// else. A panel or a reader of a chat is not the chat: a leaf that holds
+    /// one has no chat of its own to show.
+    var chatSession: (serverId: String, sessionId: String)? {
+        switch self {
+        case .session(let target):
+            return (target.serverId, target.sessionId)
+        case .entry(let entry):
+            // A chat entry whose session its server has not listed yet is still
+            // the chat's place in the leaf.
+            guard case .session(let sessionId) = entry.route else { return nil }
+            return (entry.serverId, sessionId)
+        default:
+            return nil
+        }
+    }
+
     /// Whether the screen is a New Pane launcher, the empty pane a kind fills.
     var isLauncher: Bool {
         if case .entry(let entry) = self, case .local(let token) = entry.route,
@@ -512,6 +529,12 @@ final class SceneNavigation {
     }
 
     var visibleSplitDiagnosticContext: WorkspaceStackDiagnosticContext {
+        // Two chats can show in the split window, one pane each on two
+        // servers: the focused pane's chat is the one the person is on.
+        if panes.tree.focus != panes.mainLeafID, let top = panes.stack(of: panes.tree.focus)?.stack.last,
+           case .session = top {
+            return Self.diagnosticContext(for: top)
+        }
         if let top = mainPaneRoute.stack.last { return Self.diagnosticContext(for: top) }
         switch currentPlace {
         case .utility(let utility):
@@ -610,6 +633,18 @@ final class SceneNavigation {
         visibleDiagnosticContext.workspaceId
     }
 
+    /// The server of the chat the diagnostics name, when they name one: the
+    /// focused pane's chat, else the main pane's. Two chats can show on two
+    /// servers (Stage 4a), and the transport's active server is neither's.
+    var visibleDiagnosticServerId: String? {
+        if workspaceNavigationPresentation == .split, panes.tree.focus != panes.mainLeafID,
+           let top = panes.stack(of: panes.tree.focus)?.stack.last, case .session(let chat) = top {
+            return chat.serverId
+        }
+        guard case .session(let chat)? = mainPaneRoute.stack.last else { return nil }
+        return chat.serverId
+    }
+
     /// Stack depth counts the pushed stack routes. Split depth counts a
     /// utility root plus each push, so a detail push is a route change even
     /// when the screen token stays the same.
@@ -696,8 +731,75 @@ final class SceneNavigation {
         open(.place(.allSessions))
     }
 
-    /// The session whose chat is the visible screen: the stack's top.
-    var visibleChatSession: WorkspaceSessionNavTarget? { mainPaneRoute.shownChat }
+    /// Focuses the leaf that shows this chat and brings the chat back over the
+    /// pages opened from it (D7: a session shows in one leaf). False when no
+    /// leaf shows it.
+    @discardableResult
+    func focusShownChat(_ sessionId: String, serverId: String) -> Bool {
+        guard let leaf = panes.leaf(showingChatOf: sessionId, serverId: serverId) else { return false }
+        if let revealed = panes.stackShowingChat(sessionId, serverId: serverId) {
+            setRoute(revealed.stack, in: revealed.leaf)
+        }
+        if let paneArea {
+            paneArea.focus(cell: leaf)
+        } else {
+            panes.focus(leaf)
+        }
+        return true
+    }
+
+    /// Shows `chat` in `leaf` in place of the chat that leaf shows, and focuses
+    /// it: one chat per server (Stage 4a), because that server's one connection,
+    /// claim and stream show one chat. The leaf keeps everything under the old
+    /// chat (the main leaf its place and any screens below the chat, a side
+    /// leaf its list), so Back still returns there.
+    @discardableResult
+    func showChat(_ chat: WorkspaceSessionNavTarget, inServerLeaf leaf: PaneID) -> PanePlacement {
+        setRoute(panes.stackReplacingChat(chat, in: leaf), in: leaf)
+        if let paneArea {
+            paneArea.syncSplitLeaves()
+            paneArea.focus(cell: leaf)
+        } else {
+            panes.focus(leaf)
+        }
+        return .reuse(leaf)
+    }
+
+    /// A saved tree can hold two chats of one server (a build before this rule
+    /// wrote it): the main leaf comes first, then each other leaf in tree
+    /// order. The first leaf with a live chat of a server keeps it; each later
+    /// leaf gives its chat of that server — and any pages pushed above that
+    /// chat — up for what was under it, closing when that was all it showed.
+    func repairChatsPerServer() {
+        let leafIDs = [panes.mainLeafID] + panes.tree.leaves.map(\.id).filter { $0 != panes.mainLeafID }
+        var claimedServers: Set<String> = []
+        for id in leafIDs {
+            guard var route = panes.stack(of: id) else { continue }
+            var leafServers: Set<String> = []
+            var removing = false
+            var kept: [WorkspaceStackRouteElement] = []
+            for element in route.stack {
+                // Only a live chat takes its server (see `otherChatLeaf`).
+                // Pages pushed above a removed duplicate chat go with it, up to
+                // any later session screen.
+                if case .session(let chat) = element {
+                    removing = claimedServers.contains(chat.serverId)
+                    if !removing { leafServers.insert(chat.serverId) }
+                } else if case .entry(let entry) = element, case .session = entry.route {
+                    removing = false
+                }
+                if !removing { kept.append(element) }
+            }
+            claimedServers.formUnion(leafServers)
+            guard kept.count != route.stack.count else { continue }
+            guard !kept.isEmpty || id == panes.mainLeafID else {
+                panes.close(id, undoable: false)
+                continue
+            }
+            route.stack = kept
+            setRoute(route, in: id)
+        }
+    }
 
     nonisolated static func isSameSession(
         _ lhs: WorkspaceSessionNavTarget,
@@ -736,10 +838,14 @@ final class SceneNavigation {
         return nil
     }
 
+    /// Whether a leaf's route still shows this reader: a reader opened from a
+    /// chat opens in that chat's pane, which can be any leaf.
     func containsChatReader(_ target: ChatReaderNavTarget) -> Bool {
-        mainPaneRoute.stack.contains { element in
-            if case .chatReader(let stacked) = element { return stacked == target }
-            return false
+        panes.stacks.values.contains { stack in
+            stack.stack.contains { element in
+                if case .chatReader(let stacked) = element { return stacked == target }
+                return false
+            }
         }
     }
 
@@ -763,14 +869,16 @@ final class SceneNavigation {
         return false
     }
 
-    /// True while the workspace route still holds this session's chat, under
-    /// anything pushed above it. False once it was popped or replaced. The
-    /// route is the source of truth; UIKit's moving flags miss a shell route
-    /// swap and see a lock-cover swap as a removal.
+    /// True while any of the window's leaves still holds this session's chat,
+    /// under anything pushed above it. False once it was popped or replaced.
+    /// The routes are the source of truth; UIKit's moving flags miss a shell
+    /// route swap and see a lock-cover swap as a removal.
     func routeContainsSession(_ sessionId: String) -> Bool {
-        mainPaneRoute.stack.contains { element in
-            if case .session(let target) = element { return target.sessionId == sessionId }
-            return false
+        panes.stacks.values.contains { stack in
+            stack.elements.contains { element in
+                if case .session(let target) = element { return target.sessionId == sessionId }
+                return false
+            }
         }
     }
 

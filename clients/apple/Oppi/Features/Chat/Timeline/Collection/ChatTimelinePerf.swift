@@ -68,12 +68,6 @@ enum ChatTimelinePerf {
     private static var hostUpdateUIViewCount = 0
     private static var controllerOwnedApplyCount = 0
 
-    /// Legacy fallback for metric attribution when a call site hasn't been
-    /// updated to pass an explicit `sessionId`. New instrumentation should
-    /// prefer explicit session IDs so offscreen work is attributed
-    /// correctly.
-    static var activeSessionId: String?
-
     private static var lastSlowMetricLogNs: UInt64 = 0
 
     private static var scrollWindowStartNs: UInt64 = DispatchTime.now().uptimeNanoseconds
@@ -81,7 +75,6 @@ enum ChatTimelinePerf {
     private static var scrollCommandsPerSecond = 0
 
     static func reset() {
-        activeSessionId = nil
         applyLastMs = 0
         applyMaxMs = 0
         layoutLastMs = 0
@@ -123,10 +116,6 @@ enum ChatTimelinePerf {
 
     static func elapsedMs(since startNs: UInt64) -> Int {
         Int((DispatchTime.now().uptimeNanoseconds &- startNs) / 1_000_000)
-    }
-
-    private static func resolvedSessionId(_ sessionId: String?) -> String? {
-        sessionId ?? activeSessionId
     }
 
     /// A chrome push from the hosting screen (`ChatTimelineController.update`).
@@ -206,7 +195,7 @@ enum ChatTimelinePerf {
                 items: token.itemCount,
                 changed: token.changedCount
             ),
-            sessionId: resolvedSessionId(token.sessionId)
+            sessionId: token.sessionId
         )
 
         guard durationMs >= slowApplyThresholdMs else { return }
@@ -250,7 +239,7 @@ enum ChatTimelinePerf {
 
         Telemetry.record(
             AppTimelineLayout(durationMs: Double(durationMs), items: token.itemCount),
-            sessionId: resolvedSessionId(token.sessionId)
+            sessionId: token.sessionId
         )
 
         guard durationMs >= slowLayoutThresholdMs else { return }
@@ -302,7 +291,7 @@ enum ChatTimelinePerf {
                 contentType: toolContext?.contentType,
                 outputSize: toolContext.map { TelemetryTag.OutputSize(bytes: $0.outputBytes) }
             ),
-            sessionId: resolvedSessionId(sessionId)
+            sessionId: sessionId
         )
 
         guard durationMs >= slowCellThresholdMs else { return }
@@ -347,7 +336,7 @@ enum ChatTimelinePerf {
                 inputSize: TelemetryTag.InputSize(bytes: inputBytes),
                 language: language
             ),
-            sessionId: resolvedSessionId(sessionId)
+            sessionId: sessionId
         )
 
         guard durationMs >= slowRenderThresholdMs else { return }
@@ -381,7 +370,7 @@ enum ChatTimelinePerf {
                 measure: name,
                 inputSize: TelemetryTag.InputSize(bytes: inputBytes)
             ),
-            sessionId: resolvedSessionId(sessionId)
+            sessionId: sessionId
         )
 
         guard durationMs >= slowMeasurementThresholdMs else { return }
@@ -420,7 +409,7 @@ enum ChatTimelinePerf {
                     "anchor": String(describing: anchor),
                     "animated": animated ? "true" : "false",
                 ]
-                if let sid = resolvedSessionId(sessionId) {
+                if let sid = sessionId {
                     metadata["sessionId"] = sid
                 }
                 ClientLog.info(
