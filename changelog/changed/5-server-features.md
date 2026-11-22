@@ -1,1 +1,0 @@
-- **Client/Server:** **Server Settings → Features** turns features off, and **Plain Pi** keeps only chat, sessions and files.

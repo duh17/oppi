@@ -56,6 +56,43 @@ Example:
 ## [Unreleased]
 <!-- Entries for the next release are fragments in changelog/; the release cut moves them here. Don't add entries to this section. -->
 
+## [0.56.0] - 2026-11-22
+
+Target: iOS `1.1.2` Build `59`, `oppi-server@0.56.0`, and `oppi-mirror@0.56.0` (pi-durable 1.6.0).
+
+Agent and workspace icons can be a photo, a moving symbol, or an animated WebP, session icons are circles in three sizes, and the sidebar, pins, panes, comments, Rex, and background uploads got their round of work. The server answers a session list in milliseconds while the disk is busy, and several crashes and smaller fixes are in.
+
+### Added
+
+- **Client:** Agent and workspace icons can be a photo, a moving symbol, or an animated WebP.
+- **Client:** Pin sessions, files, folders, web pages and panels to the sidebar.
+- **Client:** Comment on selected text in a PDF.
+- **Client:** The chat title menu has **Copy Session ID**, **Rename**, **Share Session** and **Edit Agent**.
+
+### Changed
+
+- **Client:** Session icons are circles in three sizes, under **Settings → Session Rows**; **Settings → Chat → Animations** (On, Short, Off) sets how much moves.
+- **Client:** Panes on iPad got many improvements, including a chat from another server beside yours; split panes are always on.
+- **Client:** Rex has its own sidebar page and connects over Tailscale; Rex and Herdr are no longer experiments.
+- **Client:** A terminal opens in the main pane like a chat, and an App Lock unlock approves its sign-in.
+- **Client/Server:** **Server Settings → Features** turns features off, and **Plain Pi** keeps only chat, sessions and files.
+- **Client/Server:** A saved Agent's tools are an exact set of Pi tools, set in Edit Agent.
+- **Client/Server:** Attachments of any size upload in the background, with progress, cancel and retry.
+- **Client:** The sidebar starts with **All Sessions**, and **Edit Sidebar** sets its order.
+
+### Fixed
+
+- **Client:** Fixed a crash when a chat row changed kind, and Godot game crashes on restart and reload.
+- **Client/Server:** Smaller fixes: downloads resume and pass 2 GB, folder listings pass 1,000 entries, dictation keeps its last words, Rex terminals reconnect on their own, and launch warnings no longer stick above the composer.
+
+### Migration notes
+
+- **Compatibility:** This app needs `oppi-server@0.55.0` or later; pins, comments, image icons, uploads over 50 MB, Agent tools and feature switches need `0.56.0`.
+- **Compatibility:** Downgrade to `0.55.0` only while every durable session is idle; it can't run a pi-durable 1.6.0 store.
+- **Agents:** `capabilities.core` is now `capabilities.tools`; the server rewrites stored Agents once at startup, and `oppi agent --core` is gone.
+- **Protocol:** Pins need a `0.56.0` server, and an older app can't read them.
+- **Plugins:** `requestUI` returns `{ park }` and answers when the caller runs again.
+
 ## [0.55.0] - 2026-11-14
 
 Target: iOS `1.1.2` Build `58`, `oppi-server@0.55.0`, and `oppi-mirror@0.55.0` (pi-durable 1.5.2).

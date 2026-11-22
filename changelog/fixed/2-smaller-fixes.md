@@ -1,1 +1,0 @@
-- **Client/Server:** Smaller fixes: downloads resume and pass 2 GB, folder listings pass 1,000 entries, dictation keeps its last words, Rex terminals reconnect on their own, and launch warnings no longer stick above the composer.

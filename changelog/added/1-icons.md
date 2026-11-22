@@ -1,1 +1,0 @@
-- **Client:** Agent and workspace icons can be a photo, a moving symbol, or an animated WebP.

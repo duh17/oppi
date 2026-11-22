@@ -1,1 +1,0 @@
-- **Client:** The sidebar starts with **All Sessions**, and **Edit Sidebar** sets its order.

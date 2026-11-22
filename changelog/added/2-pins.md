@@ -1,1 +1,0 @@
-- **Client:** Pin sessions, files, folders, web pages and panels to the sidebar.

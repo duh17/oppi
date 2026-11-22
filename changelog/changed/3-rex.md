@@ -1,1 +1,0 @@
-- **Client:** Rex has its own sidebar page and connects over Tailscale; Rex and Herdr are no longer experiments.

@@ -1,1 +1,0 @@
-- **Agents:** `capabilities.core` is now `capabilities.tools`; the server rewrites stored Agents once at startup, and `oppi agent --core` is gone.

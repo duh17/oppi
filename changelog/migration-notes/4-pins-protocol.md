@@ -1,1 +1,0 @@
-- **Protocol:** Pins need a `0.56.0` server, and an older app can't read them.

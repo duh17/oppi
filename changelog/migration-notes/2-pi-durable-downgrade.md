@@ -1,1 +1,0 @@
-- **Compatibility:** Downgrade to `0.55.0` only while every durable session is idle; it can't run a pi-durable 1.6.0 store.
