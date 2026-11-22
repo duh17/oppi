@@ -267,11 +267,14 @@ enum SSHTerminalFolderEntry {
     }
 
     /// `screen(for:)` as a terminal route, made when a stack shows it.
-    /// `workspaceId` is the workspace the terminal works in, when the caller
-    /// knows it: a split of its pane then opens that workspace's terminal.
-    static func terminal(for target: SSHTerminalFolderTarget, workspaceId: String? = nil) -> TerminalNavTarget? {
+    /// `workspace` is the server and workspace the terminal works in, when the
+    /// caller knows them: a split of its pane then opens that server's
+    /// workspace terminal. Without one, a split offers the launcher.
+    static func terminal(
+        for target: SSHTerminalFolderTarget, workspace: (serverId: String, workspaceId: String)? = nil
+    ) -> TerminalNavTarget? {
         guard target.isUsable else { return nil }
-        return TerminalNavTarget(workspaceId: workspaceId) { folderScreen(for: target) }
+        return TerminalNavTarget(workspace: workspace) { folderScreen(for: target) }
     }
 
     private static func folderScreen(for target: SSHTerminalFolderTarget) -> UIViewController {

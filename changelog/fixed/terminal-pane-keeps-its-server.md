@@ -1,0 +1,1 @@
+- **Client:** On iPad, a terminal opened from a chat that belongs to another server now splits into that chat's server's own workspace terminal. Before, **Split Right** or **Split Down** on it opened the host list, because the terminal looked for its workspace on the window's server instead of the chat's.

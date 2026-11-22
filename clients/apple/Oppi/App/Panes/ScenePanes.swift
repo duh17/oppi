@@ -524,7 +524,7 @@ final class ScenePanes {
     func context(of id: PaneID) -> (serverId: String, workspaceId: String?) {
         let top = topEntry(of: id)
         if let stack = stacks[id],
-           let found = stack.elements.reversed().lazy.compactMap({ self.workspace(of: $0, topServerId: top.serverId) }).first {
+           let found = stack.elements.reversed().lazy.compactMap({ self.workspace(of: $0) }).first {
             return found
         }
         if let found = tree.leaf(id)?.stack.reversed().lazy.compactMap({ entry in
@@ -533,10 +533,11 @@ final class ScenePanes {
         return (top.serverId, nil)
     }
 
-    /// The server and workspace `element` names. A terminal's route carries no
-    /// server, so it reads the leaf's own (`topServerId`).
+    /// The server and workspace `element` names. A terminal's route names the
+    /// server its opener knew, which a split opened from another server's
+    /// chat reads instead of the leaf's.
     private func workspace(
-        of element: WorkspaceStackRouteElement, topServerId: String
+        of element: WorkspaceStackRouteElement
     ) -> (serverId: String, workspaceId: String?)? {
         switch element {
         case .session(let target):
@@ -550,7 +551,9 @@ final class ScenePanes {
         case .entry(let entry):
             workspaceId(of: entry).map { (entry.serverId, $0) }
         case .terminal(let target):
-            target.workspaceId.map { (topServerId, $0) }
+            // The opener's own server, not the leaf's: a terminal beside a
+            // chat of another server works in that server's workspace.
+            target.workspace.map { (serverId: $0.serverId, workspaceId: $0.workspaceId) }
         default:
             nil
         }

@@ -1043,7 +1043,7 @@ extension ChatViewController {
     /// over the chat.
     private func openTerminal(_ target: SSHTerminalFolderTarget, workspaceId: String) {
         guard let serverId = connection.currentServerId ?? serverIdHint,
-              let terminal = SSHTerminalFolderEntry.terminal(for: target, workspaceId: workspaceId) else {
+              let terminal = SSHTerminalFolderEntry.terminal(for: target, workspace: (serverId, workspaceId)) else {
             SSHTerminalFolderEntry.open(target, from: self)
             return
         }

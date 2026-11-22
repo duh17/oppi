@@ -161,13 +161,44 @@ struct PaneSplitTests: PaneFixtureBuilding {
         defer { withExtendedLifetime(root) {} }
         let panes = root.navigation.panes
         let target = SSHTerminalFolderTarget(serverHost: "studio.local", folder: "/srv/oppi", label: "Oppi")
-        let terminal = try #require(SSHTerminalFolderEntry.terminal(for: target, workspaceId: "ws-1"))
+        let terminal = try #require(SSHTerminalFolderEntry.terminal(for: target, workspace: (serverId, "ws-1")))
         let content = PaneOpenContent(terminal: terminal, serverId: serverId)
         let beside = try #require(panes.split(panes.mainLeafID, edge: .right, showing: content.route))
         #expect(panes.stack(of: beside)?.top == .terminal(terminal), "the chat's own terminal opens beside it")
 
         let split = try #require(panes.split(beside, axis: .column))
         #expect(panes.topEntry(of: split) == entry(.local(PaneLocalScreen.terminal(workspaceId: "ws-1").token)))
+    }
+
+    /// A terminal beside a chat of another server keeps that chat's server: a
+    /// split of it opens `ws-2`'s terminal on the server holding `ws-2`, not a
+    /// workspace of the same id (or a host list) on the window's own server.
+    @Test func aTerminalBesideTheOtherServersChatSplitsOnTheChatsServer() async throws {
+        let other = "sha256:pane-splits-other"
+        let root = try await makeTestTwoServerRoot(firstId: serverId, otherId: other)
+        defer { withExtendedLifetime(root) {} }
+        let otherConnection = try #require(root.coordinator.connection(for: other))
+        otherConnection.workspaceStore.upsert(makeTestWorkspace(id: "ws-2", name: "Other"), serverId: other)
+        let panes = root.navigation.panes
+        panes.restore(navigation: root.navigation, coordinator: root.coordinator, applying: false)
+        root.navigation.mainPaneRoute = PaneStack(
+            place: .sessions(WorkspaceNavTarget(serverId: serverId, workspace: workspace)),
+            stack: [.session(WorkspaceSessionNavTarget(serverId: serverId, sessionId: "s-1", workspaceId: "ws-1"))]
+        )
+        let otherChat = WorkspaceSessionNavTarget(serverId: other, sessionId: "s-2", workspaceId: "ws-2")
+        let chat = try #require(panes.split(panes.mainLeafID, edge: .right, showing: .session(otherChat)))
+        let target = SSHTerminalFolderTarget(serverHost: "other-server.test", folder: "/srv/other", label: "Other")
+        let terminal = try #require(SSHTerminalFolderEntry.terminal(for: target, workspace: (other, "ws-2")))
+        let terminalPane = try #require(panes.split(chat, edge: .right, showing: .terminal(terminal)))
+        #expect(panes.stack(of: terminalPane)?.top == .terminal(terminal), "the chat's own terminal opens beside it")
+
+        let split = try #require(panes.split(terminalPane, axis: .column))
+        #expect(panes.topEntry(of: split) == PaneStackEntry(
+            serverId: other, route: .local(PaneLocalScreen.terminal(workspaceId: "ws-2").token)
+        ), "the split terminal works in the workspace of the chat it came from, on that chat's server")
+        let context = panes.context(of: split)
+        #expect(context.serverId == other, "the window's own server does not stand in for the terminal's")
+        #expect(context.workspaceId == "ws-2")
     }
 
     @Test func aRelaunchBringsLinkedSplitPanesBackButNotTheLauncherOrATerminal() async throws {

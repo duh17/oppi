@@ -278,13 +278,17 @@ extension WorkspaceStackRouteElement {
 final class TerminalNavTarget: Hashable {
     private let make: () -> UIViewController
     private weak var made: UIViewController?
-    /// The workspace the terminal works in, when its opener knows one (the
-    /// chat bar's folder terminal): a split of its pane opens that
-    /// workspace's own terminal. Nil for a Rex pane or a Rex link's list.
-    let workspaceId: String?
+    /// The server and workspace the terminal works in, when its opener knows
+    /// them (the chat bar's folder terminal): a split of its pane opens that
+    /// server's own workspace terminal. They travel together, since a
+    /// workspace id names nothing on its own (ids are per server), and the
+    /// leaf's server is the window's, which a chat from another server is
+    /// not. Nil for a Rex pane or a Rex link's list, which work in no
+    /// workspace.
+    let workspace: (serverId: String, workspaceId: String)?
 
-    init(workspaceId: String? = nil, _ make: @escaping () -> UIViewController) {
-        self.workspaceId = workspaceId
+    init(workspace: (serverId: String, workspaceId: String)? = nil, _ make: @escaping () -> UIViewController) {
+        self.workspace = workspace
         self.make = make
     }
 
