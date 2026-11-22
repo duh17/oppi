@@ -61,6 +61,9 @@ final class IconChoiceUIView: UIView {
     /// Over the tile while something plays: an animated image's frames, clipped
     /// to the tile, or a symbol running its effect.
     private let liveView = UIImageView()
+    /// A circle's hairline edge, over an image that plays: the frames fill the
+    /// circle edge to edge and would cover the drawn edge.
+    private let ringView = UIImageView()
     /// A sandbox workspace's lock mark, over `liveView` while it plays.
     private let markView = UIImageView()
     private var content: Content?
@@ -91,8 +94,9 @@ final class IconChoiceUIView: UIView {
         liveView.clipsToBounds = true
         liveView.layer.cornerRadius = EntityIcon.cornerRadius(frameSize, shape: shape)
         liveView.layer.cornerCurve = .continuous
+        ringView.isHidden = true
         markView.isHidden = true
-        for view in [imageView, liveView, markView] {
+        for view in [imageView, liveView, ringView, markView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
             NSLayoutConstraint.activate([
@@ -302,7 +306,7 @@ final class IconChoiceUIView: UIView {
     /// The symbol over an empty tile, running its effect: as an idle loop, or
     /// once for a burst.
     private func playSymbol(_ name: String, effect: IconSymbolEffect, repeats: Bool) {
-        guard let symbol = EntityIcon.tileSymbol(name, side: frameSize) else { return }
+        guard let symbol = EntityIcon.tileSymbol(name, side: frameSize, shape: shape) else { return }
         isPlaying = true
         imageView.image = EntityIcon.tile(side: frameSize, shape: shape)
         liveView.contentMode = .center
@@ -342,9 +346,12 @@ final class IconChoiceUIView: UIView {
             }
             imageView.image = EntityIcon.tile(side: frameSize, shape: shape)
             playback.start(data: data, imageView: liveView, maxPixelSize: frameSize * traitCollection.displayScale)
-            // Frames fill the tile edge to edge, like the still drawing.
+            // Frames fill the tile edge to edge, like the still drawing, so a
+            // circle keeps its hairline edge over them.
             liveView.contentMode = .scaleAspectFill
             liveView.isHidden = false
+            ringView.image = shape == .circle ? EntityIcon.circleRing(side: frameSize) : nil
+            ringView.isHidden = shape != .circle
             showSandboxMarkIfNeeded()
         }
     }
@@ -364,6 +371,7 @@ final class IconChoiceUIView: UIView {
         liveView.removeAllSymbolEffects()
         liveView.image = nil
         liveView.isHidden = true
+        ringView.isHidden = true
         markView.image = nil
         markView.isHidden = true
         isPlaying = false

@@ -158,6 +158,76 @@ struct EntityIconTests {
         #expect(grid.pixels[0].a == 0, "the image is clipped to the tile's corner")
     }
 
+    // MARK: - Circle
+
+    /// A circle gives its content room: the Pi mark, a symbol, and an emoji sit
+    /// inside an inset of about 55-60% of the diameter, where a tile's take more,
+    /// so the mark never runs into the round edge.
+    @Test func aCircleKeepsItsContentInsideAnInset() throws {
+        let side: CGFloat = 56
+        let kinds: [(String, IconEntity)] = [
+            ("the Pi mark", .pi),
+            ("a symbol", .agent(.symbol("sparkles"))),
+            ("an emoji", .agent(.emoji("🦊"))),
+        ]
+        for (name, entity) in kinds {
+            let circle = try #require(inkExtent(
+                EntityIcon.image(entity, size: side, shape: .circle),
+                over: EntityIcon.tile(side: side, shape: .circle),
+                in: side
+            ))
+            let tile = try #require(inkExtent(
+                EntityIcon.image(entity, size: side),
+                over: EntityIcon.tile(side: side),
+                in: side
+            ))
+            #expect(circle > 0.45 && circle <= 0.64, "\(name) covers \(circle) of the diameter")
+            #expect(circle < tile, "\(name) steps in on a circle and keeps the tile's share on a tile")
+        }
+    }
+
+    /// A circle's edge carries a hairline in the theme's foreground: lighter than
+    /// the fill in a dark theme, darker in a light one, and never a hard line.
+    @Test func aCircleRingsItsEdgeOnTheThemeForeground() throws {
+        let original = ThemeRuntimeState.currentThemeID()
+        defer { ThemeRuntimeState.setThemeID(original) }
+        let side: CGFloat = 96
+
+        ThemeRuntimeState.setThemeID(.dark)
+        let dark = pixelGrid(EntityIcon.image(.pi, size: side, shape: .circle))
+        let darkRing = try #require(pixel(in: dark, at: CGPoint(x: side / 2, y: 0.25)))
+        let darkFill = try #require(pixel(in: dark, at: CGPoint(x: side / 2, y: 4)))
+        #expect(darkRing.a > darkFill.a, "the ring adds a line at the edge")
+        #expect(brightness(darkRing) > brightness(darkFill), "a dark theme lights the ring")
+        // The fill is lit from the top: the same distance in at the bottom is darker.
+        let darkFoot = try #require(pixel(in: dark, at: CGPoint(x: side / 2, y: side - 4)))
+        #expect(brightness(darkFill) > brightness(darkFoot), "the fill is lit from the top")
+
+        ThemeRuntimeState.setThemeID(.light)
+        let light = pixelGrid(EntityIcon.image(.pi, size: side, shape: .circle))
+        let lightRing = try #require(pixel(in: light, at: CGPoint(x: side / 2, y: 0.25)))
+        let lightFill = try #require(pixel(in: light, at: CGPoint(x: side / 2, y: 4)))
+        #expect(brightness(lightRing) < brightness(lightFill), "a light theme darkens the ring")
+    }
+
+    /// An image still fills its circle edge to edge, under the same ring.
+    @Test func imageStillFillsItsCircleEdgeToEdge() async throws {
+        let assetId = "ia_" + String(repeating: "C", count: 43)
+        let cache = IconAssetCache(
+            fetch: { _ in Data([1, 2, 3]) },
+            decode: { _, _ in (Self.solid(.systemPink, side: 8), NSObject()) }
+        )
+        let entity = IconEntity.agent(.image(assetId: assetId))
+        let generation = EntityIcon.loadGeneration
+        _ = EntityIcon.image(entity, size: 36, assets: cache, shape: .circle)
+        try await waitForLoad(since: generation)
+
+        let grid = pixelGrid(EntityIcon.image(entity, size: 36, assets: cache, shape: .circle))
+        let edge = grid.pixels[2 * grid.width + grid.width / 2]
+        #expect(edge.r > 200 && edge.g < 120, "the image reaches the circle's edge: \(edge)")
+        #expect(grid.pixels[0].a == 0, "the image is clipped to the circle")
+    }
+
     // MARK: - Genmoji
 
     @Test func genmojiDrawsTheFallbackUntilTheArtworkArrives() async throws {
@@ -228,6 +298,38 @@ struct EntityIconTests {
         image.pngData() ?? Data()
     }
 
+    /// The share of `side` the content's ink covers: where `image` differs from
+    /// the same shape drawn without content.
+    private func inkExtent(_ image: UIImage, over plain: UIImage, in side: CGFloat) -> CGFloat? {
+        let drawn = pixelGrid(image)
+        let empty = pixelGrid(plain)
+        guard drawn.width == empty.width, drawn.height == empty.height else { return nil }
+        var minX = drawn.width, maxX = -1, minY = drawn.height, maxY = -1
+        for (index, pixel) in drawn.pixels.enumerated() where pixel != empty.pixels[index] {
+            let x = index % drawn.width
+            let y = index / drawn.width
+            minX = min(minX, x); maxX = max(maxX, x)
+            minY = min(minY, y); maxY = max(maxY, y)
+        }
+        guard maxX >= minX else { return nil }
+        return CGFloat(max(maxX - minX, maxY - minY) + 1) / (side * drawn.scale)
+    }
+
+    /// The pixel at `point`, in image points.
+    private func pixel(in grid: PixelGrid, at point: CGPoint) -> RGBAPixel? {
+        let x = Int(point.x * grid.scale)
+        let y = Int(point.y * grid.scale)
+        guard x >= 0, x < grid.width, y >= 0, y < grid.height else { return nil }
+        return grid.pixels[y * grid.width + x]
+    }
+
+    /// How light a pixel's own colour is, whatever its coverage: the channels
+    /// premultiplied by alpha, divided back out.
+    private func brightness(_ pixel: RGBAPixel) -> Double {
+        let alpha = Double(max(pixel.a, 1))
+        return (Double(pixel.r) + Double(pixel.g) + Double(pixel.b)) / 3 / alpha
+    }
+
     private func averageColour(_ image: UIImage) -> AverageColour? {
         let grid = pixelGrid(image)
         guard !grid.pixels.isEmpty else { return nil }
@@ -294,7 +396,7 @@ struct EntityIconTests {
 
     /// Pixels and their own dimensions: the CGImage's, never the point size times a
     /// scale, which can round to a different count.
-    private struct RGBAPixel {
+    private struct RGBAPixel: Equatable {
         let r: UInt8
         let g: UInt8
         let b: UInt8

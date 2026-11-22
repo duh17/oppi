@@ -30,9 +30,10 @@ enum IconShape: Hashable, Sendable {
 /// An Agent, Pi, or workspace icon sits in one tile: a rounded square (or, on its
 /// own page, a circle) in the theme's tint that fills the frame it is asked for,
 /// with a symbol, an emoji, a Genmoji, or the Pi mark centred on it and an
-/// imported image filling it edge to edge. Every kind has the same shape and
-/// size in a given place, and the tint follows the theme (the raster cache keys
-/// on it and on the shape).
+/// imported image filling it edge to edge. A circle draws that content a little
+/// smaller than a tile, lights its fill from the top, and rings its edge with a
+/// hairline. Every kind has the same shape and size in a given place, and the tint
+/// follows the theme (the raster cache keys on it and on the shape).
 ///
 /// `image` draws now and never waits: a Genmoji or an imported image (its first
 /// frame) comes from the server's icon cache
@@ -53,6 +54,36 @@ enum EntityIcon {
     private static let tileCornerShare: CGFloat = 0.26
     private static let sandboxMarkShare: CGFloat = 0.34
     private static let sandboxMarkMinimum: CGFloat = 11
+
+    /// A circle's own drawing, in one place so every circle (a session row at
+    /// any of its sizes, a chat's title, an Agent's page, an empty chat) matches:
+    /// its content steps in from a tile's share, its fill is lit from the top,
+    /// and a hairline ring marks the edge against the background.
+    private struct CircleStyle {
+        /// What a circle keeps of a tile's symbol, emoji, and mark shares: a round
+        /// edge reads tighter than a square's at the same size. On a 56 pt circle
+        /// the Pi mark then covers about 57% of the diameter (a tile draws it at
+        /// 65%), a symbol 50%, and an emoji 54%.
+        let contentScale: CGFloat
+        /// The fill's tint at its top and bottom (the tile's blue alpha, lit).
+        let tintTop: CGFloat
+        let tintBottom: CGFloat
+        /// The ring's alpha on the theme's foreground: a hairline, never a hard line.
+        let ringAlpha: CGFloat
+        /// A soft sheen just inside the ring's top edge, so the circle has depth.
+        let highlightAlpha: CGFloat
+        /// The ring's width in points, thin enough to read as a hairline at 2x.
+        let ringWidth: CGFloat
+
+        static let standard = Self(
+            contentScale: 0.88,
+            tintTop: 0.24,
+            tintBottom: 0.10,
+            ringAlpha: 0.21,
+            highlightAlpha: 0.05,
+            ringWidth: 0.5
+        )
+    }
 
     /// Bumped when artwork arrives. A row that compares its inputs puts it in the
     /// key, so the row that drew a fallback redraws with the Genmoji.
@@ -132,11 +163,17 @@ enum EntityIcon {
 
     /// A symbol in the tile's tint, at the size the tile draws it, for a view
     /// that plays the symbol's effect over `tile(side:)`.
-    static func tileSymbol(_ name: String, side: CGFloat) -> UIImage? {
+    static func tileSymbol(_ name: String, side: CGFloat, shape: IconShape = .tile) -> UIImage? {
         UIImage(
             systemName: name,
-            withConfiguration: UIImage.SymbolConfiguration(pointSize: side * tileSymbolShare, weight: .medium)
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: side * share(tileSymbolShare, shape: shape), weight: .medium)
         )?.withTintColor(ThemeRuntimeState.currentUIKitPalette().blue, renderingMode: .alwaysOriginal)
+    }
+
+    /// A kind's share of the box it draws in: the tile's, or the circle's
+    /// narrower one.
+    private static func share(_ tileShare: CGFloat, shape: IconShape) -> CGFloat {
+        shape == .circle ? tileShare * CircleStyle.standard.contentScale : tileShare
     }
 
     /// The empty tile, for a view that draws live content over it.
@@ -158,8 +195,68 @@ enum EntityIcon {
     }
 
     private static func fillTile(_ rect: CGRect, shape: IconShape) {
-        tileColor().setFill()
-        tilePath(rect, shape: shape).fill()
+        let palette = ThemeRuntimeState.currentUIKitPalette()
+        switch shape {
+        case .tile:
+            tileColor(palette).setFill()
+            tilePath(rect, shape: shape).fill()
+        case .circle:
+            fillCircle(rect, palette: palette)
+        }
+    }
+
+    /// A circle's fill: the tile's tint, lit from the top, with a soft sheen
+    /// inside its top edge and a hairline ring on its edge, so it reads as a lit
+    /// disc on the page instead of a flat wash that the content runs into.
+    private static func fillCircle(_ rect: CGRect, palette: ThemeUIKitPalette) {
+        let style = CircleStyle.standard
+        guard let context = UIGraphicsGetCurrentContext() else { return }
+        context.saveGState()
+        tilePath(rect, shape: .circle).addClip()
+        let tint: [CGColor] = [
+            palette.blue.withAlphaComponent(style.tintTop).cgColor,
+            palette.blue.withAlphaComponent(style.tintBottom).cgColor,
+        ]
+        if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: tint as CFArray, locations: [0, 1]) {
+            context.drawLinearGradient(
+                gradient,
+                start: CGPoint(x: rect.midX, y: rect.minY),
+                end: CGPoint(x: rect.midX, y: rect.maxY),
+                options: []
+            )
+        }
+        let sheen: [CGColor] = [
+            palette.fg.withAlphaComponent(style.highlightAlpha).cgColor,
+            palette.fg.withAlphaComponent(0).cgColor,
+        ]
+        if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: sheen as CFArray, locations: [0, 1]) {
+            context.drawLinearGradient(
+                gradient,
+                start: CGPoint(x: rect.midX, y: rect.minY),
+                end: CGPoint(x: rect.midX, y: rect.minY + rect.height * 0.45),
+                options: []
+            )
+        }
+        context.restoreGState()
+        circleRing(rect, palette: palette).stroke()
+    }
+
+    /// The circle's hairline edge, inset by half its width so the stroke stays
+    /// inside the frame it is drawn in.
+    private static func circleRing(_ rect: CGRect, palette: ThemeUIKitPalette) -> UIBezierPath {
+        let width = CircleStyle.standard.ringWidth
+        let path = UIBezierPath(ovalIn: rect.insetBy(dx: width / 2, dy: width / 2))
+        path.lineWidth = width
+        palette.fg.withAlphaComponent(CircleStyle.standard.ringAlpha).setStroke()
+        return path
+    }
+
+    /// A circle's hairline edge alone, in a clear square: an icon that plays an
+    /// image over its drawn circle keeps the same edge.
+    static func circleRing(side: CGFloat) -> UIImage {
+        raster(side) { rect in
+            circleRing(rect, palette: ThemeRuntimeState.currentUIKitPalette()).stroke()
+        }.withRenderingMode(.alwaysOriginal)
     }
 
     /// The tile, then `artwork` aspect-filled and clipped to it, so a
@@ -182,7 +279,7 @@ enum EntityIcon {
     }
 
     private static func tiledSymbol(_ name: String, side: CGFloat, shape: IconShape) -> UIImage? {
-        guard let symbol = tileSymbol(name, side: side) else { return nil }
+        guard let symbol = tileSymbol(name, side: side, shape: shape) else { return nil }
         return tiled(side, shape: shape) { rect in drawCentred(symbol, in: rect) }
     }
 
@@ -197,7 +294,7 @@ enum EntityIcon {
     ) -> (image: UIImage, isFinal: Bool) {
         switch entity {
         case .pi:
-            let mark = PiAvatarRenderer.render(size: frame * tileArtworkShare)
+            let mark = PiAvatarRenderer.render(size: frame * share(tileArtworkShare, shape: shape))
             return (tiled(frame, shape: shape) { rect in drawCentred(mark, in: rect) }, true)
         case .server(_, let badge):
             return (symbol(badge.symbolName, size: frame) ?? UIImage(), true)
@@ -233,7 +330,7 @@ enum EntityIcon {
             // A symbol's effect plays only in `IconChoiceUIView`, which animates or bursts it.
             return (tiledSymbol(name, side: box, shape: shape) ?? fallbackTile, true)
         case .text(let emoji):
-            let font = UIFont.systemFont(ofSize: box * tileEmojiShare)
+            let font = UIFont.systemFont(ofSize: box * share(tileEmojiShare, shape: shape))
             return (tiled(box, shape: shape) { rect in drawCentred(emoji, font: font, in: rect) }, true)
         case .genmoji(let assetId, _), .image(let assetId):
             // An animated image draws its first frame here; only
@@ -244,7 +341,10 @@ enum EntityIcon {
                         drawFilling(artwork, in: rect, shape: shape)
                     } else {
                         fillTile(rect, shape: shape)
-                        let inner = contentRect(inFrame: rect.width, content: rect.width * tileArtworkShare)
+                        let inner = contentRect(
+                            inFrame: rect.width,
+                            content: rect.width * share(tileArtworkShare, shape: shape)
+                        )
                         artwork.draw(in: aspectFit(artwork.size, in: inner))
                     }
                 }
