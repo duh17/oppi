@@ -1075,9 +1075,15 @@ private final class ContextWindowCardView: UIView, UIContentView {
         stack.spacing = 10
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
+        // A content view's own margins are zero, so the stack sat on the cell's
+        // rounded corners and clipped its own title and totals. Take the list
+        // cell's horizontal margins — the inset its value rows below use — and
+        // keep only vertical breathing room of our own.
+        directionalLayoutMargins = NSDirectionalEdgeInsets(top: 12, leading: 0, bottom: 12, trailing: 0)
+        preservesSuperviewLayoutMargins = true
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: layoutMarginsGuide.topAnchor, constant: 4),
-            stack.bottomAnchor.constraint(equalTo: layoutMarginsGuide.bottomAnchor, constant: -4),
+            stack.topAnchor.constraint(equalTo: layoutMarginsGuide.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: layoutMarginsGuide.bottomAnchor),
             stack.leadingAnchor.constraint(equalTo: layoutMarginsGuide.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: layoutMarginsGuide.trailingAnchor),
             bar.heightAnchor.constraint(equalToConstant: 12),
