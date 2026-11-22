@@ -111,7 +111,7 @@ extension QuickSessionModel {
                     liveVoice: startsLiveVoice,
                     serverId: consentServerId,
                     connection: consentConnection,
-                    from: nil
+                    from: presenter
                 ) else { return }
                 handleSend(startsLiveVoice: startsLiveVoice)
             }

@@ -37,6 +37,10 @@ final class QuickSessionModel {
     @ObservationIgnored let liveVoiceCalls: LiveVoiceCallCenter
     /// Closes Quick Session; set by its view controller.
     @ObservationIgnored var onDismiss: () -> Void = {}
+    /// The screen showing Quick Session; set by its view controller. The AI sharing ask
+    /// presents over it, so its sheet lands in this screen's window rather than whichever
+    /// window is frontmost (another scene's, or another screen's).
+    @ObservationIgnored weak var presenter: UIViewController?
     @ObservationIgnored private let durableByDefault = AppPreferenceStore.DurableSessions.startsDurable
 
     // MARK: Draft

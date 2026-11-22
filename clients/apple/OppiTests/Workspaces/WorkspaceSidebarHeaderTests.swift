@@ -10,7 +10,7 @@ struct WorkspaceSidebarHeaderTests {
     /// The split wraps the sidebar in a navigation stack. That stack's bar had
     /// nothing in it and still took a bar's height, which left a band between the
     /// status bar and the header row.
-    @Test func theSplitSidebarsColumnShowsNoBarAboveItsHeaderRow() throws {
+    @Test func theSplitSidebarsColumnShowsNoBarAboveItsHeaderRow() async throws {
         let root = makeTestAppRoot()
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
@@ -32,6 +32,12 @@ struct WorkspaceSidebarHeaderTests {
         let sidebar = try #require(primary.viewControllers.first as? WorkspaceSidebarViewController)
         sidebar.loadViewIfNeeded()
         #expect(sidebar.hidesNavigationBar, "The sidebar brings its own header row")
-        #expect(primary.isNavigationBarHidden, "The sidebar's column reserved an empty bar above its header row")
+        // The stack hides its bar from its delegate's `willShow`, which UIKit sends as the
+        // column appears. A window's appearance transition can land a turn after it is
+        // visible, so wait for the bar instead of reading it right after layout.
+        #expect(
+            await waitForMainActorCondition(timeout: .seconds(5)) { primary.isNavigationBarHidden },
+            "The sidebar's column reserved an empty bar above its header row"
+        )
     }
 }

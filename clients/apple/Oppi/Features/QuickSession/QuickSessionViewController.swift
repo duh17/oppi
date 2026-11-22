@@ -89,6 +89,8 @@ final class QuickSessionViewController: UIViewController {
         model = QuickSessionModel(root: root)
         super.init(nibName: nil, bundle: nil)
         model.onDismiss = onDismiss
+        // The AI sharing ask presents over Quick Session, whatever window is frontmost.
+        model.presenter = self
         // Presented controllers and the composer's hosts find the app root here.
         traitOverrides.appRootEnvironment = root
     }

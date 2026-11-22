@@ -272,6 +272,17 @@ struct AISharingConsentGateTests {
         model.text = "Plan the release"
         let window = ConsentWindow(UIViewController())
         defer { window.close() }
+        // The ask presents over Quick Session's own screen, not over whichever window is
+        // frontmost: make another window key, as another scene's or a running test's can be.
+        let otherWindow = makeSceneWindow()
+        otherWindow.rootViewController = UIViewController()
+        otherWindow.makeKeyAndVisible()
+        defer { hideTestWindow(otherWindow) }
+        #expect(
+            await waitForMainActorCondition(timeout: .seconds(2)) { !window.window.isKeyWindow },
+            "another window has to be frontmost for this test to mean anything"
+        )
+        model.presenter = window.presenter
 
         model.handleSend()
 
@@ -306,6 +317,7 @@ struct AISharingConsentGateTests {
         model.text = "Plan the release"
         let window = ConsentWindow(UIViewController())
         defer { window.close() }
+        model.presenter = window.presenter
 
         model.handleSend()
 
@@ -359,6 +371,7 @@ struct AISharingConsentGateTests {
         model.text = "Plan the release"
         let window = ConsentWindow(UIViewController())
         defer { window.close() }
+        model.presenter = window.presenter
 
         model.handleSend()
 
@@ -562,6 +575,9 @@ private final class ConsentWindow {
     }
 
     func presented<T: UIViewController>(_ type: T.Type) async -> T? { await ConsentSheet.presented(type, in: window) }
+
+    /// The screen the window shows: the one a send asks its consent from.
+    var presenter: UIViewController? { window.rootViewController }
 
     func consentSheet() async -> ConsentSheet? { await ConsentSheet.find(in: window) }
 
