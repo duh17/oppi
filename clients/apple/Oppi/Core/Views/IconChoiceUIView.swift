@@ -14,8 +14,8 @@ import UniformTypeIdentifiers
 /// icon picker, and in an Agent's row in the Agents list; everywhere else the
 /// first frame draws still. WebP is the only animated image format, so a PNG and
 /// a stored GIF draw still. A playing view stops when it leaves its
-/// window and whenever `MotionPolicy` takes the loops away (Motion set to
-/// Moments only or Off, Reduce Motion, Low Power Mode, or the system's Auto-Play
+/// window and whenever `MotionPolicy` takes the loops away (Animations at
+/// Short or Off, Reduce Motion, Low Power Mode, or the system's Auto-Play
 /// Animated Images), with a sandbox workspace's lock mark kept over it. A view
 /// that never animates can still play one short `playBurst()` at a moment — a
 /// session row's icon when its session needs the person, a chat's title icon and
@@ -238,7 +238,7 @@ final class IconChoiceUIView: UIView {
     /// image's frames for `burstDuration`, or a symbol's effect once. A session
     /// row plays one when its session starts needing the person, and a chat's
     /// title icon and empty hero when the chat opens; `MotionPolicy` allows a
-    /// moment in Moments only and Full, and never in Off. A view that already
+    /// moment in On and Short, and never in Off. A view that already
     /// animates ignores it.
     func playBurst() {
         guard !animates, !isKnownStill, window != nil, MotionPolicy.playsMoments else { return }

@@ -287,7 +287,7 @@ final class MicButtonChromeView: UIControl {
         ringLayer.isHidden = showsOrb
         orbView.isHidden = !showsOrb
         orbView.isAnimationEnabled = showsOrb
-        // Moments only and Off hold the indicator still, as Reduce Motion does:
+        // Short and Off hold the indicator still, as Reduce Motion does:
         // the orb paints one frame instead of following the voice.
         orbView.forceReduceMotion = !MotionPolicy.playsLoops
         if let orbStyle = dictationStyle.orbStyle {

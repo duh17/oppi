@@ -455,8 +455,8 @@ enum AppPreferenceStore {
         )
         static let piIconStyleKey = "\(AppIdentifiers.subsystem).appearance.piIconStyle"
 
-        /// Nothing stored is every animation: what the app played before Motion
-        /// was a setting, so an update never stills an app that moved.
+        /// Nothing stored is every animation: what the app played before the
+        /// Animations setting existed, so an update never stills an app that moved.
         static let motionDefault = MotionSetting.full
 
         static var motion: MotionSetting { motion(in: .standard) }

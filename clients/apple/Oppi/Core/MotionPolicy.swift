@@ -2,7 +2,7 @@ import Accessibility
 import UIKit
 
 /// The app's one answer to "may this move?", for every animating view: the
-/// Motion setting in Settings, held still by the system's own switches. A view
+/// Animations setting in Settings, held still by the system's own switches. A view
 /// asks this instead of reading the setting or the system itself, so there is
 /// one rule rather than one per animation (`IconChoiceUIView`, the busy
 /// spinner, the dictation indicator, the sidebar's mark).
@@ -27,7 +27,7 @@ enum MotionPolicy {
     /// the person (`IconChoiceUIView.playBurst`).
     static var playsMoments: Bool { effective().playsMoments }
 
-    /// Runs `handler` when the Motion setting or one of the system's switches
+    /// Runs `handler` when the Animations setting or one of the system's switches
     /// changes. The tokens are the caller's to remove.
     static func observe(_ handler: @escaping @MainActor () -> Void) -> [NSObjectProtocol] {
         let center = NotificationCenter.default

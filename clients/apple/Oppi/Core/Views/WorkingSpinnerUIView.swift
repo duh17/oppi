@@ -5,7 +5,7 @@ import UIKit
 /// view shows, and only while `isAnimating`, so the others' timers and the
 /// Metal loop stop. It follows a style change in Settings itself.
 ///
-/// While `MotionPolicy` allows no loops (Motion set to Moments only or Off, or
+/// While `MotionPolicy` allows no loops (Animations at Short or Off, or
 /// Reduce Motion) every style holds one still frame: braille and Game of Life
 /// stop ticking here, and the orb paints its own still frame.
 final class WorkingSpinnerUIView: UIView {

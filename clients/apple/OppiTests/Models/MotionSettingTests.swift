@@ -6,13 +6,13 @@ import UIKit
 @Suite("MotionSetting")
 struct MotionSettingTests {
     @Test func displayNameMapping() {
-        #expect(MotionSetting.full.displayName == "Full")
-        #expect(MotionSetting.moments.displayName == "Moments only")
+        #expect(MotionSetting.full.displayName == "On")
+        #expect(MotionSetting.moments.displayName == "Short")
         #expect(MotionSetting.off.displayName == "Off")
     }
 
-    /// Full is every animation, Moments only drops the decorative loops, Off
-    /// drops the moments too.
+    /// On is every animation, Short drops the decorative loops, Off drops the
+    /// moments too.
     @Test func capabilitiesNarrowFromFullToOff() {
         #expect(MotionSetting.full.playsLoops && MotionSetting.full.playsMoments)
         #expect(!MotionSetting.moments.playsLoops && MotionSetting.moments.playsMoments)
@@ -24,6 +24,14 @@ struct MotionSettingTests {
             #expect(MotionSetting(rawValue: setting.rawValue) == setting)
         }
         #expect(MotionSetting.allCases == [.full, .moments, .off])
+    }
+
+    /// The stored values are not the row's labels: a choice made before the
+    /// rename still reads back as the same setting.
+    @Test func storedRawValuesStay() {
+        #expect(MotionSetting.full.rawValue == "full")
+        #expect(MotionSetting.moments.rawValue == "moments")
+        #expect(MotionSetting.off.rawValue == "off")
     }
 }
 
