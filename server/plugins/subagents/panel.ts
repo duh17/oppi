@@ -365,21 +365,29 @@ export function subagentView(state: SubagentPanelState): SubagentSurface {
     );
   if (groups.working.length > 0) section("working", "Working", groups.working);
   if (groups.recent.length > 0) section("recent", "Recent", groups.recent);
-  const earlier = groups.earlier.flatMap((item) => taken.get(item) ?? []);
-  if (earlier.length > 0) {
-    // One fold for everything older, so the drawer stays short until someone opens it. A fold
-    // holds 12 children too, so more than that take a second fold.
-    add(text({ id: "section:earlier:title", text: "Earlier", style: "caption" }));
-    for (let index = 0; index < earlier.length; index += NODE_CHILDREN) {
-      const placed = add(
-        group({
-          id: index === 0 ? "earlier:group" : `earlier:group:${index}`,
-          title: `${groups.earlier.length} finished`,
-          collapsed: true,
-          children: earlier.slice(index, index + NODE_CHILDREN),
-        }),
-      );
-      if (!placed) break;
+  // One fold for everything older, so the drawer stays short until someone opens it. A node holds
+  // 12 children and a child is one or two of them (its row, and the fold over its answer): the fold
+  // takes the children that fit in one, and its title counts exactly those. The row below counts
+  // the rest, with every other child the budget left out.
+  const foldChildren: SurfaceNode[] = [];
+  let foldCount = 0;
+  for (const item of groups.earlier) {
+    const nodes = taken.get(item);
+    if (!nodes || foldChildren.length + nodes.length > NODE_CHILDREN) break;
+    foldChildren.push(...nodes);
+    foldCount += 1;
+  }
+  if (foldCount > 0) {
+    const fold = group({
+      id: "earlier:group",
+      title: `${foldCount} finished`,
+      collapsed: true,
+      children: foldChildren,
+    });
+    // The heading and the fold go together: a body with no room for both shows neither.
+    if (body.length + 2 <= bodyCap) {
+      add(text({ id: "section:earlier:title", text: "Earlier", style: "caption" }));
+      add(fold);
     }
   }
 

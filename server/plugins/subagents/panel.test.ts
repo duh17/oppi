@@ -303,4 +303,38 @@ describe("subagents panel", () => {
     expect(recent).toBeDefined();
     expect(inside(earlier, "head:old-3")).toBe(false);
   });
+
+  test("251 finished children are one Earlier fold that counts what it holds", () => {
+    const rows: Subagent[] = [
+      failed("child-a", 9_000),
+      ...Array.from({ length: 251 }, (_, index) => ({
+        ...failed(`old-${index}`, 1_000 + index, { state: "success" as const }),
+      })),
+    ];
+    const view = subagentView({ rows, threadSessionId: "parent-session" });
+    const surface = panel.render({ rows, threadSessionId: "parent-session" });
+    // One fold, however many finished children there are: no second fold, no repeated title.
+    const folds = nodes(surface).filter(
+      (node) => node.type === "group" && String(node.id).startsWith("earlier:group"),
+    );
+    expect(folds).toHaveLength(1);
+    const fold = folds[0] as { title?: unknown; children?: unknown[] };
+    const held = fold.children ?? [];
+    // Its title counts the children it holds, not the whole Earlier section.
+    expect(fold.title).toBe(`${held.length} finished`);
+    expect(held.length).toBe(12);
+    // Nothing repeats: one fold, one title that counts it.
+    const counted = nodes(surface)
+      .map((node) => node.title)
+      .filter((title) => /^\d+ finished$/.test(String(title)));
+    expect(counted).toEqual([fold.title]);
+    // The rest is counted once, by the row that opens the thread.
+    const more = nodes(surface).find((node) => node.id === "more:text");
+    expect(Number(String(more?.text ?? "").replace(/\D+/g, ""))).toBe(
+      rows.length - view.shown.size,
+    );
+    // Every child drawn is drawn once, and the fold's children are among them.
+    expect(view.shown.size).toBe(1 + 3 + 12);
+    expect(ids(surface).filter((id) => id.startsWith("child:")).length).toBe(view.shown.size);
+  });
 });
