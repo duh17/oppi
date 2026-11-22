@@ -30,6 +30,14 @@ final class NavigationJourneyUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(allSessions.waitUntilExists(timeout: 5), "The sidebar has no All Sessions row")
         assertFirstPlace(allSessions)
         XCTAssertTrue(allSessions.isSelected, "All Sessions must be selected while it shows")
+        // The sidebar's header row is level with the detail pane's title row, not
+        // a bar's height below it: nothing sits between the status bar and the icon.
+        let appIcon = app.images["workspace.sidebar.appIcon"].firstMatch
+        let detailTitle = app.staticTexts["workspace.inbox.title"].firstMatch
+        XCTAssertTrue(appIcon.waitUntilExists(timeout: 5), "The sidebar has no header row")
+        XCTAssertTrue(detailTitle.waitUntilExists(timeout: 5), "The detail pane has no title row")
+        XCTAssertLessThan(abs(appIcon.frame.midY - detailTitle.frame.midY), appIcon.frame.height,
+                          "The sidebar's header row sits a row below the detail pane's title row")
         attachScreenshot("sidebar-ipad-landscape")
 
         agents.tap()

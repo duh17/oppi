@@ -14,7 +14,11 @@ import UIKit
 /// Places, the disclosure, state rows, and the footer are native list
 /// cells. The workspace row (`WorkspaceSidebarRowConfiguration`) draws the
 /// runtime icon, lock badge, status counts, and git line.
-final class WorkspaceSidebarViewController: UIViewController {
+///
+/// The header row belongs to the sidebar, so the column shows no bar above it:
+/// an empty bar left a band, a bar's height of nothing, between the status bar
+/// and the header (`hidesNavigationBar`).
+final class WorkspaceSidebarViewController: UIViewController, NavigationBarHiding {
     private let root: AppRootEnvironment
     private let onSelect: (() -> Void)?
 
@@ -23,7 +27,8 @@ final class WorkspaceSidebarViewController: UIViewController {
 
     /// The app icon's π heads the column in place of a written name, drawn
     /// on the sidebar itself with its elves at work, with the Edit Sidebar
-    /// glyph at the row's trailing end.
+    /// glyph at the row's trailing end. The icon and the glyph are the column's
+    /// top row: nothing sits above them.
     private let appIconView = LivingPiMarkView()
     private let editButton = UIButton(configuration: .plain())
     private let list: UICollectionView
@@ -112,13 +117,27 @@ final class WorkspaceSidebarViewController: UIViewController {
         super.init(nibName: nil, bundle: nil)
         // Controllers presented from here find the root.
         traitOverrides.appRootEnvironment = root
-        navigationItem.largeTitleDisplayMode = .never
     }
+
+    /// The header row is the sidebar's own; no stack draws a bar over it.
+    var hidesNavigationBar: Bool { true }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
     // MARK: Lifecycle
+
+    override func didMove(toParent parent: UIViewController?) {
+        super.didMove(toParent: parent)
+        // The split view wraps its primary column in a navigation controller;
+        // the sidebar brings its own header row.
+        navigationController?.updateNavigationBar(for: self, animated: false)
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        navigationController?.updateNavigationBar(for: self, animated: false)
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
