@@ -499,8 +499,9 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         currentFiles: { version: 1 },
         // Saved Agents state capabilities (tools, plugins, MCP servers, Skills, context) instead
         // of Pi tool lists and extension IDs. An older app writes the old shape and an older
-        // server cannot read the new one, so both sides gate on this.
-        agentCapabilities: { version: 1 },
+        // server cannot read the new one, so both sides gate on this. v2: an Agent's tools are a
+        // Pi tool set (`capabilities.tools`), where v1 had a coding tier (`capabilities.core`).
+        agentCapabilities: { version: 2 },
         workspaceFileEditing: {
           version: 1,
           maxBytes: MAX_WORKSPACE_FILE_EDIT_BYTES,

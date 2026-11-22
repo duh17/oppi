@@ -53,6 +53,7 @@ import {
 
 import type { AgentDefinition } from "./agent-definition.js";
 import {
+  agentPiTools,
   compileAgentCapabilities,
   type AgentBuiltinPluginFact,
   missingAgentSkillsWarning,
@@ -105,6 +106,7 @@ import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
 import { resolveAgentPluginPaths, resolveAgentSkillPaths } from "./agent-plugin-selection.js";
 import { piDefaultTools } from "./durable-agent.js";
+import { piToolNames } from "./pi-global-config.js";
 import { keepAutoDiscoveryOffHost, resolveSandboxExtensions } from "./sandbox-host-extensions.js";
 import { canonicalServerResourcePath } from "./server-resource-id.js";
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
@@ -613,8 +615,9 @@ export interface SdkBackendConfig {
   /** Saved Agent definition used to configure this runtime. */
   agentDefinition?: AgentDefinition;
   /**
-   * Oppi's own plugin tools, for a read-only Agent's exclusions (see `agent-capabilities.ts`);
-   * `null` means the catalog could not be read, which refuses a read-only Agent's launch.
+   * Oppi's own plugin tools, for an Agent that cannot edit files and names no plugins (see
+   * `agent-capabilities.ts`); `null` means the catalog could not be read, which refuses such an
+   * Agent's launch.
    */
   getBuiltinPluginFacts?: () => Promise<readonly AgentBuiltinPluginFact[] | null>;
 
@@ -731,6 +734,34 @@ async function withTogglePlugins(
 }
 
 /**
+ * The session's Pi settings with the Agent's own Pi tools (plus `codemode` when an admitted MCP
+ * server is reached through it, from `agentPiTools`) in place of the Pi Tools setting.
+ *
+ * Pi grants a name in its `defaultTools` and denies one outside it; there is no third option, so an
+ * Agent that states its tools states that session's `defaultTools`. Every method still runs on the
+ * real manager — this session keeps reading and writing the same settings file — and only
+ * `getDefaultTools` answers differently. The exclusions in the same plan deny what Pi would
+ * otherwise add (a plugin's tools the Agent did not name).
+ */
+function withAgentTools<T extends object>(settings: T, tools: readonly string[]): T {
+  const selected = [...tools];
+  return new Proxy(settings, {
+    get(target, property) {
+      if (property === "getDefaultTools") return () => [...selected];
+      const value = Reflect.get(target, property, target) as unknown;
+      return typeof value === "function"
+        ? (value as (...args: unknown[]) => unknown).bind(target)
+        : value;
+    },
+  });
+}
+
+/** Whether the Agent's own Pi tools asked for the search, or it follows the setting. */
+function wantsToolSearch(compiled: CompiledAgentCapabilities): boolean {
+  return compiled.tools === undefined || compiled.tools.includes("tool_search");
+}
+
+/**
  * The Pi built-ins an exact extension list has to name. An Agent that selects plugins gets
  * `noExtensions: true`, so MCP, codemode, and tool search load only when they are listed: the
  * compiler already decided whether this session affords them.
@@ -752,11 +783,12 @@ function withCompiledBuiltins(
   // declared to nobody until the search extension is there to load them.
   if ((compiled.mcp.enabled && options.mcpOn) || compiled.discovery.includes("tool_search"))
     wanted.push("tool-search");
-  // A full Agent keeps codemode when the Pi Tools setting enables it (local JS batching); a
-  // read-only Agent gets it only when an admitted MCP server is reached through it.
+  // An Agent that follows the Pi Tools setting keeps codemode when the setting enables it (local
+  // JS batching); an Agent with its own tool set gets it only when it names it or an admitted MCP
+  // server is reached through it.
   const codemode =
     compiled.discovery.includes("codemode") ||
-    (compiled.core === "full" && options.piTools.has("codemode"));
+    (compiled.tools === undefined && options.piTools.has("codemode"));
   if (codemode) wanted.push("codemode");
   const additions = wanted
     .filter((name) => options.builtins.includes(name))
@@ -1238,6 +1270,7 @@ export class SdkBackend implements AgentBackend {
               dataDir: config.dataDir,
             }),
             mcpAvailable: mcpOn,
+            piToolNames: piToolNames(settingsManager.getDefaultTools() ?? null),
             ...(agentBuiltinFacts ? { builtinPlugins: agentBuiltinFacts } : {}),
             ...(agentBuiltinFacts === null ? { builtinPluginsUnknown: true } : {}),
           })
@@ -1601,6 +1634,7 @@ export class SdkBackend implements AgentBackend {
       if (!session.model && scopedPins.model) {
         session.model = `${scopedPins.model.provider}/${scopedPins.model.id}`;
       }
+      const ownPiTools = agentPiTools(compiled);
       const createResult = await createAgentSession({
         cwd: sessionCwd,
         agentDir: runtimeAgentDir,
@@ -1608,7 +1642,8 @@ export class SdkBackend implements AgentBackend {
         model: scopedPins.model ?? model,
         thinkingLevel: scopedPins.thinkingLevel,
         sessionManager,
-        settingsManager,
+        settingsManager:
+          ownPiTools === undefined ? settingsManager : withAgentTools(settingsManager, ownPiTools),
         resourceLoader: loader,
         sessionStartEvent,
         ...(scoped.scopedModels ? { scopedModels: scoped.scopedModels } : {}),
@@ -1619,10 +1654,12 @@ export class SdkBackend implements AgentBackend {
       });
 
       // Pi registers `tool_search` inactive, so a plugin's deferred tools are declared to the
-      // model only once it is on. Only a full Agent turns it on here: a read-only one states what
-      // it reaches, and a server's deferred exposure is Pi's own rule, left alone. The extension
-      // must be loaded too, which `withCompiledBuiltins` saw to for an Agent that selects plugins.
-      if (compiled?.core === "full" && compiled.discovery.includes("tool_search")) {
+      // model only once it is on. A session that follows the Pi Tools setting gets it, as does an
+      // Agent that names it; an Agent with its own set that did not name it does not, whatever an
+      // MCP server's exposure reports (`discovery`), because the search reaches every plugin tool
+      // and the Agent stated what it reaches. The extension is loaded either way, which
+      // `withCompiledBuiltins` saw to.
+      if (compiled?.discovery.includes("tool_search") && wantsToolSearch(compiled)) {
         const activeToolNames = createResult.session.getActiveToolNames();
         if (
           !activeToolNames.includes("tool_search") &&

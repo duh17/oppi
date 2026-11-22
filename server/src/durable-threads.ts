@@ -25,6 +25,7 @@ import {
   OppiAgentDoc,
   resolveDurableAgent,
   retargetInstructions,
+  sessionPiTools,
   type SavedAgent,
 } from "./durable-agent.js";
 import {
@@ -34,6 +35,7 @@ import {
 } from "./agent-capabilities.js";
 import { DurableRuntime, type DurableHarness, type SessionHost } from "./durable-harness.js";
 import { mcpServerFacts } from "./durable-mcp.js";
+import { piToolNames, readPiDefaultTools } from "./pi-global-config.js";
 import { durableStoreId } from "./session-runtime-capabilities.js";
 import { DURABLE_THREAD_KEY_PREFIX } from "./reserved-launch-keys.js";
 import { mintSessionId } from "./id.js";
@@ -65,8 +67,8 @@ export interface DurableThreadsDeps {
   runtime: DurableHarness;
   /**
    * Oppi's built-in plugin tools, for the child compile: a bound child's policy is the document
-   * written at spawn, so a read-only Agent spawned as a subagent needs the same answer its parent
-   * had. Absent (tests) adds no exclusions.
+   * written at spawn, so an Agent that cannot edit files, spawned as a subagent, needs the same
+   * answer its parent had. Absent (tests) adds no exclusions.
    */
   getBuiltinPluginFacts?: () => Promise<readonly AgentBuiltinPluginFact[] | null>;
   storage: Pick<
@@ -98,20 +100,24 @@ export interface DurableThreadsDeps {
 
 /**
  * A bound child's plan: the same compiler as its parent, with the same inventory of Oppi's
- * plugins. A child's policy is the document written at spawn, so a read-only Agent spawned as a
- * subagent keeps the exclusions its parent had, rather than the built-ins arriving by omission.
+ * plugins. A child's policy is the document written at spawn, so an Agent that cannot edit files,
+ * spawned as a subagent, keeps the exclusions its parent had rather than the built-ins arriving by
+ * omission.
  */
 export function compileChildCapabilities(input: {
   definition: AgentDefinition;
   runtime: "host" | "sandbox";
   mcpServers: readonly AgentMcpServerFact[];
   builtinFacts: readonly AgentBuiltinPluginFact[] | null | undefined;
+  /** Pi's own tool names, so the child's own set denies the ones it does not name. */
+  piToolNames: readonly string[];
 }): CompiledAgentCapabilities {
   return compileAgentCapabilities({
     definition: input.definition,
     engine: "durable",
     runtime: input.runtime,
     mcpServers: input.mcpServers,
+    piToolNames: input.piToolNames,
     ...(input.builtinFacts ? { builtinPlugins: input.builtinFacts } : {}),
     ...(input.builtinFacts === null ? { builtinPluginsUnknown: true } : {}),
   });
@@ -318,6 +324,10 @@ export class DurableThreads {
             builtinFacts: this.deps.getBuiltinPluginFacts
               ? await this.deps.getBuiltinPluginFacts()
               : undefined,
+            // Pi's own governed names, from the global Pi Tools setting: the child's plan denies
+            // the ones its Agent did not name. The parent's tool list is not that universe — it
+            // also holds plugin tools, and denying those would strip a child's `ask` or `notify`.
+            piToolNames: piToolNames(readPiDefaultTools(getAgentDir()).defaultTools),
           });
     const { change, doc } = resolveDurableAgent({
       ...(saved ? { saved } : {}),
@@ -334,8 +344,9 @@ export class DurableThreads {
       agentOptsIn: false,
       ...(compiled ? { compiled } : {}),
       enabled: (name) => this.deps.runtime.isExtensionEnabled(name),
-      // A child gets the Pi Tools setting's tools its parent offers.
-      piTools: new Set(agent.tools.map((tool) => tool.name)),
+      // A child spawned with a saved Agent runs with that Agent's own Pi tools (plus codemode when
+      // an admitted MCP server needs it); otherwise it inherits what its parent offers.
+      piTools: sessionPiTools(compiled, new Set(agent.tools.map((tool) => tool.name))),
       codemode: this.deps.runtime.codemode,
       sessions: this.deps.runtime.sessionsExtension,
       spawn: grant,

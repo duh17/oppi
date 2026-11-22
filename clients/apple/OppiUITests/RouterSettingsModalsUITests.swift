@@ -384,10 +384,42 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
         tapBarButton(edit)
         XCTAssertTrue(app.navigationBars["Edit Agent"].waitUntilExists(timeout: 10), "The editor did not open")
 
-        let editFiles = app.switches["agent.nativeEdit.editFiles"]
-        scrollIntoView(editFiles)
-        XCTAssertTrue(editFiles.waitUntilExists(timeout: 10), "The editor has no Tools section")
-        XCTAssertEqual(editFiles.value as? String, "1", "the fixture Agent edits files")
+        let piTools = app.buttons["agent.nativeEdit.tools"]
+        scrollIntoView(piTools)
+        XCTAssertTrue(piTools.waitUntilExists(timeout: 10), "The editor has no Tools section")
+        XCTAssertEqual(piTools.value as? String, "read, bash", "the fixture Agent names its Pi tools")
+        // The same page Pi's own Tools row opens: the mode, then the tools an Agent may name.
+        tapScrolledIntoView(piTools)
+        let mode = app.buttons["agent.nativeEdit.toolMode"]
+        XCTAssertTrue(mode.waitUntilExists(timeout: 10), "The Pi Tools page did not open")
+        XCTAssertEqual(mode.value as? String, "Choose tools", "the fixture Agent names its own tools")
+        // Its own set: read and bash chosen, edit and write not, so it cannot change files.
+        let read = app.buttons["agent.nativeEdit.tool.read"]
+        scrollIntoView(read)
+        XCTAssertTrue(read.waitUntilExists(timeout: 10), "Pi's built-in tools are offered")
+        XCTAssertEqual(read.value as? String, "Selected")
+        let editTool = app.buttons["agent.nativeEdit.tool.edit"]
+        scrollIntoView(editTool)
+        XCTAssertEqual(editTool.value as? String, "Not selected", "the fixture Agent cannot edit files")
+        let codemode = app.switches["agent.nativeEdit.optionalTool.codemode"]
+        scrollIntoView(codemode)
+        XCTAssertTrue(codemode.waitUntilExists(timeout: 10), "codemode is offered to an Agent")
+        XCTAssertEqual(codemode.value as? String, "0", "the fixture Agent does not name codemode")
+        attachScreenshot("agent-pi-tools")
+        // Turning codemode on adds it to the Agent's tools without wiping plugins or MCP.
+        codemode.tap()
+        XCTAssertTrue(
+            waitFor(codemode.value as? String == "1", timeout: 5),
+            "codemode switch must turn on"
+        )
+        app.buttons.matching(identifier: "BackButton").firstMatch.tap()
+        XCTAssertTrue(piTools.waitUntilExists(timeout: 10), "The editor did not come back")
+        XCTAssertEqual(
+            piTools.value as? String,
+            "read, bash, codemode",
+            "turning codemode on updates the editor's Pi Tools summary"
+        )
+
         let pluginsRow = app.buttons["agent.nativeEdit.plugins"]
         scrollIntoView(pluginsRow)
         XCTAssertEqual(pluginsRow.value as? String, "1 selected")
@@ -444,7 +476,7 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
         attachScreenshot("agent-editor-skills")
         app.buttons.matching(identifier: "BackButton").firstMatch.tap()
 
-        // A save writes the definition this form holds.
+        // A save writes the definition this form holds, including codemode and both lists.
         let save = app.buttons["agent.nativeEdit.save"]
         tapBarButton(save)
         XCTAssertTrue(app.navigationBars["Edit Agent"].waitUntilGone(timeout: 10), "Save closes the editor")
@@ -452,6 +484,31 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
             waitFor(lastWrite.contains("PATCH /agents/agent-nanny"), timeout: 10),
             "Save must reach the server: \(lastWrite)"
         )
+        XCTAssertTrue(
+            lastWrite.contains("codemode"),
+            "Save must persist codemode in capabilities.tools: \(lastWrite)"
+        )
+        // Reopen Edit Agent: codemode stays on and both plugin and MCP selections survived.
+        tapBarButton(edit)
+        XCTAssertTrue(app.navigationBars["Edit Agent"].waitUntilExists(timeout: 10), "The editor did not reopen")
+        let reopenedTools = app.buttons["agent.nativeEdit.tools"]
+        scrollIntoView(reopenedTools)
+        XCTAssertTrue(reopenedTools.waitUntilExists(timeout: 10))
+        XCTAssertEqual(reopenedTools.value as? String, "read, bash, codemode")
+        let reopenedPlugins = app.buttons["agent.nativeEdit.plugins"]
+        scrollIntoView(reopenedPlugins)
+        XCTAssertEqual(reopenedPlugins.value as? String, "1 selected")
+        let reopenedMcp = app.buttons["agent.nativeEdit.mcpServers"]
+        scrollIntoView(reopenedMcp)
+        XCTAssertEqual(reopenedMcp.value as? String, "2 selected")
+        tapScrolledIntoView(reopenedTools)
+        let reopenedCodemode = app.switches["agent.nativeEdit.optionalTool.codemode"]
+        scrollIntoView(reopenedCodemode)
+        XCTAssertTrue(reopenedCodemode.waitUntilExists(timeout: 10))
+        XCTAssertEqual(reopenedCodemode.value as? String, "1", "codemode must remain on after reopen")
+        app.buttons.matching(identifier: "BackButton").firstMatch.tap()
+        tapBarButton(cancelButton)
+        XCTAssertTrue(app.navigationBars["Edit Agent"].waitUntilGone(timeout: 10))
         assertRunning()
     }
 

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  AGENT_CORE_TIER_TOOLS,
   AGENT_MCP_RESOURCE_TOOL_NAMES,
   agentMcpNamespace,
+  agentPiTools,
   compileAgentCapabilities,
   createBuiltinPluginFactsReader,
   selectAgentSkills,
@@ -25,6 +25,19 @@ const servers: AgentMcpServerFact[] = [
   { ...server("off", ["codemode"]), enabled: false },
 ];
 
+/** Every Pi tool name a session's Pi Tools setting can govern on this server. */
+const piToolNames = [
+  "read",
+  "write",
+  "edit",
+  "bash",
+  "ls",
+  "find",
+  "grep",
+  "codemode",
+  "tool_search",
+];
+
 function compile(
   definition: AgentDefinition,
   overrides: Partial<Parameters<typeof compileAgentCapabilities>[0]> = {},
@@ -34,6 +47,7 @@ function compile(
     engine: "durable",
     runtime: "host",
     mcpServers: servers,
+    piToolNames,
     ...overrides,
   });
 }
@@ -41,8 +55,8 @@ function compile(
 describe("compileAgentCapabilities", () => {
   it("makes a default Agent a normal session", () => {
     const compiled = compile({ name: "A" });
-    expect(compiled.core).toBe("full");
-    expect(compiled.allowed).toBeUndefined();
+    expect(compiled.tools).toBeUndefined();
+    expect(compiled.readOnly).toBe(false);
     expect(compiled.excluded).toEqual([]);
     expect(compiled.mcp).toEqual({ enabled: true });
     expect(compiled.plugins).toBeUndefined();
@@ -55,17 +69,22 @@ describe("compileAgentCapabilities", () => {
     expect(compiled.warnings).toEqual([]);
   });
 
-  it("never needs an allow list, even for a read-only Agent", () => {
+  it("states its own Pi tools, and denies every other one Pi governs", () => {
+    // A selection is what the Agent keeps; Pi's tool policy can only deny a name, so the rest of
+    // Pi's own tools become exclusions. Plugin and MCP tools are untouched by it.
     const compiled = compile({
       name: "A",
-      capabilities: { core: "readonly", plugins: [], mcp: {} },
+      capabilities: { tools: ["read", "bash"], plugins: [], mcp: {} },
     });
-    expect(compiled.allowed).toBeUndefined();
-    // Read and shell only: the two tools that write, plus the MCP transport tools it cannot need.
+    expect(compiled.tools).toEqual(["read", "bash"]);
+    expect(compiled.readOnly).toBe(true);
     expect([...compiled.excluded].sort()).toEqual(
       [
         "codemode",
         "edit",
+        "find",
+        "grep",
+        "ls",
         "mcp__*",
         "tool_search",
         "write",
@@ -73,6 +92,16 @@ describe("compileAgentCapabilities", () => {
       ].sort(),
     );
     expect(compiled.mcp).toEqual({ enabled: false, servers: [] });
+  });
+
+  it("keeps the Pi tools an Agent names, even one the setting leaves off", () => {
+    // `grep` is not in the setting's own list; naming it is the Agent saying it wants it.
+    const compiled = compile({
+      name: "A",
+      capabilities: { tools: ["read", "bash", "grep"] },
+    });
+    expect(compiled.excluded).not.toContain("grep");
+    expect(compiled.excluded).toContain("ls");
   });
 
   it("derives codemode from a codemode-exposed server, and tool search from a deferred one", () => {
@@ -93,7 +122,7 @@ describe("compileAgentCapabilities", () => {
   it("keeps an explicit per-server tool list, and excludes the rest of that server's tools", () => {
     const compiled = compile({
       name: "A",
-      capabilities: { core: "readonly", plugins: [], mcp: { gmail: ["search", "read"] } },
+      capabilities: { tools: ["read"], plugins: [], mcp: { gmail: ["search", "read"] } },
     });
     expect(compiled.mcp.tools).toEqual({ gmail: ["search", "read"] });
     expect(compiled.excluded).toContain("mcp__gmail__send");
@@ -108,6 +137,7 @@ describe("compileAgentCapabilities", () => {
       engine: "classic",
       runtime: "host",
       mcpServers: facts,
+      piToolNames,
     });
     expect(compiled.mcp.servers).toEqual(["chrome-devtools"]);
     expect(compiled.excluded).toEqual([]);
@@ -150,18 +180,51 @@ describe("compileAgentCapabilities", () => {
     expect(compiled.discovery).toEqual(["tool_search"]);
   });
 
-  it("affords tool search to a full Agent, not to a read-only one", () => {
-    // A plugin's deferred tool is declared to the model only once tool_search loads it. A full
-    // Agent may reach every loaded plugin, so the search is part of a normal session. A read-only
-    // Agent states what it reaches: Oppi's catalog reports tool names, not exposures, so nothing
-    // can say whether a plugin it named defers a tool, and the search would hand it unnamed tools.
+  it("affords tool search to an Agent that follows the setting, not to one with its own tools", () => {
+    // A plugin's deferred tool is declared to the model only once tool_search loads it. An Agent
+    // with no tool set of its own is a normal session, so the search is part of it. An Agent that
+    // states its tools gets exactly what it named.
     expect(compile({ name: "A" }, { mcpServers: [] }).discovery).toEqual(["tool_search"]);
     const sealed = compile({
       name: "A",
-      capabilities: { core: "readonly", plugins: ["imagen", "secret"], mcp: {} },
+      capabilities: { tools: ["read", "bash"], plugins: ["imagen", "secret"], mcp: {} },
     });
     expect(sealed.discovery).toEqual([]);
     expect(sealed.excluded).toContain("tool_search");
+  });
+
+  it("turns codemode on for a read-only Agent that names it", () => {
+    // The owner's own case: an Agent that cannot edit files may still batch its work through
+    // codemode, with no MCP server at all.
+    const compiled = compile({
+      name: "Reviewer",
+      capabilities: { tools: ["read", "bash", "codemode"], plugins: [], mcp: {} },
+    });
+    expect(compiled.readOnly).toBe(true);
+    expect(compiled.discovery).toEqual(["codemode"]);
+    expect(compiled.excluded).not.toContain("codemode");
+  });
+
+  it("keeps codemode off for a read-only Agent that does not name it", () => {
+    const compiled = compile({
+      name: "Reviewer",
+      capabilities: { tools: ["read", "bash"], plugins: [], mcp: {} },
+    });
+    expect(compiled.readOnly).toBe(true);
+    expect(compiled.discovery).toEqual([]);
+    expect(compiled.excluded).toContain("codemode");
+  });
+
+  it("hands codemode to a read-only Agent whose named MCP server needs it", () => {
+    // The regression the plan protects: a server exposing codemode arrives that way whether or
+    // not the Agent named the transport.
+    const compiled = compile({
+      name: "Mail triage",
+      capabilities: { tools: ["read", "bash"], plugins: [], mcp: { gmail: "all" } },
+    });
+    expect(compiled.readOnly).toBe(true);
+    expect(compiled.discovery).toEqual(["codemode", "tool_search"]);
+    expect(compiled.excluded).not.toContain("codemode");
   });
 
   it("carries the context toggles straight through", () => {
@@ -180,9 +243,39 @@ describe("compileAgentCapabilities", () => {
       engine: "classic",
       runtime: "host",
       mcpServers: [server("gmail", ["codemode"])],
+      piToolNames,
     });
     expect(compiled.warnings).toHaveLength(1);
     expect(compiled.warnings[0]).toContain("gmail");
+  });
+});
+
+describe("agentPiTools", () => {
+  it("returns undefined when the Agent follows the server's Pi Tools setting", () => {
+    expect(agentPiTools(undefined)).toBeUndefined();
+    expect(agentPiTools(compile({ name: "Worker" }))).toBeUndefined();
+  });
+
+  it("includes codemode from discovery without duplicating it or adding tool_search", () => {
+    const withServer = compile({
+      name: "Mail triage",
+      capabilities: { tools: ["read", "bash"], plugins: [], mcp: { gmail: "all" } },
+    });
+    expect(withServer.discovery).toEqual(["codemode", "tool_search"]);
+    expect(agentPiTools(withServer)).toEqual(["read", "bash", "codemode"]);
+
+    const namedCodemode = compile({
+      name: "Batching",
+      capabilities: { tools: ["read", "bash", "codemode"], plugins: [], mcp: { gmail: "all" } },
+    });
+    expect(agentPiTools(namedCodemode)).toEqual(["read", "bash", "codemode"]);
+
+    const deferredOnly = compile({
+      name: "Deferred",
+      capabilities: { tools: ["read", "bash"], plugins: [], mcp: { coros: "all" } },
+    });
+    expect(deferredOnly.discovery).toEqual(["tool_search"]);
+    expect(agentPiTools(deferredOnly)).toEqual(["read", "bash"]);
   });
 });
 
@@ -235,20 +328,28 @@ describe("Oppi's own plugins, by the names its catalog uses", () => {
     { name: "oppi-control", tools: ["agents_create", "sessions_send"] },
   ];
 
-  it("keeps every unnamed plugin's tools out of a read-only Agent", () => {
-    const compiled = compile({ name: "Reviewer", capabilities: { core: "readonly" } }, {
-      builtinPlugins: catalog,
-    });
-    for (const tool of ["sqlite_query", "godot_export", "secret_run", "background_job", "agents_create"]) {
+  it("keeps every unnamed plugin's tools out of an Agent that cannot edit files", () => {
+    const compiled = compile(
+      { name: "Reviewer", capabilities: { tools: ["read", "bash"], plugins: [], mcp: {} } },
+      { builtinPlugins: catalog },
+    );
+    for (const tool of [
+      "sqlite_query",
+      "godot_export",
+      "secret_run",
+      "background_job",
+      "agents_create",
+    ]) {
       expect(compiled.excluded, tool).toContain(tool);
     }
   });
 
-  it("keeps the tier's own tools and the switch tools a read-only Agent has", () => {
-    // `bash` arrives through background-jobs, but it is the read-only tier's own tool.
-    const compiled = compile({ name: "Reviewer", capabilities: { core: "readonly" } }, {
-      builtinPlugins: catalog,
-    });
+  it("keeps the tools the Agent names and the switch tools it has", () => {
+    // `bash` arrives through background-jobs, but the Agent names it, so it stays.
+    const compiled = compile(
+      { name: "Reviewer", capabilities: { tools: ["read", "bash"], plugins: [], mcp: {} } },
+      { builtinPlugins: catalog },
+    );
     expect(compiled.excluded).not.toContain("bash");
     // Notify is the notify switch's, and live voice is the session's own call.
     expect(compiled.excluded).not.toContain("notify");
@@ -257,18 +358,41 @@ describe("Oppi's own plugins, by the names its catalog uses", () => {
 
   it("gives back a named plugin's tools", () => {
     const compiled = compile(
-      { name: "Reviewer", capabilities: { core: "readonly", plugins: ["background-jobs"] } },
+      {
+        name: "Reviewer",
+        capabilities: { tools: ["read", "bash"], plugins: ["background-jobs"], mcp: {} },
+      },
       { builtinPlugins: catalog },
     );
     expect(compiled.excluded).not.toContain("background_job");
     expect(compiled.excluded).toContain("sqlite_query");
   });
 
-  it("refuses a read-only Agent when the catalog could not be read, and starts a full one", () => {
+  it("keeps an unnamed plugin's tool out even when a read-only Agent names it in tools", () => {
+    // Only Pi's own governed tools (such as `bash` wrapped by background-jobs) are protected from
+    // unnamed built-in exclusions; naming a feature plugin's tool in `capabilities.tools` must not
+    // bypass the read-only plugin rule.
+    const compiled = compile(
+      {
+        name: "Reviewer",
+        capabilities: {
+          tools: ["read", "bash", "sqlite_query", "godot_export"],
+          plugins: [],
+          mcp: {},
+        },
+      },
+      { builtinPlugins: catalog },
+    );
+    expect(compiled.excluded).toContain("sqlite_query");
+    expect(compiled.excluded).toContain("godot_export");
+    expect(compiled.excluded).not.toContain("bash");
+  });
+
+  it("refuses an Agent that cannot edit files when the catalog could not be read", () => {
     let refused: unknown;
     try {
       compile(
-        { name: "Reviewer", capabilities: { core: "readonly" } },
+        { name: "Reviewer", capabilities: { tools: ["read", "bash"], plugins: [], mcp: {} } },
         { builtinPluginsUnknown: true },
       );
     } catch (error) {
@@ -277,8 +401,11 @@ describe("Oppi's own plugins, by the names its catalog uses", () => {
     expect(refused).toBeInstanceOf(AgentConfigurationError);
     expect((refused as AgentConfigurationError).code).toBe("agent_builtin_plugins_unavailable");
 
-    const full = compile({ name: "Worker" }, { builtinPluginsUnknown: true });
-    expect(full.core).toBe("full");
+    const writable = compile(
+      { name: "Worker", capabilities: { tools: ["read", "bash", "edit"] } },
+      { builtinPluginsUnknown: true },
+    );
+    expect(writable.readOnly).toBe(false);
   });
 });
 

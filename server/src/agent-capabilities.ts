@@ -8,33 +8,25 @@
  *
  * Two rules keep the model honest:
  *
- * - A tier never needs an allow list. `full` is a normal session (only exclusions), and
- *   `readonly` is a normal session that may not write. What a session *has* comes from the
- *   extensions that are selected, not from a second list of names that can drift from them.
+ * - Pi's tools are named, never filtered by a tier. An Agent either follows the Pi Tools setting
+ *   (`tools` omitted) or states its own set, which the compiler turns into exclusions: Pi's tool
+ *   policy can deny a name and cannot allow one, so the Agent's set is a list of names it keeps.
+ *   What a session *has* beyond those comes from the extensions that are selected.
  * - Transport is derived, never stored. An Agent names MCP servers and tools; whether that
  *   needs `codemode` or `tool_search` is this file's answer for the resolved exposure, so a
  *   workspace switching a server from `direct` to `codemode` cannot break an Agent.
  */
 import {
   isAgentDefinitionV1,
-  type AgentCoreTier,
   type AgentDefinition,
   type AgentMcpSelection,
   type AgentMcpServerFact,
 } from "./agent-definition.js";
 import { AgentConfigurationError } from "./agent-launch-errors.js";
+import { PI_DISCOVERY_TOOL_NAMES } from "./pi-tool-names.js";
 
-/** The built-in coding tools per tier. `full` adds nothing: the session's own set applies. */
-export const AGENT_CORE_TIER_TOOLS: Readonly<Record<AgentCoreTier, readonly string[]>> = {
-  full: ["read", "write", "edit", "bash", "ls", "find", "grep"],
-  readonly: ["read", "bash", "ls", "find", "grep"],
-};
-
-/** The tools a tier may not use, so `readonly` stays "read and shell only" without an allow list. */
-const AGENT_TIER_DENIED_TOOLS: Readonly<Record<AgentCoreTier, readonly string[]>> = {
-  full: [],
-  readonly: ["write", "edit"],
-};
+/** The two tool names that write files: an Agent with neither cannot change them. */
+const AGENT_FILE_WRITE_TOOLS = ["write", "edit"] as const;
 
 /**
  * The built-in plugins whose tools a read-only Agent keeps without naming them: the session's own
@@ -59,9 +51,13 @@ export const AGENT_MCP_RESOURCE_TOOL_NAMES = [
   "read_mcp_resource",
 ] as const;
 
-/** The tools no Agent writes by name: the MCP transport meta-tools the compiler derives. */
-export const AGENT_DISCOVERY_TOOLS = ["codemode", "tool_search"] as const;
-export type AgentDiscoveryTool = (typeof AGENT_DISCOVERY_TOOLS)[number];
+/** The tools an Agent may name that the compiler also derives: the MCP transport meta-tools. */
+export const AGENT_DISCOVERY_TOOLS = PI_DISCOVERY_TOOL_NAMES;
+export type AgentDiscoveryTool = (typeof PI_DISCOVERY_TOOL_NAMES)[number];
+
+export function isAgentDiscoveryTool(name: string): name is AgentDiscoveryTool {
+  return (AGENT_DISCOVERY_TOOLS as readonly string[]).includes(name);
+}
 
 /** Pi's MCP namespace for a server name: what its tool names are prefixed with. */
 export function agentMcpNamespace(serverName: string): string {
@@ -74,25 +70,31 @@ export interface AgentBuiltinPluginFact {
   readonly tools: readonly string[];
 }
 
+/** Whether a Pi tool set leaves an Agent unable to change files. */
+export function agentToolSetReadOnly(tools: readonly string[]): boolean {
+  return AGENT_FILE_WRITE_TOOLS.every((name) => !tools.includes(name));
+}
+
 /**
- * The tools of Oppi's own built-in plugins a read-only Agent may not use, because it did not name
- * the plugin. A read-only Agent states what it may reach; a feature plugin it never asked for is
- * also a way to write (`sqlite_query`, `godot_export`), so it does not arrive by omission — an
- * Agent that names no plugins reaches none of them. Both engines call this with their own
- * built-in inventory, so the two sessions get the same answer.
+ * The tools of Oppi's own built-in plugins an Agent that cannot edit files may not use, because it
+ * did not name the plugin. Such an Agent states what it may reach; a feature plugin it never asked
+ * for is also a way to write (`sqlite_query`, `godot_export`), so it does not arrive by omission.
+ * Both engines call this with their own built-in inventory, so the two sessions get the same
+ * answer. `kept` is the Pi tools the Agent kept (already filtered to `piToolNames`): a plugin that
+ * wraps a coding tool the Agent kept must not take that tool away, and naming an arbitrary plugin
+ * tool in `capabilities.tools` must not bypass this rule.
  */
 export function unchosenBuiltinToolExclusions(
-  core: AgentCoreTier,
+  kept: readonly string[],
   plugins: readonly string[] | undefined,
   builtins: readonly AgentBuiltinPluginFact[] | undefined,
 ): string[] {
-  if (core !== "readonly" || builtins === undefined) return [];
+  if (builtins === undefined) return [];
   const named = new Set(plugins ?? []);
   const togglePlugins = new Set<string>(
     Object.values(AGENT_TOGGLE_TOOLS).map((toggle) => toggle.plugin as string),
   );
-  // A plugin that wraps a coding tool must not take that tool away: the tier decides those.
-  const tierTools = new Set(AGENT_CORE_TIER_TOOLS[core]);
+  const keptTools = new Set(kept);
   const excluded: string[] = [];
   for (const builtin of builtins) {
     if (named.has(builtin.name)) continue;
@@ -100,7 +102,7 @@ export function unchosenBuiltinToolExclusions(
     if (AGENT_SESSION_OWN_PLUGINS.has(builtin.name)) continue;
     // A session's own MCP extensions are per session, not an Agent's choice.
     if (builtin.name.startsWith("oppi.mcp/")) continue;
-    for (const tool of builtin.tools) if (!tierTools.has(tool)) excluded.push(tool);
+    for (const tool of builtin.tools) if (!keptTools.has(tool)) excluded.push(tool);
   }
   return [...new Set(excluded)];
 }
@@ -133,12 +135,10 @@ export function createBuiltinPluginFactsReader(
 
 /** A compiled Agent: everything a session needs, with no definition left to interpret. */
 export interface CompiledAgentCapabilities {
-  readonly core: AgentCoreTier;
-  /**
-   * The Pi tool allow list, or undefined: `full` and `readonly` both compile to exclusions only,
-   * so a session's own tools (the Pi Tools setting, its plugins) stay in force.
-   */
-  readonly allowed?: readonly string[];
+  /** The Agent's Pi tool set, or undefined: a session follows the Pi Tools setting. */
+  readonly tools?: readonly string[];
+  /** Whether that set leaves the Agent unable to change files (no `edit`, no `write`). */
+  readonly readOnly: boolean;
   readonly excluded: readonly string[];
   /** `codemode` / `tool_search`: the discovery tools this session may use. */
   readonly discovery: readonly AgentDiscoveryTool[];
@@ -180,10 +180,17 @@ export interface CompileAgentCapabilitiesInput {
   readonly builtinPlugins?: readonly AgentBuiltinPluginFact[];
   /**
    * The catalog could not be read and nothing was cached: what the built-ins offer is unknown.
-   * A read-only Agent is refused (`agent_builtin_plugins_unavailable`), because the alternative is
-   * handing it tools it did not name; a full Agent's tools do not depend on it and it starts.
+   * An Agent that cannot edit files is refused (`agent_builtin_plugins_unavailable`), because the
+   * alternative is handing it tools it did not name; any other Agent starts.
    */
   readonly builtinPluginsUnknown?: boolean;
+  /**
+   * Every tool name Pi's `defaultTools` governs on this server: Pi's built-in tools, `codemode`,
+   * `tool_search`, and the optional tools the setting turns on (`piToolNames()`). An Agent that
+   * states its own set denies the rest of them, so this is required: an engine that could not say
+   * what Pi governs would silently widen every Agent that names its tools.
+   */
+  readonly piToolNames: readonly string[];
 }
 
 /**
@@ -205,16 +212,19 @@ export function compileAgentCapabilities(
     );
   }
   const capabilities = input.definition.capabilities ?? {};
-  const core: AgentCoreTier = capabilities.core ?? "full";
-  // Fail closed. A read-only Agent's tool set is "what it named, and nothing else", which needs
-  // Oppi's plugin inventory; an unknown inventory would silently widen it.
-  if (input.builtinPluginsUnknown === true && core === "readonly") {
+  // The Agent's own Pi tool set, or none: `undefined` follows the Pi Tools setting. Names are
+  // deduplicated here, so the engines and the app never see the same tool twice.
+  const tools = capabilities.tools === undefined ? undefined : [...new Set(capabilities.tools)];
+  const readOnly = tools !== undefined && agentToolSetReadOnly(tools);
+  // Fail closed. Such an Agent's reach is "what it named, and nothing else", which needs Oppi's
+  // plugin inventory; an unknown inventory would silently widen it.
+  if (input.builtinPluginsUnknown === true && readOnly) {
     throw new AgentConfigurationError(
       "agent_builtin_plugins_unavailable",
       {},
-      `Agent ${input.definition.name} runs read-only, and Oppi could not read its plugin ` +
-        `inventory to keep unnamed tools out of the session. Try launching again, or run it with ` +
-        `full access.`,
+      `Agent ${input.definition.name} cannot edit files, and Oppi could not read its plugin ` +
+        `inventory to keep unnamed tools out of the session. Try launching again, or give the ` +
+        `Agent \`edit\` or \`write\` in its tools.`,
     );
   }
   const ask = capabilities.ask ?? true;
@@ -230,38 +240,44 @@ export function compileAgentCapabilities(
     runtime: input.runtime,
   });
 
-  // Pi registers `tool_search` inactive and declares a deferred tool to nobody until it loads.
-  // A full Agent may reach every loaded plugin, so the search is part of a normal session here,
-  // whatever the Pi Tools setting says: a plugin's deferred tools (imagen's image tools, secret's)
-  // are otherwise unreachable. A read-only Agent does not get it: Oppi's catalog reports tool
-  // names, not exposures, so nothing can say whether a plugin it named defers a tool, and the
-  // search would let it load tools it never named. MCP servers ask for it through their own
-  // exposure, which `compileMcp` reports.
+  // Two sources ask for a discovery tool. A session that follows the Pi Tools setting is a normal
+  // session, so `tool_search` is part of it whatever the setting says: Pi registers it inactive,
+  // and a plugin's deferred tools (imagen's image tools, secret's) are otherwise unreachable. An
+  // Agent with its own set gets exactly the discovery tools it names. Either way an admitted MCP
+  // server's own exposure adds what makes it reachable (`compileMcp`), so switching a server
+  // from `direct` to `codemode` cannot break an Agent.
   const discovery: AgentDiscoveryTool[] = [
-    ...mcp.discovery,
-    ...(core === "full" && !mcp.discovery.includes("tool_search")
-      ? (["tool_search"] as const)
-      : []),
+    ...new Set<AgentDiscoveryTool>([
+      ...mcp.discovery,
+      ...(tools === undefined ? (["tool_search"] as const) : []),
+      ...(tools ?? []).filter(isAgentDiscoveryTool),
+    ]),
   ];
 
-  const deniedDiscovery = mcp.selection.enabled
-    ? []
-    : AGENT_DISCOVERY_TOOLS.filter((tool) => !discovery.includes(tool));
+  // An Agent with its own set keeps the Pi tools it names and denies the rest of Pi's own: the
+  // deny is the only direction Pi's tool policy has, and it leaves plugin and MCP tools alone.
+  const deniedPiTools = (
+    tools === undefined ? [] : input.piToolNames.filter((name) => !tools.includes(name))
+  ).filter((name) => !(isAgentDiscoveryTool(name) && discovery.includes(name)));
+  // Only Pi's own governed tools (such as `bash` wrapped by background-jobs) are kept past the
+  // unnamed built-in plugin rule; naming a feature plugin's tool in `tools` cannot bypass it.
+  const piToolSet = new Set(input.piToolNames);
+  const keptPiTools = tools === undefined ? [] : tools.filter((name) => piToolSet.has(name));
   const excluded = [
-    ...AGENT_TIER_DENIED_TOOLS[core],
+    ...deniedPiTools,
     ...(ask ? [] : [AGENT_TOGGLE_TOOLS.ask.tool]),
     ...(notify ? [] : [AGENT_TOGGLE_TOOLS.notify.tool]),
     ...(subagent ? [] : [AGENT_TOGGLE_TOOLS.subagent.tool]),
-    // A read-only Agent keeps codemode and tool search only when an admitted server needs them:
-    // both reach whatever the servers expose, which a read-only Agent asked to narrow.
-    ...(core === "readonly" ? deniedDiscovery : []),
     ...mcp.excludedTools,
     // A feature plugin it never named is also a way to write (`sqlite_query`, `godot_export`).
-    ...unchosenBuiltinToolExclusions(core, plugins, input.builtinPlugins),
+    ...(tools !== undefined && readOnly
+      ? unchosenBuiltinToolExclusions(keptPiTools, plugins, input.builtinPlugins)
+      : []),
   ];
 
   return {
-    core,
+    ...(tools === undefined ? {} : { tools }),
+    readOnly,
     excluded: [...new Set(excluded)],
     discovery,
     mcp: mcp.selection,
@@ -276,6 +292,24 @@ export function compileAgentCapabilities(
     subagent,
     warnings: mcp.warnings,
   };
+}
+
+/**
+ * The Pi tool names a compiled Agent's own set enables in both engines, or `undefined` when it
+ * follows the server's Pi Tools setting.
+ *
+ * Adds `codemode` when an admitted MCP server is reached through it, so such a server stays
+ * reachable even when the Agent did not name `codemode`. `tool_search` is deliberately omitted:
+ * the search reaches every tool a plugin defers, and an Agent that stated its tools reaches only
+ * what it named (`durable-mcp.ts`, `discoveryTools`).
+ */
+export function agentPiTools(
+  compiled: CompiledAgentCapabilities | undefined,
+): string[] | undefined {
+  if (compiled?.tools === undefined) return undefined;
+  return compiled.discovery.includes("codemode") && !compiled.tools.includes("codemode")
+    ? [...compiled.tools, "codemode"]
+    : [...compiled.tools];
 }
 
 /**

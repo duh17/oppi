@@ -125,19 +125,33 @@ struct AgentEditorScreensTests {
         let screen = try Screen(makeEditor())
         defer { screen.hide() }
 
-        let editFiles = try #require(await screen.waitForSwitch("agent.nativeEdit.editFiles"))
-        #expect(editFiles.isOn, "a normal session's tools are the default")
+        // The first row also waits for the page's own list to load, which sets the others.
+        let toolsRow = try #require(await screen.waitForButton("agent.nativeEdit.tools"))
+        #expect(toolsRow.accessibilityValue == "Pi standard", "a new Agent follows the setting")
         #expect(screen.button("agent.nativeEdit.plugins")?.accessibilityValue == "All")
         #expect(screen.button("agent.nativeEdit.mcpServers")?.accessibilityValue == "All")
         #expect(screen.button("agent.nativeEdit.skills")?.accessibilityValue == "All")
 
-        // Turning Edit files off narrows the Agent to reading, and it names nothing to reach.
-        editFiles.isOn = false
-        editFiles.sendActions(for: .valueChanged)
+        // The Pi Tools page is Pi's own: choose an exact set, then take edit and write out of it.
+        toolsRow.sendActions(for: .touchUpInside)
+        let tools = try #require(await screen.waitForPushedPage(AgentToolSelectionViewController.self))
+        let mode = try #require(await screen.waitForButton("agent.nativeEdit.toolMode", in: tools.view))
+        try KitMenuRow.choose("Choose tools", in: mode)
+        for name in ["edit", "write"] {
+            let tool = try #require(await screen.waitForButton("agent.nativeEdit.tool.\(name)", in: tools.view))
+            #expect(tool.accessibilityValue == "Selected", "the set starts from Pi's own tools")
+            tool.sendActions(for: .touchUpInside)
+            #expect(await screen.waitFor {
+                screen.button("agent.nativeEdit.tool.\(name)", in: tools.view)?.accessibilityValue == "Not selected"
+            })
+        }
+        screen.navigation.popViewController(animated: false)
+
+        // Without edit and write the Agent cannot change files, and it names what it reaches.
         #expect(await screen.waitFor { screen.button("agent.nativeEdit.plugins")?.accessibilityValue == "None" })
         #expect(screen.button("agent.nativeEdit.mcpServers")?.accessibilityValue == "None")
         #expect(await screen.waitFor {
-            screen.footer("Without Edit files this Agent reads and searches only, and it names the plugins and MCP servers it may use (both start at None).")
+            screen.footer("Without edit and write this Agent cannot change files, and it names the plugins and MCP servers it may use (both start at None). Ask me, Notify me, and Delegate decide whether it can ask you a question, send a push when it is done, and start child sessions.")
         })
 
         for identifier in ["agent.nativeEdit.askMe", "agent.nativeEdit.notifyMe", "agent.nativeEdit.delegate",
@@ -153,7 +167,7 @@ struct AgentEditorScreensTests {
 
         let definition = try #require(AgentEditorURLProtocol.savedAgent?.definition)
         let capabilities = try #require(definition.capabilities)
-        #expect(capabilities.core == .readonly)
+        #expect(capabilities.tools == ["read", "bash"])
         #expect(capabilities.ask == false)
         #expect(capabilities.notify == false)
         #expect(capabilities.subagent == false)
@@ -166,8 +180,9 @@ struct AgentEditorScreensTests {
         // What the server stored is what the editor shows when it opens again.
         let reopened = try Screen(makeEditor(agent: AgentEditorURLProtocol.savedAgent))
         defer { reopened.hide() }
-        let editFilesAgain = await reopened.waitForSwitch("agent.nativeEdit.editFiles")
-        #expect(editFilesAgain?.isOn == false)
+        let reopenedTools = try #require(await reopened.waitForButton("agent.nativeEdit.tools"))
+        // The stored order reads the same before the tools catalog loads and after it.
+        #expect(reopenedTools.accessibilityValue == "read, bash")
         #expect(reopened.button("agent.nativeEdit.plugins")?.accessibilityValue == "None")
         #expect(reopened.switchIsOn("agent.nativeEdit.askMe") == false)
         #expect(reopened.switchIsOn("agent.nativeEdit.contextFiles") == false)
@@ -179,7 +194,7 @@ struct AgentEditorScreensTests {
     @Test("a read-only Agent's plugin page offers a list, not everything")
     func readOnlyAgentCannotFollowEveryPlugin() async throws {
         let screen = try Screen(makeEditor(
-            agent: makeAgent(capabilities: AgentCapabilities(core: .readonly, plugins: [], mcp: [:]))
+            agent: makeAgent(capabilities: AgentCapabilities(tools: ["read", "bash"], plugins: [], mcp: [:]))
         ))
         defer { screen.hide() }
 
@@ -205,9 +220,117 @@ struct AgentEditorScreensTests {
         try await screen.saveAndWait()
 
         let capabilities = try #require(AgentEditorURLProtocol.savedAgent?.definition.capabilities)
-        #expect(capabilities.core == .readonly)
+        #expect(capabilities.tools == ["read", "bash"])
         #expect(capabilities.plugins == ["webtools"])
         #expect(capabilities.mcp?.isEmpty == true, "the MCP map is still stated, so the server keeps it explicit")
+    }
+
+    @Test("a read-only Agent with plugins and MCP keeps both lists when turning codemode on")
+    func readOnlyAgentTurningCodemodeOnKeepsPluginsAndMcp() async throws {
+        let screen = try Screen(makeEditor(
+            agent: makeAgent(capabilities: AgentCapabilities(
+                tools: ["read", "bash"],
+                plugins: ["webtools"],
+                mcp: [
+                    "gmail": .tools(["search_emails", "read_email"]),
+                    "coros": .all,
+                ]
+            ))
+        ))
+        defer { screen.hide() }
+
+        let toolsRow = try #require(await screen.waitForButton("agent.nativeEdit.tools"))
+        #expect(toolsRow.accessibilityValue == "read, bash")
+        #expect(screen.button("agent.nativeEdit.plugins")?.accessibilityValue == "1 selected")
+        #expect(screen.button("agent.nativeEdit.mcpServers")?.accessibilityValue == "2 selected")
+
+        toolsRow.sendActions(for: .touchUpInside)
+        let tools = try #require(await screen.waitForPushedPage(AgentToolSelectionViewController.self))
+        let codemode = try #require(await screen.waitForSwitch("agent.nativeEdit.optionalTool.codemode", in: tools.view))
+        #expect(!codemode.isOn)
+        codemode.setOn(true, animated: false)
+        codemode.sendActions(for: .valueChanged)
+        #expect(await screen.waitFor {
+            screen.visibleViews(of: UISwitch.self, in: tools.view)
+                .first { $0.accessibilityIdentifier == "agent.nativeEdit.optionalTool.codemode" }?.isOn == true
+        })
+
+        screen.navigation.popViewController(animated: false)
+        #expect(await screen.waitFor {
+            screen.button("agent.nativeEdit.tools")?.accessibilityValue == "read, bash, codemode"
+        })
+        #expect(screen.button("agent.nativeEdit.plugins")?.accessibilityValue == "1 selected")
+        #expect(screen.button("agent.nativeEdit.mcpServers")?.accessibilityValue == "2 selected")
+
+        try await screen.saveAndWait()
+
+        let capabilities = try #require(AgentEditorURLProtocol.savedAgent?.definition.capabilities)
+        #expect(capabilities.tools == ["read", "bash", "codemode"])
+        #expect(capabilities.plugins == ["webtools"])
+        #expect(capabilities.mcp == [
+            "gmail": .tools(["search_emails", "read_email"]),
+            "coros": .all,
+        ])
+    }
+
+    @Test("choosing exact tools before the catalog loads does not produce an empty set or wipe plugins and MCP")
+    func choosingExactBeforeCatalogLoadsDoesNotProduceEmptySetOrWipe() async throws {
+        let draft = AgentNativeEditDraft(
+            agent: makeAgent(capabilities: AgentCapabilities(
+                tools: nil,
+                plugins: ["webtools"],
+                mcp: ["gmail": .all]
+            )),
+            connection: makeConnection(),
+            serverName: "mac-studio"
+        )
+        #expect(draft.builtInTools.isEmpty, "catalog has not loaded yet")
+        let page = AgentToolSelectionViewController(selection: .agent(draft, serverName: "mac-studio"))
+        let screen = try Screen(page)
+        defer { screen.hide() }
+
+        let mode = try #require(await screen.waitForButton("agent.nativeEdit.toolMode", in: page.view))
+        try Screen.choose("Choose tools", in: mode)
+
+        #expect(!draft.toolsAll)
+        #expect(!draft.selectedTools.isEmpty, "switching to Choose tools before load must not start empty")
+        #expect(draft.canEditFiles, "default tools remain editable until edit and write are turned off")
+        #expect(draft.selectedPlugins == ["webtools"])
+        #expect(draft.mcpSelection == ["gmail": .all])
+    }
+
+    @Test("Pi-defaults mode hides optional switches for an Agent and shows them once Choose tools is picked")
+    func piDefaultsModeHidesOptionalSwitchesUntilExactIsChosen() async throws {
+        let screen = try Screen(makeEditor(agent: makeAgent()))
+        defer { screen.hide() }
+
+        let toolsRow = try #require(await screen.waitForButton("agent.nativeEdit.tools"))
+        toolsRow.sendActions(for: .touchUpInside)
+        let tools = try #require(await screen.waitForPushedPage(AgentToolSelectionViewController.self))
+        let mode = try #require(await screen.waitForButton("agent.nativeEdit.toolMode", in: tools.view))
+        #expect(mode.accessibilityValue == "Pi defaults")
+        #expect(await screen.waitFor {
+            screen.footer(AgentManagementPresentation.agentToolsFollowSettingFooter)
+        })
+        // Optional switches do not apply in Pi-defaults mode: an Agent follows the server setting.
+        #expect(
+            screen.visibleViews(of: UISwitch.self, in: tools.view)
+                .first { $0.accessibilityIdentifier == "agent.nativeEdit.optionalTool.codemode" } == nil
+        )
+
+        // Choosing an exact set reveals both built-in and optional tools, and codemode saves.
+        try Screen.choose("Choose tools", in: mode)
+        let codemode = try #require(await screen.waitForSwitch("agent.nativeEdit.optionalTool.codemode", in: tools.view))
+        #expect(!codemode.isOn)
+        codemode.setOn(true, animated: false)
+        codemode.sendActions(for: .valueChanged)
+        screen.navigation.popViewController(animated: false)
+
+        try await screen.saveAndWait()
+        #expect(
+            AgentEditorURLProtocol.savedAgent?.definition.capabilities?.tools
+                == ["read", "bash", "edit", "write", "codemode"]
+        )
     }
 
     @Test("a plugin with no summary attached is still offered, by its contributed tools")
@@ -652,8 +775,8 @@ private final class AgentEditorURLProtocol: URLProtocol, @unchecked Sendable {
         case ("GET", "/server/resources/extensions"):
             body = Self.json(ServerExtensionCatalog(
                 extensions: Self.extensions,
-                builtInTools: [],
-                optionalTools: []
+                builtInTools: Self.builtInTools,
+                optionalTools: Self.optionalTools
             ))
         case ("GET", let path) where path.hasPrefix("/mcp/scopes/") && path.hasSuffix("/servers"):
             let scopeId = path
@@ -759,6 +882,21 @@ private final class AgentEditorURLProtocol: URLProtocol, @unchecked Sendable {
             id: "broken", name: "broken", description: "Invalid frontmatter.", provenance: provenance("~/.pi/agent/skills"),
             path: "/skills/broken/SKILL.md", state: .error, loadError: "Missing description.", warnings: [], editable: true
         ),
+    ]
+
+    /// Pi's own built-in tools, as the server lists them: read, bash, edit and write are on.
+    static let builtInTools: [ServerToolSummary] = [
+        ServerToolSummary(name: "read", description: "Read a file", defaultEnabled: true),
+        ServerToolSummary(name: "bash", description: "Run a command", defaultEnabled: true),
+        ServerToolSummary(name: "edit", description: "Edit a file", defaultEnabled: true),
+        ServerToolSummary(name: "write", description: "Write a file", defaultEnabled: true),
+        ServerToolSummary(name: "grep", description: "Search text", defaultEnabled: false),
+        ServerToolSummary(name: "find", description: "Find files", defaultEnabled: false),
+        ServerToolSummary(name: "ls", description: "List a folder", defaultEnabled: false),
+    ]
+    static let optionalTools: [ServerToolSummary] = [
+        ServerToolSummary(name: "codemode", description: "Run JavaScript", defaultEnabled: false),
+        ServerToolSummary(name: "tool_search", description: "Search tools", defaultEnabled: false),
     ]
 
     private static let extensions: [ServerExtensionSummary] = [

@@ -1093,5 +1093,16 @@
         "workout_library"
       ]
     ]
+  ],
+  "piToolNames": [
+    "read",
+    "write",
+    "edit",
+    "bash",
+    "ls",
+    "find",
+    "grep",
+    "codemode",
+    "tool_search"
   ]
 }

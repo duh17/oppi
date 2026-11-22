@@ -188,7 +188,7 @@ struct AgentScheduleAPIClientTests {
                 mode: .replace,
                 text: "Use only these instructions."
             ),
-            capabilities: AgentCapabilities(core: .full, ask: true, notify: true, subagent: true),
+            capabilities: AgentCapabilities(tools: ["read", "edit"], ask: true, notify: true, subagent: true),
             context: AgentContext(contextFiles: true, sessionHistory: false),
             model: "openai/gpt-5.6",
             thinkingLevel: .max
@@ -214,7 +214,7 @@ struct AgentScheduleAPIClientTests {
             let context = try #require(json["context"] as? [String: Any])
             switch requestCount {
             case 1:
-                #expect(capabilities["core"] as? String == "readonly")
+                #expect(capabilities["tools"] as? [String] == ["read", "bash"])
                 #expect(capabilities["ask"] as? Bool == false)
                 #expect(capabilities["notify"] as? Bool == true)
                 #expect(capabilities["subagent"] as? Bool == false)
@@ -224,13 +224,13 @@ struct AgentScheduleAPIClientTests {
                 #expect(context["contextFiles"] as? Bool == false)
                 #expect(context["sessionHistory"] as? Bool == true)
             default:
-                #expect(capabilities["core"] is NSNull)
+                #expect(capabilities["tools"] is NSNull)
                 #expect(capabilities["plugins"] is NSNull)
                 #expect(capabilities["mcp"] is NSNull)
                 #expect(context["skills"] is NSNull)
             }
             let definition = requestCount == 1
-                ? #"{"name":"Reviewer","capabilities":{"core":"readonly","ask":false,"subagent":false,"plugins":[],"mcp":{}},"context":{"skills":[],"contextFiles":false}}"#
+                ? #"{"name":"Reviewer","capabilities":{"tools":["read","bash"],"ask":false,"subagent":false,"plugins":[],"mcp":{}},"context":{"skills":[],"contextFiles":false}}"#
                 : #"{"name":"Reviewer"}"#
             return mockResponse(json: """
             {"agent":{"id":"agent-1","name":"Reviewer","status":"active","version":\(requestCount + 1),"definition":\(definition),"createdAt":1000,"updatedAt":4000}}
@@ -243,13 +243,13 @@ struct AgentScheduleAPIClientTests {
             description: nil,
             instructions: nil,
             capabilities: AgentCapabilities(
-                core: .readonly, ask: false, notify: true, subagent: false, plugins: [], mcp: [:]
+                tools: ["read", "bash"], ask: false, notify: true, subagent: false, plugins: [], mcp: [:]
             ),
             context: AgentContext(skills: [], contextFiles: false, sessionHistory: true),
             model: nil,
             thinkingLevel: nil
         )
-        #expect(named.definition.capabilities?.core == .readonly)
+        #expect(named.definition.capabilities?.tools == ["read", "bash"])
         #expect(named.definition.capabilities?.plugins?.isEmpty == true)
         #expect(named.definition.capabilities?.mcp?.isEmpty == true)
         #expect(named.definition.context?.skills?.isEmpty == true)
@@ -265,7 +265,7 @@ struct AgentScheduleAPIClientTests {
             model: nil,
             thinkingLevel: nil
         )
-        #expect(followed.definition.capabilities?.core == nil)
+        #expect(followed.definition.capabilities?.tools == nil)
         #expect(followed.definition.capabilities?.plugins == nil)
         #expect(followed.definition.capabilities?.mcp == nil)
         #expect(followed.definition.context?.skills == nil)

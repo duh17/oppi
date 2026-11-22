@@ -250,6 +250,7 @@ const AGENT_VALUE_CLEAR_TWINS: Array<{ values: string[]; clear: string }> = [
     values: ["instructions", "instructions-file", "instructions-mode"],
     clear: "clear-instructions",
   },
+  { values: ["tools"], clear: "clear-tools" },
   { values: ["plugins"], clear: "clear-plugins" },
   { values: ["mcp"], clear: "clear-mcp" },
   { values: ["skills"], clear: "clear-skills" },
@@ -258,12 +259,12 @@ const AGENT_VALUE_CLEAR_TWINS: Array<{ values: string[]; clear: string }> = [
   { values: ["required-engine"], clear: "clear-required-engine" },
 ];
 
-/** A tool name list is not a saved Agent's business: capabilities are. */
+/** A tool policy is not a saved Agent's business: its Pi tools are. */
 function assertNoToolPolicyFlags(flags: Record<string, string>): void {
-  for (const name of ["tools", "exclude-tools", "no-tools", "no-builtin-tools"]) {
+  for (const name of ["exclude-tools", "no-tools", "no-builtin-tools"]) {
     if (!hasFlag(flags, name)) continue;
     throw new Error(
-      `--${name} is not an Agent flag: an Agent states --core, --plugins, --mcp, and its ask/notify/subagent switches`,
+      `--${name} is not an Agent flag: an Agent states --tools, --plugins, --mcp, and its ask/notify/subagent switches`,
     );
   }
 }
@@ -377,13 +378,10 @@ function applyCapabilityFlags(
   definition: Record<string, unknown>,
   flags: Record<string, string>,
 ): void {
-  if (hasFlag(flags, "core")) {
-    const core = flags.core;
-    if (core !== "full" && core !== "readonly") {
-      throw new Error("--core must be full or readonly");
-    }
-    overlayNested(definition, "capabilities", "core", core);
+  if (hasFlag(flags, "tools")) {
+    overlayNested(definition, "capabilities", "tools", parseAgentSelectionFlag(flags.tools ?? ""));
   }
+  if (hasFlag(flags, "clear-tools")) overlayNested(definition, "capabilities", "tools", null);
   for (const toggle of ["ask", "notify", "subagent"] as const) {
     const on = hasFlag(flags, toggle);
     const off = hasFlag(flags, `no-${toggle}`);

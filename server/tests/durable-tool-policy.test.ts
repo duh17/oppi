@@ -6,10 +6,15 @@ import { defineExtension, type ToolRegistration } from "@earendil-works/pi-durab
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import {
   resolveDurableAgent,
+  sessionPiTools,
   toolAllowed,
   type DurableToolNarrowing,
 } from "../src/durable-agent.js";
-import type { CompiledAgentCapabilities } from "../src/agent-capabilities.js";
+import {
+  compileAgentCapabilities,
+  type CompiledAgentCapabilities,
+} from "../src/agent-capabilities.js";
+import type { AgentDefinition, AgentMcpServerFact } from "../src/agent-definition.js";
 import { DurableMcp } from "../src/durable-mcp.js";
 import { McpToolCache, mcpToolCachePath } from "../src/mcp-tool-cache.js";
 import { bindOppiHost } from "../src/durable-extension-api.js";
@@ -126,7 +131,7 @@ describe("durable tool policy, as Pi's createAgentSession", () => {
     ]);
   });
 
-  it("gives a read-only Agent codemode only through an admitted MCP server", () => {
+  it("gives an Agent codemode through its own tools or an admitted MCP server", () => {
     const launch = (compiled: CompiledAgentCapabilities) =>
       resolveDurableAgent({
         saved: { id: "agent-1", version: 1, definition: { name: "Exact" } },
@@ -144,7 +149,8 @@ describe("durable tool policy, as Pi's createAgentSession", () => {
         notifies: false,
       });
     const withServer = launch({
-      core: "readonly",
+      tools: ["read", "bash"],
+      readOnly: true,
       excluded: ["write", "edit"],
       discovery: ["codemode"],
       plugins: [],
@@ -160,7 +166,8 @@ describe("durable tool policy, as Pi's createAgentSession", () => {
     expect(withServer.doc.extensions).toEqual({ packages: [], mcp: true, codemode: true });
 
     const without = launch({
-      core: "readonly",
+      tools: ["read", "bash"],
+      readOnly: true,
       excluded: ["write", "edit", "codemode"],
       discovery: [],
       plugins: [],
@@ -175,6 +182,66 @@ describe("durable tool policy, as Pi's createAgentSession", () => {
     expect(without.change.extensions.map((extension) => extension.name)).not.toContain("codemode");
     expect(without.change.tools.map((tool) => tool.name)).not.toContain("codemode");
     expect(without.doc.extensions).toEqual({ packages: [], mcp: false, codemode: false });
+  });
+
+  it("grants codemode an Agent names, and withholds it from one that does not", () => {
+    // The plan comes from the compiler, not hand-built, and both durable-backend and
+    // durable-threads resolve the session's Pi tools through `sessionPiTools`.
+    const narrowSetting: ReadonlySet<string> = new Set(["read", "bash", "edit", "write"]);
+    const sessionTools = (definition: AgentDefinition, mcpServers: AgentMcpServerFact[]) => {
+      const compiled = compileAgentCapabilities({
+        definition,
+        engine: "durable",
+        runtime: "host",
+        mcpServers,
+        piToolNames: [...EVERY_PI_TOOL],
+      });
+      const piTools = sessionPiTools(compiled, narrowSetting);
+      return resolveDurableAgent({
+        saved: { id: "agent-1", version: 1, definition },
+        compiled,
+        runtime: "host",
+        base: [CodingTools, DurableAsk, Codemode],
+        loaded: [],
+        enabled: () => true,
+        piTools,
+        codemode: Codemode,
+        sessions: defineExtension({ name: "oppi.sessions" }),
+        spawn: false,
+        grant: false,
+        notify: defineExtension({ name: "oppi.notify" }),
+        notifies: false,
+      }).change.tools.map((tool) => tool.name);
+    };
+    const gmail = [
+      { name: "gmail", enabled: true, exposures: ["codemode" as const], tools: ["search"] },
+    ];
+    const named: AgentDefinition = {
+      name: "Batching",
+      capabilities: { tools: ["read", "bash", "codemode"], plugins: [], mcp: {} },
+    };
+    const unnamed: AgentDefinition = {
+      name: "Sealed",
+      capabilities: { tools: ["read", "bash"], plugins: [], mcp: {} },
+    };
+    expect(sessionTools(named, [])).toContain("codemode");
+    expect(sessionTools(unnamed, [])).not.toContain("codemode");
+    // An MCP server that needs codemode still brings it to an Agent that did not name it.
+    const withServer: AgentDefinition = {
+      name: "Mail triage",
+      capabilities: { tools: ["read", "bash"], plugins: [], mcp: { gmail: "all" } },
+    };
+    expect(sessionTools(withServer, gmail)).toContain("codemode");
+    // Following the Pi Tools setting falls back to the provided setting set.
+    expect(sessionPiTools(undefined, narrowSetting)).toBe(narrowSetting);
+    const inherit = compileAgentCapabilities({
+      definition: { name: "Worker" },
+      engine: "durable",
+      runtime: "host",
+      mcpServers: gmail,
+      piToolNames: [...EVERY_PI_TOOL],
+    });
+    expect(sessionPiTools(inherit, narrowSetting)).toBe(narrowSetting);
   });
 
   it("narrows a spawn's tools and never widens them past the parent's", () => {
@@ -287,7 +354,7 @@ describe("durable tool policy, as Pi's createAgentSession", () => {
       resolveDurableAgent({
         saved: { id: "agent-1", version: 1, definition: { name: "Agent" } },
         compiled: {
-          core: "full",
+          readOnly: false,
           excluded: [],
           discovery: [],
           mcp: { enabled: true },

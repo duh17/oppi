@@ -21,10 +21,10 @@ Oppi adds a lifecycle-journal extension and Pi's built-ins to each managed sessi
 | --- | --- |
 | Managed host | `mcp`, `codemode`, `tool-search` |
 | Managed sandbox | `mcp`, `tool-search` (no `codemode`) |
-| Durable (host and sandbox) | Durable versions of `mcp`, `codemode`, and `tool_search`, and plugins instead of Pi's extensions ([Plugins](#plugins)). A read-only Agent keeps `codemode` and `tool_search` only while an MCP server it names needs them. |
+| Durable (host and sandbox) | Durable versions of `mcp`, `codemode`, and `tool_search`, and plugins instead of Pi's extensions ([Plugins](#plugins)). An Agent states its own Pi tools, so it keeps `codemode` and `tool_search` when it names them, and it also gets whichever one an MCP server it names needs. |
 | Oppi Mirror | None; the terminal's own Pi loads its built-ins |
 
-`-builtin:<name>` in Pi settings, a read-only Agent, or another extension that registers the same tool, command, or flag can leave a built-in out ([MCP, codemode, and tool search](server-configuration.md#mcp-servers-codemode-and-tool-search)). A Pi extension can register a tool named `oppi`; Oppi does not reserve that name.
+`-builtin:<name>` in Pi settings, an Agent whose Pi tools leave the name out, or another extension that registers the same tool, command, or flag can leave a built-in out ([MCP, codemode, and tool search](server-configuration.md#mcp-servers-codemode-and-tool-search)). A Pi extension can register a tool named `oppi`; Oppi does not reserve that name.
 
 Workspace Settings → Skills and Extensions toggles write Pi resource settings: `+path` enables a resource that is otherwise filtered out, `-path` disables one Pi would load, and package resources use the same filtering inside the package entry. Temporary resources cannot be edited from Oppi. Sandbox workspaces also have a `workspace.tools` allowlist for VM-backed tools only.
 

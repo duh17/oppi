@@ -189,10 +189,10 @@ struct AgentCapabilityPage {
 /// The editor's three capability pages and the tools page an MCP server opens.
 @MainActor
 enum AgentCapabilityPages {
-    /// Why a read-only Agent cannot follow every plugin or MCP server: it would widen
+    /// Why an Agent that cannot edit files cannot follow every plugin or MCP server: it would widen
     /// what it may reach by omission.
     static let readOnlyFooter =
-        "A read-only Agent names the plugins and MCP servers it may use. Turn on Edit files to follow every one again."
+        "An Agent whose Pi tools leave out edit and write names the plugins and MCP servers it may use. Turn on edit or write in Pi Tools to follow every one again."
 
     static func plugins(draft: AgentNativeEditDraft) -> AgentCapabilitySelectionViewController {
         AgentCapabilitySelectionViewController(
@@ -203,7 +203,7 @@ enum AgentCapabilityPages {
                     allKey: "pluginAll",
                     allTitle: "All, including new ones",
                     allIsOn: draft.pluginsAll,
-                    allFooter: draft.editsFiles ? nil : readOnlyFooter,
+                    allFooter: draft.canEditFiles ? nil : readOnlyFooter,
                     listFooter: "Only the plugins chosen here load in this Agent's sessions. A plugin brings its own tools.",
                     emptyMessage: "No Plugins\nThis server has no plugin to choose.",
                     choices: draft.pluginChoices,
@@ -226,7 +226,7 @@ enum AgentCapabilityPages {
                     allKey: "mcpAll",
                     allTitle: "All, including new ones",
                     allIsOn: draft.mcpAll,
-                    allFooter: draft.editsFiles ? nil : readOnlyFooter,
+                    allFooter: draft.canEditFiles ? nil : readOnlyFooter,
                     listFooter: "This Agent reaches a server through codemode or directly, as the server's exposure says. Each server's tools are chosen beside it.",
                     emptyMessage: "No MCP Servers\nThis server has no MCP server configured.",
                     choices: draft.mcpServerChoices,

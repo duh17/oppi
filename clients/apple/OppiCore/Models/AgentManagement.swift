@@ -22,13 +22,6 @@ struct AgentInstructions: Codable, Sendable, Equatable {
     }
 }
 
-/// The built-in coding tools an Agent may use: `full` is a normal session's set,
-/// `readonly` keeps reading and searching. The server expands a tier into tool names.
-enum AgentCoreTier: String, Codable, CaseIterable, Sendable, Equatable {
-    case full
-    case readonly
-}
-
 /// One MCP server's tools: every one it reports, or the exact names it may call.
 enum AgentMcpTools: Codable, Sendable, Equatable, Hashable {
     case all
@@ -61,7 +54,9 @@ enum AgentMcpTools: Codable, Sendable, Equatable, Hashable {
 /// omitted means the server's default: a normal session's tools, all enabled plugins,
 /// every configured MCP server.
 struct AgentCapabilities: Codable, Sendable, Equatable {
-    var core: AgentCoreTier?
+    /// The Pi tools this Agent's sessions start with, named as Pi's `defaultTools` names them.
+    /// Omitted follows the server's Pi Tools setting; a list is this Agent's own set.
+    var tools: [String]?
     var ask: Bool?
     var notify: Bool?
     var subagent: Bool?
@@ -72,14 +67,14 @@ struct AgentCapabilities: Codable, Sendable, Equatable {
     var mcp: [String: AgentMcpTools]?
 
     init(
-        core: AgentCoreTier? = nil,
+        tools: [String]? = nil,
         ask: Bool? = nil,
         notify: Bool? = nil,
         subagent: Bool? = nil,
         plugins: [String]? = nil,
         mcp: [String: AgentMcpTools]? = nil
     ) {
-        self.core = core
+        self.tools = tools
         self.ask = ask
         self.notify = notify
         self.subagent = subagent
@@ -87,7 +82,15 @@ struct AgentCapabilities: Codable, Sendable, Equatable {
         self.mcp = mcp
     }
 
-    var editsFiles: Bool { core != .readonly }
+    /// The two Pi tools that change files: an Agent without them cannot write.
+    static let writeToolNames = ["write", "edit"]
+
+    /// Whether these tools leave the Agent unable to change files. Read-only is that, never a tier.
+    var canEditFiles: Bool {
+        guard let tools else { return true }
+        return tools.contains { Self.writeToolNames.contains($0) }
+    }
+
     var canAsk: Bool { ask ?? true }
     var canNotify: Bool { notify ?? true }
     var canDelegate: Bool { subagent ?? true }

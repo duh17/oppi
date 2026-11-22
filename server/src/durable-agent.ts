@@ -7,7 +7,7 @@ import {
 } from "@earendil-works/pi-durable";
 
 import type { AgentDefinition } from "./agent-definition.js";
-import type { CompiledAgentCapabilities } from "./agent-capabilities.js";
+import { agentPiTools, type CompiledAgentCapabilities } from "./agent-capabilities.js";
 import type { LoadedPlugin } from "./plugin-host.js";
 import { DURABLE_MCP_EXTENSION_PREFIX } from "./durable-mcp.js";
 import { PI_BUILTIN_TOOL_NAMES, PI_DEFAULT_TOOL_NAMES } from "./pi-global-config.js";
@@ -54,7 +54,7 @@ export type OppiAgentState = {
   sessionHistory?: false;
   /**
    * The plugins this Agent selected by name, whether it reaches MCP at all, and whether it is
-   * offered codemode (a read-only Agent gets it only through an admitted server).
+   * offered codemode (an Agent that never named it gets it only through an admitted server).
    */
   extensions?: { packages: string[]; mcp: boolean; codemode: boolean };
   /** The tool policy, also applied to tools added when the session attaches again. */
@@ -127,6 +127,22 @@ export function piDefaultTools(settings: {
   getDefaultTools(): string[] | undefined;
 }): ReadonlySet<string> {
   return new Set(settings.getDefaultTools() ?? PI_DEFAULT_TOOL_NAMES);
+}
+
+/**
+ * The Pi tools a durable session runs with: the Agent's own set when it states one (plus
+ * `codemode` when an admitted MCP server is reached through it, so such a server stays reachable),
+ * else `fallback` (the Pi Tools setting for a top-level session, or the parent's tools for a
+ * child). `tool_search` is deliberately omitted from exposure additions: the search reaches every
+ * tool a plugin defers, and an Agent that stated its tools reaches only what it named
+ * (`durable-mcp.ts`, `discoveryTools`).
+ */
+export function sessionPiTools(
+  compiled: CompiledAgentCapabilities | undefined,
+  fallback: ReadonlySet<string>,
+): ReadonlySet<string> {
+  const own = agentPiTools(compiled);
+  return own === undefined ? fallback : new Set(own);
 }
 
 /**
@@ -281,7 +297,7 @@ interface DurableAgentInput {
    * top-level session, the parent's tools for a child.
    */
   piTools: ReadonlySet<string>;
-  /** pi-durable's `codemode`; a read-only Agent gets it only through an admitted MCP server. */
+  /** pi-durable's `codemode`; an Agent that did not name it gets it only through a named server. */
   codemode: Extension;
   /** Oppi's extension that offers `subagent`. */
   sessions: Extension;
@@ -322,9 +338,10 @@ export function resolveDurableAgent(input: DurableAgentInput): {
       // A saved Agent picks its own plugins; a copy keeps the parent's.
       !(saved && pluginNames.has(extension.name)),
   );
-  // A read-only Agent keeps codemode only when an admitted MCP server is reached through it.
+  // An Agent with its own tool set keeps codemode only when it names it or an admitted MCP
+  // server is reached through it; one that follows the Pi Tools setting keeps the setting's.
   const base =
-    compiled?.core === "readonly" && !compiled.discovery.includes("codemode")
+    compiled?.tools !== undefined && !compiled.discovery.includes("codemode")
       ? kept.filter((extension) => extension.name !== input.codemode.name)
       : kept;
   const optedIn = [
@@ -419,7 +436,7 @@ export function resolveDurableAgent(input: DurableAgentInput): {
                 // not opt into must not reach the document, or the next attach would load it.
                 packages: packages.map((extension) => extension.name),
                 mcp: compiled.mcp.enabled,
-                codemode: compiled.core === "full" || compiled.discovery.includes("codemode"),
+                codemode: compiled.tools === undefined || compiled.discovery.includes("codemode"),
               },
             }),
         ...(toolPolicy ? { tools: toolPolicy } : {}),

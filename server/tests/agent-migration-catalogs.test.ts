@@ -171,7 +171,11 @@ describe("the migration's startup catalogs", () => {
       catalogs,
     );
     expect(result.definition?.capabilities.mcp).toEqual({ xcode: "all" });
-    expect(result.notes).toEqual([]);
+    // The only note is the one every v1 allow list gets: it became the Agent's own Pi tools.
+    expect(result.definition?.capabilities.tools).toEqual(["read", "grep", "ls", "find", "bash"]);
+    expect(result.notes).toEqual([
+      "sessionDefaults.tools became the Agent's own Pi tools: read, grep, ls, find, bash",
+    ]);
   });
 
   it("keeps a whole-server rule whose tools no scope has listed, and asks the owner to check", async () => {
@@ -197,8 +201,9 @@ describe("the migration's startup catalogs", () => {
       catalogs,
     );
     expect(result.definition?.capabilities.mcp).toEqual({ coros: "all" });
-    // One note for the server, not one per refused tool.
+    // One note for the server, not one per refused tool, after the tool set's own.
     expect(result.notes).toEqual([
+      "sessionDefaults.tools became the Agent's own Pi tools: read, write",
       "kept all of coros: no session has listed its tools here, so createSingleWorkout, updateWorkoutDetails stay reachable. Check this Agent.",
     ]);
   });

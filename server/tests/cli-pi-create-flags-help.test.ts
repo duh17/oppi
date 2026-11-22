@@ -41,13 +41,13 @@ describe("Pi create-flag help", () => {
       const text = helpText(path);
       expect(text, path.join(" ")).toContain("--model");
       expect(text, path.join(" ")).toContain("--thinking");
-      expect(text, path.join(" ")).toContain("--core");
+      expect(text, path.join(" ")).toContain("--tools");
       expect(text, path.join(" ")).toContain("--plugins");
       expect(text, path.join(" ")).toContain("--mcp");
       expect(text, path.join(" ")).toContain("--ask");
       expect(text, path.join(" ")).toContain("--subagent");
-      // A saved Agent has no tool list and no Pi tool-policy flags.
-      expect(text, path.join(" ")).not.toContain("--tools");
+      // A saved Agent names its Pi tools; it has no coding tier and no raw tool policy.
+      expect(text, path.join(" ")).not.toContain("--core");
       expect(text, path.join(" ")).not.toContain("--no-builtin-tools");
       expect(text, path.join(" ")).toContain("sessionDefaults");
       expect(text, path.join(" ")).toContain(":thinking");
@@ -81,7 +81,7 @@ describe("Pi create-flag help", () => {
       "--instructions",
       "--instructions-file",
       "--instructions-mode",
-      "--core",
+      "--tools",
       "--plugins",
       "--mcp",
       "--skills",

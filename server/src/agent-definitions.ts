@@ -13,6 +13,7 @@ import { openDatabase, type SqliteDatabase } from "./sqlite-compat.js";
 import { runSessionStateDeadSchemaCleanup } from "./storage/session-state-cleanup-migration.js";
 import { isThinkingLevel } from "./thinking-levels.js";
 import { isAgentDefinitionV1, type AgentDefinition } from "./agent-definition.js";
+import { agentToolSetReadOnly, isAgentDiscoveryTool } from "./agent-capabilities.js";
 import {
   migrateAgentDefinitionV1,
   type AgentMigrationCatalogs,
@@ -108,7 +109,6 @@ interface AgentVersionRow {
 }
 
 const INSTRUCTION_MODES = new Set(["append", "replace"]);
-const CORE_TIERS = new Set(["full", "readonly"]);
 const FORBIDDEN_AGENT_DEFINITION_KEYS = new Set([
   "target",
   "workspaceId",
@@ -132,7 +132,7 @@ const AGENT_DEFINITION_KEYS = new Set([
 const AGENT_V1_DEFINITION_KEYS = new Set(["resources"]);
 const AGENT_V1_SESSION_DEFAULT_KEYS = new Set(["tools", "excludeTools", "noTools"]);
 const INSTRUCTION_KEYS = new Set(["mode", "text"]);
-const CAPABILITY_KEYS = new Set(["core", "ask", "notify", "subagent", "plugins", "mcp"]);
+const CAPABILITY_KEYS = new Set(["tools", "ask", "notify", "subagent", "plugins", "mcp"]);
 const CONTEXT_KEYS = new Set(["skills", "contextFiles", "sessionHistory"]);
 const SESSION_DEFAULT_KEYS = new Set(["model", "thinkingLevel"]);
 const LAUNCH_CONSTRAINT_KEYS = new Set([
@@ -365,6 +365,125 @@ export class AgentDefinitionStore {
       .prepare("SELECT * FROM agent_definition_versions ORDER BY id ASC, version ASC")
       .all() as AgentVersionRow[];
     return rows.map(agentVersionFromRow);
+  }
+
+  /** True while any stored row or version still names `capabilities.core`, the coding tier. */
+  hasCodingTierDefinitions(): boolean {
+    const namesCore = (definitionJson: string): boolean => {
+      try {
+        const parsed: unknown = JSON.parse(definitionJson);
+        return isRecord(parsed) && isRecord(parsed.capabilities) && "core" in parsed.capabilities;
+      } catch {
+        return false;
+      }
+    };
+    const rows = this.db
+      .prepare(
+        "SELECT definition_json FROM agent_definitions UNION ALL SELECT definition_json FROM agent_definition_versions",
+      )
+      .all() as Array<{ definition_json: string }>;
+    return rows.some((row) => namesCore(row.definition_json));
+  }
+
+  /**
+   * The rewrite of `capabilities.core` into `capabilities.tools`, once per data directory, over the
+   * rows and version history stored at that moment: the same effective tools each Agent has now.
+   *
+   * - A normal Agent (`full`) stated no tools and followed the Pi Tools setting; it keeps doing
+   *   that, so its `core` is dropped and no `tools` is written.
+   * - An Agent that cannot change files had read/bash/… from the setting, and the two write tools
+   *   and the MCP transport tools out of it. Its own set is the setting minus `write`, `edit` and
+   *   the two discovery names: `codemode` and `tool_search` come back only from an MCP server that
+   *   needs them, exactly as they do today, so dropping that server still takes them away.
+   *
+   * A row the rewrite cannot make valid is left alone and reported; it then refuses to launch by
+   * name. Idempotent: a row with no `core` is not touched, so a second pass writes nothing.
+   */
+  migrateStoredAgentTools(piToolNames: readonly string[]): {
+    migrated: number;
+    notes: Array<{ id: string; notes: string[] }>;
+    backupPath: string;
+  } {
+    const kept = piToolNames.filter(
+      (name) => name !== "write" && name !== "edit" && !isAgentDiscoveryTool(name),
+    );
+    const { backupPath, result } = migrateWithBackup(
+      this.db,
+      this.dataDir,
+      "agent-definitions-pi-tools",
+      () => this.rewriteCodingTiers(kept),
+    );
+    return { ...result, backupPath };
+  }
+
+  private rewriteCodingTiers(keptForReadOnly: readonly string[]): {
+    migrated: number;
+    notes: Array<{ id: string; notes: string[] }>;
+  } {
+    const currentRows = this.db.prepare("SELECT * FROM agent_definitions").all() as AgentRow[];
+    const versionRows = this.db
+      .prepare("SELECT * FROM agent_definition_versions")
+      .all() as AgentVersionRow[];
+    const updateCurrent = this.db.prepare(
+      "UPDATE agent_definitions SET definition_json = ? WHERE id = ?",
+    );
+    const updateVersion = this.db.prepare(
+      "UPDATE agent_definition_versions SET definition_json = ? WHERE id = ? AND version = ?",
+    );
+    let migrated = 0;
+    const notes: Array<{ id: string; notes: string[] }> = [];
+
+    const rewrite = (rawJson: string): string => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(rawJson);
+      } catch {
+        return rawJson;
+      }
+      if (!isRecord(parsed) || !isRecord(parsed.capabilities)) return rawJson;
+      const capabilities = { ...parsed.capabilities };
+      const core = capabilities.core;
+      if (!("core" in capabilities)) return rawJson;
+      delete capabilities.core;
+      const note =
+        core === "readonly"
+          ? `a read-only Agent's coding tier became its own Pi tools (${keptForReadOnly.join(", ")}); codemode and tool search come from an MCP server that needs them`
+          : "dropped the full coding tier: this Agent follows the Pi Tools setting, as it did";
+      if (core === "readonly") capabilities.tools = [...keptForReadOnly];
+      const rewritten = JSON.stringify({ ...parsed, capabilities });
+      try {
+        validateAgentDefinition(JSON.parse(rewritten));
+      } catch (error) {
+        notes.push({
+          id: "",
+          notes: [
+            `could not rewrite this Agent's coding tier, so it is untouched and cannot start: ${error instanceof Error ? error.message : String(error)}`,
+          ],
+        });
+        return rawJson;
+      }
+      migrated += 1;
+      notes.push({ id: "", notes: [note] });
+      return rewritten;
+    };
+
+    this.db.transaction(() => {
+      for (const row of currentRows) {
+        const before = notes.length;
+        const rewritten = rewrite(row.definition_json);
+        const last = notes[notes.length - 1];
+        if (notes.length > before && last) last.id = row.id;
+        if (rewritten !== row.definition_json) updateCurrent.run(rewritten, row.id);
+      }
+      for (const row of versionRows) {
+        const before = notes.length;
+        const rewritten = rewrite(row.definition_json);
+        const last = notes[notes.length - 1];
+        if (notes.length > before && last) last.id = `${row.id}@v${row.version}`;
+        if (rewritten !== row.definition_json) updateVersion.run(rewritten, row.id, row.version);
+      }
+    })();
+    return { migrated, notes };
   }
 
   /** True while any stored row or version still holds the v1 shape. */
@@ -695,10 +814,8 @@ function validateCapabilities(value: unknown): AgentDefinition["capabilities"] |
   if (!isRecord(value)) throw new Error("capabilities must be an object");
   assertAllowedKeys(value, CAPABILITY_KEYS, "capabilities");
 
-  const core = validateString(value.core, "capabilities.core");
-  if (core !== undefined && !CORE_TIERS.has(core)) {
-    throw new Error("capabilities.core must be full or readonly");
-  }
+  const tools =
+    value.tools === undefined ? undefined : validateStringArray(value.tools, "capabilities.tools");
   const ask = optionalBoolean(value.ask, "capabilities.ask");
   const notify = optionalBoolean(value.notify, "capabilities.notify");
   const subagent = optionalBoolean(value.subagent, "capabilities.subagent");
@@ -707,20 +824,25 @@ function validateCapabilities(value: unknown): AgentDefinition["capabilities"] |
       ? undefined
       : validateStringArray(value.plugins, "capabilities.plugins");
   const mcp = validateMcpSelection(value.mcp);
+  if (tools !== undefined && new Set(tools).size !== tools.length) {
+    throw new Error("capabilities.tools names a tool twice");
+  }
 
-  // A restricted Agent states what it may reach: "everything" is never implied by omission, which
-  // is the one property that made the old allow lists widen access by accident.
-  if (core === "readonly") {
+  // An Agent that cannot edit files states what it may reach: "everything" is never implied by
+  // omission, which is the one property that made the old allow lists widen access by accident.
+  if (tools !== undefined && agentToolSetReadOnly(tools)) {
     if (plugins === undefined) {
-      throw new Error("capabilities.plugins is required when capabilities.core is readonly");
+      throw new Error(
+        "capabilities.plugins is required when capabilities.tools cannot write files",
+      );
     }
     if (mcp === undefined) {
-      throw new Error("capabilities.mcp is required when capabilities.core is readonly");
+      throw new Error("capabilities.mcp is required when capabilities.tools cannot write files");
     }
   }
 
   return {
-    ...(core !== undefined ? { core: core as "full" | "readonly" } : {}),
+    ...(tools !== undefined ? { tools } : {}),
     ...(ask !== undefined ? { ask } : {}),
     ...(notify !== undefined ? { notify } : {}),
     ...(subagent !== undefined ? { subagent } : {}),

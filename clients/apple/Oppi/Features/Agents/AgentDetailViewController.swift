@@ -302,8 +302,12 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
         let capabilities = capabilities ?? AgentCapabilities()
         return [
             .value(
-                title: "Edit files",
-                value: capabilities.editsFiles ? "Yes" : "No, reading and searching only"
+                title: "Pi Tools",
+                value: AgentManagementPresentation.agentToolsSummary(tools: capabilities.tools)
+            ),
+            .value(
+                title: "Edits files",
+                value: Self.yesNo(capabilities.canEditFiles)
             ),
             .value(title: "Ask me", value: Self.yesNo(capabilities.canAsk)),
             .value(title: "Notify me", value: Self.yesNo(capabilities.canNotify)),
@@ -615,7 +619,8 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
             "",
             "## Tools",
             "",
-            "- **Edit files:** \(capabilities.editsFiles ? "Yes" : "No, reading and searching only")",
+            "- **Pi Tools:** \(AgentManagementPresentation.agentToolsSummary(tools: capabilities.tools))",
+            "- **Edits files:** \(Self.yesNo(capabilities.canEditFiles))",
             "- **Ask me:** \(Self.yesNo(capabilities.canAsk))",
             "- **Notify me:** \(Self.yesNo(capabilities.canNotify))",
             "- **Delegate:** \(Self.yesNo(capabilities.canDelegate))",

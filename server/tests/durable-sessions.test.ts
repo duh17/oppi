@@ -3177,7 +3177,7 @@ describe("durable-native threads", () => {
       name: "Reviewer",
       instructions: { mode: "replace", text: "REVIEWER_PROMPT" },
       sessionDefaults: { model: "faux/faux-2", thinkingLevel: "high" },
-      capabilities: { core: "readonly", plugins: [], mcp: {} },
+      capabilities: { tools: ["read", "bash"], plugins: [], mcp: {} },
     });
     agents.createAgent({
       name: "Fenced",
@@ -3684,7 +3684,7 @@ describe("durable engine on create requests", () => {
       instructions: { mode: "append", text: "SCOUT_RULES" },
       sessionDefaults: { model: "faux/faux-2" },
       // A read-only Agent: the compiled policy (no write/edit) is what reaches the session.
-      capabilities: { core: "readonly", plugins: [], mcp: {} },
+      capabilities: { tools: ["read", "bash"], plugins: [], mcp: {} },
     });
     const created = await route(f, "POST", `/agents/${agent.id}/sessions`, {
       prompt: { text: "Scout around" },

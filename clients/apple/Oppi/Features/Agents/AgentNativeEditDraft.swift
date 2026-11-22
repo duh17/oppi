@@ -48,9 +48,17 @@ final class AgentNativeEditDraft {
     /// Settings → Chat → Style. Never sent to the server.
     var chatStyle: AppPreferences.ChatDisplay.Style?
 
-    /// Edit files: a normal session's tools. Off is a read-only Agent: reading and
-    /// searching, and whatever plugins and MCP servers it names here.
-    var editsFiles: Bool
+    /// The Pi tools this Agent's sessions start with, as Pi's `defaultTools` names them.
+    /// `toolsAll` follows the server's Pi Tools setting; otherwise `selectedTools` is that set,
+    /// whichever row of the tools page named each one.
+    var toolsAll: Bool
+    var selectedTools: Set<String>
+    /// The order the server stored the tools in, so a page that has not loaded its catalog yet
+    /// shows them as saved instead of resorting them under the reader.
+    private let storedOrder: [String]
+    /// The catalog the tools page shows: Pi's built-in tools and the ones extensions register off.
+    var builtInTools: [ServerToolSummary] = []
+    var optionalTools: [ServerToolSummary] = []
     var canAsk: Bool
     var canNotify: Bool
     var canDelegate: Bool
@@ -110,7 +118,9 @@ final class AgentNativeEditDraft {
         chatStyle = connection.currentServerId.flatMap {
             AppPreferences.ChatDisplay.agentStyle(serverId: $0, agentId: agent.id)
         }
-        editsFiles = capabilities?.editsFiles ?? true
+        toolsAll = capabilities?.tools == nil
+        selectedTools = Set(capabilities?.tools ?? [])
+        storedOrder = capabilities?.tools ?? []
         canAsk = capabilities?.canAsk ?? true
         canNotify = capabilities?.canNotify ?? true
         canDelegate = capabilities?.canDelegate ?? true
@@ -149,15 +159,77 @@ final class AgentNativeEditDraft {
 
     // MARK: Capabilities
 
-    /// A read-only Agent names what it may reach: it never widens by omission, so
-    /// turning Edit files off clears both lists.
-    func setEditsFiles(_ edits: Bool) {
-        editsFiles = edits
-        guard !edits else { return }
+    /// An Agent whose tools cannot change files names what it may reach: it never widens by
+    /// omission, so leaving an editable tool set for a read-only one clears both lists. Choosing a
+    /// set starts from the tools Pi itself starts a session with, as the Pi Tools page does.
+    func setToolsMode(_ mode: AgentToolSelectionMode) {
+        let couldEdit = canEditFiles
+        if mode == .inherit {
+            toolsAll = true
+            return
+        }
+        if toolsAll {
+            selectedTools = defaultToolNames
+        }
+        toolsAll = false
+        applyReadOnlyRule(couldEdit: couldEdit)
+    }
+
+    /// Pi's standard four tools (`DEFAULT_TOOL_NAMES` in Pi), used when switching to an exact set
+    /// before the server's tool catalog has loaded so the set never starts empty and wipes plugins
+    /// and MCP.
+    static let fallbackDefaultToolNames: Set<String> = ["read", "bash", "edit", "write"]
+
+    /// The tools Pi itself starts a session with (`defaultEnabled`), the set the page begins from.
+    var defaultToolNames: Set<String> {
+        let listed = Set(builtInTools.filter { $0.defaultEnabled == true }.map(\.name))
+        return listed.isEmpty ? Self.fallbackDefaultToolNames : listed
+    }
+
+    func selectTool(_ name: String, _ selected: Bool) {
+        let couldEdit = canEditFiles
+        if selected { selectedTools.insert(name) } else { selectedTools.remove(name) }
+        applyReadOnlyRule(couldEdit: couldEdit)
+    }
+
+    /// The whole set at once, as the page's Select All, Select None, and its rows write it.
+    func selectTools(_ names: Set<String>) {
+        let couldEdit = canEditFiles
+        selectedTools = names
+        applyReadOnlyRule(couldEdit: couldEdit)
+    }
+
+    /// A set without `edit` and `write` cannot change files, and such an Agent states what it may
+    /// reach: the plugin and MCP lists start empty rather than following every one. Only the
+    /// transition from editable to read-only clears them, so editing a read-only Agent's tools
+    /// (turning `codemode` on, for instance) keeps the lists it already named.
+    private func applyReadOnlyRule(couldEdit: Bool) {
+        guard couldEdit, !canEditFiles else { return }
         pluginsAll = false
         selectedPlugins = []
         mcpAll = false
         mcpSelection = [:]
+    }
+
+    /// The set as a save sends it: in the tools page's own order, so a name the catalog cannot
+    /// show keeps its place at the end instead of being dropped. Before the catalog loads it is
+    /// the stored order, the same list without a flicker.
+    var resolvedToolNames: [String] {
+        guard builtInTools.isEmpty && optionalTools.isEmpty else {
+            return AgentManagementPresentation.toolNames(
+                selected: selectedTools,
+                builtInTools: builtInTools,
+                optionalTools: optionalTools
+            )
+        }
+        let stored = storedOrder.filter { selectedTools.contains($0) }
+        let known = Set(stored)
+        return stored + selectedTools.filter { !known.contains($0) }.sorted()
+    }
+
+    /// The capability as the editor shows it: whether these tools can change files.
+    var canEditFiles: Bool {
+        toolsAll || selectedTools.contains { AgentCapabilities.writeToolNames.contains($0) }
     }
 
     /// `false` starts from nothing: an explicit list names what the Agent may use.
@@ -198,7 +270,7 @@ final class AgentNativeEditDraft {
 
     var resolvedCapabilities: AgentCapabilities {
         AgentCapabilities(
-            core: editsFiles ? nil : .readonly,
+            tools: toolsAll ? nil : resolvedToolNames,
             ask: canAsk,
             notify: canNotify,
             subagent: canDelegate,
@@ -391,6 +463,20 @@ final class AgentNativeEditDraft {
     }
 
     // MARK: Loading
+
+    /// The tools page's catalog: Pi's built-in tools and the ones extensions register off. The Pi
+    /// Tools page reads the same list from the same call, and it is not part of the resource store.
+    func refreshTools(apiClient: APIClient?) async {
+        guard let apiClient else { return }
+        do {
+            let catalog = try await apiClient.listServerExtensions(plugins: false)
+            builtInTools = catalog.builtInTools
+            optionalTools = catalog.optionalTools ?? []
+        } catch {
+            // The rows it already has stay: the page says the catalog is unavailable, and a save
+            // keeps the names it cannot list (`AgentManagementPresentation.toolNames`).
+        }
+    }
 
     func refreshResources(apiClient: APIClient?) async {
         guard let apiClient, let serverId = connection.currentServerId else { return }

@@ -176,7 +176,7 @@ describe("agent command", () => {
         name: "Reviewer",
         model: "gpt-5.3-codex",
         thinking: "high",
-        core: "readonly",
+        tools: "read,bash",
         plugins: "webtools,notebook",
         mcp: "gmail,xcode",
         skills: "qa",
@@ -192,7 +192,7 @@ describe("agent command", () => {
         name: "Reviewer",
         description: "From JSON",
         capabilities: {
-          core: "readonly",
+          tools: ["read", "bash"],
           ask: false,
           plugins: ["webtools", "notebook"],
           mcp: { gmail: "all", xcode: "all" },
@@ -233,12 +233,12 @@ describe("agent command", () => {
     });
   });
 
-  it("refuses a tool name list on an Agent command", async () => {
+  it("refuses a Pi tool policy on an Agent command", async () => {
     const captured = await captureCliOutput(() =>
       cmdAgent(storage, "create", [], {
         json: "true",
         name: "Reviewer",
-        tools: "read",
+        "exclude-tools": "write",
       }),
     );
 
@@ -247,10 +247,46 @@ describe("agent command", () => {
       ok: false,
       error: {
         message:
-          "--tools is not an Agent flag: an Agent states --core, --plugins, --mcp, and its ask/notify/subagent switches",
+          "--exclude-tools is not an Agent flag: an Agent states --tools, --plugins, --mcp, and its ask/notify/subagent switches",
       },
     });
     expect(request).not.toHaveBeenCalled();
+  });
+
+  it("writes an Agent's Pi tool set from --tools, and clears it", async () => {
+    request
+      .mockResolvedValueOnce({ agent: { id: "agent-1", name: "Reviewer" } } as never)
+      .mockResolvedValueOnce({ agent: { id: "agent-1", name: "Reviewer" } } as never);
+
+    await captureCliOutput(() =>
+      cmdAgent(storage, "create", [], {
+        json: "true",
+        name: "Reviewer",
+        tools: "read,bash,codemode",
+        plugins: "none",
+        mcp: "none",
+      }),
+    );
+    expect(request).toHaveBeenLastCalledWith(storage, "/agents", {
+      method: "POST",
+      body: {
+        name: "Reviewer",
+        capabilities: { tools: ["read", "bash", "codemode"], plugins: [], mcp: {} },
+      },
+    });
+
+    // An update carries the definition it patches, as every Agent update does.
+    await captureCliOutput(() =>
+      cmdAgent(storage, "update", ["Reviewer"], {
+        json: "true",
+        "clear-tools": "true",
+        "definition-json": JSON.stringify({ description: "Reviewer" }),
+      }),
+    );
+    expect(request).toHaveBeenLastCalledWith(storage, "/agents/Reviewer", {
+      method: "PATCH",
+      body: { description: "Reviewer", capabilities: { tools: null } },
+    });
   });
 
   it("pins Agent update expected-version help", () => {

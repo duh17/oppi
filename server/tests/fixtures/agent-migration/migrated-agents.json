@@ -13,7 +13,11 @@
       "thinkingLevel": "high"
     },
     "capabilities": {
-      "core": "readonly",
+      "tools": [
+        "read",
+        "bash",
+        "codemode"
+      ],
       "ask": false,
       "notify": false,
       "subagent": false,
@@ -47,7 +51,14 @@
       "thinkingLevel": "high"
     },
     "capabilities": {
-      "core": "readonly",
+      "tools": [
+        "bash",
+        "find",
+        "grep",
+        "ls",
+        "read",
+        "codemode"
+      ],
       "ask": false,
       "notify": false,
       "subagent": false,
@@ -82,7 +93,10 @@
       "thinkingLevel": "low"
     },
     "capabilities": {
-      "core": "readonly",
+      "tools": [
+        "read",
+        "bash"
+      ],
       "ask": false,
       "subagent": false,
       "plugins": [],
@@ -103,7 +117,9 @@
       "thinkingLevel": "medium"
     },
     "capabilities": {
-      "core": "readonly",
+      "tools": [
+        "bash"
+      ],
       "ask": false,
       "notify": false,
       "subagent": false,
@@ -152,6 +168,16 @@
       "thinkingLevel": "medium"
     },
     "capabilities": {
+      "tools": [
+        "bash",
+        "codemode",
+        "edit",
+        "find",
+        "grep",
+        "ls",
+        "read",
+        "write"
+      ],
       "ask": false,
       "notify": false,
       "subagent": false,
@@ -221,6 +247,15 @@
       "thinkingLevel": "high"
     },
     "capabilities": {
+      "tools": [
+        "bash",
+        "edit",
+        "find",
+        "grep",
+        "ls",
+        "read",
+        "write"
+      ],
       "notify": false,
       "plugins": [
         "digest-sources-v2",
@@ -290,6 +325,14 @@
       "thinkingLevel": "high"
     },
     "capabilities": {
+      "tools": [
+        "bash",
+        "codemode",
+        "edit",
+        "read",
+        "tool_search",
+        "write"
+      ],
       "notify": false,
       "plugins": [
         "background-jobs",
@@ -372,7 +415,13 @@
       "thinkingLevel": "high"
     },
     "capabilities": {
-      "core": "readonly",
+      "tools": [
+        "read",
+        "bash",
+        "grep",
+        "find",
+        "ls"
+      ],
       "ask": false,
       "notify": false,
       "plugins": [],
@@ -426,7 +475,13 @@
       "thinkingLevel": "high"
     },
     "capabilities": {
-      "core": "readonly",
+      "tools": [
+        "bash",
+        "find",
+        "grep",
+        "ls",
+        "read"
+      ],
       "ask": false,
       "notify": false,
       "subagent": false,

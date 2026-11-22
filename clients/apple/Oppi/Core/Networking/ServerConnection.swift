@@ -211,11 +211,12 @@ final class ServerConnection {
               let capability = serverCapabilities?.internalUrlViews, capability.version >= 1 else { return false }
         return capability.schemes.contains(scheme)
     }
-    /// Whether this server stores an Agent's capabilities (v2). An older server keeps the old
-    /// shape, so the app shows its Agents read-only instead of sending a body it would refuse.
-    /// Until `/server/info` arrives nothing is known, and the editor stays as it was.
+    /// Whether this server stores an Agent's capabilities as Pi tools (v2, `capabilities.tools`).
+    /// An older server keeps the coding tier, so the app shows its Agents read-only instead of
+    /// sending a body it would refuse. Until `/server/info` arrives nothing is known, and the
+    /// editor stays as it was.
     var editsAgentCapabilities: Bool {
-        serverCapabilities == nil || (serverCapabilities?.agentCapabilities?.version ?? 0) >= 1
+        serverCapabilities == nil || (serverCapabilities?.agentCapabilities?.version ?? 0) >= 2
     }
     /// Whether this server offers `feature` (its switch in `/server/info`). Every feature reads on
     /// until capabilities load, so a pane restored at launch waits for them rather than closing.
@@ -2210,7 +2211,7 @@ final class ServerConnection {
         var capabilities = serverCapabilities
             ?? ServerInfo.Capabilities(sessionStream: nil, dictationStream: nil, appEventStream: nil, extensionNativeUI: nil)
         capabilities.agentCapabilities = offered
-            ? ServerInfo.CapabilityVersion(version: 1)
+            ? ServerInfo.CapabilityVersion(version: 2)
             : nil
         serverCapabilities = capabilities
     }

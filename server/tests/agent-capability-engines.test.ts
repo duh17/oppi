@@ -73,11 +73,24 @@ function writeCodemodeServer(): void {
   );
 }
 
+/** Every Pi tool name this server's Pi Tools setting can govern, for the compiler calls below. */
+const PI_TOOL_NAMES = [
+  "read",
+  "write",
+  "edit",
+  "bash",
+  "ls",
+  "find",
+  "grep",
+  "codemode",
+  "tool_search",
+];
+
 const mailTriageShape: AgentDefinition = {
   name: "Mail triage",
   instructions: { mode: "append", text: "Triage mail." },
   capabilities: {
-    core: "readonly",
+    tools: ["read", "bash"],
     ask: false,
     notify: false,
     subagent: false,
@@ -104,7 +117,7 @@ function makeSession(): Session {
 
 describe("classic engine", () => {
   // One real launch below; the two compiler tests after it are named for what they check.
-  it("launches a migrated Agent with the tools its tier allows and nothing that writes", async () => {
+  it("launches an Agent with the tools it names and nothing that writes", async () => {
     const cwd = tempDir("oppi-capability-classic-");
     const backend = await SdkBackend.create({
       session: makeSession(),
@@ -149,6 +162,7 @@ describe("classic engine", () => {
       engine: "classic",
       runtime: "host",
       mcpServers: facts,
+      piToolNames: PI_TOOL_NAMES,
     });
     // Every server that is configured but not admitted is excluded by pattern, so no exposure
     // change can open it later; the admitted server needs codemode to be reachable at all.
@@ -165,7 +179,7 @@ describe("classic engine", () => {
     const compiled = compileAgentCapabilities({
       definition: {
         name: "Sealed",
-        capabilities: { core: "readonly", plugins: [], mcp: {} },
+        capabilities: { tools: ["read", "bash"], plugins: [], mcp: {} },
       },
       engine: "classic",
       runtime: "host",
@@ -175,6 +189,7 @@ describe("classic engine", () => {
         projectTrusted: false,
         dataDir: agentDir,
       }),
+      piToolNames: PI_TOOL_NAMES,
     });
     expect(compiled.mcp).toEqual({ enabled: false, servers: [] });
     expect(compiled.excluded).toContain("mcp__*");
@@ -240,7 +255,10 @@ describe("classic engine", () => {
   it("leaves a read-only Agent without the search, so a deferred tool stays out of reach", async () => {
     writeDeferredPlugin();
     const backend = await launch(
-      { name: "Sealed", capabilities: { core: "readonly", plugins: ["probe-plugin"] } },
+      {
+        name: "Sealed",
+        capabilities: { tools: ["read", "bash"], plugins: ["probe-plugin"], mcp: {} },
+      },
       tempDir("oppi-deferred-readonly-"),
     );
     try {
@@ -262,7 +280,7 @@ describe("classic engine", () => {
     writeCodemodeServer();
     const definition: AgentDefinition = {
       name: "Mail triage",
-      capabilities: { core: "readonly", plugins: [], mcp: { gmail: "all" } },
+      capabilities: { tools: ["read", "bash"], plugins: [], mcp: { gmail: "all" } },
     };
     const compiled = compileAgentCapabilities({
       definition,
@@ -274,6 +292,7 @@ describe("classic engine", () => {
         projectTrusted: false,
         dataDir: agentDir,
       }),
+      piToolNames: PI_TOOL_NAMES,
     });
     expect(compiled.discovery).toEqual(["codemode", "tool_search"]);
 
@@ -281,6 +300,110 @@ describe("classic engine", () => {
     try {
       const active = backend.session.getActiveToolNames();
       expect(active).toContain("codemode");
+      expect(active).not.toContain("tool_search");
+    } finally {
+      await backend.dispose();
+    }
+  });
+
+  /** Pi's own Pi Tools setting, as the Pi page writes it. */
+  function writePiToolsSetting(defaultTools: string[]): void {
+    writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultTools }));
+  }
+
+  it("turns codemode on for an Agent that names it, with no MCP server at all", async () => {
+    // The owner's case: a sealed Agent may batch its own reads through codemode. Nothing in this
+    // workspace reaches an MCP server, so only the Agent's own tool set can explain it.
+    const backend = await launch(
+      {
+        name: "Batching Reviewer",
+        capabilities: { tools: ["read", "bash", "codemode"], plugins: [], mcp: {} },
+      },
+      tempDir("oppi-codemode-named-"),
+    );
+    try {
+      const active = backend.session.getActiveToolNames();
+      expect(active).toContain("codemode");
+      expect(active).toContain("read");
+      // Still sealed: naming codemode does not hand it the tools that write.
+      expect(active).not.toContain("write");
+      expect(active).not.toContain("edit");
+    } finally {
+      await backend.dispose();
+    }
+  });
+
+  it("keeps codemode off for an Agent that does not name it", async () => {
+    // The setting turns codemode on for every normal session; this Agent stated its own tools, so
+    // the setting does not reach it.
+    writePiToolsSetting(["read", "bash", "edit", "write", "codemode"]);
+    const backend = await launch(
+      { name: "Sealed", capabilities: { tools: ["read", "bash"], plugins: [], mcp: {} } },
+      tempDir("oppi-codemode-unnamed-"),
+    );
+    try {
+      const active = backend.session.getActiveToolNames();
+      expect(active).toContain("read");
+      expect(active).not.toContain("codemode");
+    } finally {
+      await backend.dispose();
+    }
+  });
+
+  it("leaves an Agent that follows the setting exactly as the setting has it", async () => {
+    writePiToolsSetting(["read", "bash", "edit", "write", "codemode"]);
+    const backend = await launch({ name: "Worker" }, tempDir("oppi-inherit-tools-"));
+    try {
+      const active = backend.session.getActiveToolNames();
+      expect(active).toContain("codemode");
+      expect(active).toContain("write");
+      expect(active).toContain("edit");
+    } finally {
+      await backend.dispose();
+    }
+  });
+
+  it("turns codemode on for a read-only Agent with a codemode server even when the setting leaves codemode off", async () => {
+    // Classic passes `agentPiTools(compiled)` through the settings Proxy so `getDefaultTools()`
+    // includes `codemode` from discovery, matching durable's `sessionPiTools`.
+    writePiToolsSetting(["read", "bash"]);
+    writeCodemodeServer();
+    const backend = await launch(
+      {
+        name: "Mail triage",
+        capabilities: { tools: ["read", "bash"], plugins: [], mcp: { gmail: "all" } },
+      },
+      tempDir("oppi-codemode-proxy-discovery-"),
+    );
+    try {
+      const active = backend.session.getActiveToolNames();
+      expect(active).toContain("codemode");
+      expect(active).toContain("read");
+      expect(active).not.toContain("write");
+      expect(active).not.toContain("tool_search");
+      expect(backend.session.settingsManager.getDefaultTools()).toEqual([
+        "read",
+        "bash",
+        "codemode",
+      ]);
+    } finally {
+      await backend.dispose();
+    }
+  });
+
+  it("keeps the read-only rule: a plugin it did not name brings no tool", async () => {
+    writeDeferredPlugin();
+    const backend = await launch(
+      {
+        name: "Sealed",
+        capabilities: { tools: ["read", "bash"], plugins: [], mcp: {} },
+      },
+      tempDir("oppi-sealed-plugin-"),
+    );
+    try {
+      const active = backend.session.getActiveToolNames();
+      expect(active).toContain("read");
+      expect(active).not.toContain("probe_deferred");
       expect(active).not.toContain("tool_search");
     } finally {
       await backend.dispose();
@@ -343,6 +466,7 @@ describe("an unmigrated Agent", () => {
     userMcpServers: [],
     workspaceMcpServers: new Map(),
     mcpServerTools: new Map(),
+    piToolNames: PI_TOOL_NAMES,
   } satisfies AgentMigrationCatalogs;
 
   // The row the migration could not rewrite still holds v1 wiring. Every path that compiles a
@@ -493,17 +617,17 @@ describe("the compiler gives both engines the same plan", () => {
     ["a full Agent", { name: "Full" }],
     [
       "a read-only Agent",
-      { name: "Sealed", capabilities: { core: "readonly", plugins: [], mcp: {} } },
+      { name: "Sealed", capabilities: { tools: ["read", "bash"], plugins: [], mcp: {} } },
     ],
     [
       "a read-only Agent that names a plugin",
-      { name: "Named", capabilities: { core: "readonly", plugins: ["notebook"], mcp: {} } },
+      { name: "Named", capabilities: { tools: ["read", "bash"], plugins: ["notebook"], mcp: {} } },
     ],
     [
       "a read-only Agent with a named server's tools",
       {
         name: "Mail",
-        capabilities: { core: "readonly", plugins: [], mcp: { gmail: ["search", "read"] } },
+        capabilities: { tools: ["read", "bash"], plugins: [], mcp: { gmail: ["search", "read"] } },
       },
     ],
   ];
@@ -518,6 +642,7 @@ describe("the compiler gives both engines the same plan", () => {
         runtime: "host",
         mcpServers: factServers,
         builtinPlugins,
+        piToolNames: PI_TOOL_NAMES,
       });
       const durable = compileAgentCapabilities({
         definition,
@@ -525,18 +650,23 @@ describe("the compiler gives both engines the same plan", () => {
         runtime: "host",
         mcpServers: factServers,
         builtinPlugins,
+        piToolNames: PI_TOOL_NAMES,
       });
       expect(offered(classic)).toEqual(offered(durable));
     });
   }
 
-  it("gives a read-only Agent no built-in plugin tool it did not name", () => {
+  it("gives an Agent that cannot edit files no built-in plugin tool it did not name", () => {
     const compiled = compileAgentCapabilities({
-      definition: { name: "Sealed", capabilities: { core: "readonly", plugins: [], mcp: {} } },
+      definition: {
+        name: "Sealed",
+        capabilities: { tools: ["read", "bash", "ls", "find", "grep"], plugins: [], mcp: {} },
+      },
       engine: "durable",
       runtime: "host",
       mcpServers: factServers,
       builtinPlugins,
+      piToolNames: PI_TOOL_NAMES,
     });
     const tools = offered(compiled);
     expect(tools).toEqual(expect.arrayContaining(["read", "bash", "ls", "find", "grep"]));
@@ -562,6 +692,7 @@ describe("the compiler gives both engines the same plan", () => {
       runtime: "host",
       mcpServers: factServers,
       builtinPlugins,
+      piToolNames: PI_TOOL_NAMES,
     });
     expect(offered(compiled)).toEqual(
       expect.arrayContaining(["sqlite_query", "godot_export", "background_job"]),

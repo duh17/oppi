@@ -3,10 +3,15 @@ import { dirname, join } from "node:path";
 
 import { properLockfile } from "./pi-lockfile.js";
 import { importPiDist } from "./pi-private.js";
+import { PI_DISCOVERY_TOOL_NAMES } from "./pi-tool-names.js";
 
 const [piTools, piSettings, piSystemPrompt] = await Promise.all([
   importPiDist("core/tools/index.js", ["allToolNames", "createToolDefinition"]),
-  importPiDist("core/settings-manager.js", ["DEFAULT_TOOL_NAMES"]),
+  importPiDist("core/settings-manager.js", [
+    "DEFAULT_TOOL_NAMES",
+    "applyToolModifiers",
+    "isToolModifier",
+  ]),
   importPiDist("core/system-prompt.js", ["buildSystemPromptSections"]),
 ]);
 
@@ -17,6 +22,9 @@ export const PI_BUILTIN_TOOL_NAMES = piTools.allToolNames as ReadonlySet<string>
 
 /** The tools Pi selects when `defaultTools` is unset (`DEFAULT_TOOL_NAMES`). */
 export const PI_DEFAULT_TOOL_NAMES = piSettings.DEFAULT_TOOL_NAMES as readonly string[];
+
+/** The tools Pi's own extensions register off, which `defaultTools` turns on. */
+export const PI_OPTIONAL_TOOL_NAMES = PI_DISCOVERY_TOOL_NAMES;
 
 /** Pi's built-in tools an Oppi host can run: every one but PowerShell, as no host is Windows. */
 const SETTING_TOOL_NAMES = new Set(
@@ -69,6 +77,36 @@ export function readPiDefaultTools(agentDir: string): PiDefaultToolsSnapshot {
     return { defaultTools: null };
   }
   return { defaultTools: parseDefaultTools(settings.defaultTools) };
+}
+
+/**
+ * Every tool name Pi's `defaultTools` governs here: Pi's built-in tools, the `codemode` and
+ * `tool_search` extensions Pi registers off, and the names the live setting turns on. An Agent
+ * that states its own Pi tool set denies the rest of these; one that states none follows it.
+ */
+export function piToolNames(setting: readonly string[] | null): string[] {
+  return [...new Set([...PI_BUILTIN_TOOL_NAMES, ...PI_OPTIONAL_TOOL_NAMES, ...(setting ?? [])])];
+}
+
+/**
+ * The Pi Tools setting resolved the way Pi resolves it (`SettingsManager.getDefaultTools`): plain
+ * names replace Pi's defaults, and `+name` / `-name` entries edit the result in order. This is the
+ * live selection the Pi Tools page shows, which a migration copies into an Agent's own set.
+ */
+export function resolvedPiDefaultTools(agentDir: string): string[] {
+  const { defaultTools } = readPiDefaultTools(agentDir);
+  const entries = defaultTools ?? [];
+  const isModifier = piSettings.isToolModifier as (entry: string) => boolean;
+  const applyModifiers = piSettings.applyToolModifiers as (
+    base: readonly string[],
+    entries: readonly string[],
+  ) => string[];
+  const plain = entries.filter((entry) => !isModifier(entry));
+  const base =
+    defaultTools === null || (plain.length === 0 && entries.length > 0)
+      ? [...PI_DEFAULT_TOOL_NAMES]
+      : plain;
+  return applyModifiers(base, entries);
 }
 
 /**

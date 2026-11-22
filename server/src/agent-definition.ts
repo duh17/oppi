@@ -1,17 +1,14 @@
 /**
  * A saved Agent's declaration: what it may do, not how Pi is wired to do it.
  *
- * An Agent states intent — a coding-tool tier, plugin names, MCP servers and tools, Skill
- * names, context toggles. It never names Pi internals: no `codemode`/`tool_search`, no
- * `builtin:*` extension IDs, no `mcp__<server>__<tool>` strings, no host Skill paths.
- * `agent-capabilities.ts` is the one owner that turns this into a session, for both engines.
+ * An Agent states intent — Pi tool names, plugin names, MCP servers and tools, Skill names,
+ * context toggles. It never names Pi's wiring: no `builtin:*` extension IDs, no
+ * `mcp__<server>__<tool>` strings, no host Skill paths. `agent-capabilities.ts` is the one owner
+ * that turns this into a session, for both engines.
  */
 import type { IconChoice } from "./types.js";
 import type { ThinkingLevel } from "./thinking-levels.js";
 import { isRecord } from "./json-shape.js";
-
-/** The built-in coding tools an Agent may use. Expanded by the server, never by the Agent. */
-export type AgentCoreTier = "full" | "readonly";
 
 /** One MCP server's tools: `"all"`, or the exact tool names it may call. */
 export type AgentMcpTools = "all" | readonly string[];
@@ -19,14 +16,22 @@ export type AgentMcpTools = "all" | readonly string[];
 /**
  * MCP access, keyed by a server's `mcp.json` name (`"gmail"`, `"chrome-devtools"`); the server
  * matches by namespace, so the hyphen and underscore spellings are the same server. Omitted
- * means every configured server; `{}` means none. A restricted tier must state it (D2 in the
- * plan): a locked-down Agent never inherits every server by omission.
+ * means every configured server; `{}` means none. An Agent that cannot edit files must state it:
+ * it never inherits every server by omission.
  */
 export type AgentMcpSelection = Readonly<Record<string, AgentMcpTools>>;
 
 export interface AgentCapabilities {
-  /** Default `full`: a normal session's tools. `readonly` keeps read and search tools. */
-  readonly core?: AgentCoreTier;
+  /**
+   * The Pi tools this Agent's sessions start with, named the way Pi's `defaultTools` names them
+   * (`read`, `bash`, `codemode`, a tool a plugin registers off). Omitted follows the server's Pi
+   * Tools setting; a list is this Agent's own set. Extension tools — a plugin's, an MCP server's —
+   * stay enabled either way, so this is not an allow list for everything a session can reach.
+   *
+   * An Agent whose set leaves out both `edit` and `write` cannot change files: it must then state
+   * `plugins` and `mcp`, and the tools of the plugins it does not name stay out of its sessions.
+   */
+  readonly tools?: readonly string[];
   /** Ask the person a question. Default true. */
   readonly ask?: boolean;
   /** Send a push when a result is ready. Default true. */

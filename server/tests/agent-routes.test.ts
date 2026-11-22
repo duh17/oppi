@@ -360,7 +360,7 @@ describe("agent routes", () => {
             name: "Reviewer",
             description: "Reviews diffs",
             instructions: { mode: "append", text: "Focus on risk." },
-            capabilities: { core: "readonly", plugins: [], mcp: {} },
+            capabilities: { tools: ["read", "bash"], plugins: [], mcp: {} },
             context: { skills: ["reviewer"] },
             sessionDefaults: { model: "openai-codex/gpt-5.5", thinkingLevel: "medium" },
             launchConstraints: {
@@ -413,7 +413,7 @@ describe("agent routes", () => {
         definition: {
           name: "Reviewer",
           description: "Reviews diffs",
-          capabilities: { core: "readonly", plugins: [], mcp: {} },
+          capabilities: { tools: ["read", "bash"], plugins: [], mcp: {} },
           context: { skills: ["reviewer"] },
         },
       });

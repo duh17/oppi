@@ -76,8 +76,8 @@ export type AgentConfigurationFailureCode =
   /** The stored Agent is still in the v1 shape the migration could not rewrite. */
   | "agent_definition_v2_required"
   /**
-   * A read-only Agent, and Oppi could not read the plugin inventory that keeps unnamed tools out
-   * of its session: refused rather than launched wider than the Agent said.
+   * An Agent that cannot edit files, and Oppi could not read the plugin inventory that keeps
+   * unnamed tools out of its session: refused rather than launched wider than the Agent said.
    */
   | "agent_builtin_plugins_unavailable";
 

@@ -135,6 +135,31 @@ export class Storage {
     return result;
   }
 
+  /**
+   * The once-per-data-directory rewrite of `capabilities.core` into `capabilities.tools`, over the
+   * rows and version history stored now. `piToolNames` is the live Pi Tools selection resolved
+   * against Pi's defaults (`resolvedPiDefaultTools`): an Agent that could not change files gets
+   * that selection without the two write tools and the two discovery tools.
+   */
+  migrateAgentToolSelections(piToolNames: readonly string[]): {
+    migrated: number;
+    notes: Array<{ id: string; notes: string[] }>;
+    backupPath?: string;
+  } {
+    let result: {
+      migrated: number;
+      notes: Array<{ id: string; notes: string[] }>;
+      backupPath?: string;
+    } = { migrated: 0, notes: [] };
+    this.runMigrationOnceSync("agent_definitions_pi_tools", () => {
+      const { backupPath, ...written } =
+        this.agentDefinitionStore.migrateStoredAgentTools(piToolNames);
+      result = { ...written, backupPath };
+      return true;
+    });
+    return result;
+  }
+
   // ─── Config ───
 
   static getDefaultConfig(dataDir: string = DEFAULT_DATA_DIR): ServerConfig {

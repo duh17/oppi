@@ -50,9 +50,11 @@ import {
   OppiAgentDoc,
   piDefaultTools,
   resolveDurableAgent,
+  sessionPiTools,
   toolAllowed,
   type OppiAgentState,
 } from "./durable-agent.js";
+import { piToolNames } from "./pi-global-config.js";
 import type { AgentBackend, BackendRunState } from "./agent-backend.js";
 import { isControlConversation } from "./control-session.js";
 import { readRequestDisplay, type DurableAgentController } from "./durable-agent-controller.js";
@@ -180,8 +182,9 @@ interface DurableBackendOptions {
   workspace?: Workspace;
   agentDefinition?: AgentDefinition;
   /**
-   * Oppi's own plugin tools, for a read-only Agent's exclusions (see `agent-capabilities.ts`);
-   * `null` means the catalog could not be read, which refuses a read-only Agent's launch.
+   * Oppi's own plugin tools, for an Agent that cannot edit files and names no plugins (see
+   * `agent-capabilities.ts`); `null` means the catalog could not be read, which refuses such an
+   * Agent's launch.
    */
   getBuiltinPluginFacts?: () => Promise<readonly AgentBuiltinPluginFact[] | null>;
   dataDir: string;
@@ -435,10 +438,12 @@ export class DurableBackend implements AgentBackend {
               ...(workspace && sandbox ? { toolScope: `sandbox:${workspace.id}` } : {}),
             }),
             mcpAvailable: options.mcpEnabled?.() !== false,
+            piToolNames: piToolNames(piSettings.getDefaultTools() ?? null),
             ...(builtinFacts ? { builtinPlugins: builtinFacts } : {}),
             ...(builtinFacts === null ? { builtinPluginsUnknown: true } : {}),
           })
         : undefined;
+    const resolvedPiTools = sessionPiTools(compiled, piTools);
     // A plugin or Skill the Agent names that this engine cannot load is skipped: say so, rather
     // than start a session that quietly does less than its definition says.
     const warnings = durableAgentWarnings({
@@ -460,7 +465,7 @@ export class DurableBackend implements AgentBackend {
           hostCwd,
           cwd,
           sandbox,
-          piTools,
+          piTools: resolvedPiTools,
           hostExtensionIds,
           ...(compiled ? { compiled } : {}),
         });
@@ -547,7 +552,7 @@ export class DurableBackend implements AgentBackend {
               // codemode namespace; undefined admits every configured server.
               ...(compiled?.mcp.servers ? { servers: compiled.mcp.servers } : {}),
               policy: session.launch?.tools,
-              piTools,
+              piTools: resolvedPiTools,
               providerToken: (provider) => registry.getApiKeyForProvider(provider),
               toolCache: new McpToolCache(
                 mcpToolCachePath(options.dataDir),
@@ -563,7 +568,7 @@ export class DurableBackend implements AgentBackend {
         hostCwd,
         cwd,
         mcp,
-        piTools,
+        piTools: resolvedPiTools,
         piSettings,
         launched,
         packageExtensions,

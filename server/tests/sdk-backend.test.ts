@@ -1756,7 +1756,7 @@ describe("SdkBackend saved Agent definitions", () => {
       name: "Runtime Agent",
       instructions: { mode: "append", text: "Always answer with OPPI_AGENT_RUNTIME_OK." },
       context: { skills: ["agent-review"], contextFiles: false },
-      capabilities: { core: "readonly", plugins: [], mcp: {} },
+      capabilities: { tools: ["read", "bash"], plugins: [], mcp: {} },
     };
 
     const backend = await SdkBackend.create({
@@ -1839,7 +1839,7 @@ describe("SdkBackend saved Agent definitions", () => {
         } as Workspace,
         agentDefinition: {
           name: "Fruit Agent",
-          capabilities: { core: "readonly", plugins: [], mcp: {} },
+          capabilities: { tools: ["read", "bash"], plugins: [], mcp: {} },
           context: { skills: ["fruitstand"] },
         },
         onEvent: vi.fn(),

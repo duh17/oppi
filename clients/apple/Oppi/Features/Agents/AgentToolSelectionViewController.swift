@@ -10,7 +10,9 @@ struct AgentToolSelection {
         var selectedNames: Set<String>
         var builtInTools: [ServerToolSummary]
         var defaultSelection: Set<String>
-        /// Tools Pi extensions register off. Shown in every mode when there are any.
+        /// Tools Pi extensions register off. Pi offers them in every mode (writing `+name` in Pi
+        /// defaults); an Agent omits them in Pi defaults because it follows the server's Pi Tools
+        /// setting as a whole.
         var optionalTools: [ServerToolSummary]
         var selectedOptionalNames: Set<String>
     }
@@ -50,6 +52,37 @@ struct AgentToolSelection {
             setSelectedNames: { tools.selectedNames = $0 },
             setSelectedOptionalNames: { tools.selectedOptionalNames = $0 },
             didClose: { tools.pickerDidClose() }
+        )
+    }
+
+    /// An Agent's own Pi tools, edited on the same page as Pi's. Every change lands in the editor's
+    /// draft and saves with it, so leaving the page has nothing to write: `didClose` is empty.
+    static func agent(_ draft: AgentNativeEditDraft, serverName: String) -> Self {
+        Self(
+            title: "Pi Tools",
+            inheritFooter: AgentManagementPresentation.agentToolsFollowSettingFooter,
+            exactFooter: AgentManagementPresentation.agentToolsExactFooter,
+            optionalToolsFooter: AgentManagementPresentation.agentToolsOptionalFooter,
+            serverName: serverName,
+            state: {
+                State(
+                    mode: draft.toolsAll ? .inherit : .exact,
+                    selectedNames: draft.selectedTools,
+                    builtInTools: draft.builtInTools,
+                    defaultSelection: draft.defaultToolNames,
+                    // An Agent in Pi-defaults mode follows the server's Pi Tools setting as a
+                    // whole (it has no `+name` modifiers), so optional switches apply only in
+                    // Choose tools mode.
+                    optionalTools: draft.toolsAll ? [] : draft.optionalTools,
+                    selectedOptionalNames: draft.selectedTools
+                )
+            },
+            setMode: { draft.setToolsMode($0) },
+            // Both sections are one set on an Agent: the built-in rows and the optional rows are
+            // two views of the same Pi `defaultTools` list.
+            setSelectedNames: { names in draft.selectTools(names) },
+            setSelectedOptionalNames: { names in draft.selectTools(names) },
+            didClose: {}
         )
     }
 }
@@ -179,7 +212,7 @@ final class AgentToolSelectionViewController: ListScreenController<
     /// Choosing "Choose tools" starts the list from the defaults.
     private func choose(_ mode: AgentToolSelectionMode) {
         let state = selection.state()
-        if mode == .exact, state.mode != .exact {
+        if mode == .exact, state.mode != .exact, !state.defaultSelection.isEmpty {
             selection.setSelectedNames(state.defaultSelection)
         }
         selection.setMode(mode)

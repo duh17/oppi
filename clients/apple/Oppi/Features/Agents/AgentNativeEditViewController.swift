@@ -15,7 +15,7 @@ final class AgentNativeEditViewController: ListScreenController<
         case customPrompt, promptMode, prompt
         case model, useServerModel, thinking
         case chatStyle
-        case editFiles, askMe, notifyMe, delegate, plugins, mcpServers, skills
+        case tools, askMe, notifyMe, delegate, plugins, mcpServers, skills
         case contextFiles, sessionHistory
         case runtime, engine, workspaceMode, workspaces
         case error
@@ -111,8 +111,10 @@ final class AgentNativeEditViewController: ListScreenController<
             MainActor.assumeIsolated { self?.chatStyleDidChange() }
         }
         loadTask = Task { [draft, apiClient] in
+            async let tools: Void = draft.refreshTools(apiClient: apiClient)
             async let resources: Void = draft.refreshResources(apiClient: apiClient)
             async let servers: Void = draft.refreshMcpServers(apiClient: apiClient)
+            _ = await tools
             _ = await (resources, servers)
         }
     }
@@ -177,7 +179,7 @@ final class AgentNativeEditViewController: ListScreenController<
                 .tools,
                 header: "Tools",
                 footer: toolsFooter,
-                items: [.editFiles, .askMe, .notifyMe, .delegate, .plugins, .mcpServers, .skills]
+                items: [.tools, .askMe, .notifyMe, .delegate, .plugins, .mcpServers, .skills]
             ),
             .init(
                 .context,
@@ -205,10 +207,16 @@ final class AgentNativeEditViewController: ListScreenController<
             : "Uses these instructions instead of the server's default system prompt."
     }
 
+    private var toolsSummary: String {
+        AgentManagementPresentation.agentToolsSummary(tools: draft.toolsAll ? nil : draft.resolvedToolNames)
+    }
+
     private var toolsFooter: String {
-        draft.editsFiles
-            ? "Edit files gives this Agent Pi's coding tools. Ask me, Notify me, and Delegate decide whether it can ask you a question, send a push when it is done, and start child sessions."
-            : "Without Edit files this Agent reads and searches only, and it names the plugins and MCP servers it may use (both start at None). Ask me, Notify me, and Delegate decide whether it can ask you a question, send a push when it is done, and start child sessions."
+        let switching =
+            "Ask me, Notify me, and Delegate decide whether it can ask you a question, send a push when it is done, and start child sessions."
+        return draft.canEditFiles
+            ? "Pi Tools chooses the tools this Agent's sessions start with. \(switching)"
+            : "Without edit and write this Agent cannot change files, and it names the plugins and MCP servers it may use (both start at None). \(switching)"
     }
 
     /// The draft values a row is drawn from. A pass reconfigures only the rows
@@ -227,7 +235,7 @@ final class AgentNativeEditViewController: ListScreenController<
         case .useServerModel: AnyHashable(0)
         case .thinking: AnyHashable(draft.thinkingLevel)
         case .chatStyle: AnyHashable([AnyHashable(draft.chatStyle), AnyHashable(AppPreferences.ChatDisplay.style)])
-        case .editFiles: AnyHashable(draft.editsFiles)
+        case .tools: AnyHashable([draft.toolsAll, draft.selectedTools] as [AnyHashable])
         case .askMe: AnyHashable(draft.canAsk)
         case .notifyMe: AnyHashable(draft.canNotify)
         case .delegate: AnyHashable(draft.canDelegate)
@@ -254,7 +262,7 @@ final class AgentNativeEditViewController: ListScreenController<
         switch item {
         case .name, .description, .prompt:
             collectionView.dequeueConfiguredReusableCell(using: textViewRow, for: indexPath, item: item)
-        case .model, .plugins, .mcpServers, .skills, .workspaces:
+        case .model, .tools, .plugins, .mcpServers, .skills, .workspaces:
             collectionView.dequeueConfiguredReusableCell(using: indexRow, for: indexPath, item: item)
         case .useServerModel:
             collectionView.dequeueConfiguredReusableCell(using: actionRow, for: indexPath, item: item)
@@ -262,7 +270,7 @@ final class AgentNativeEditViewController: ListScreenController<
             collectionView.dequeueConfiguredReusableCell(using: menuRow, for: indexPath, item: item)
         case .error:
             collectionView.dequeueConfiguredReusableCell(using: stateRow, for: indexPath, item: item)
-        case .customPrompt, .editFiles, .askMe, .notifyMe, .delegate, .contextFiles, .sessionHistory:
+        case .customPrompt, .askMe, .notifyMe, .delegate, .contextFiles, .sessionHistory:
             super.dequeue(item, at: indexPath)
         }
     }
@@ -276,13 +284,6 @@ final class AgentNativeEditViewController: ListScreenController<
                 isOn: draft.usesCustomInstructions,
                 identifier: "agent.nativeEdit.customPrompt"
             ) { [weak self] in self?.draft.usesCustomInstructions = $0 }
-        case .editFiles:
-            toggleRow(
-                cell,
-                title: "Edit files",
-                isOn: draft.editsFiles,
-                identifier: "agent.nativeEdit.editFiles"
-            ) { [weak self] in self?.draft.setEditsFiles($0) }
         case .askMe:
             toggleRow(cell, title: "Ask me", isOn: draft.canAsk, identifier: "agent.nativeEdit.askMe") { [weak self] in
                 self?.draft.canAsk = $0
@@ -368,6 +369,19 @@ final class AgentNativeEditViewController: ListScreenController<
                 identifier: "agent.nativeEdit.model"
             ) { [weak self] in
                 self?.presentModelPicker()
+            }
+        case .tools:
+            cell.configure(
+                title: "Pi Tools", image: nil, value: toolsSummary,
+                identifier: "agent.nativeEdit.tools"
+            ) { [weak self] in
+                guard let self else { return }
+                Router.push(
+                    AgentToolSelectionViewController(
+                        selection: .agent(draft, serverName: draft.serverName)
+                    ),
+                    from: self
+                )
             }
         case .plugins:
             cell.configure(

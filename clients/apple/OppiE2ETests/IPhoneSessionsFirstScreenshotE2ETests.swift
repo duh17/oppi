@@ -515,7 +515,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         XCTAssertEqual(capabilities["ask"] as? Bool, true)
         XCTAssertEqual(capabilities["notify"] as? Bool, true)
         XCTAssertEqual(capabilities["subagent"] as? Bool, true)
-        XCTAssertNil(capabilities["core"], "Edit files on is the default: no tier is stored")
+        XCTAssertNil(capabilities["tools"], "Pi defaults is the default: no tool set is stored")
         XCTAssertNil(capabilities["plugins"], "No plugin list means every enabled plugin")
         XCTAssertNil(capabilities["mcp"], "No MCP map means every configured server")
 

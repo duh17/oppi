@@ -1409,7 +1409,7 @@ describe("confirm card text", () => {
         definition: {
           name: "Nanny",
           capabilities: {
-            core: "readonly",
+            tools: ["read", "bash"],
             ask: true,
             mcp: { gmail: "all" },
             plugins: ["notebook"],
@@ -1422,7 +1422,7 @@ describe("confirm card text", () => {
       method: "PATCH",
       path: "/agents/a1",
       body: {
-        capabilities: { core: "full", mcp: {}, plugins: [] },
+        capabilities: { mcp: {}, plugins: [] },
         context: { skills: [] },
       },
       current: agentCurrent,
@@ -1435,7 +1435,7 @@ describe("confirm card text", () => {
       method: "PATCH",
       path: "/agents/a1",
       body: {
-        capabilities: { core: null, ask: null, mcp: null, plugins: null },
+        capabilities: { tools: null, ask: null, mcp: null, plugins: null },
         context: { skills: null },
       },
       current: agentCurrent,
@@ -1444,7 +1444,7 @@ describe("confirm card text", () => {
     expect(lifted.message).toContain("(removed: every MCP server)");
     expect(lifted.message).toContain("(removed: every plugin)");
     expect(lifted.message).toContain("(removed: every Skill Pi discovers)");
-    expect(lifted.message).toContain("(removed: the full tool set)");
+    expect(lifted.message).toContain("(removed: the Pi Tools setting's own tools)");
     expect(lifted.message).not.toContain("(removed)");
 
     // An env key can carry text no screen shows: it is marked and counted.

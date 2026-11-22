@@ -573,7 +573,7 @@ export default function (pi) {
     const sealed = await create({
       agentDefinition: {
         name: "Sealed",
-        capabilities: { core: "readonly", plugins: [], mcp: {} },
+        capabilities: { tools: ["read", "bash"], plugins: [], mcp: {} },
       },
     });
     expect(extensionPaths(sealed).filter((path) => path.startsWith("builtin:"))).toEqual([]);

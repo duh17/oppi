@@ -240,7 +240,7 @@ enum AgentsLoadStateTests {
                 caption == "Update this server to see and edit this Agent’s tools, plugins, MCP servers, and context."
             )
             #expect(
-                AgentListViewControllerTests.labelTexts(in: screen.view).contains("Edit files") == false,
+                AgentListViewControllerTests.labelTexts(in: screen.view).contains("Pi Tools") == false,
                 "no capability rows for a server that cannot store them"
             )
             let edit = try #require(
@@ -264,7 +264,7 @@ enum AgentsLoadStateTests {
                 definition: AgentDefinition(
                     name: "Current",
                     icon: .defaultValue,
-                    capabilities: AgentCapabilities(core: .full, plugins: [], mcp: [:])
+                    capabilities: AgentCapabilities(plugins: [], mcp: [:])
                 ),
                 createdAt: Date(timeIntervalSince1970: 1),
                 updatedAt: Date(timeIntervalSince1970: 1),
@@ -280,8 +280,12 @@ enum AgentsLoadStateTests {
             window.frame = CGRect(x: 0, y: 0, width: 390, height: 2600)
             defer { AgentListViewControllerTests.hide(window) }
 
-            let values = await waitForValues(["Edit files", "Plugins", "MCP Servers"], in: screen)
-            #expect(values["Edit files"] == "Yes")
+            let values = await waitForValues(
+                ["Pi Tools", "Edits files", "Plugins", "MCP Servers"],
+                in: screen
+            )
+            #expect(values["Pi Tools"] == "Pi standard", "no tool set follows the Pi Tools setting")
+            #expect(values["Edits files"] == "Yes")
             #expect(values["Plugins"] == "None")
             #expect(values["MCP Servers"] == "None")
             let edit = try #require(
@@ -306,7 +310,7 @@ enum AgentsLoadStateTests {
                     name: "Nanny",
                     icon: .defaultValue,
                     capabilities: AgentCapabilities(
-                        core: .readonly,
+                        tools: ["read", "bash"],
                         ask: true,
                         notify: false,
                         subagent: false,
@@ -332,11 +336,12 @@ enum AgentsLoadStateTests {
             defer { AgentListViewControllerTests.hide(window) }
 
             let values = await waitForValues(
-                ["Edit files", "Ask me", "Notify me", "Delegate", "Plugins", "MCP Servers",
-                 "Read AGENTS.md", "Read past sessions", "Skills"],
+                ["Pi Tools", "Edits files", "Ask me", "Notify me", "Delegate", "Plugins",
+                 "MCP Servers", "Read AGENTS.md", "Read past sessions", "Skills"],
                 in: screen
             )
-            #expect(values["Edit files"] == "No, reading and searching only")
+            #expect(values["Pi Tools"] == "read, bash")
+            #expect(values["Edits files"] == "No")
             #expect(values["Ask me"] == "Yes")
             #expect(values["Notify me"] == "No")
             #expect(values["Delegate"] == "No")

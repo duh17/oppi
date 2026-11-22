@@ -1714,7 +1714,7 @@ const HELP_TOPICS: HelpTopic[] = [
       "Agent definitions are target-agnostic; workspace/worktree/cwd are launch inputs, not stored Agent fields.",
       "AgentDefinition top-level keys: name, icon, description, instructions, capabilities, context, sessionDefaults, launchConstraints. Anything else is rejected.",
       "Launch-only keys are forbidden in definitions: target, workspaceId, worktreeId, cwd, schedule, attachments, images.",
-      "capabilities states what the Agent may do: core full|readonly, ask/notify/subagent, plugins by name, and mcp servers with all or some of their tools. context names Skills and the two context toggles. Omit a list to follow every plugin, server or Skill; an empty list means none.",
+      "capabilities states what the Agent may do: its Pi tools by name (read, bash, edit, write, codemode, a tool an extension registers off), ask/notify/subagent, plugins by name, and mcp servers with all or some of their tools. context names Skills and the two context toggles. Omit a list to follow every plugin, server or Skill; an empty list means none, and an Agent whose tools leave out edit and write must state plugins and mcp.",
       "Use 'oppi session create --agent <agent> --workspace <workspace> --prompt <text>' to launch a saved Agent.",
     ],
     examples: [
@@ -1754,7 +1754,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Create saved Agent",
     summary: "Create a saved Agent from first-class flags and optional file or inline JSON.",
     usage:
-      "oppi agent create [--name <name>] [--description <text>] [--icon <text> | --icon-image <file>] [--instructions <text> | --instructions-file <file>] [--instructions-mode <append|replace>] [--core <full|readonly>] [--ask | --no-ask] [--notify | --no-notify] [--subagent | --no-subagent] [--plugins <all|csv>] [--mcp <all|none|csv>] [--skills <all|csv>] [--context-files | --no-context-files] [--session-history | --no-session-history] [--allowed-workspaces <csv>] [--required-runtime <host|sandbox>] [--required-engine durable] [--definition <file> | --definition-json <json-object>] [--model <model[:thinking]>] [--thinking <level>] [--idempotency-key <key>] [--json]",
+      "oppi agent create [--name <name>] [--description <text>] [--icon <text> | --icon-image <file>] [--instructions <text> | --instructions-file <file>] [--instructions-mode <append|replace>] [--tools <all|none|csv>] [--ask | --no-ask] [--notify | --no-notify] [--subagent | --no-subagent] [--plugins <all|csv>] [--mcp <all|none|csv>] [--skills <all|csv>] [--context-files | --no-context-files] [--session-history | --no-session-history] [--allowed-workspaces <csv>] [--required-runtime <host|sandbox>] [--required-engine durable] [--definition <file> | --definition-json <json-object>] [--model <model[:thinking]>] [--thinking <level>] [--idempotency-key <key>] [--json]",
     flags: [
       {
         name: "--name",
@@ -1789,9 +1789,14 @@ const HELP_TOPICS: HelpTopic[] = [
         summary: "writes instructions.mode; defaults to append when creating from text or file",
       },
       {
-        name: "--core",
-        value: "<full|readonly>",
-        summary: "writes capabilities.core; full is a normal session, readonly cannot write files",
+        name: "--tools",
+        value: "<all|none|csv>",
+        summary:
+          "writes capabilities.tools; all follows the Pi Tools setting, none is no Pi tool, a CSV is that set",
+      },
+      {
+        name: "--clear-tools",
+        summary: "sets capabilities.tools null, following the Pi Tools setting again",
       },
       {
         name: "--ask",
@@ -1872,7 +1877,7 @@ const HELP_TOPICS: HelpTopic[] = [
       "--model and --thinking write sessionDefaults and overlay the same keys from --definition / --definition-json; --thinking wins over a --model :thinking suffix.",
       "Allowed AgentDefinition keys: name, icon, description, instructions, sessionDefaults, capabilities, context, launchConstraints.",
       "Forbidden launch-only keys: target, workspaceId, worktreeId, cwd, schedule, attachments, images.",
-      "An Agent states capabilities, never Pi wiring: --core full|readonly, the ask/notify/subagent switches, --plugins by name, and --mcp by server name. Omit --plugins or --mcp for every enabled plugin or every configured server; pass none for no plugins or no servers. A readonly Agent must state both (with --core readonly, pass --plugins none, or the names, and --mcp none, or the servers).",
+      "An Agent states capabilities, never Pi wiring: --tools by name, the ask/notify/subagent switches, --plugins by name, and --mcp by server name. Omit --tools for the server's Pi Tools setting; pass none for no Pi tool. Omit --plugins or --mcp for every enabled plugin or every configured server; pass none for no plugins or no servers. An Agent whose --tools leave out edit and write must state both (pass --plugins none, or the names, and --mcp none, or the servers).",
       "--skills takes Skill names (a Skill's folder name), not paths: omit it for Pi discovery, pass all to clear a selection. --no-context-files stops the workspace AGENTS.md and prompt from reaching the session; --no-session-history stops history:// and agent:// reads.",
       "--allowed-workspaces writes launchConstraints.allowedWorkspaceIds (workspace IDs) and must not be empty; omit it for any workspace. --required-runtime writes launchConstraints.requiredRuntime.",
       "--required-engine durable writes launchConstraints.requiredEngine: every launch of the Agent (session create, Quick Session, schedules, subagents) runs durable; an omitted --engine becomes durable, --engine classic is refused, and launches fail while durable sessions are off on the server.",
@@ -1880,7 +1885,7 @@ const HELP_TOPICS: HelpTopic[] = [
       "--instructions and --instructions-file are mutually exclusive. --instructions-mode is append or replace and defaults to append when creating from text or file; it requires --instructions, --instructions-file, or instructions.text in the definition JSON.",
       '--icon is default, one Unicode emoji, or an SF Symbol name. --icon-image <file> reads a PNG, APNG, GIF, or WebP of at most 1 MiB from this host, stores it in the server\'s icon store (POST /icon-assets, which checks the bytes), and sets {"kind":"image","assetId":"ia_…"}; a relative path is from the current directory, and ~/ is expanded. --icon and --icon-image are mutually exclusive. A Genmoji has no flag: after POST /icon-assets stores its HEIC, set {"kind":"genmoji","assetId":"ia_…","contentDescription":"…"} in definition JSON.',
       'A symbol icon can carry an animation in definition JSON: {"kind":"symbol","name":"sparkles","effect":"bounce"}, where effect is bounce, pulse, breathe, wiggle, or rotate. The app plays it only on the Agent\'s page and in the icon picker.',
-      'There is no tool list: what a session has comes from its tier, its plugins, and its MCP servers. A tool subset of one MCP server is written in definition JSON (capabilities.mcp: {"gmail": ["search", "read"]}).',
+      'A session has what the Agent names: its Pi tools, its plugins, and its MCP servers. A tool subset of one MCP server is written in definition JSON (capabilities.mcp: {"gmail": ["search", "read"]}).',
     ],
     examples: [
       {
@@ -1902,7 +1907,7 @@ const HELP_TOPICS: HelpTopic[] = [
     title: "Update saved Agent",
     summary: "Patch a saved Agent from first-class flags and optional file or inline JSON.",
     usage:
-      "oppi agent update <agent> [--name <name>] [--description <text>] [--clear-description] [--icon <text> | --icon-image <file>] [--clear-icon] [--instructions <text> | --instructions-file <file>] [--instructions-mode <append|replace>] [--clear-instructions] [--core <full|readonly>] [--ask | --no-ask] [--notify | --no-notify] [--subagent | --no-subagent] [--plugins <all|csv>] [--clear-plugins] [--mcp <all|none|csv>] [--clear-mcp] [--skills <all|csv>] [--clear-skills] [--context-files | --no-context-files] [--session-history | --no-session-history] [--allowed-workspaces <csv>] [--clear-allowed-workspaces] [--required-runtime <host|sandbox>] [--clear-required-runtime] [--required-engine durable] [--clear-required-engine] [--definition <file> | --definition-json <json-object>] [--model <model[:thinking]>] [--thinking <level>] [--expected-version <version>] [--json]",
+      "oppi agent update <agent> [--name <name>] [--description <text>] [--clear-description] [--icon <text> | --icon-image <file>] [--clear-icon] [--instructions <text> | --instructions-file <file>] [--instructions-mode <append|replace>] [--clear-instructions] [--tools <all|none|csv>] [--ask | --no-ask] [--notify | --no-notify] [--subagent | --no-subagent] [--plugins <all|csv>] [--clear-plugins] [--mcp <all|none|csv>] [--clear-mcp] [--skills <all|csv>] [--clear-skills] [--context-files | --no-context-files] [--session-history | --no-session-history] [--allowed-workspaces <csv>] [--clear-allowed-workspaces] [--required-runtime <host|sandbox>] [--clear-required-runtime] [--required-engine durable] [--clear-required-engine] [--definition <file> | --definition-json <json-object>] [--model <model[:thinking]>] [--thinking <level>] [--expected-version <version>] [--json]",
     arguments: [{ name: "<agent>", summary: "agent id or unique name" }],
     flags: [
       {
@@ -1944,9 +1949,14 @@ const HELP_TOPICS: HelpTopic[] = [
       },
       { name: "--clear-instructions", summary: "sets instructions null" },
       {
-        name: "--core",
-        value: "<full|readonly>",
-        summary: "overlays capabilities.core; readonly cannot write files",
+        name: "--tools",
+        value: "<all|none|csv>",
+        summary:
+          "overlays capabilities.tools; all follows the Pi Tools setting, none is no Pi tool",
+      },
+      {
+        name: "--clear-tools",
+        summary: "sets capabilities.tools null",
       },
       { name: "--ask", summary: "sets capabilities.ask true; --no-ask sets it false" },
       { name: "--notify", summary: "sets capabilities.notify true; --no-notify sets it false" },
@@ -2050,7 +2060,7 @@ const HELP_TOPICS: HelpTopic[] = [
       "Update is a PATCH: omitted fields keep their stored values; nested capabilities, context, sessionDefaults, and launchConstraints merge key by key; JSON null clears a field or nested key.",
       "Run 'oppi agent get <agent>' first, then patch only the changed fields; --expected-version with the reviewed version returns a conflict instead of overwriting newer changes.",
       "--model and --thinking overlay the same sessionDefaults keys from --definition / --definition-json; --thinking wins over a --model :thinking suffix.",
-      "--core, --plugins, --skills, --mcp overlay capabilities/context; --plugins/--skills/--mcp take a CSV, 'none' for [], or 'all' to follow everything again, and an empty value is refused; the matching --clear-* sets null.",
+      "--tools, --plugins, --skills, --mcp overlay capabilities/context; --plugins/--skills/--mcp take a CSV, 'none' for [], or 'all' to follow everything again, and an empty value is refused; the matching --clear-* sets null.",
       "--allowed-workspaces overlays launchConstraints.allowedWorkspaceIds (workspace IDs) and must not be empty; --clear-allowed-workspaces sets null (any). --required-runtime overlays launchConstraints.requiredRuntime; --clear-required-runtime sets null (either). --required-engine durable overlays launchConstraints.requiredEngine, so every launch runs durable and --engine classic is refused; --clear-required-engine sets null (either engine).",
       "Explicit flags override corresponding JSON keys without dropping sibling nested fields. Instructions replace as a whole. --name overlays definition.name.",
       "--instructions and --instructions-file are mutually exclusive. --instructions-mode requires --instructions, --instructions-file, or instructions.text in the definition JSON rather than dropping stored text.",
@@ -2065,7 +2075,7 @@ const HELP_TOPICS: HelpTopic[] = [
       { command: "oppi agent update Reviewer --definition ./agent-update.json --json" },
       { command: "oppi agent update Reviewer --icon-image ./fox.gif --json" },
       {
-        command: `oppi agent update Reviewer --core readonly --plugins none --mcp none --expected-version 3 --json`,
+        command: `oppi agent update Reviewer --tools read,bash --plugins none --mcp none --expected-version 3 --json`,
       },
       {
         command: `oppi agent update Reviewer --definition-json '{"capabilities":{"mcp":{"gmail":["search","read"]}}}' --json`,

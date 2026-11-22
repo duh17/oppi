@@ -54,7 +54,7 @@ describe("agent create/update editor-flag parity", () => {
       icon: "🧘",
       instructions: "Be careful",
       "instructions-mode": "replace",
-      core: "readonly",
+      tools: "read, bash",
       plugins: "webtools, notebook",
       mcp: "gmail, xcode",
       skills: "review, security",
@@ -71,7 +71,7 @@ describe("agent create/update editor-flag parity", () => {
       icon: { kind: "emoji", value: "🧘" },
       instructions: { mode: "replace", text: "Be careful" },
       capabilities: {
-        core: "readonly",
+        tools: ["read", "bash"],
         ask: false,
         plugins: ["webtools", "notebook"],
         mcp: { gmail: "all", xcode: "all" },
@@ -144,7 +144,12 @@ describe("agent create/update editor-flag parity", () => {
   });
 
   it("reads `none` as exact none, `all` as inherit, and refuses an empty value", async () => {
-    await runAgent("create", [], { name: "Reviewer", skills: "none", plugins: "none", mcp: "none" });
+    await runAgent("create", [], {
+      name: "Reviewer",
+      skills: "none",
+      plugins: "none",
+      mcp: "none",
+    });
     expect(postedBody()).toEqual({
       name: "Reviewer",
       capabilities: { plugins: [], mcp: {} },
@@ -153,7 +158,11 @@ describe("agent create/update editor-flag parity", () => {
     request.mockReset();
     request.mockResolvedValue(created as never);
     await runAgent("create", [], { name: "Reviewer", skills: "all", mcp: "all" });
-    expect(postedBody()).toEqual({ name: "Reviewer", capabilities: { mcp: null }, context: { skills: null } });
+    expect(postedBody()).toEqual({
+      name: "Reviewer",
+      capabilities: { mcp: null },
+      context: { skills: null },
+    });
     // An empty value reads as "everything" to whoever meant "nothing": it is refused instead.
     request.mockClear();
     const refused = await runAgent("create", [], { name: "Reviewer", skills: "" });
@@ -264,8 +273,7 @@ describe("agent create/update editor-flag parity", () => {
     expect(JSON.parse(resources.stdout)).toMatchObject({
       ok: false,
       error: {
-        message:
-          "cannot overlay context.skills because context is null in the definition JSON",
+        message: "cannot overlay context.skills because context is null in the definition JSON",
       },
     });
     expect(request).not.toHaveBeenCalled();
@@ -287,7 +295,7 @@ describe("agent create/update editor-flag parity", () => {
       skills: "new-skill",
       "required-runtime": "sandbox",
       "definition-json": JSON.stringify({
-        capabilities: { core: "full", plugins: ["webtools"] },
+        capabilities: { tools: ["read", "write"], plugins: ["webtools"] },
         context: { skills: ["old-skill"], sessionHistory: false },
         launchConstraints: { allowedWorkspaceIds: ["ws-1"], requiredRuntime: "host" },
         sessionDefaults: { model: "json-model" },
@@ -295,7 +303,7 @@ describe("agent create/update editor-flag parity", () => {
     });
 
     expect(patchedBody()).toEqual({
-      capabilities: { core: "full", plugins: ["webtools"] },
+      capabilities: { tools: ["read", "write"], plugins: ["webtools"] },
       context: { skills: ["new-skill"], sessionHistory: false },
       launchConstraints: { allowedWorkspaceIds: ["ws-1"], requiredRuntime: "sandbox" },
       sessionDefaults: { model: "json-model" },

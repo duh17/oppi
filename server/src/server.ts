@@ -163,6 +163,7 @@ import { ProviderAuthManager } from "./provider-auth/provider-auth-manager.js";
 import { McpService } from "./mcp-service.js";
 import { buildAgentMigrationCatalogs } from "./agent-migration-catalogs.js";
 import { createBuiltinPluginFactsReader } from "./agent-capabilities.js";
+import { resolvedPiDefaultTools } from "./pi-global-config.js";
 import { ScreensStreamMux } from "./screens-stream.js";
 import { featureOn, serverFeatures } from "./server-features.js";
 import { ProviderQuotaService } from "./provider-quota/service.js";
@@ -971,6 +972,25 @@ export class Server {
         log.info("agents.migrated_to_capabilities", { migrated, backupPath });
       } catch (error) {
         log.warn("agents.migration_failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    // Agents that still state a coding tier are rewritten once into the Pi tools each can use now:
+    // the live Pi Tools selection, read once, without the write and discovery tools for an Agent
+    // that cannot edit files. Every row that changed is logged at warn: it is a stored change the
+    // owner may want to see, and the backup is what undoes it.
+    if (this.storage.getAgentDefinitionStore().hasCodingTierDefinitions()) {
+      try {
+        const { migrated, notes, backupPath } = this.storage.migrateAgentToolSelections(
+          resolvedPiDefaultTools(agentDir),
+        );
+        for (const entry of notes) {
+          log.warn("agents.migrated_tools_row", { agentId: entry.id, notes: entry.notes });
+        }
+        log.info("agents.migrated_to_pi_tools", { migrated, backupPath });
+      } catch (error) {
+        log.warn("agents.tools_migration_failed", {
           error: error instanceof Error ? error.message : String(error),
         });
       }

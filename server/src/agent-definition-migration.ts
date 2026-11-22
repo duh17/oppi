@@ -10,9 +10,9 @@
  *
  * The rules preserve what each Agent could actually do, not what its lists happened to say:
  *
- * - An allow list decides the tier (write/edit ⇒ full, else readonly) and, because v2 lets an
- *   Agent state a plugin instead of its tools, the plugins whose tools it names: a plugin that is
- *   not named is not selected.
+ * - An allow list becomes the Agent's own Pi tool set, so `write`/`edit` in it decide whether the
+ *   Agent can change files, and — because v2 lets an Agent state a plugin instead of its tools —
+ *   the plugins whose tools it names: a plugin that is not named is not selected.
  * - An exclusion decides the toggles (`ask`, `notify`, `subagent`) and, because v2 lets an Agent
  *   state which MCP servers it reaches, the servers left after the excluded ones. A plugin whose
  *   tools the old policy excluded is not selected.
@@ -27,7 +27,7 @@ import {
   type AgentMcpTools,
 } from "./agent-definition.js";
 import {
-  AGENT_CORE_TIER_TOOLS,
+  agentToolSetReadOnly,
   AGENT_TOGGLE_TOOLS,
   agentMcpNamespace,
 } from "./agent-capabilities.js";
@@ -54,6 +54,12 @@ export interface AgentMigrationCatalogs {
   readonly workspaceMcpServers: ReadonlyMap<string, readonly string[]>;
   /** The last-known tool names per MCP server, from Oppi's tool cache. */
   readonly mcpServerTools: ReadonlyMap<string, readonly string[]>;
+  /**
+   * Pi's own tool names: its built-in tools and the two its extensions register off. They are the
+   * only names `capabilities.tools` can hold, so a v1 allow list keeps these and its plugin, MCP
+   * and toggle names reach their own fields instead.
+   */
+  readonly piToolNames: readonly string[];
 }
 
 export interface AgentMigrationResult {
@@ -103,7 +109,7 @@ export function migrateAgentDefinitionV1(
   const allowed = defaults.tools;
   const excluded = defaults.excludeTools ?? [];
 
-  const core = tierFor(v1, notes);
+  const tools = toolsFor(v1, catalogs.piToolNames, notes);
   const noTools = defaults.noTools === "all";
   const toggles = {
     ask: !noTools && toggleOn("ask", allowed, excluded),
@@ -116,13 +122,17 @@ export function migrateAgentDefinitionV1(
   const mcp = noTools
     ? {}
     : mcpFor(v1.name, allowed, excluded, v1.launchConstraints, catalogs, notes);
+  // An Agent whose tools cannot write files states what it may reach (see `AgentCapabilities`).
+  // A v1 Agent in that position had already lost its unnamed plugins in the old model, so both
+  // lists come out empty rather than absent.
+  const cannotWrite = tools !== undefined && agentToolSetReadOnly(tools);
   const capabilities: AgentCapabilities = {
-    ...(core === "full" ? {} : { core }),
+    ...(tools === undefined ? {} : { tools }),
     ...(toggles.ask ? {} : { ask: false }),
     ...(toggles.notify ? {} : { notify: false }),
     ...(toggles.subagent ? {} : { subagent: false }),
-    ...(plugins === undefined ? {} : { plugins }),
-    ...(mcp === undefined ? {} : { mcp }),
+    ...(plugins !== undefined ? { plugins } : cannotWrite ? { plugins: [] } : {}),
+    ...(mcp !== undefined ? { mcp } : cannotWrite ? { mcp: {} } : {}),
   };
   const context = contextFor(resources);
 
@@ -158,25 +168,32 @@ export function migrateAgentDefinitionV1(
 }
 
 /**
- * The tier: an allow list that names `write`/`edit` is a working Agent, anything narrower is
- * read-only. No policy, or exclusions only, was a normal session.
+ * The Pi tools an Agent stated, or none for a normal session. A v1 allow list is exactly that: the
+ * names it may use, which becomes the Agent's own set. No list, or exclusions only, was a normal
+ * session that follows the Pi Tools setting. `noTools: "all"` used everything up, so the set is
+ * empty, and `toolsFor` is the only reader of the old policy's tool names.
  */
-function tierFor(v1: V1Definition, notes: string[]): "full" | "readonly" {
+function toolsFor(
+  v1: V1Definition,
+  piToolNames: readonly string[],
+  notes: string[],
+): string[] | undefined {
   const defaults = v1.sessionDefaults ?? {};
   if (v1.resources?.agentsFiles !== undefined) {
     notes.push("dropped resources.agentsFiles (no Agent used it)");
   }
   if (defaults.noTools === "all") {
-    notes.push('sessionDefaults.noTools "all" became core: readonly with no plugins');
-    return "readonly";
+    notes.push('sessionDefaults.noTools "all" became an empty Pi tool set with no plugins');
+    return [];
   }
   if (defaults.noTools === "builtin") notes.push('dropped sessionDefaults.noTools "builtin"');
-  if (defaults.tools === undefined) return "full";
-  const writable = defaults.tools.some(
-    (tool) =>
-      AGENT_CORE_TIER_TOOLS.full.includes(tool) && !AGENT_CORE_TIER_TOOLS.readonly.includes(tool),
-  );
-  return writable ? "full" : "readonly";
+  if (defaults.tools === undefined) return undefined;
+  // Only the Pi names: a plugin's tools are selected through `plugins`, an MCP tool through `mcp`,
+  // and a toggle through its own switch, all of which the same migration computes.
+  const pi = new Set(piToolNames);
+  const tools = [...new Set(defaults.tools.filter((name) => pi.has(name)))];
+  notes.push(`sessionDefaults.tools became the Agent's own Pi tools: ${tools.join(", ")}`);
+  return tools;
 }
 
 /** A toggle is on unless the policy named its tool and refused it. */

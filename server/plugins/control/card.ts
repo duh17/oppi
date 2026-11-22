@@ -432,10 +432,11 @@ const LIFTS: { [path: string]: { empty: string; gone: string; sentence: string }
     gone: "every Skill Pi discovers",
     sentence: "Without a Skill list, the session gets every Skill Pi discovers.",
   },
-  "capabilities.core": {
-    empty: "the full tool set",
-    gone: "the full tool set",
-    sentence: "Without a core tier, the Agent has a normal session's tools, which include writing.",
+  "capabilities.tools": {
+    empty: "no Pi tool",
+    gone: "the Pi Tools setting's own tools",
+    sentence:
+      "Without a Pi tool list, the Agent starts with the tools the Pi Tools setting selects.",
   },
   "capabilities.ask": {
     empty: "it can ask",

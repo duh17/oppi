@@ -341,12 +341,12 @@ private struct NativeAgentUpdateBody: Encodable {
         let capabilities: AgentCapabilities
 
         enum CodingKeys: String, CodingKey {
-            case core, ask, notify, subagent, plugins, mcp
+            case tools, ask, notify, subagent, plugins, mcp
         }
 
         func encode(to encoder: Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
-            try container.encodeNullable(capabilities.core, forKey: .core)
+            try container.encodeNullable(capabilities.tools, forKey: .tools)
             try container.encodeNullable(capabilities.ask, forKey: .ask)
             try container.encodeNullable(capabilities.notify, forKey: .notify)
             try container.encodeNullable(capabilities.subagent, forKey: .subagent)

@@ -7,6 +7,8 @@ import { join } from "node:path";
 
 import type { AgentMigrationCatalogs } from "./agent-definition-migration.js";
 import { mcpServerFacts } from "./durable-mcp.js";
+import { PI_BUILTIN_TOOL_NAMES } from "./pi-global-config.js";
+import { PI_DISCOVERY_TOOL_NAMES } from "./pi-tool-names.js";
 import { readMcpDocument } from "./mcp-config.js";
 import { workspaceMountRoot } from "./session-work-root.js";
 import type { ServerExtensionSummary } from "./server-resource-service.js";
@@ -93,6 +95,7 @@ export async function buildAgentMigrationCatalogs(input: {
     userMcpServers,
     workspaceMcpServers,
     mcpServerTools,
+    piToolNames: [...PI_BUILTIN_TOOL_NAMES, ...PI_DISCOVERY_TOOL_NAMES],
   };
 }
 

@@ -35,6 +35,12 @@ enum AgentManagementPresentation {
         "Uses Pi's standard built-in tools. Extension tools stay enabled."
     static let piToolsExactFooter =
         "Only the selected built-in tools are available. Extension tools stay enabled."
+    static let agentToolsFollowSettingFooter =
+        "Uses the tools the server's Pi Tools setting starts a session with, including optional tools like codemode when they are on there. Switch to Choose tools to set this Agent's own built-in and optional tools."
+    static let agentToolsExactFooter =
+        "These are the Pi tools this Agent's sessions start with; an MCP server it names can still turn codemode or tool_search on. A set without edit and write cannot change files, and then names the plugins and MCP servers it may use."
+    static let agentToolsOptionalFooter =
+        "Pi and its extensions register these tools off. Turning one on adds it to this Agent's tools. An MCP server can still turn codemode or tool_search on when its exposure needs it."
     static let piOptionalToolsFooter =
         "Pi and its extensions register these tools off; turning one on adds it to Pi's defaultTools. MCP servers can still turn on codemode or tool_search when their exposure needs it."
 
@@ -214,5 +220,28 @@ enum AgentManagementPresentation {
         builtInTools: [ServerToolSummary]
     ) -> [String] {
         builtInTools.map(\.name).filter { selectedNames.contains($0) }
+    }
+
+    /// An Agent's own Pi tools, in the order the tools page lists them: Pi's built-in tools, the
+    /// ones extensions register off, then any name the catalog does not know (a server that has
+    /// since changed, or a tool a newer Pi has) so a save never drops a choice it cannot show.
+    static func toolNames(
+        selected: Set<String>,
+        builtInTools: [ServerToolSummary],
+        optionalTools: [ServerToolSummary]
+    ) -> [String] {
+        let listed = (builtInTools + optionalTools).map(\.name)
+        let known = Set(listed)
+        let chosen = listed.filter { selected.contains($0) }
+        let unlisted = selected.filter { !known.contains($0) }.sorted()
+        return chosen + unlisted
+    }
+
+    /// An Agent's tools row: what following the setting means, or how many tools it names.
+    static func agentToolsSummary(tools: [String]?) -> String {
+        guard let tools else { return piStandardToolsSummary }
+        if tools.isEmpty { return "None" }
+        if tools.count <= 3 { return tools.joined(separator: ", ") }
+        return "\(tools.count) tools"
     }
 }

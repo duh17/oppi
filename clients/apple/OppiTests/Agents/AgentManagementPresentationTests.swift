@@ -331,4 +331,46 @@ struct AgentManagementPresentationTests {
             ) == ["read", "grep"]
         )
     }
+
+    /// An Agent's own tools keep the tools page's order, and a name the catalog cannot show is
+    /// kept at the end rather than dropped by a save.
+    @Test func agentToolNamesKeepThePageOrderAndEveryChosenName() {
+        let builtIn = [
+            ServerToolSummary(name: "read", defaultEnabled: true),
+            ServerToolSummary(name: "bash", defaultEnabled: true),
+            ServerToolSummary(name: "edit", defaultEnabled: true),
+        ]
+        let optional = [ServerToolSummary(name: "codemode", defaultEnabled: false)]
+        #expect(
+            AgentManagementPresentation.toolNames(
+                selected: ["codemode", "read"],
+                builtInTools: builtIn,
+                optionalTools: optional
+            ) == ["read", "codemode"]
+        )
+        #expect(
+            AgentManagementPresentation.toolNames(
+                selected: ["gone_tool", "bash"],
+                builtInTools: builtIn,
+                optionalTools: optional
+            ) == ["bash", "gone_tool"]
+        )
+    }
+
+    /// Read-only is derived from the tools, never a tier: the same rule the server enforces.
+    @Test func agentToolsDecideWhetherItCanEditFiles() {
+        // `edit` or `write` in the set, or none of the set stated at all.
+        #expect(AgentCapabilities(tools: ["read", "edit"]).canEditFiles)
+        #expect(AgentCapabilities(tools: ["read", "write"]).canEditFiles)
+        #expect(AgentCapabilities(tools: ["read", "bash"]).canEditFiles == false)
+        #expect(AgentCapabilities(tools: ["read", "bash", "codemode"]).canEditFiles == false)
+        #expect(AgentCapabilities().canEditFiles, "no tool set follows the setting, which may write")
+        #expect(AgentManagementPresentation.agentToolsSummary(tools: nil) == "Pi standard")
+        #expect(AgentManagementPresentation.agentToolsSummary(tools: []) == "None")
+        #expect(AgentManagementPresentation.agentToolsSummary(tools: ["read", "bash"]) == "read, bash")
+        #expect(
+            AgentManagementPresentation.agentToolsSummary(tools: ["read", "bash", "edit", "codemode"])
+                == "4 tools"
+        )
+    }
 }

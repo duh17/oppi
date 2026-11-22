@@ -130,7 +130,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
 
   /** Injected by the server to resolve skill names to host directory paths. */
   skillPathResolver: ((skillNames: string[]) => Promise<string[]>) | null = null;
-  /** Injected by the server: Oppi's own plugins and their tools, for read-only Agents. */
+  /** Injected by the server: Oppi's own plugins and their tools, for Agents that name none. */
   builtinPluginFacts: (() => Promise<readonly AgentBuiltinPluginFact[] | null>) | null = null;
 
   /** Injected by the server: who is offered the agent `notify` tool, and its send. */

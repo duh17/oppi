@@ -23,8 +23,9 @@ import UIKit
 /// request answers 404). `ssh-setup-install-ask`: Set Up a Computer after a
 /// check of a Mac without Oppi, with Install & Start's shell profile question up.
 /// Router modal pages (`RouterSettingsModalsUITests`): `agents`,
-/// `agents-pi-file`, `schedules`, `skill-file-review`, `skill-file-edit` (a
-/// server that also edits Skill files in place),
+/// `agents-pi-file`, `agent-editor` (the Agent editor's Tools section), `agent-tools` (the Pi
+/// Tools page it pushes, exact-mode fixture), and `agent-tools-defaults` (the Pi-defaults state), `schedules`, `skill-file-review`,
+/// `skill-file-edit` (a server that also edits Skill files in place),
 /// `pairing-approval`, `onboarding-add-server`, `onboarding-tailscale` (the
 /// same onboarding over a running tailnet); `theme-import` and
 /// `agents-pi` serve them too. `SCREENSHOT_SWEEP_SHOWS_WRITES=1` shows the
@@ -193,10 +194,10 @@ final class SettingsSweepPreviewController: PreviewRootController {
         _ patch: [String: Any]
     ) -> AgentCapabilities {
         var merged = current ?? AgentCapabilities()
-        if let core = patch["core"] as? String {
-            merged.core = AgentCoreTier(rawValue: core)
-        } else if patch.keys.contains("core") {
-            merged.core = nil
+        if let tools = patch["tools"] as? [String] {
+            merged.tools = tools
+        } else if patch.keys.contains("tools") {
+            merged.tools = nil
         }
         if let ask = patch["ask"] as? Bool { merged.ask = ask } else if patch.keys.contains("ask") { merged.ask = nil }
         if let notify = patch["notify"] as? Bool { merged.notify = notify } else if patch.keys.contains("notify") { merged.notify = nil }
@@ -532,6 +533,33 @@ final class SettingsSweepPreviewController: PreviewRootController {
             return stack { SchedulesViewController(root: root) }
         case "agents":
             return stack { AgentListViewController(root: root) }
+        case "agent-editor", "agent-tools", "agent-tools-defaults":
+            // The Agent editor's Tools section, and the Pi Tools page it pushes: the same page as
+            // Pi's own, filled from the fixture Agent and the server's tool catalog.
+            let fixtureAgent = page == "agent-tools-defaults" ? Self.agent : Self.nanny
+            let draft = AgentNativeEditDraft(
+                agent: fixtureAgent,
+                connection: connection,
+                serverName: root.windowServerName
+            )
+            draft.builtInTools = Self.piBuiltInTools
+            draft.optionalTools = Self.piOptionalTools
+            if page == "agent-tools" || page == "agent-tools-defaults" {
+                return stack {
+                    AgentToolSelectionViewController(
+                        selection: .agent(draft, serverName: root.windowServerName)
+                    )
+                }
+            }
+            return stack {
+                AgentNativeEditViewController(
+                    agent: fixtureAgent,
+                    apiClient: client,
+                    connection: connection,
+                    serverName: root.windowServerName,
+                    onSaved: { _ in }
+                )
+            }
         case "agents-pi", "agents-pi-file":
             // Pi's prompt reader needs the server's `piFileEditing` capability
             // before its pencil can appear.
@@ -665,6 +693,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
             icon: .emoji("🧸"),
             instructions: AgentInstructions(text: "Keep the household running: chores, school, and repairs."),
             capabilities: AgentCapabilities(
+                tools: ["read", "bash"],
                 ask: true, notify: false, subagent: false,
                 plugins: ["notebook"],
                 mcp: [
@@ -680,6 +709,21 @@ final class SettingsSweepPreviewController: PreviewRootController {
         ),
         createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1), archivedAt: nil
     )
+
+    /// Pi's built-in tools as the server lists them: the four Pi starts a session with are on.
+    private static let piBuiltInTools: [ServerToolSummary] = [
+        ServerToolSummary(name: "read", description: "Read a file", defaultEnabled: true),
+        ServerToolSummary(name: "bash", description: "Run a shell command", defaultEnabled: true),
+        ServerToolSummary(name: "edit", description: "Edit a file", defaultEnabled: true),
+        ServerToolSummary(name: "write", description: "Write a file", defaultEnabled: true),
+        ServerToolSummary(name: "grep", description: "Search file contents", defaultEnabled: false),
+        ServerToolSummary(name: "find", description: "Find files by name", defaultEnabled: false),
+        ServerToolSummary(name: "ls", description: "List a folder", defaultEnabled: false),
+    ]
+    private static let piOptionalTools: [ServerToolSummary] = [
+        ServerToolSummary(name: "codemode", description: "Batch tool calls in one script", defaultEnabled: false),
+        ServerToolSummary(name: "tool_search", description: "Load a deferred tool", defaultEnabled: false),
+    ]
 
     /// The global MCP servers an Agent may name, one narrowed by the fixture Agent.
     private static let mcpScope = McpScopeSnapshot(
@@ -789,13 +833,13 @@ final class SettingsSweepPreviewController: PreviewRootController {
             "/server/resources/pi/default-tools": json(PiDefaultToolsSnapshot(defaultTools: ["+codemode"])),
             "/server/resources/extensions": json(ServerExtensionCatalog(
                 extensions: catalogExtensions(page: page),
-                builtInTools: [ServerToolSummary(name: "read"), ServerToolSummary(name: "bash")],
-                optionalTools: [ServerToolSummary(name: "codemode")]
+                builtInTools: Self.piBuiltInTools,
+                optionalTools: Self.piOptionalTools
             )),
             // A Skill file is a host read; the fixture answers every one.
             "/files/current": Data("# Release\n\nReview release readiness.".utf8),
             // `skill-file-edit`: the server edits Skill files, read through the Skill.
-            "/server/info": Data(#"{"name":"mac-studio","version":"1.0","uptime":1,"os":"darwin","arch":"arm64","hostname":"mac-studio","nodeVersion":"22","piVersion":"1","configVersion":1,"capabilities":{"currentFiles":{"version":1},"agentCapabilities":{"version":1},"workspaceFileEditing":{"version":1,"maxBytes":1048576},"skillFileEditing":{"version":1,"maxBytes":1048576},"piFileEditing":{"version":1,"maxBytes":1048576}},"stats":{"workspaceCount":0,"activeSessionCount":0,"totalSessionCount":0,"skillCount":1,"modelCount":0}}"#.utf8),
+            "/server/info": Data(#"{"name":"mac-studio","version":"1.0","uptime":1,"os":"darwin","arch":"arm64","hostname":"mac-studio","nodeVersion":"22","piVersion":"1","configVersion":1,"capabilities":{"currentFiles":{"version":1},"agentCapabilities":{"version":2},"workspaceFileEditing":{"version":1,"maxBytes":1048576},"skillFileEditing":{"version":1,"maxBytes":1048576},"piFileEditing":{"version":1,"maxBytes":1048576}},"stats":{"workspaceCount":0,"activeSessionCount":0,"totalSessionCount":0,"skillCount":1,"modelCount":0}}"#.utf8),
             "PUT /files/current": Data(#"{"etag":"\"sha256-\#(String(repeating: "b", count: 64))\"","size":1,"mtimeMs":1}"#.utf8),
             "/server/resources/skills": json(ServerSkillsCatalog(skills: skills)),
             "PUT /server/resources/skills/release/enabled": json({ () -> ServerSkillSummary in
