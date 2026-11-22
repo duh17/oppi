@@ -83,14 +83,19 @@ final class GitPaneLinkE2ETests: E2ETestCase {
     func testLinkedGitPaneKeepsItsStatusAndLoadsAfterRelaunch() throws {
         let (_, changed) = try openLinkedGit()
 
-        // Another screen loading another checkout of the same workspace (its
-        // Workspace Detail reads the main checkout) leaves the pane's alone.
-        openSidebar()
-        tap(app.descendants(matching: .any)["workspace.open.\(workspaceName)"].firstMatch, named: "the workspace in the sidebar", timeout: 10)
-        XCTAssertTrue(app.collectionViews["workspace.sessionList"].waitForExistence(timeout: 15), "The workspace opened")
-        beat(4)
-        XCTAssertTrue(changed.exists, "The Git pane kept its worktree's status after another checkout loaded: \(stateValue)")
-        try saveLabScreenshot(name: "git-pane-link-beside-workspace")
+        // A compact window covers the main pane with the link's Git panel, so
+        // only an iPad has a sidebar beside the pane to open another checkout
+        // from.
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            // Another screen loading another checkout of the same workspace (its
+            // Workspace Detail reads the main checkout) leaves the pane's alone.
+            openSidebar()
+            tap(app.descendants(matching: .any)["workspace.open.\(workspaceName)"].firstMatch, named: "the workspace in the sidebar", timeout: 10)
+            XCTAssertTrue(app.collectionViews["workspace.sessionList"].waitForExistence(timeout: 15), "The workspace opened")
+            beat(4)
+            XCTAssertTrue(changed.exists, "The Git pane kept its worktree's status after another checkout loaded: \(stateValue)")
+            try saveLabScreenshot(name: "git-pane-link-beside-workspace")
+        }
 
         // Cold: a relaunch, then the link, with nothing else asking for its status.
         app.terminate()
