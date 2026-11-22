@@ -133,7 +133,8 @@ extension ServerConnection {
 /// every other row (a prompt, a state, a local session) is the list's own
 /// `Row`, drawn by `configureRow`. The list builds a `Snapshot` in
 /// `updateProperties()` and applies it; only items whose values changed
-/// reconfigure, and a theme or row-appearance change reconfigures them all.
+/// reconfigure, and a theme, row-appearance, or icon-cache change reconfigures
+/// them all.
 @MainActor
 final class SessionListCollection<
     Section: Hashable & Sendable,
@@ -239,6 +240,9 @@ final class SessionListCollection<
     /// theme the cells last drew.
     private var display = SessionRowDisplay.standard
     private var themeID: ThemeID?
+    /// The icons' cache the rows on screen were configured with. A row draws its
+    /// Agent's picture from it, so another cache is new configuration for every row.
+    private var configuredIconAssetCache: IconAssetCache?
     private var hasApplied = false
 
     /// `iconAssetCache` is the list's server's, for saved-Agent Genmoji.
@@ -284,9 +288,18 @@ final class SessionListCollection<
         guard let dataSource else { return }
         let display = root.sessionRows.display
         let themeID = root.themeStore.activeThemeID
+        // A row draws its Agent's picture from the connection's icon cache, and a
+        // launch can list its sessions from this device before the connection has
+        // one: the rows drawn then keep the fallback symbol, because a row asks
+        // that cache for the bytes and nothing would ask again. Read here, the
+        // cache is also the input a screen's `updateProperties()` tracks, so
+        // installing it reconfigures the rows that were drawn without it.
+        let cache = iconAssetCache()
         let reconfigureAll = display != self.display || themeID != self.themeID
+            || cache !== configuredIconAssetCache
         self.display = display
         self.themeID = themeID
+        configuredIconAssetCache = cache
 
         var items = next.items
         let existing = Set(dataSource.snapshot().itemIdentifiers)

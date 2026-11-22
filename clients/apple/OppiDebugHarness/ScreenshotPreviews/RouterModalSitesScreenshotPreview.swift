@@ -50,7 +50,8 @@ final class RouterModalSitesPreviewController: PreviewRootController {
             coordinator: RouterModalSitesFixtures.makeCoordinator(
                 playing: site.hasSuffix("now-playing"),
                 threads: site == "inbox-threads" || quickSession,
-                durable: quickSession
+                durable: quickSession,
+                lateIconCache: environment["SCREENSHOT_ICON_CACHE_LATE"] == "1"
             ),
             navigation: navigation,
             themeStore: ThemeStore(),
@@ -277,7 +278,17 @@ private enum RouterModalSitesFixtures {
     static let serverId = "sha256:router-modal-sites"
 
     /// `durable` advertises Durable sessions, as a current server does.
-    static func makeCoordinator(playing: Bool, threads: Bool = false, durable: Bool = false) -> ConnectionCoordinator {
+    /// `lateIconCache` draws the rows while the icons' cache cannot answer — a
+    /// launch that lists this device's sessions before its connection can fetch
+    /// anything — and installs the connection's real cache afterwards, so a
+    /// capture shows whether an Agent's picture reaches rows that were drawn
+    /// before their icons could load.
+    static func makeCoordinator(
+        playing: Bool,
+        threads: Bool = false,
+        durable: Bool = false,
+        lateIconCache: Bool = false
+    ) -> ConnectionCoordinator {
         let coordinator = ConnectionCoordinator(serverStore: ServerStore())
         guard let server = PairedServer(from: ServerCredentials(
             host: "router-modal-sites.invalid",
@@ -303,8 +314,28 @@ private enum RouterModalSitesFixtures {
             connection.audioPlayer._setPlaybackStateForTesting(playing: "router-modal-sites-audio", loading: nil)
             connection.audioPlayer._setNowPlayingItemTitleForTesting("Fixture narration")
         }
+        if lateIconCache {
+            // The route install below puts the connection's own cache back, so the
+            // unanswerable one is put again after it, and the real one lands once
+            // the rows are on screen.
+            let cache = IconAssetCache(apiClient: api, serverId: server.id)
+            connection.setIconAssetCacheForTesting(pendingIconCache)
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(400))
+                connection.setIconAssetCacheForTesting(pendingIconCache)
+                try? await Task.sleep(for: .milliseconds(800))
+                connection.setIconAssetCacheForTesting(cache)
+            }
+        }
         return coordinator
     }
+
+    /// A cache that cannot answer inside a capture. Its fetch outlives the launch,
+    /// so it draws the fallback an absent cache does and never redraws a row.
+    private static let pendingIconCache = IconAssetCache(fetch: { _ in
+        try await Task.sleep(for: .seconds(60))
+        throw APIError.server(status: 504, message: "Icon asset is not available yet")
+    })
 
     /// One launch tree across two workspaces: an idle root with a working child, a finished
     /// child with its own child, and a child that runs in kypu, plus a plain session.
