@@ -405,6 +405,7 @@ final class WorkspaceSidebarViewController: UIViewController {
         cell.accessories = []
         cell.accessibilityElements = [cell.element]
         cell.element.isHidden = false
+        cell.element.paneItems = nil
         cell.element.accessibilityIdentifier = nil
         cell.element.accessibilityLabel = nil
         cell.element.accessibilityValue = nil
@@ -421,12 +422,14 @@ final class WorkspaceSidebarViewController: UIViewController {
             guard let row = model.places[place] else { return }
             paintsSelection = true
             isSelected = row.isSelected
+            cell.element.paneItems = { [weak self] in self?.placePaneItems(place) ?? [] }
             configurePlace(cell, row: row, palette: palette)
         case .disclosure:
             configureDisclosure(cell, palette: palette)
         case .workspace(let id):
             guard let row = model.workspaces[id] else { return }
             let workspace = row.target.workspace
+            cell.element.paneItems = { [weak self] in self?.placePaneItems(.sessions(row.target)) ?? [] }
             cell.contentConfiguration = WorkspaceSidebarRowConfiguration(
                 workspace: workspace,
                 status: row.status,
@@ -592,6 +595,23 @@ final class WorkspaceSidebarViewController: UIViewController {
         }
     }
 
+    // MARK: Pane menu
+
+    /// Open in New Pane ▸ Right / Below for a row's place (N7c, §2.5): the
+    /// place opens beside the main pane, which is where the row's own tap lands
+    /// — the owner's answer is that the sidebar never opens into the pane that
+    /// has focus. Nothing on a compact window, where the window holds one pane.
+    private func placePaneItems(_ place: NavigationPlace) -> [PaneMenuItem] {
+        guard let host = navigation.paneArea, let serverId = model.server?.id else { return [] }
+        let main = navigation.panes.mainLeafID
+        let content = PaneOpenContent(place: place, serverId: serverId)
+        return PaneOpenMenu.items(in: host, from: main, includesOpenHere: false, offersOtherPanes: false) { [weak self] placement in
+            // The drawer steps out of the way, so the pane it opens is in sight.
+            self?.onSelect?()
+            PaneOpenMenu.place(placement, in: host, from: main) { content }
+        }
+    }
+
     // MARK: Actions
 
     /// A tap and accessibility activation run the same action.
@@ -691,6 +711,11 @@ private final class FooterListView: UICollectionView {
 final class SidebarRowElement: UIButton {
     var onActivate: (() -> Void)?
     var onHighlightChange: (() -> Void)?
+    /// The place this row opens in a new pane, built when the person long
+    /// presses or VoiceOver reads the row's actions: nil for a row that opens
+    /// nothing beside. One menu and one set of actions serve every row a cell
+    /// is reused for, and both run the same `PaneMenuItem.run`.
+    var paneItems: (@MainActor () -> [PaneMenuItem])?
 
     override var isHighlighted: Bool {
         didSet { if isHighlighted != oldValue { onHighlightChange?() } }
@@ -699,6 +724,12 @@ final class SidebarRowElement: UIButton {
     override init(frame: CGRect) {
         super.init(frame: frame)
         addAction(UIAction { [weak self] _ in self?.onActivate?() }, for: .touchUpInside)
+        PaneOpenContextMenu.install(on: self) { [weak self] in self?.paneItems?() ?? [] }
+        accessibilityCustomActionsBlock = { [weak self] in
+            MainActor.assumeIsolated {
+                self.map { PaneOpenMenu.accessibilityActions(of: $0.paneItems?() ?? []) } ?? []
+            }
+        }
     }
 
     @available(*, unavailable)

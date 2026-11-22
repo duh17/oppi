@@ -20,30 +20,50 @@ enum PaneOpenPlacement: Hashable {
 }
 
 /// What an item opens as in a pane: the route its leaf shows, and the server
-/// holding a terminal opener's screen for its scoped lock.
+/// holding a screen whose route cannot name it, for its scoped lock.
 struct PaneOpenContent {
     let route: WorkspaceStackRouteElement
-    private let terminalServerId: String?
+    /// The server a terminal its opener made, or a utility place, belongs to.
+    private let screenServerId: String?
 
     init(entry: PaneStackEntry) {
         route = .entry(entry)
-        terminalServerId = nil
+        screenServerId = nil
     }
 
     init(file target: WorkspaceLinkedFileNavTarget) {
         route = .linkedFile(target)
-        terminalServerId = nil
+        screenServerId = nil
     }
 
     init(folder target: FileBrowserNavTarget) {
         route = .fileBrowser(target)
-        terminalServerId = nil
+        screenServerId = nil
+    }
+
+    /// A place a sidebar row opens: a workspace's list and All Sessions as the
+    /// list entry a leaf restores from, as the launcher's Sessions choice opens
+    /// them. A utility (Agents, a terminal's host list, Settings) has no link —
+    /// `PaneEntries.entry(for:)` names which screens a saved pane can hold — so
+    /// its pane is a surface of its own, like the launcher, and a relaunch's
+    /// restore drops it.
+    init(place: NavigationPlace, serverId: String) {
+        switch place {
+        case .sessions(let workspace):
+            route = .entry(PaneStackEntry(
+                serverId: workspace?.serverId ?? serverId,
+                route: .sessions(workspace: workspace?.workspace.id)
+            ))
+        case .utility(let utility):
+            route = .utility(utility)
+        }
+        screenServerId = serverId
     }
 
     /// A terminal its opener made (a folder terminal, Rex).
     init(terminal: TerminalNavTarget, serverId: String) {
         route = .terminal(terminal)
-        terminalServerId = serverId
+        screenServerId = serverId
     }
 
     /// What the item shows as in the main pane: a workspace's sessions is that
@@ -75,7 +95,7 @@ struct PaneOpenContent {
         case .entry(let entry):
             PaneEntries.lockTarget(entry)
         default:
-            .server(terminalServerId ?? "")
+            .server(screenServerId ?? "")
         }
     }
 }
@@ -191,7 +211,20 @@ enum PaneOpenMenu {
         offersOtherPanes: Bool = true,
         open: @escaping @MainActor (PaneOpenPlacement) -> Void
     ) -> [PaneMenuItem] {
-        guard let (host, cell) = locate(view), let choices = host.openChoices(from: cell) else { return [] }
+        guard let (host, cell) = locate(view) else { return [] }
+        return items(in: host, from: cell, includesOpenHere: includesOpenHere, offersOtherPanes: offersOtherPanes, open: open)
+    }
+
+    /// The same items for an item that is not in a pane of its own (a sidebar
+    /// row): `source` is the pane its opens act in.
+    static func items(
+        in host: PaneHostController,
+        from source: PaneID,
+        includesOpenHere: Bool = true,
+        offersOtherPanes: Bool = true,
+        open: @escaping @MainActor (PaneOpenPlacement) -> Void
+    ) -> [PaneMenuItem] {
+        guard let choices = host.openChoices(from: source) else { return [] }
         var items: [PaneMenuItem] = []
         if includesOpenHere {
             items.append(PaneMenuItem(
@@ -249,7 +282,12 @@ enum PaneOpenMenu {
         offersOtherPanes: Bool = true,
         open: @escaping @MainActor (PaneOpenPlacement) -> Void
     ) -> [UIAccessibilityCustomAction] {
-        items(near: view, includesOpenHere: includesOpenHere, offersOtherPanes: offersOtherPanes, open: open).flatMap(\.leaves).map { item in
+        accessibilityActions(of: items(near: view, includesOpenHere: includesOpenHere, offersOtherPanes: offersOtherPanes, open: open))
+    }
+
+    /// `items` as accessibility actions: the same `run` a touch runs.
+    static func accessibilityActions(of items: [PaneMenuItem]) -> [UIAccessibilityCustomAction] {
+        items.flatMap(\.leaves).map { item in
             let run = item.run
             return UIAccessibilityCustomAction(name: item.actionName) { _ in
                 run()
@@ -293,15 +331,43 @@ enum PaneOpenMenu {
     ) {
         guard placement != .here else { return }
         Task { @MainActor [weak view] in
-            let opener = view.flatMap { AppRootEnvironment.near($0) }?.opener
-            guard let content = await content() else {
-                opener?.toast(String(localized: "Oppi can\u{2019}t open this in a pane"))
-                return
+            await place(opener: view.flatMap { AppRootEnvironment.near($0) }?.opener, content: content) { content in
+                guard let view, let (host, cell) = locate(view) else { return }
+                host.place(content, at: placement, from: cell)
             }
-            guard await ScopedLockService.shared.authorize(content.lockTarget),
-                  let view, let (host, cell) = locate(view) else { return }
-            host.place(content, at: placement, from: cell)
         }
+    }
+
+    /// Places what `content` resolves to at `placement` in the pane `source` of
+    /// `host`, once its scoped lock allows, for an item outside the panes (a
+    /// sidebar row). `.here` is the surface's own open.
+    static func place(
+        _ placement: PaneOpenPlacement,
+        in host: PaneHostController,
+        from source: PaneID,
+        content: @escaping @MainActor () async -> PaneOpenContent?
+    ) {
+        guard placement != .here else { return }
+        Task { @MainActor in
+            await place(opener: AppRootEnvironment.near(host)?.opener, content: content) { content in
+                host.place(content, at: placement, from: source)
+            }
+        }
+    }
+
+    /// The steps both placements share: resolve the content, ask its lock, then
+    /// place it. A content that cannot resolve says so instead.
+    private static func place(
+        opener: AppOpener?,
+        content: @escaping @MainActor () async -> PaneOpenContent?,
+        open: @escaping @MainActor (PaneOpenContent) -> Void
+    ) async {
+        guard let content = await content() else {
+            opener?.toast(String(localized: "Oppi can\u{2019}t open this in a pane"))
+            return
+        }
+        guard await ScopedLockService.shared.authorize(content.lockTarget) else { return }
+        open(content)
     }
 
     /// The pane host `view` sits in and the cell that holds it.
@@ -317,15 +383,23 @@ enum PaneOpenMenu {
 /// items, and nothing where there are none.
 @MainActor
 final class PaneOpenContextMenu: NSObject, UIContextMenuInteractionDelegate {
-    private let open: @MainActor (PaneOpenPlacement) -> Void
+    private let menuItems: @MainActor () -> [PaneMenuItem]
 
-    init(open: @escaping @MainActor (PaneOpenPlacement) -> Void) {
-        self.open = open
+    init(items: @escaping @MainActor () -> [PaneMenuItem]) {
+        menuItems = items
     }
 
-    /// Adds the menu to `view`; the view keeps it through its interaction.
+    /// Adds the menu to `view`, built by `items` at the press; the view keeps
+    /// it through its interaction.
+    static func install(on view: UIView, items: @escaping @MainActor () -> [PaneMenuItem]) {
+        view.addInteraction(Interaction(menu: PaneOpenContextMenu(items: items)))
+    }
+
+    /// Adds the pane items `open` runs to the item in `view`.
     static func install(on view: UIView, open: @escaping @MainActor (PaneOpenPlacement) -> Void) {
-        view.addInteraction(Interaction(menu: PaneOpenContextMenu(open: open)))
+        install(on: view) { [weak view] in
+            view.map { PaneOpenMenu.items(near: $0, open: open) } ?? []
+        }
     }
 
     /// An interaction that keeps its delegate, which UIKit holds weakly.
@@ -342,8 +416,7 @@ final class PaneOpenContextMenu: NSObject, UIContextMenuInteractionDelegate {
         _ interaction: UIContextMenuInteraction,
         configurationForMenuAtLocation location: CGPoint
     ) -> UIContextMenuConfiguration? {
-        guard let view = interaction.view else { return nil }
-        let items = PaneOpenMenu.items(near: view, open: open)
+        let items = menuItems()
         guard !items.isEmpty else { return nil }
         return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { _ in
             UIMenu(children: items.map(\.element))
