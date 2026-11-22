@@ -77,6 +77,20 @@ extension ChatViewController {
         UIPasteboard.general.string = sessionId
     }
 
+    /// The chat title's icon opens the Agent this session launched with, on the
+    /// same page the Agents list pushes, and Pi's own page for a session launched
+    /// without one.
+    func openSessionAgentPage() {
+        guard let root else { return }
+        switch assistantIdentityPresentation {
+        case .agent:
+            guard let agentId = session?.launch?.agentId, !agentId.isEmpty else { return }
+            Router.push(AgentDetailViewController(root: root, agentId: agentId) { _ in }, from: screen)
+        case .globalAvatar:
+            Router.push(PiAgentDetailViewController(root: root), from: screen)
+        }
+    }
+
     func shareSessionFromTitleMenu() {
         guard hasShareSlashCommand else {
             reducer.process(

@@ -53,13 +53,14 @@ enum ChatTimelineChromeOverlap {
 }
 
 /// The empty timeline: the session's Agent icon (Genmoji included) or the Pi
-/// mark, centered in the space between the bars. It fades in after 300 ms,
-/// so a session that is only briefly empty while its history loads never
-/// flashes it.
+/// mark, on the same circle as the Agent page's hero, centered in the space
+/// between the bars. It fades in after 300 ms, so a session that is only briefly
+/// empty while its history loads never flashes it, and plays one icon moment as
+/// it settles.
 final class ChatEmptyStateView: UIView {
     private static let side: CGFloat = 112
-    /// The Pi mark or the Agent's icon, on its tile.
-    private let icon = IconChoiceUIView(frameSize: side)
+    /// The Pi mark or the Agent's icon, on its circle.
+    private let icon = IconChoiceUIView(frameSize: side, shape: .circle)
     private var top: NSLayoutConstraint?
     private var bottom: NSLayoutConstraint?
     private var shownSessionID: String?
@@ -142,7 +143,15 @@ final class ChatEmptyStateView: UIView {
             } else {
                 UIView.animate(withDuration: 0.3, delay: 0, options: .curveEaseIn) { self.alpha = 1 }
             }
+            // The chat's own moment, as its title's icon plays: the hero is the
+            // other half of a chat opening.
+            self.icon.playBurst()
         }
+    }
+
+    /// One burst of the hero, for the moments `ChatViewController` plays.
+    func playIconMoment() {
+        icon.playBurst()
     }
 }
 

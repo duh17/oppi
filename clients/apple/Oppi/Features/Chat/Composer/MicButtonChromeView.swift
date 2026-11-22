@@ -37,6 +37,7 @@ final class MicButtonChromeView: UIControl {
     private var engineBadge: MicEngineBadge = .onDevice
     private var dictationStyle: DictationIndicatorStyle = .current
     nonisolated(unsafe) private var dictationStyleObserver: NSObjectProtocol?
+    private var motionObservers: [NSObjectProtocol] = []
 
     /// Long-press menu, shown while `isContextMenuInteractionEnabled` is on. Tap still sends `.touchUpInside`.
     var menuProvider: (() -> UIMenu?)?
@@ -203,13 +204,14 @@ final class MicButtonChromeView: UIControl {
                 self?.applyDictationStyleFromPreferences()
             }
         }
+        motionObservers = MotionPolicy.observe { [weak self] in self?.updateAppearance(animated: false) }
         updateAppearance(animated: false)
     }
 
-    deinit {
+    isolated deinit {
         liveLink?.invalidate()
-        if let dictationStyleObserver {
-            NotificationCenter.default.removeObserver(dictationStyleObserver)
+        for observer in [dictationStyleObserver].compactMap({ $0 }) + motionObservers {
+            NotificationCenter.default.removeObserver(observer)
         }
     }
 
@@ -285,6 +287,9 @@ final class MicButtonChromeView: UIControl {
         ringLayer.isHidden = showsOrb
         orbView.isHidden = !showsOrb
         orbView.isAnimationEnabled = showsOrb
+        // Moments only and Off hold the indicator still, as Reduce Motion does:
+        // the orb paints one frame instead of following the voice.
+        orbView.forceReduceMotion = !MotionPolicy.playsLoops
         if let orbStyle = dictationStyle.orbStyle {
             orbView.style = orbStyle
             orbView.sizeClass = .dictation(side: Double(diameter))
@@ -378,13 +383,14 @@ final class MicButtonChromeView: UIControl {
 
     /// The parts that move with the voice: the orb's spectrum or the ring's width.
     private func applyVoiceLevel(animated: Bool) {
+        let moves = animated && MotionPolicy.playsLoops
         let spectrum = isRecording ? voiceSpectrum : .zero
         if dictationStyle.orbStyle != nil {
             orbView.voiceSpectrum = spectrum
         }
         let clampedLevel = CGFloat(min(max(spectrum.level, 0), 1))
         let lineWidth = isRecording ? 1.5 + clampedLevel * 2.0 : 1
-        if animated, !showsOrb {
+        if moves, !showsOrb {
             let animation = CABasicAnimation(keyPath: "lineWidth")
             animation.fromValue = ringLayer.presentation()?.lineWidth ?? ringLayer.lineWidth
             animation.toValue = lineWidth

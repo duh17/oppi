@@ -437,8 +437,8 @@ enum AppPreferenceStore {
 
     // MARK: - Appearance
 
-    /// Spinner, dictation indicator, and Pi icon styles. Spinner key matches iOS
-    /// `AppPreferences.Appearance`.
+    /// Motion, spinner, dictation indicator, and Pi icon styles. Spinner key
+    /// matches iOS `AppPreferences.Appearance`.
     enum Appearance {
         static let spinnerStyleKey = "spinnerStyle"
         static let dictationIndicatorStyleKey =
@@ -449,7 +449,21 @@ enum AppPreferenceStore {
         static let dictationIndicatorDidChangeNotification = Notification.Name(
             "\(AppIdentifiers.subsystem).appearance.dictationIndicatorStyleDidChange"
         )
+        static let motionKey = "\(AppIdentifiers.subsystem).appearance.motion"
+        static let motionDidChangeNotification = Notification.Name(
+            "\(AppIdentifiers.subsystem).appearance.motionDidChange"
+        )
         static let piIconStyleKey = "\(AppIdentifiers.subsystem).appearance.piIconStyle"
+
+        /// Nothing stored is every animation: what the app played before Motion
+        /// was a setting, so an update never stills an app that moved.
+        static let motionDefault = MotionSetting.full
+
+        static var motion: MotionSetting { motion(in: .standard) }
+
+        static func motion(in defaults: UserDefaults) -> MotionSetting {
+            defaults.string(forKey: motionKey).flatMap(MotionSetting.init(rawValue:)) ?? motionDefault
+        }
 
         /// What nothing stored means; `SettingsCatalog.piIcon` uses this same constant.
         static let piIconStyleDefault = PiIconStyle.color
@@ -493,5 +507,6 @@ enum AppPreferenceStore {
             defaults.set(style.rawValue, forKey: dictationIndicatorStyleKey)
             NotificationCenter.default.post(name: dictationIndicatorDidChangeNotification, object: nil)
         }
+
     }
 }

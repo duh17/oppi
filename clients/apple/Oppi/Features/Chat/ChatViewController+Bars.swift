@@ -214,6 +214,10 @@ final class ChatBarItems {
         }
 
         titleControl.onTap = { [weak chat] in chat?.presentRenameAlert() }
+        titleControl.onOpenAgent = { [weak chat] in chat?.openSessionAgentPage() }
+        titleControl.openAgentName = chat.assistantIdentityPresentation == .globalAvatar
+            ? String(localized: "Open Pi")
+            : String(localized: "Open Agent")
         titleControl.menuProvider = { [weak self, weak chat] in
             guard let self, let chat else { return nil }
             return self.makeSessionMenu(title: nil, includesRename: false, chat: chat)
@@ -639,14 +643,33 @@ final class ChatBarItems {
     }
 }
 
-/// The session title in the bar: `ChatTitleView` (avatar, name, cost,
+/// The session title in the bar: `ChatTitleView` (icon, name, cost,
 /// mirror and durable marks, Conversation subtitle). A tap renames; a long
 /// press offers Copy Session ID and Share Session. One element for
-/// accessibility, whose activation is the same rename.
+/// accessibility, whose activation is the same rename; a tap on the icon
+/// opens the session's Agent, which is that element's one custom action.
 @MainActor
 final class ChatTitleControl: UIControl {
     var onTap: (() -> Void)?
     var menuProvider: (() -> UIMenu?)?
+    /// Opens the session's Agent page from the title's icon.
+    var onOpenAgent: (() -> Void)? {
+        didSet { (titleView as? ChatTitleView)?.onOpenAgent = onOpenAgent }
+    }
+    /// What the icon's open is called for VoiceOver: "Open Agent", or "Open Pi"
+    /// for a session launched without one. Nil while there is nothing to open.
+    var openAgentName: String? {
+        didSet {
+            guard openAgentName != oldValue else { return }
+            accessibilityCustomActions = openAgentName.map { name in
+                [UIAccessibilityCustomAction(name: name, image: nil) { [weak self] _ in
+                    guard let open = self?.onOpenAgent else { return false }
+                    open()
+                    return true
+                }]
+            }
+        }
+    }
     private(set) var titleView: UIView?
 
     override init(frame: CGRect) {
@@ -674,6 +697,21 @@ final class ChatTitleControl: UIControl {
             view.topAnchor.constraint(equalTo: topAnchor),
             view.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+        (view as? ChatTitleView)?.onOpenAgent = onOpenAgent
+    }
+
+    /// The title around the icon renames, as its activation does; the icon itself
+    /// takes the touches inside it (`ChatTitleView.avatarHitTarget`).
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard isUserInteractionEnabled, !isHidden, alpha > 0.01,
+              self.point(inside: point, with: event) else { return nil }
+        return (titleView as? ChatTitleView)?.avatarHitTarget(for: point) ?? self
+    }
+
+    /// One burst of the icon, for the chat's moments (it opened, a turn ended, it
+    /// needs the person).
+    func playIconMoment() {
+        (titleView as? ChatTitleView)?.playIconMoment()
     }
 
     override func accessibilityActivate() -> Bool {
@@ -874,13 +912,14 @@ extension ChatViewController {
         Router.topPresenter(from: self).present(alert, animated: true)
     }
 
-    /// The session slot's avatar on the rail.
+    /// The session slot's icon on the rail, on the same 32 pt circle the title
+    /// shows it on.
     func railSessionImage() -> UIImage {
         switch assistantIdentityPresentation {
         case .agent:
-            EntityIcon.image(.agent(session?.launch?.agentIcon), size: 22, assets: connection.iconAssetCache)
+            EntityIcon.image(.agent(session?.launch?.agentIcon), size: 32, assets: connection.iconAssetCache, shape: .circle)
         case .globalAvatar:
-            EntityIcon.image(.pi, size: 22)
+            EntityIcon.image(.pi, size: 32, shape: .circle)
         }
     }
 }

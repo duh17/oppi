@@ -14,11 +14,13 @@ import UniformTypeIdentifiers
 /// icon picker, and in an Agent's row in the Agents list; everywhere else the
 /// first frame draws still. WebP is the only animated image format, so a PNG and
 /// a stored GIF draw still. A playing view stops when it leaves its
-/// window and whenever Reduce Motion, Low Power Mode, or the system's Auto-Play
-/// Animated Images takes it away, with a sandbox workspace's lock mark kept over
-/// it. A view that never animates can still play one short `playBurst()` — a
-/// session row's icon when its session needs the person — and rests on its still
-/// drawing after it. Only the chat timeline animates anything else.
+/// window and whenever `MotionPolicy` takes the loops away (Motion set to
+/// Moments only or Off, Reduce Motion, Low Power Mode, or the system's Auto-Play
+/// Animated Images), with a sandbox workspace's lock mark kept over it. A view
+/// that never animates can still play one short `playBurst()` at a moment — a
+/// session row's icon when its session needs the person, a chat's title icon and
+/// empty hero when it opens — and rests on its still drawing after it. Only the
+/// chat timeline animates anything else.
 @MainActor
 final class IconChoiceUIView: UIView {
     enum Content: Equatable {
@@ -113,15 +115,13 @@ final class IconChoiceUIView: UIView {
         if animates { observeMotionPolicy() }
     }
 
-    /// Any of these turning off stops the icon on its still drawing; turning
-    /// back on plays it again. A view installs these the first time it animates,
-    /// so a list of still icons observes nothing.
+    /// Any change that may still these icons stops them on their still drawing;
+    /// one that allows them again plays them. A view installs these the first
+    /// time it animates or bursts, so a list of still icons observes nothing.
     private func observeMotionPolicy() {
         guard !observesMotionPolicy else { return }
         observesMotionPolicy = true
-        observe(UIAccessibility.reduceMotionStatusDidChangeNotification) { $0.motionPolicyChanged() }
-        observe(.NSProcessInfoPowerStateDidChange) { $0.motionPolicyChanged() }
-        observe(AccessibilitySettings.animatedImagesEnabledDidChangeNotification) { $0.motionPolicyChanged() }
+        observers += MotionPolicy.observe { [weak self] in self?.motionPolicyChanged() }
     }
 
     @available(*, unavailable)
@@ -211,21 +211,18 @@ final class IconChoiceUIView: UIView {
     /// longer than one run of a symbol's effect.
     static let burstDuration: Duration = .milliseconds(2_400)
 
-    /// Whether an icon may move: Reduce Motion, Low Power Mode, and the
-    /// system's Auto-Play Animated Images each hold it still.
-    static func motionAllowed(
-        reduceMotion: Bool = UIAccessibility.isReduceMotionEnabled,
-        lowPowerMode: Bool = ProcessInfo.processInfo.isLowPowerModeEnabled,
-        animatedImages: Bool = AccessibilitySettings.animatedImagesEnabled
-    ) -> Bool {
-        !reduceMotion && !lowPowerMode && animatedImages
-    }
-
+    /// A settings or system change may stop or allow the loops and a running
+    /// burst; ask `MotionPolicy` again rather than keeping its own copy.
     private func motionPolicyChanged() {
         guard animates || burst != nil else { return }
-        if Self.motionAllowed() {
-            startPlayingIfAllowed()
-        } else {
+        if animates {
+            if MotionPolicy.playsLoops {
+                startPlayingIfAllowed()
+            } else {
+                stopPlaying()
+                render()
+            }
+        } else if !MotionPolicy.playsMoments {
             stopPlaying()
             render()
         }
@@ -235,12 +232,12 @@ final class IconChoiceUIView: UIView {
 
     /// Plays the icon briefly and then rests on its still drawing: an animated
     /// image's frames for `burstDuration`, or a symbol's effect once. A session
-    /// row plays one when its session starts needing the person, and when the
-    /// row appears already needing them. Reduce Motion, Low Power Mode, and
-    /// Auto-Play Animated Images off keep it still, and a view that already
+    /// row plays one when its session starts needing the person, and a chat's
+    /// title icon and empty hero when the chat opens; `MotionPolicy` allows a
+    /// moment in Moments only and Full, and never in Off. A view that already
     /// animates ignores it.
     func playBurst() {
-        guard !animates, !isKnownStill, window != nil, Self.motionAllowed() else { return }
+        guard !animates, !isKnownStill, window != nil, MotionPolicy.playsMoments else { return }
         // A burst replaces whatever the view showed, so a reused row never
         // keeps the previous session's burst.
         stopPlaying()
@@ -294,7 +291,7 @@ final class IconChoiceUIView: UIView {
     }
 
     private func startPlayingIfAllowed() {
-        guard animates, !isPlaying, !isKnownStill, window != nil, Self.motionAllowed() else { return }
+        guard animates, !isPlaying, !isKnownStill, window != nil, MotionPolicy.playsLoops else { return }
         if let symbolEffect {
             playSymbol(symbolEffect.name, effect: symbolEffect.effect, repeats: true)
         } else if let imageBytes {

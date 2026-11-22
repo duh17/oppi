@@ -188,6 +188,22 @@ enum SettingsCatalog {
         copy: SettingCopy(title: String(localized: "Open Links"))
     )
 
+    // MARK: - Chat (this device)
+
+    /// How much of the app moves: every animation, only the icon moments, or
+    /// nothing. A device setting on the `AppPreferenceStore` key `MotionPolicy`
+    /// reads, so every animating view and this row show one value.
+    static let motion = SettingDeclaration<MotionSetting>(
+        id: "settings.chat.motion",
+        key: AppPreferenceStore.Appearance.motionKey,
+        storage: .device(perServer: false),
+        default: AppPreferenceStore.Appearance.motionDefault,
+        copy: SettingCopy(
+            title: String(localized: "Motion"),
+            footer: String(localized: "Full plays every animation. Moments only keeps spinners, the dictation indicator, and the sidebar still, and plays an icon for a moment when a chat opens, a turn ends, or a session needs you. Off draws every icon on its first frame. Reduce Motion, Low Power Mode, or Auto-Play Animated Images off holds everything still.")
+        )
+    )
+
     // MARK: - Appearance (this device)
 
     /// How the Pi mark is drawn everywhere: the official colors, or the theme
@@ -442,6 +458,7 @@ enum SettingsCatalog {
         hapticFeedback.descriptor,
         keepAwakeAfterActivity.descriptor,
         openLinks.descriptor,
+        motion.descriptor,
         piIcon.descriptor,
         terminalTapMode.descriptor,
         terminalFindsTailnetRex.descriptor,

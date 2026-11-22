@@ -5,15 +5,16 @@ import UIKit
 /// view shows, and only while `isAnimating`, so the others' timers and the
 /// Metal loop stop. It follows a style change in Settings itself.
 ///
-/// Under Reduce Motion every style holds one still frame: braille and Game of
-/// Life stop ticking here, and the orb paints its own still frame.
+/// While `MotionPolicy` allows no loops (Motion set to Moments only or Off, or
+/// Reduce Motion) every style holds one still frame: braille and Game of Life
+/// stop ticking here, and the orb paints its own still frame.
 final class WorkingSpinnerUIView: UIView {
     private let braille = BrailleSpinnerUIView()
     private let life = GameOfLifeUIView(gridSize: 6)
     private let orb = OrbMetalView(style: .working, sizeClass: .workingCompact)
     private(set) var style = SpinnerStyle.current
     nonisolated(unsafe) private var styleObserver: NSObjectProtocol?
-    nonisolated(unsafe) private var motionObserver: NSObjectProtocol?
+    private var motionObservers: [NSObjectProtocol] = []
 
     var isAnimating = false {
         didSet { if isAnimating != oldValue { applyVisibility() } }
@@ -42,13 +43,7 @@ final class WorkingSpinnerUIView: UIView {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.applyStyleFromPreferences() }
         }
-        motionObserver = NotificationCenter.default.addObserver(
-            forName: UIAccessibility.reduceMotionStatusDidChangeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.applyMotion() }
-        }
+        motionObservers = MotionPolicy.observe { [weak self] in self?.applyMotion() }
         applyMotion()
         applyVisibility()
     }
@@ -56,15 +51,17 @@ final class WorkingSpinnerUIView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    deinit {
-        for observer in [styleObserver, motionObserver].compactMap({ $0 }) {
+    isolated deinit {
+        for observer in [styleObserver].compactMap({ $0 }) + motionObservers {
             NotificationCenter.default.removeObserver(observer)
         }
     }
 
     private func applyMotion() {
-        braille.isFrozen = UIAccessibility.isReduceMotionEnabled
-        life.isFrozen = UIAccessibility.isReduceMotionEnabled
+        let still = !MotionPolicy.playsLoops
+        braille.isFrozen = still
+        life.isFrozen = still
+        orb.forceReduceMotion = still
     }
 
     private func applyStyleFromPreferences() {

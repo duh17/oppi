@@ -681,14 +681,21 @@ final class ChatJumpToBottomView: UIView {
 
 // MARK: - Title
 
-/// The session title in the bar: the assistant's avatar, the session name,
+/// The session title in the bar: the session's icon on its circle, the name,
 /// its cost, the pi-tui mirror and Durable marks, and in the Conversation
 /// layout the model and thinking level under it. `ChatTitleControl` owns
-/// the tap, the menu, and accessibility.
+/// the taps, the menu, and accessibility.
 final class ChatTitleView: UIView {
     weak var chat: ChatViewController?
-    /// The Pi mark or the session's Agent icon, on its tile.
-    private let avatarIcon = IconChoiceUIView(frameSize: 22)
+    /// The Pi mark or the session's Agent icon on its 32 pt circle. A tap opens
+    /// that Agent's page (Pi's for a session launched without one); the title
+    /// around it still renames (`ChatTitleControl.hitTest`).
+    private let avatar = ChatTitleAvatarButton()
+    /// What the circle opens, from `ChatTitleControl`, so touch and accessibility
+    /// run one action.
+    var onOpenAgent: (() -> Void)? {
+        didSet { avatar.onOpenAgent = onOpenAgent }
+    }
     private let nameLabel = ExtensionChromeFont.label(.subheadline, .semibold)
     private let costLabel = UILabel()
     private let mirror = TerminalMirrorIndicatorUIView()
@@ -696,6 +703,9 @@ final class ChatTitleView: UIView {
     private let subtitleLabel = ExtensionChromeFont.label(.caption2)
     private var maxWidth: NSLayoutConstraint?
     private var appliedAvatar: AvatarKey?
+    /// A moment asked for before the circle had anything to draw: the chat can
+    /// appear before the bar's first pass, and a burst then would play nothing.
+    private var waitsForContent = false
 
     /// What the avatar shows; it renders again only when this changes.
     private struct AvatarKey: Equatable {
@@ -703,6 +713,14 @@ final class ChatTitleView: UIView {
         let icon: IconChoice?
         let themeID: ThemeID
         let hasAssetCache: Bool
+
+        /// What the circle draws: the Agent's icon, or the Pi mark.
+        var content: IconChoiceUIView.Content {
+            switch identity {
+            case .agent: .choice(icon, purpose: .agent, sandbox: false)
+            case .globalAvatar: .piAvatar
+            }
+        }
     }
 
     init(chat: ChatViewController) {
@@ -722,7 +740,7 @@ final class ChatTitleView: UIView {
             label.setContentCompressionResistancePriority(.required, for: .horizontal)
             label.setContentHuggingPriority(.required, for: .horizontal)
         }
-        let row = UIStackView(arrangedSubviews: [avatarIcon, nameLabel, costLabel, mirror, durableLabel])
+        let row = UIStackView(arrangedSubviews: [avatar, nameLabel, costLabel, mirror, durableLabel])
         row.axis = .horizontal
         row.alignment = .center
         row.spacing = 6
@@ -776,20 +794,85 @@ final class ChatTitleView: UIView {
         subtitleLabel.textColor = palette.ui.comment
 
         let assetCache = chat.connection.iconAssetCache
-        let avatar = AvatarKey(
+        let key = AvatarKey(
             identity: chat.assistantIdentityPresentation,
             icon: session?.launch?.agentIcon,
             themeID: themeID,
             hasAssetCache: assetCache != nil
         )
-        guard avatar != appliedAvatar else { return }
-        appliedAvatar = avatar
-        switch avatar.identity {
-        case .agent:
-            avatarIcon.apply(.choice(avatar.icon, purpose: .agent, sandbox: false), assetCache: assetCache)
-        case .globalAvatar:
-            avatarIcon.apply(.piAvatar)
+        guard key != appliedAvatar else { return }
+        appliedAvatar = key
+        avatar.apply(key.content, assetCache: assetCache)
+        if waitsForContent {
+            waitsForContent = false
+            avatar.playBurst()
         }
+    }
+
+    /// One burst of the circle: the chat opened, a turn ended, or the session
+    /// needs the person (`ChatViewController.playIconMoment()`). A chat that
+    /// appears before its icon has content plays it when the content lands.
+    func playIconMoment() {
+        guard appliedAvatar != nil else {
+            waitsForContent = true
+            return
+        }
+        avatar.playBurst()
+    }
+
+    /// The circle's touch target in this view's coordinates, for the title
+    /// control's hit test: the circle opens the Agent, the title renames.
+    func avatarHitTarget(for point: CGPoint) -> UIView? {
+        avatar.point(inside: avatar.convert(point, from: self), with: nil) ? avatar : nil
+    }
+}
+
+/// The session's icon in the chat title: the Agent's, else the Pi mark, on a
+/// 32 pt circle. It opens that Agent's page, so it is a control of its own
+/// inside the title; the title around it still renames. A moment plays it for
+/// 2.4 s, and it rests on its first frame after that.
+private final class ChatTitleAvatarButton: UIControl {
+    private static let side: CGFloat = 32
+    private let icon = IconChoiceUIView(frameSize: side, shape: .circle)
+    /// The same action the title's accessibility custom action runs.
+    var onOpenAgent: (() -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        // The title is one accessibility element whose activation renames; the
+        // circle's open is that element's custom action, so the circle stays out
+        // of the tree rather than being an element the title would hide.
+        isAccessibilityElement = false
+        icon.isUserInteractionEnabled = false
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(icon)
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor),
+            icon.trailingAnchor.constraint(equalTo: trailingAnchor),
+            icon.topAnchor.constraint(equalTo: topAnchor),
+            icon.bottomAnchor.constraint(equalTo: bottomAnchor),
+            widthAnchor.constraint(equalToConstant: Self.side),
+            heightAnchor.constraint(equalToConstant: Self.side),
+        ])
+        addAction(UIAction { [weak self] _ in self?.onOpenAgent?() }, for: .touchUpInside)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func apply(_ content: IconChoiceUIView.Content, assetCache: IconAssetCache?) {
+        icon.apply(content, assetCache: assetCache)
+    }
+
+    func playBurst() {
+        icon.playBurst()
+    }
+
+    /// A 32 pt circle in a bar about that tall reaches up and down for a
+    /// comfortable target and never sideways, so a tap on the title beside it
+    /// still renames.
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        bounds.insetBy(dx: 0, dy: -6).contains(point)
     }
 }
 

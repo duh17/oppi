@@ -1,13 +1,14 @@
 import UIKit
 
-/// Settings > Chat: the busy animation, the chat style and its work strip,
-/// the Top Bar page, and Quick Comments. Values are
+/// Settings > Chat: motion, the busy animation, the chat style and its work
+/// strip, the Top Bar page, and Quick Comments. Values are
 /// `AppPreferences.ChatDisplay` / `.ChatTopBar`, which open chats observe, so a
 /// change reaches them without reopening the chat. Everything here is saved on
 /// this device.
 final class SettingsChatViewController: ListScreenController<SettingsChatViewController.Section, SettingsChatViewController.Item> {
-    enum Section: Hashable, Sendable { case busy, style, topBar, comments }
+    enum Section: Hashable, Sendable { case motion, busy, style, topBar, comments }
     enum Item: Hashable, Sendable {
+        case motion
         case spinnerStyle, spinnerPreview
         case chatStyle, workStripStyle, workStripPreview, conversationPreview
         case topBar
@@ -22,6 +23,7 @@ final class SettingsChatViewController: ListScreenController<SettingsChatViewCon
             title: String(localized: "Chat"),
             listIdentifier: "settings.chat.list",
             scope: .device,
+            settings: root.settings,
             headers: true,
             footers: true
         )
@@ -69,6 +71,7 @@ final class SettingsChatViewController: ListScreenController<SettingsChatViewCon
 
     override func sections() -> [ListSection<Section, Item>] {
         // Read every value so any change re-runs this pass.
+        _ = settingInputs(SettingsCatalog.motion)
         _ = (AppPreferences.Appearance.spinnerStyle, AppPreferences.ChatDisplay.style)
         _ = (AppPreferences.ChatDisplay.workStripStyle, AppPreferences.ChatTopBar.layout)
         var style: [Item] = [.chatStyle]
@@ -78,6 +81,7 @@ final class SettingsChatViewController: ListScreenController<SettingsChatViewCon
         case .chat: style.append(.conversationPreview)
         }
         return [
+            ListSection(.motion, footer: SettingsCatalog.motion.copy.footer, items: [.motion]),
             ListSection(
                 .busy,
                 footer: String(localized: "The spinner shown while a turn is running."),
@@ -100,6 +104,7 @@ final class SettingsChatViewController: ListScreenController<SettingsChatViewCon
     /// The preference values a row is drawn from.
     override func inputs(of item: Item) -> AnyHashable {
         switch item {
+        case .motion: AnyHashable(settingInputs(SettingsCatalog.motion))
         case .spinnerStyle, .spinnerPreview: AnyHashable(AppPreferences.Appearance.spinnerStyle.rawValue)
         case .chatStyle: AnyHashable(chatStyle.rawValue)
         case .workStripStyle, .workStripPreview: AnyHashable(AppPreferences.ChatDisplay.workStripStyle.rawValue)
@@ -137,24 +142,31 @@ final class SettingsChatViewController: ListScreenController<SettingsChatViewCon
 
     // MARK: - Cells
 
-    private lazy var menuRow = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, _ in
+    private lazy var menuRow = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, item in
         guard let self else { return }
-        cell.configure(
-            title: String(localized: "Busy Animation"),
-            identifier: "settings.spinnerStyle",
-            value: AppPreferences.Appearance.spinnerStyle.displayName,
-            menu: { [weak self] in
-                SpinnerStyle.allCases.map { style in
-                    SettingsMenuOption(
-                        title: style.displayName,
-                        selected: style == AppPreferences.Appearance.spinnerStyle
-                    ) { [weak self] in
-                        AppPreferences.Appearance.setSpinnerStyle(style)
-                        self?.setNeedsUpdateProperties()
+        switch item {
+        case .motion:
+            settingChoiceRow(cell, SettingsCatalog.motion, choices: MotionSetting.allCases.map {
+                SettingChoice(value: $0, title: $0.displayName)
+            })
+        default:
+            cell.configure(
+                title: String(localized: "Busy Animation"),
+                identifier: "settings.spinnerStyle",
+                value: AppPreferences.Appearance.spinnerStyle.displayName,
+                menu: { [weak self] in
+                    SpinnerStyle.allCases.map { style in
+                        SettingsMenuOption(
+                            title: style.displayName,
+                            selected: style == AppPreferences.Appearance.spinnerStyle
+                        ) { [weak self] in
+                            AppPreferences.Appearance.setSpinnerStyle(style)
+                            self?.setNeedsUpdateProperties()
+                        }
                     }
                 }
-            }
-        )
+            )
+        }
     }
 
     private lazy var segmentedRow = UICollectionView.CellRegistration<SettingsSegmentedRowCell, Item> { [weak self] cell, _, item in
@@ -191,7 +203,7 @@ final class SettingsChatViewController: ListScreenController<SettingsChatViewCon
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
         switch item {
-        case .spinnerStyle:
+        case .motion, .spinnerStyle:
             collectionView.dequeueConfiguredReusableCell(using: menuRow, for: indexPath, item: item)
         case .chatStyle, .workStripStyle:
             collectionView.dequeueConfiguredReusableCell(using: segmentedRow, for: indexPath, item: item)

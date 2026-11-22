@@ -44,6 +44,7 @@ final class LivingPiMarkView: UIView {
     private let elfLayers: [CALayer]
     private var wakeTimer: Timer?
     private var sceneIsInBackground = false
+    private var motionObservers: [NSObjectProtocol] = []
 
     override init(frame: CGRect) {
         blockLayers = LivingPiPlanner.slots.map { _ in
@@ -65,14 +66,17 @@ final class LivingPiMarkView: UIView {
         }
         applyColors()
         let center = NotificationCenter.default
-        center.addObserver(self, selector: #selector(conditionsDidChange), name: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil)
-        center.addObserver(self, selector: #selector(conditionsDidChange), name: .NSProcessInfoPowerStateDidChange, object: nil)
+        motionObservers = MotionPolicy.observe { [weak self] in self?.updateRunning() }
         center.addObserver(self, selector: #selector(sceneDidEnterBackground(_:)), name: UIScene.didEnterBackgroundNotification, object: nil)
         center.addObserver(self, selector: #selector(sceneWillEnterForeground(_:)), name: UIScene.willEnterForegroundNotification, object: nil)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    isolated deinit {
+        motionObservers.forEach(NotificationCenter.default.removeObserver)
+    }
 
     // MARK: Layout
 
@@ -150,8 +154,7 @@ final class LivingPiMarkView: UIView {
     // MARK: Running
 
     private var mayRun: Bool {
-        window != nil && !isHidden && !sceneIsInBackground
-            && !ProcessInfo.processInfo.isLowPowerModeEnabled && !UIAccessibility.isReduceMotionEnabled
+        window != nil && !isHidden && !sceneIsInBackground && MotionPolicy.playsLoops
     }
 
     override var isHidden: Bool {
@@ -195,10 +198,6 @@ final class LivingPiMarkView: UIView {
         }
         play(job)
         wake(after: job.duration + planner.rest())
-    }
-
-    @objc nonisolated private func conditionsDidChange() {
-        Task { @MainActor [weak self] in self?.updateRunning() }
     }
 
     @objc nonisolated private func sceneDidEnterBackground(_ note: Notification) {

@@ -181,6 +181,11 @@ final class ChatViewController: UIViewController {
     var timelineWidth: CGFloat = 0
     var lastTimelineChrome: ChatTimelineChromeKey?
     var observed = ChatObservedValues()
+    /// Whether this chat played its opening icon moment.
+    var hasPlayedOpenMoment = false
+    /// The session status the last moment pass compared against, so a turn ending
+    /// and a session needing the person each play one burst.
+    var lastStatusKind: SessionStatusKind?
     var sessionEntryTask: Task<Void, Never>?
     var hasAppeared = false
     /// The call center told this chat is on screen; kept because the app root is gone from the

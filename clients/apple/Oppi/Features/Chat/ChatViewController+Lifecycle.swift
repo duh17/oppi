@@ -223,6 +223,24 @@ extension ChatViewController {
         // In the window now, which `viewWillAppear` cannot promise.
         updateTopBarTip()
         noteOnScreen(true)
+        playOpeningIconMoment()
+    }
+
+    /// The chat opening is one of an icon's moments, once per chat: coming back
+    /// from a pushed screen is not an opening.
+    private func playOpeningIconMoment() {
+        guard !hasPlayedOpenMoment else { return }
+        hasPlayedOpenMoment = true
+        playIconMoment()
+    }
+
+    /// One icon moment: the bar's icon and, while the chat is empty, its hero
+    /// play one short burst (`IconChoiceUIView.playBurst`). The moments are the
+    /// chat opening, a turn ending, and the session needing the person; nothing
+    /// here loops.
+    func playIconMoment() {
+        barItems.titleControl.playIconMoment()
+        timeline.ownedClock.emptyOverlay?.playIconMoment()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -371,6 +389,7 @@ extension ChatViewController {
         if previous.sessionStatus != next.sessionStatus {
             handleSessionStatusChange(next.sessionStatus)
         }
+        announceStatusMoment(previous.sessionStatus, next.sessionStatus)
         if previous.sessionWarnings != next.sessionWarnings {
             applySessionWarnings()
         }
@@ -398,6 +417,31 @@ extension ChatViewController {
             composerDraftController.restoreSetAsideMessage()
             synchronizeComposerMode()
         }
+    }
+
+    /// The session's status is the row's own attention signal (`SessionStatusKind`),
+    /// so a chat plays its icon moment for the same two things a session row
+    /// bursts for: a turn that ended, and a session that starts needing the person.
+    private func announceStatusMoment(_ previous: SessionStatus?, _ next: SessionStatus?) {
+        guard hasAppeared, previous != next else { return }
+        let kind = currentStatusKind
+        let wasWorking = lastStatusKind == .working
+        let wasNeeding = lastStatusKind?.needsAttention == true
+        lastStatusKind = kind
+        if (wasWorking && kind != .working) || (kind.needsAttention && !wasNeeding) {
+            playIconMoment()
+        }
+    }
+
+    /// This session's status as the session list reads it: blocked on a question,
+    /// approval, or sign-in, a run that settled unseen, or working.
+    private var currentStatusKind: SessionStatusKind {
+        guard let session else { return .idle }
+        return SessionStatusKind.resolve(
+            session: session,
+            pendingAskCount: connection.sessionListAskCount(for: sessionId),
+            seenAt: connection.sessionStore.seenAt(for: sessionId)
+        )
     }
 
     private func installNotificationObservers() {

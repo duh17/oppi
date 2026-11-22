@@ -146,11 +146,12 @@ struct SessionRowAttentionBurstTests {
     }
 
     /// Reduce Motion, Low Power Mode, and Auto-Play Animated Images off each
-    /// hold the icon still; `playBurst()` and the idle animation both read it.
+    /// hold the icon still; `playBurst()` and the idle animation both read the
+    /// app's one motion policy.
     @Test func motionPolicyHoldsTheIconStill() {
-        #expect(!IconChoiceUIView.motionAllowed(reduceMotion: true))
-        #expect(!IconChoiceUIView.motionAllowed(lowPowerMode: true))
-        #expect(!IconChoiceUIView.motionAllowed(animatedImages: false))
-        #expect(IconChoiceUIView.motionAllowed())
+        #expect(MotionPolicy.effective(setting: .full, reduceMotion: true) == .off)
+        #expect(MotionPolicy.effective(setting: .full, lowPowerMode: true) == .off)
+        #expect(MotionPolicy.effective(setting: .full, animatedImages: false) == .off)
+        #expect(MotionPolicy.effective(setting: .full) == .full)
     }
 }

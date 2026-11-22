@@ -32,6 +32,9 @@ import UIKit
 /// the notice chip above the composer, the text only in the drawer a tap opens.
 /// `SCREENSHOT_COLOR_SCHEME=light` shows the chat in the light theme.
 /// `CHAT_ROUTES_SESSION_TITLE=<title>` names the chat (a long-title check).
+/// `CHAT_ROUTES_AGENT=1` launches the fixture session with a saved Agent, so the
+/// title's and the empty hero's icon is that Agent's; `CHAT_ROUTES_EMPTY=1` leaves the
+/// timeline empty, so the chat shows its own empty state.
 /// `CHAT_ROUTES_LONG_FILE=1` serves a long file with wide lines;
 /// `CHAT_ROUTES_LONG_FILE=<n>` serves n lines of wrapping code.
 /// `CHAT_ROUTES_PANE_RESIZE=1` adds the live divider resize readout
@@ -654,7 +657,7 @@ enum ChatRoutesFixture {
     }
 
     static func session(id: String, status: SessionStatus, activityTick: Int = 0) -> Session {
-        Session(
+        var session = Session(
             id: id,
             workspaceId: workspace.id,
             workspaceName: workspace.name,
@@ -681,6 +684,15 @@ enum ChatRoutesFixture {
             thinkingLevel: "medium",
             warnings: id == sessionId ? warnings : nil
         )
+        // `CHAT_ROUTES_AGENT=1`: a session launched with a saved Agent, so the
+        // chat's title and empty hero draw its icon and play its moment.
+        if environment["CHAT_ROUTES_AGENT"] == "1" {
+            session.launch = SessionLaunchMetadata(
+                agentId: "chat-routes-agent",
+                agentIcon: .symbol("sparkles", effect: .bounce)
+            )
+        }
+        return session
     }
 
     /// `CHAT_ROUTES_WARNINGS=N`: N session launch warnings, on the notice chip above the
@@ -807,6 +819,8 @@ enum ChatRoutesFixture {
     /// A user message with a commit pill and a file pill, then filler turns so
     /// the outline has entries, into the chat's own reducer.
     @MainActor static func seedTimelineIfNeeded(into reducer: TimelineReducer) {
+        // `CHAT_ROUTES_EMPTY=1`: no rows, so the chat shows its empty state.
+        guard environment["CHAT_ROUTES_EMPTY"] != "1" else { return }
         guard !reducer.items.contains(where: { $0.id == seedMarkerId }) else { return }
         let userText = UserMessageAttachmentPresentation.makeDisplayText(
             text: "Review the routes",
