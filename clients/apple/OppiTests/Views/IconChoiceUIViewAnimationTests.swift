@@ -269,6 +269,33 @@ struct IconCircleShapeTests {
         #expect(circle.shape == .circle && tile.shape == .tile)
     }
 
+    /// A session with no saved Agent shows the Pi mark: on a circle where it is
+    /// drawn on one, as a session row and an empty chat draw it.
+    @Test func aCircleClipsThePiMarkToo() throws {
+        let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 220))
+        window.isHidden = false
+        defer { hideTestWindow(window) }
+
+        let tile = IconChoiceUIView(frameSize: 96)
+        let circle = IconChoiceUIView(frameSize: 96, shape: .circle)
+        for (index, view) in [tile, circle].enumerated() {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            window.addSubview(view)
+            NSLayoutConstraint.activate([
+                view.leadingAnchor.constraint(equalTo: window.leadingAnchor, constant: CGFloat(index) * 120),
+                view.topAnchor.constraint(equalTo: window.topAnchor),
+            ])
+            view.apply(.piAvatar)
+        }
+        window.layoutIfNeeded()
+
+        let corner = CGPoint(x: 12, y: 12)
+        let centre = CGPoint(x: 48, y: 48)
+        #expect(iconAlpha(of: circle, at: corner) < 0.02, "the Pi mark's circle leaves its corners clear")
+        #expect(iconAlpha(of: circle, at: centre) > 0.05, "the circle still draws the Pi mark")
+        #expect(iconAlpha(of: tile, at: corner) > 0.05, "a tile fills its corners")
+    }
+
     @Test func aCirclePlaysItsAnimatedImage() async throws {
         let webp = IconWebPFixtures.threeColour
         let window = makeTestWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 200))

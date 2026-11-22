@@ -312,13 +312,18 @@ private enum RouterModalSitesFixtures {
     /// shape of a big thread whose live members sit among stopped ones. `SCREENSHOT_LIST_FILLER`
     /// adds that many plain idle sessions, which list above the thread.
     /// `SCREENSHOT_THREAD_FOCUS=<root id>` (the inbox site) opens that thread as a thread link does.
+    /// `SCREENSHOT_SESSION_ICONS=1` launches the tree's sessions from saved Agents with their icons
+    /// (an emoji, symbols, and a stored image served when `SCREENSHOT_ICON_IMAGE` names a PNG on
+    /// this Mac); the plain sessions stay Pi's.
     private static var threadSessions: [Session] {
         let now = Date()
+        let icons = ProcessInfo.processInfo.environment["SCREENSHOT_SESSION_ICONS"] == "1"
         func session(
             _ id: String, _ name: String, workspace: String = "oppi", parent: String? = nil,
-            status: SessionStatus, minutesAgo: Double, cost: Double
+            status: SessionStatus, minutesAgo: Double, cost: Double,
+            agent: (id: String, icon: IconChoice)? = nil
         ) -> Session {
-            Session(
+            var session = Session(
                 id: id,
                 workspaceId: workspace,
                 workspaceName: workspace,
@@ -333,6 +338,10 @@ private enum RouterModalSitesFixtures {
                 cost: cost,
                 parentSessionId: parent
             )
+            if icons, let agent {
+                session.launch = SessionLaunchMetadata(agentId: agent.id, agentIcon: agent.icon)
+            }
+            return session
         }
         let extraStopped = (Int(ProcessInfo.processInfo.environment["SCREENSHOT_THREAD_STOPPED_COUNT"] ?? "") ?? 0)
         let oldWorkers = (0..<extraStopped).map { index in
@@ -346,17 +355,38 @@ private enum RouterModalSitesFixtures {
             session("filler-\(index)", "Filler session \(index + 1)", status: .ready, minutesAgo: 5 + Double(index), cost: 0.01)
         }
         return filler + oldWorkers + [
-            session("thread-root", "Plan the router migration", status: .ready, minutesAgo: 60, cost: 1.42),
+            session(
+                "thread-root", "Plan the router migration", status: .ready, minutesAgo: 60, cost: 1.42,
+                agent: ("agent-nanny", .emoji("🧸"))
+            ),
             session(
                 "child-working", "Migrate the chat routes", parent: "thread-root",
-                status: .busy, minutesAgo: 40, cost: 0.61
+                status: .busy, minutesAgo: 40, cost: 0.61,
+                agent: ("agent-reviewer", .symbol("sparkles"))
             ),
-            session("child-done", "Audit the old routes", parent: "thread-root", status: .stopped, minutesAgo: 35, cost: 0.33),
-            session("grandchild", "Write the route table", parent: "child-done", status: .stopped, minutesAgo: 30, cost: 0.12),
-            session("child-kypu", "Check the kypu client", workspace: "kypu", parent: "thread-root", status: .ready, minutesAgo: 25, cost: 0.2),
-            session("plain", "Fix the flaky upload test", status: .ready, minutesAgo: 10, cost: 0.18),
+            session(
+                "child-done", "Audit the old routes", parent: "thread-root", status: .stopped, minutesAgo: 35, cost: 0.33,
+                agent: ("agent-auditor", .symbol("checkmark.seal"))
+            ),
+            session(
+                "grandchild", "Write the route table", parent: "child-done", status: .stopped, minutesAgo: 30, cost: 0.12,
+                agent: ("agent-writer", .emoji("🧭"))
+            ),
+            // A child launched from plain Pi, so the indented rows show a Pi mark too.
+            session(
+                "child-kypu", "Check the kypu client", workspace: "kypu", parent: "thread-root", status: .ready,
+                minutesAgo: 25, cost: 0.2
+            ),
+            session(
+                "plain", "Fix the flaky upload test", status: .ready, minutesAgo: 10, cost: 0.18,
+                agent: ("agent-designer", .image(assetId: imageIconAssetId))
+            ),
         ]
     }
+
+    /// The stored image one fixture Agent's icon is (`IconChoice.image`). The id is one the model
+    /// accepts: `ia_` and 43 URL-safe characters.
+    private static let imageIconAssetId = "ia_" + String(repeating: "c", count: 43)
 
     private static let api: APIClient = {
         let config = URLSessionConfiguration.ephemeral
@@ -421,25 +451,29 @@ private final class RouterModalSitesURLProtocol: URLProtocol {
         let encoder = JSONEncoder()
         let path = request.url?.path ?? ""
         let list = request.httpMethod == "GET" ? Self.lists.withLock { $0[path] } : nil
-        let response: Data? = switch (request.httpMethod, path) {
+        let response: (data: Data, contentType: String)? = switch (request.httpMethod, path) {
         case ("GET", _) where list != nil:
-            list
+            list.map { ($0, "application/json") }
         case ("GET", "/models"):
-            try? encoder.encode(Models(models: [
+            (try? encoder.encode(Models(models: [
                 ModelInfo(
                     id: "claude-opus-5-5", name: "Claude Opus 5.5", provider: "anthropic",
                     contextWindow: 1_000_000, isDefault: true
                 ),
                 ModelInfo(id: "fixture-swift", name: "Fixture Swift", provider: "fixture", contextWindow: 200_000),
                 ModelInfo(id: "fixture-steady", name: "Fixture Steady", provider: "fixture", contextWindow: 200_000),
-            ]))
+            ]))).map { ($0, "application/json") }
+        // A stored icon's bytes, so a capture draws a real image icon: the PNG
+        // `SCREENSHOT_ICON_IMAGE` names on this Mac, for the fixture Agent's asset.
+        case ("GET", let path) where path.hasPrefix("/icon-assets/"):
+            Self.storedIcon.map { ($0, "image/png") }
         case ("GET", "/workspaces/oppi/worktrees"):
-            try? encoder.encode(Worktrees(worktrees: [
+            (try? encoder.encode(Worktrees(worktrees: [
                 WorkspaceWorktree(id: WorkspaceWorktree.mainId, name: "oppi", path: "~/workspace/oppi", branch: "main", headSha: nil, isMain: true, isGitRepo: true, sessionCount: nil),
                 WorkspaceWorktree(id: "router-fix", name: "router-fix", path: "~/workspace/oppi-router-fix", branch: "router-fix", headSha: nil, isMain: false, isGitRepo: true, sessionCount: nil),
-            ]))
+            ]))).map { ($0, "application/json") }
         case ("GET", "/workspaces/oppi/git/status"):
-            try? encoder.encode(GitStatus(
+            (try? encoder.encode(GitStatus(
                 isGitRepo: true, branch: "main", headSha: "7b42c0d", ahead: 3, behind: 0,
                 dirtyCount: 3, untrackedCount: 0, stagedCount: 0,
                 files: [
@@ -449,15 +483,15 @@ private final class RouterModalSitesURLProtocol: URLProtocol {
                 ],
                 totalFiles: 3, addedLines: 113, removedLines: 8, stashCount: 0,
                 lastCommitMessage: "Route fixture", lastCommitDate: nil, recentCommits: []
-            ))
+            ))).map { ($0, "application/json") }
         case ("GET", "/agents"):
-            try? encoder.encode(Agents(agents: [
+            (try? encoder.encode(Agents(agents: [
                 AgentDefinitionSummary(
                     id: "reviewer", name: "Reviewer", icon: .defaultValue, description: nil,
                     status: .active, version: 1,
                     createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1), archivedAt: nil
                 ),
-            ]))
+            ]))).map { ($0, "application/json") }
         default:
             nil
         }
@@ -466,15 +500,20 @@ private final class RouterModalSitesURLProtocol: URLProtocol {
                   url: url,
                   statusCode: response == nil ? 404 : 200,
                   httpVersion: "HTTP/1.1",
-                  headerFields: ["Content-Type": "application/json"]
+                  headerFields: ["Content-Type": response?.contentType ?? "application/json"]
               ) else {
             client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
             return
         }
         client?.urlProtocol(self, didReceive: http, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: response ?? Data(#"{"error":"Not found"}"#.utf8))
+        client?.urlProtocol(self, didLoad: response?.data ?? Data(#"{"error":"Not found"}"#.utf8))
         client?.urlProtocolDidFinishLoading(self)
     }
+
+    /// The fixture Agent's stored icon: the PNG at `SCREENSHOT_ICON_IMAGE`, when the capture names
+    /// one. Without it the agent's icon falls back to its symbol, as a missing asset does.
+    private static let storedIcon: Data? = ProcessInfo.processInfo.environment["SCREENSHOT_ICON_IMAGE"]
+        .flatMap { FileManager.default.contents(atPath: $0) }
 
     override func stopLoading() {}
 }

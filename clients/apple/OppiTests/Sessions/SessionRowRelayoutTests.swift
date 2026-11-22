@@ -254,10 +254,13 @@ struct SessionRowRelayoutTests {
             "Compact fits the details on one line at this width, but drew two: workspace \(workspaceFrame), gauge \(gaugeFrame)"
         )
 
-        // The cell is as tall as the one-line row it holds.
-        let (portrait, portraitWindow) = makeList()
-        defer { portraitWindow.isHidden = true }
-        let oneLineHeight = itemHeight(portrait)
+        // The cell is as tall as the one-line row it holds: the same list at the
+        // same width with nothing beside it. (A phone in portrait is narrower than
+        // this row plus the session icon's column, so there Compact draws the same
+        // facts on two lines and is no one-line reference.)
+        let (full, fullWindow) = makeList(width: 620, height: 402)
+        defer { fullWindow.isHidden = true }
+        let oneLineHeight = itemHeight(full)
         #expect(
             abs(itemHeight(list) - oneLineHeight) < 0.5,
             "The cell kept the two-line height: \(itemHeight(list)) vs one line \(oneLineHeight)"
@@ -270,7 +273,7 @@ struct SessionRowRelayoutTests {
     /// without the indent would settle one detail line, be drawn with two, and
     /// keep the shorter height.
     @Test func indentedChildRowIsSizedForItsIndentedWidth() throws {
-        let indent = CGFloat(SessionListEntryContentView.maxIndentLevels) * SessionRowIdentity.textInset(isWide: false)
+        let indent = CGFloat(SessionListEntryContentView.maxIndentLevels) * SessionRowIdentity.textInset
         func height(depth: Int, width: CGFloat) -> CGFloat {
             let session = richSession()
             let content = SessionListRowContent(

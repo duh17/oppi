@@ -35,7 +35,7 @@ struct ForegroundReturnCostTests {
 
         keepAlive.end()
         await rig.connection.reconnectIfNeeded()
-        #expect(await rig.waitForSessionListRead())
+        #expect(await rig.waitForSessionListRead(), "a return reads the session list: \(rig.sessionReadDiagnosis)")
 
         #expect(rig.sockets.opened == 1)
         // Session rows ride on events the stream dropped; the catalog is inside its freshness window.
@@ -126,20 +126,29 @@ private final class ReturnRig {
         }
         let configuration = URLSessionConfiguration.ephemeral
         TestURLProtocol.install(in: configuration)
-        #expect(await configureTestConnection(connection, credentials: ServerCredentials(
-            host: "return.example.test",
-            port: 7749,
-            token: "sk_return",
-            name: "Return",
-            scheme: .https,
-            serverFingerprint: "sha256:return"
-        )))
-        connection.setAPIClientForTesting(APIClient(
+        // The route's own client factory, not only an installed client: a
+        // foreground recovery may rebuild the route, and the rebuilt client must
+        // still be this rig's URLProtocol-backed one. A real client would read an
+        // unreachable host, so the return would leave the list unread and the
+        // wait in each test would time out.
+        let client = APIClient(
             environment: OppiClientEnvironment(
                 baseURL: try #require(URL(string: "https://return.example.test:7749")),
                 bearerToken: "sk_return"
             ),
             configuration: configuration
+        )
+        #expect(await configureTestConnection(
+            connection,
+            credentials: ServerCredentials(
+                host: "return.example.test",
+                port: 7749,
+                token: "sk_return",
+                name: "Return",
+                scheme: .https,
+                serverFingerprint: "sha256:return"
+            ),
+            apiClient: client
         ))
         connection.setSplitStreamCapabilitiesForTesting(appEventStream: true)
         connection._listPairingApprovalsForTesting = { [] }
@@ -178,6 +187,16 @@ private final class ReturnRig {
         await waitForMainActorCondition(timeout: .seconds(10)) {
             reads.count(path: "/sessions/recent") >= 1 && !connection.sessionStore.isSyncing
         }
+    }
+
+    /// What a failed `waitForSessionListRead` needs to explain itself: whether the
+    /// read never came, or came and left the store syncing.
+    var sessionReadDiagnosis: String {
+        "session reads \(reads.count(path: "/sessions/recent")), "
+            + "syncing \(connection.sessionStore.isSyncing), "
+            + "lastSyncFailed \(connection.sessionStore.lastSyncFailed), "
+            + "stream \(connection.appEventStreamTransportState), "
+            + "listRefreshRunning \(connection.sessionListRefreshTask != nil)"
     }
 }
 

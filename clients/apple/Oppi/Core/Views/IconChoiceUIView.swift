@@ -184,7 +184,7 @@ final class IconChoiceUIView: UIView {
         guard let content, !isPlaying else { return }
         switch content {
         case .piAvatar:
-            imageView.image = EntityIcon.image(.pi, size: frameSize)
+            imageView.image = EntityIcon.image(.pi, size: frameSize, shape: shape)
         case .symbol(let name, let color, let style, let weight):
             imageView.image = UIImage.scaledSymbol(name, style: style, weight: weight, color: color)
         case .worktree(let color, let style):

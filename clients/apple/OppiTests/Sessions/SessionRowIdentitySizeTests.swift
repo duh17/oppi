@@ -2,13 +2,12 @@ import Testing
 import UIKit
 @testable import Oppi
 
-/// The session row's identity tile. A compact layout (an iPhone) keeps the 20-pt
-/// tile the row was drawn with; a wide one (an iPad, or the Duo's inner display)
-/// draws 32 pt, balancing it against the title and its caption detail line (about
-/// 39 pt together at the default text size), and the text column moves out with
-/// it. The row's height stays the text's: the bigger tile fits inside it.
+/// The session row's identity icon: the session's icon on the 32-pt circle an
+/// Agent's own page draws it in, on every width, with the text column starting
+/// past it. The row's height stays the text's: the circle is aligned to the
+/// title line and fits beside the details.
 @MainActor
-@Suite("Session row identity tile")
+@Suite("Session row identity icon")
 struct SessionRowIdentitySizeTests {
     private func session() -> Session {
         var session = Session(
@@ -35,9 +34,11 @@ struct SessionRowIdentitySizeTests {
         return window
     }
 
+    /// A row laid out at the height it asks for: a taller frame stretches the
+    /// text column, which moves the title away from the circle.
     private func makeRow(in window: UIWindow) -> SessionRowView {
         let row = SessionRowView(combinesAccessibility: true)
-        row.frame = CGRect(x: 0, y: 0, width: 430, height: 80)
+        row.frame = CGRect(x: 0, y: 0, width: 430, height: 60)
         window.addSubview(row)
         row.apply(
             SessionRowView.Content(presentation: SessionRowPresentationBuilder.make(session: session())),
@@ -45,6 +46,7 @@ struct SessionRowIdentitySizeTests {
             themeID: .dark,
             iconAssetCache: nil
         )
+        row.frame.size.height = height(of: row)
         window.layoutIfNeeded()
         return row
     }
@@ -53,16 +55,20 @@ struct SessionRowIdentitySizeTests {
         root.subviews.flatMap { ([$0 as? T].compactMap { $0 }) + descendants(of: $0, type) }
     }
 
-    /// The identity tile's drawn side.
-    private func tileSide(of row: SessionRowView) -> CGFloat? {
-        descendants(of: row, SessionGridBadgeView.self).first.map(\.bounds.width)
+    /// The identity circle as the row draws it.
+    private func drawnIcon(of row: SessionRowView) -> (side: CGFloat, shape: IconShape)? {
+        guard let badge = descendants(of: row, SessionGridBadgeView.self).first,
+              let icon = badge.subviews.compactMap({ $0 as? IconChoiceUIView }).first else { return nil }
+        return (badge.bounds.width, icon.shape)
     }
 
-    /// Where the row's text starts, past the tile.
+    private func label(_ text: String, in row: SessionRowView) -> UILabel? {
+        descendants(of: row, UILabel.self).first { $0.text == text }
+    }
+
+    /// Where the row's text starts, past the circle.
     private func textStart(of row: SessionRowView) -> CGFloat? {
-        descendants(of: row, UILabel.self)
-            .first { $0.text == "Refactor checkout flow" }
-            .map { $0.convert($0.bounds, to: row).minX }
+        label("Refactor checkout flow", in: row).map { $0.convert($0.bounds, to: row).minX }
     }
 
     private func height(of row: SessionRowView) -> CGFloat {
@@ -73,16 +79,13 @@ struct SessionRowIdentitySizeTests {
         ).height
     }
 
-    @Test func theGridIsTheRowsOwnWhenCompactAndWiderWhenWide() {
-        #expect(SessionRowIdentity.tileSide(isWide: false) == 20)
-        #expect(SessionRowIdentity.columnWidth(isWide: false) == 24)
-        #expect(SessionRowIdentity.textInset(isWide: false) == 32, "the grid the row was drawn with")
-        #expect(SessionRowIdentity.tileSide(isWide: true) == 32)
-        #expect(SessionRowIdentity.columnWidth(isWide: true) == 36)
-        #expect(SessionRowIdentity.textInset(isWide: true) == 44)
+    @Test func theIconIsTheAgentPagesCircleAtBothWidths() {
+        #expect(SessionRowIdentity.side == 32)
+        #expect(SessionRowIdentity.columnWidth == 36)
+        #expect(SessionRowIdentity.textInset == 44)
     }
 
-    @Test func aWideRowDrawsTheLargerTileWithoutGrowingTheRow() {
+    @Test func everyRowDrawsTheCirclePastTheSameTextBox() {
         let phone = makeWindow(wide: false)
         let pad = makeWindow(wide: true)
         defer {
@@ -92,32 +95,32 @@ struct SessionRowIdentitySizeTests {
         let phoneRow = makeRow(in: phone)
         let padRow = makeRow(in: pad)
 
-        #expect(tileSide(of: phoneRow) == 20)
-        #expect(textStart(of: phoneRow) == 32)
-        #expect(tileSide(of: padRow) == 32)
+        #expect(drawnIcon(of: phoneRow)?.side == 32)
+        #expect(drawnIcon(of: phoneRow)?.shape == .circle)
+        #expect(textStart(of: phoneRow) == 44)
+        #expect(drawnIcon(of: padRow)?.side == 32)
+        #expect(drawnIcon(of: padRow)?.shape == .circle)
         #expect(textStart(of: padRow) == 44)
-        // The tile is as tall as the row's first two lines, and still inside the
-        // row: both widths lay the same three lines out at the same height.
-        #expect(height(of: padRow) == height(of: phoneRow))
     }
 
-    @Test func aRowThatTurnsWideGrowsItsTile() {
+    @Test func theCircleSitsOnTheTitleLineAndFitsTheRow() throws {
         let window = makeWindow(wide: false)
         defer { hideTestWindow(window) }
         let row = makeRow(in: window)
-        #expect(tileSide(of: row) == 20)
 
-        // A row in a window that turned wide (Split View, rotation): the next
-        // pass resizes the tile and moves the text column with it.
-        window.traitOverrides.horizontalSizeClass = .regular
-        row.apply(
-            SessionRowView.Content(presentation: SessionRowPresentationBuilder.make(session: session())),
-            display: .standard,
-            themeID: .dark,
-            iconAssetCache: nil
+        let badge = try #require(descendants(of: row, SessionGridBadgeView.self).first)
+        let title = try #require(label("Refactor checkout flow", in: row))
+        let circleFrame = badge.convert(badge.bounds, to: row)
+        let titleFrame = title.convert(title.bounds, to: row)
+        #expect(
+            abs(circleFrame.minY - titleFrame.minY) < 6,
+            "the circle sits on the title line, not centred in the row: circle \(circleFrame), title \(titleFrame)"
         )
-        window.layoutIfNeeded()
-        #expect(tileSide(of: row) == 32)
-        #expect(textStart(of: row) == 44)
+
+        // The circle is inside the row: the details and the circle share the height.
+        #expect(
+            circleFrame.maxY <= height(of: row),
+            "the row grows for the circle rather than drawing it outside: circle \(circleFrame), row \(height(of: row))"
+        )
     }
 }

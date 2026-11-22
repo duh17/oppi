@@ -98,6 +98,10 @@ struct ChatTitleIconTests {
         }, "a session launched without an Agent opens Pi's page")
     }
 
+    /// How long a moment may take to end: its own duration plus room for the
+    /// symbol effect and the main actor to settle.
+    private static let momentTimeout: Duration = .seconds(10)
+
     @Test func aMomentPlaysInTheTitleAndRestsAfter() async throws {
         let host = try await makeHost(agent: true)
         defer { hideTestWindow(host.window) }
@@ -106,13 +110,23 @@ struct ChatTitleIconTests {
             return titleIcon(of: host.chat) != nil
         }, "the title installs its icon")
         let icon = try #require(titleIcon(of: host.chat))
-        #expect(liveLayers(of: icon) == 1, "the title's icon rests on its still drawing")
+        // The chat's own opening plays a moment too, so the icon may be running
+        // here. Await the end of whatever plays instead of assuming it starts at
+        // rest: on a loaded machine the open is still playing when this asserted.
+        #expect(
+            await waitForMainActorCondition(timeout: Self.momentTimeout) { liveLayers(of: icon) == 1 },
+            "the title's icon rests on its still drawing"
+        )
 
         host.chat.playIconMoment()
         #expect(liveLayers(of: icon) == 2, "the moment runs the symbol's effect over the drawing")
 
-        try await Task.sleep(for: IconChoiceUIView.burstDuration + .milliseconds(300))
-        #expect(liveLayers(of: icon) == 1, "the moment ends on the still drawing")
+        // Its real end, not a fixed wait: a second moment still running would
+        // keep the effect up longer than one burst's duration.
+        #expect(
+            await waitForMainActorCondition(timeout: Self.momentTimeout) { liveLayers(of: icon) == 1 },
+            "the moment ends on the still drawing"
+        )
     }
 
     /// The chat opening is the first moment: the title plays it on its own, from

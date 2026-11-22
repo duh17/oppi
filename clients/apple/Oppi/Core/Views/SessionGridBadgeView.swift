@@ -3,24 +3,14 @@ import UIKit
 /// Session identity badge. Ordinary sessions paint the Pi mark; saved-Agent
 /// rows paint the launch snapshot icon and never consult Pi identity. The
 /// artwork is `EntityIcon`'s and the moving is `IconChoiceUIView`'s; this view
-/// places it at the badge's size and passes on the row's burst
+/// places it at the badge's size and shape and passes on the row's burst
 /// (`playBurst()`, `stopBurst()`) when the session needs the person.
 final class SessionGridBadgeView: UIView {
-    private var icon: IconChoiceUIView
-    /// The badge's side in points. The session row points it at the idiom's
-    /// tile once it knows its traits (iPad draws a larger one), which redraws
-    /// the icon at the new size.
-    var iconSize: CGFloat {
-        didSet {
-            guard iconSize != oldValue else { return }
-            icon.removeFromSuperview()
-            icon = IconChoiceUIView(frameSize: iconSize)
-            placeIcon()
-            lastApplied = nil
-            updateIfNeeded()
-            invalidateIntrinsicContentSize()
-        }
-    }
+    private let icon: IconChoiceUIView
+    /// The badge's side in points, and the shape it draws the icon in: the
+    /// rounded tile, or the circle a session row draws it as.
+    let iconSize: CGFloat
+    let shape: IconShape
 
     var sessionId: String = "" {
         didSet { updateIfNeeded() }
@@ -47,11 +37,13 @@ final class SessionGridBadgeView: UIView {
     private var isConfiguring = false
 
     /// `iconSize` is the badge's own side: its holder lays it out at that
-    /// square, and the icon draws to fill it. The Agent icon view listens for
-    /// artwork and theme changes itself, so the badge only says what to draw.
-    init(iconSize: CGFloat) {
+    /// square, and the icon draws to fill it in `shape`. The Agent icon view
+    /// listens for artwork and theme changes itself, so the badge only says
+    /// what to draw.
+    init(iconSize: CGFloat, shape: IconShape = .tile) {
         self.iconSize = iconSize
-        icon = IconChoiceUIView(frameSize: iconSize)
+        self.shape = shape
+        icon = IconChoiceUIView(frameSize: iconSize, shape: shape)
         super.init(frame: .zero)
         isOpaque = false
         isAccessibilityElement = true
