@@ -4,7 +4,7 @@ import UIKit
 @testable import Oppi
 
 /// The session row's identity icon: the session's icon on a circle whose size
-/// the person picks (Settings › Session Rows › Session Icons), with the text
+/// the person picks (Settings › Session Rows › Icon Size), with the text
 /// column, a thread's child indents, and the row's height following it.
 @MainActor
 @Suite("Session row identity icon")
@@ -213,7 +213,7 @@ struct SessionIconSizePreferenceTests {
     }
 }
 
-/// Settings › Session Rows › Session Icons while a row is on screen: the row
+/// Settings › Session Rows › Icon Size while a row is on screen: the row
 /// redraws where it is, at the new circle and column, and a row built later
 /// reads the size Settings holds now.
 ///

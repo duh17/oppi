@@ -5,6 +5,10 @@ import UIKit
 /// which reports edits back. A row's icon plays, as an Agent's icon does
 /// everywhere it is its own: a reused row stops when it leaves its window.
 ///
+/// A row draws its icon on the circle Settings › Icon Size sets, at the size it
+/// sets, in the column a session row uses (`SessionRowIdentity`), so this list
+/// shows how an Agent's icon really looks in the session list.
+///
 /// A `ListScreenController`: the base owns the list, the loading and failure
 /// row, and the load on appearance and pull to refresh. This page keeps its
 /// rows and its composer.
@@ -25,6 +29,10 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
     private var agents: [AgentDefinitionSummary] = [] {
         didSet { setNeedsUpdateProperties() }
     }
+
+    /// Icon Size while a row is on screen: the rows take a new size where they
+    /// are, as the session rows do, rather than waiting for the page to reopen.
+    private var iconSizeObserver: NSObjectProtocol?
 
     init(root: AppRootEnvironment) {
         self.root = root
@@ -49,11 +57,30 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
 
     private var palette: ThemePalette { root.themeStore.activeThemeID.palette }
 
+    /// The circle Settings › Icon Size sets now: the side each row draws its
+    /// icon at, and how far past it the text starts.
+    private var identity: SessionRowIdentity { .current }
+
     // MARK: - Lifecycle
 
     override func viewDidLoad() {
         super.viewDidLoad()
         composer.install(in: self)
+        // `inputs(of:)` keys each row by the circle's side, so this pass redraws
+        // the rows at the new size and the list re-measures the cells it grows.
+        iconSizeObserver = NotificationCenter.default.addObserver(
+            forName: AppPreferenceStore.Appearance.sessionIconSizeDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.setNeedsUpdateProperties() }
+        }
+    }
+
+    isolated deinit {
+        if let iconSizeObserver {
+            NotificationCenter.default.removeObserver(iconSizeObserver)
+        }
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -124,8 +151,14 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
     override func failureTitle() -> String? { String(localized: "Couldn't Load Agents") }
 
     override func inputs(of item: Item) -> AnyHashable {
-        // The Pi row draws the Pi mark, which follows the style and the theme.
-        if case .pi = item { return AnyHashable(AppPreferences.Appearance.piIconStyle.rawValue) }
+        // The Pi row draws the Pi mark, which follows the style and the theme, on
+        // the circle Icon Size sets.
+        if case .pi = item {
+            return AnyHashable([
+                AnyHashable(AppPreferences.Appearance.piIconStyle.rawValue),
+                AnyHashable(identity.side),
+            ])
+        }
         guard case .saved(let id) = item, let agent = agents.first(where: { $0.id == id }) else { return AnyHashable(0) }
         // The row draws the age as text ("2h ago"), which changes without the
         // agent changing: the string is the input, so a pass redraws it. The icon's
@@ -134,7 +167,7 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
         return AnyHashable([
             AnyHashable(agent.name), AnyHashable(agent.version), AnyHashable(agent.description),
             AnyHashable(agent.icon), AnyHashable(agent.updatedAt.relativeString()),
-            AnyHashable(EntityIcon.loadGeneration),
+            AnyHashable(EntityIcon.loadGeneration), AnyHashable(identity.side),
         ])
     }
 
@@ -144,6 +177,9 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
 
     override func configureCard(_ cell: SidebarListCell, item: Item) {
         let palette = palette
+        // Read now, not in the row's own build: the content view outlives this
+        // pass, and it is the page's to let go of.
+        let identity = identity
         switch item {
         case .pi:
             ListScreen.buttonRow(cell, identifier: "agents.row.pi", label: "Pi", value: "Global Pi configuration") { [weak self] in
@@ -151,7 +187,8 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
             }
             cell.contentConfiguration = ControlViewContent(insets: Self.rowInsets) {
                 Self.row(
-                    icon: Self.icon(.piAvatar),
+                    identity: identity,
+                    icon: Self.icon(.piAvatar, size: identity.side),
                     title: "Pi",
                     badge: nil,
                     subtitle: "Global Pi configuration",
@@ -188,7 +225,8 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
                 updated.textColor = palette.ui.comment
                 updated.setContentCompressionResistancePriority(.required, for: .horizontal)
                 return Self.row(
-                    icon: Self.icon(.choice(agent.icon, purpose: .agent, sandbox: false), assets: assets),
+                    identity: identity,
+                    icon: Self.icon(.choice(agent.icon, purpose: .agent, sandbox: false), size: identity.side, assets: assets),
                     title: agent.name,
                     badge: badge,
                     subtitle: description,
@@ -201,8 +239,11 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
     }
 
     /// An icon, a headline (with an optional badge) over a caption, and an
-    /// optional trailing view.
+    /// optional trailing view. The text starts as far past the icon as it does
+    /// in a session row, so both lists put the same Agent's icon on the same
+    /// circle with the same room around it.
     private static func row(
+        identity: SessionRowIdentity,
         icon: UIView,
         title: String,
         badge: UIView?,
@@ -216,17 +257,25 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
         let text = ControlRowViews.stack([titleRow, caption], spacing: 4, alignment: .leading)
         var views: [UIView] = [icon, text, ControlRowViews.spacer()]
         if let trailing { views.append(trailing) }
-        return ControlRowViews.stack(views, axis: .horizontal, spacing: 14, alignment: .center)
+        return ControlRowViews.stack(
+            views, axis: .horizontal,
+            spacing: identity.textInset - identity.side, alignment: .center
+        )
     }
 
-    /// Room above and below each row, so the tiles and two-line captions breathe.
+    /// Room above and below each row, so the circles and two-line captions
+    /// breathe; a larger icon grows the row and nothing else.
     private static let rowInsets = NSDirectionalEdgeInsets(top: 12, leading: 0, bottom: 12, trailing: 0)
 
-    /// Pi's and every Agent's icon in the list: one 36 pt tile. An Agent's icon
-    /// plays here as it does on the Agent's own page; Pi's mark has nothing to
-    /// play.
-    private static func icon(_ content: IconChoiceUIView.Content, assets: IconAssetCache? = nil) -> IconChoiceUIView {
-        let icon = IconChoiceUIView(frameSize: 36, animates: true)
+    /// Pi's and every Agent's icon in the list: the circle Icon Size sets, drawn
+    /// as a session row draws it. An Agent's icon plays here as it does on the
+    /// Agent's own page; Pi's mark has nothing to play.
+    private static func icon(
+        _ content: IconChoiceUIView.Content,
+        size: CGFloat,
+        assets: IconAssetCache? = nil
+    ) -> IconChoiceUIView {
+        let icon = IconChoiceUIView(frameSize: size, animates: true, shape: .circle)
         icon.apply(content, assetCache: assets)
         return icon
     }

@@ -127,6 +127,139 @@ enum AgentsLoadStateTests {
         }
     }
 
+    /// A row draws its icon on the circle Settings › Session Rows › Icon Size
+    /// sets, at the size it sets, with the text starting in the column a session
+    /// row uses, and a page on screen takes a new size where it is.
+    @MainActor
+    @Suite("Agents list icon size")
+    struct AgentListIconSizeTests {
+        @Test("Pi and every Agent draw the circle Icon Size holds, and a change reaches the page on screen")
+        func rowsFollowIconSize() async throws {
+            let key = AppPreferenceStore.Appearance.sessionIconSizeKey
+            let original = UserDefaults.standard.object(forKey: key)
+            defer {
+                if let original {
+                    UserDefaults.standard.set(original, forKey: key)
+                } else {
+                    UserDefaults.standard.removeObject(forKey: key)
+                }
+                NotificationCenter.default.post(
+                    name: AppPreferenceStore.Appearance.sessionIconSizeDidChangeNotification,
+                    object: nil
+                )
+            }
+
+            AgentsURLProtocol.reset()
+            let root = makeTestAppRoot()
+            root.coordinator.activeConnection.setAPIClientForTesting(AgentsURLProtocol.makeClient())
+            UserDefaults.standard.set(SessionIconSize.small.rawValue, forKey: key)
+            let screen = AgentListViewController(root: root)
+            let window = try AgentListViewControllerTests.show(screen)
+            defer { AgentListViewControllerTests.hide(window) }
+
+            #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+                screen.view.layoutIfNeeded()
+                return Self.icon(in: screen.view, row: "agents.row.reviewer") != nil
+                    && Self.icon(in: screen.view, row: "agents.row.pi") != nil
+            }, "the list draws Pi and the saved Agent")
+            screen.view.layoutIfNeeded()
+
+            let small = SessionRowIdentity(size: .small)
+            for row in ["agents.row.pi", "agents.row.reviewer"] {
+                let icon = try #require(Self.icon(in: screen.view, row: row), "\(row) has an icon")
+                #expect(icon.shape == .circle, "\(row) draws the circle a session row draws")
+                #expect(icon.bounds.width == small.side, "\(row) draws the size Settings holds")
+            }
+            #expect(Self.textStart(in: screen.view, row: "agents.row.reviewer", title: "Reviewer") == small.textInset,
+                    "the text starts in the column a session row uses")
+            let smallHeight = try #require(Self.cellHeight(in: screen.view, row: "agents.row.reviewer"))
+
+            // Settings saves through the device store, whose hook posts the change.
+            UserDefaults.standard.set(SessionIconSize.large.rawValue, forKey: key)
+            NotificationCenter.default.post(
+                name: AppPreferenceStore.Appearance.sessionIconSizeDidChangeNotification,
+                object: nil
+            )
+            let large = SessionRowIdentity(size: .large)
+            #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+                screen.view.layoutIfNeeded()
+                return Self.icon(in: screen.view, row: "agents.row.pi")?.bounds.width == large.side
+                    && Self.icon(in: screen.view, row: "agents.row.reviewer")?.bounds.width == large.side
+            }, "a page on screen takes the new size without loading again")
+
+            for row in ["agents.row.pi", "agents.row.reviewer"] {
+                let icon = try #require(Self.icon(in: screen.view, row: row))
+                #expect(icon.shape == .circle, "\(row) keeps its circle")
+            }
+            #expect(Self.textStart(in: screen.view, row: "agents.row.reviewer", title: "Reviewer") == large.textInset,
+                    "the text column follows the larger circle")
+            let largeHeight = try #require(Self.cellHeight(in: screen.view, row: "agents.row.reviewer"))
+            #expect(largeHeight > smallHeight, "the row grows for the larger circle: \(smallHeight) then \(largeHeight)")
+            #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+                screen.view.layoutIfNeeded()
+                return (Self.cellHeight(in: screen.view, row: "agents.row.pi") ?? 0) >= large.side
+            }, "the Pi row grows for its circle too")
+        }
+
+        // MARK: - Reading the rows
+
+        /// The row's own icon: the circle `configureCard` puts in it.
+        private static func icon(in root: UIView, row identifier: String) -> IconChoiceUIView? {
+            icons(in: root).first { icon in
+                var ancestor: UIView? = icon
+                while let current = ancestor {
+                    if let cell = current as? SidebarListCell {
+                        return cell.element.accessibilityIdentifier == identifier
+                    }
+                    ancestor = current.superview
+                }
+                return false
+            }
+        }
+
+        private static func icons(in root: UIView) -> [IconChoiceUIView] {
+            var found = (root as? IconChoiceUIView).map { [$0] } ?? []
+            for subview in root.subviews { found += icons(in: subview) }
+            return found
+        }
+
+        /// Where the row's title starts, measured from its icon's leading edge:
+        /// a session row puts the text at `textInset`.
+        private static func textStart(in root: UIView, row identifier: String, title: String) -> CGFloat? {
+            guard let icon = icon(in: root, row: identifier),
+                  let label = labels(in: root, row: identifier).first(where: { $0.text == title }) else { return nil }
+            return label.convert(label.bounds, to: icon.superview).minX - icon.frame.minX
+        }
+
+        private static func labels(in root: UIView, row identifier: String) -> [UILabel] {
+            var found: [UILabel] = []
+            if let label = root as? UILabel, isInRow(root, identifier: identifier) { found.append(label) }
+            for subview in root.subviews { found += labels(in: subview, row: identifier) }
+            return found
+        }
+
+        private static func isInRow(_ view: UIView, identifier: String) -> Bool {
+            var ancestor: UIView? = view
+            while let current = ancestor {
+                if let cell = current as? SidebarListCell {
+                    return cell.element.accessibilityIdentifier == identifier
+                }
+                ancestor = current.superview
+            }
+            return false
+        }
+
+        private static func cellHeight(in root: UIView, row identifier: String) -> CGFloat? {
+            guard let icon = icon(in: root, row: identifier) else { return nil }
+            var ancestor: UIView? = icon
+            while let current = ancestor {
+                if let cell = current as? SidebarListCell { return cell.bounds.height }
+                ancestor = current.superview
+            }
+            return nil
+        }
+    }
+
     @MainActor
     @Suite("A rejected server certificate is not a cancel")
     struct CertificateRejectionLoadTests {

@@ -368,7 +368,7 @@ final class SessionRowDisplayEditorViewController: ListScreenController<
     // MARK: - Rows
 
     /// The switches and Restore Defaults are the kit's theme cards; the Density
-    /// picker is the page's own cell and Session Icons the kit's menu row
+    /// picker is the page's own cell and Icon Size the kit's menu row
     /// (`dequeue(_:at:)`).
     override var rowStyle: ListRowStyle { .card }
 
@@ -420,7 +420,7 @@ final class SessionRowDisplayEditorViewController: ListScreenController<
     }
 
     /// The Density picker is the page's own cell; every other row is the kit's
-    /// card row, except Session Icons, which is the kit's menu row. The kit
+    /// card row, except Icon Size, which is the kit's menu row. The kit
     /// paints its card like any list cell it dequeues.
     private lazy var densityCell = UICollectionView.CellRegistration<SessionRowsDensityCell, Item> { [weak self] cell, _, _ in
         guard let self else { return }

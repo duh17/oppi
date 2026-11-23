@@ -208,18 +208,19 @@ enum SettingsCatalog {
 
     // MARK: - Session Rows (this device)
 
-    /// How big a session list draws its icon: 32 pt, 44 pt, or 56 pt on the
-    /// session's circle. A device setting on the `AppPreferenceStore` key
-    /// `SessionRowIdentity` reads, so every session list and this row show one
-    /// value.
+    /// How big a list draws an icon: 32 pt, 44 pt, or 56 pt on the circle a
+    /// session's or an Agent's icon sits on. A device setting on the
+    /// `AppPreferenceStore` key `SessionRowIdentity` reads, so every session
+    /// list, the Agents list, and this row show one value. It stays on Session
+    /// Rows, the page whose preview shows it, instead of a page of its own.
     static let sessionIconSize = SettingDeclaration<SessionIconSize>(
         id: "settings.sessionRows.iconSize",
         key: AppPreferenceStore.Appearance.sessionIconSizeKey,
         storage: .device(perServer: false),
         default: AppPreferenceStore.Appearance.sessionIconSizeDefault,
         copy: SettingCopy(
-            title: String(localized: "Session Icons"),
-            footer: String(localized: "Small draws a session's icon on a 32 pt circle, Medium 44 pt, and Large 56 pt, in every session list. A larger icon takes a wider column, so titles start further in and a thread's children indent further.")
+            title: String(localized: "Icon Size"),
+            footer: String(localized: "Sizes the icon in the session list and the Agents list: Small draws it on a 32 pt circle, Medium 44 pt, and Large 56 pt. A larger icon takes a wider column, so titles start further in and a thread's children indent further; an Agent's row grows only as tall as its icon needs.")
         )
     )
 

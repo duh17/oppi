@@ -2,7 +2,8 @@ import UIKit
 
 /// The session row's identity column: the session's icon beside its title and
 /// details, on the circle an Agent's own page shows its icon in. The size is the
-/// person's choice (Settings › Session Rows › Session Icons), and the column and
+/// person's choice (Settings › Session Rows › Icon Size, which also sizes the
+/// Agents list's icons), and the column and
 /// the text's start follow it, so a thread's strip and child rows line up on the
 /// same text block at any size.
 struct SessionRowIdentity: Equatable {
@@ -745,8 +746,9 @@ final class SessionRowView: UIView {
             worktreeIcon.heightAnchor.constraint(equalToConstant: 16),
         ])
         arrangeDetailRows(joined: false)
-        // Settings › Session Rows › Session Icons: every row on screen follows the
-        // size where it is, and the list re-measures the cell for the height it needs.
+        // Settings › Session Rows › Icon Size: every row on screen, here and in
+        // the Agents list, follows the size where it is, and the list re-measures
+        // the cell for the height it needs.
         identityObserver = NotificationCenter.default.addObserver(
             forName: AppPreferenceStore.Appearance.sessionIconSizeDidChangeNotification,
             object: nil,

@@ -72,7 +72,7 @@ final class SessionGridBadgeView: UIView {
     }
 
     /// Draws the icon at a new side. A session row calls this when the person
-    /// changes Settings › Session Rows › Session Icons while the row is on
+    /// changes Settings › Session Rows › Icon Size while the row is on
     /// screen: `IconChoiceUIView` draws at its own size, so it is replaced and
     /// given the badge's identity again. The holder lays the badge out at
     /// `iconSize`, so it is the caller's to resize too.

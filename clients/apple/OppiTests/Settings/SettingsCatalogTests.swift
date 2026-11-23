@@ -21,4 +21,18 @@ struct SettingsCatalogTests {
         #expect(SettingStorage.deviceOnServer(.serverMetrics, field: "x").scope(serverName: "mac-studio", workspaceName: nil) == .deviceOnServer("mac-studio"))
         #expect(SettingStorage.piOwned(.serverMetrics, level: .global).scope(serverName: "mac-studio", workspaceName: nil) == .server("mac-studio"))
     }
+
+    /// The size setting covers two lists, so its row and footer name both, and
+    /// it stays on the key and the page it already had: a rename is not a
+    /// migration.
+    @Test("Icon Size names the session list and the Agents list, and keeps its stored place")
+    func iconSizeNamesBothLists() throws {
+        let setting = SettingsCatalog.sessionIconSize
+        #expect(setting.id == "settings.sessionRows.iconSize")
+        #expect(setting.key == AppPreferenceStore.Appearance.sessionIconSizeKey)
+        #expect(setting.copy.title == "Icon Size")
+        let footer = try #require(setting.copy.footer)
+        #expect(footer.contains("session list"))
+        #expect(footer.contains("Agents list"))
+    }
 }

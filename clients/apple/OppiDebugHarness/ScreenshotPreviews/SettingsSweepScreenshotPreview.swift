@@ -680,7 +680,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
             icon: agentIcon,
             instructions: AgentInstructions(text: "Review the change against the HIG.")
         ),
-        createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1), archivedAt: nil
+        createdAt: Date().addingTimeInterval(-12 * 86_400), updatedAt: Date().addingTimeInterval(-20 * 60), archivedAt: nil
     )
 
     /// A realistic restricted Agent: one MCP server narrowed to the tools it needs,
@@ -707,7 +707,21 @@ final class SettingsSweepPreviewController: PreviewRootController {
             context: AgentContext(skills: ["household", "school-calendar"], sessionHistory: false),
             sessionDefaults: AgentSessionDefaults(model: "anthropic/claude-sonnet-5", thinkingLevel: .medium)
         ),
-        createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1), archivedAt: nil
+        createdAt: Date().addingTimeInterval(-30 * 86_400), updatedAt: Date().addingTimeInterval(-4 * 3_600), archivedAt: nil
+    )
+
+    /// A third Agent whose icon is a symbol, so this page shows the kinds an
+    /// icon can be beside Pi's mark: an image (Design Reviewer), a symbol (this
+    /// one), and an emoji (Nanny). Its detail is read-only over the fixture.
+    private static let triager = StoredAgentDefinition(
+        id: "agent-triager", name: "Night Triager", icon: .symbol("moon.stars.fill", effect: .pulse),
+        description: "Sorts the night shift's findings into a backlog.", status: .active, version: 1,
+        definition: AgentDefinition(
+            name: "Night Triager",
+            icon: .symbol("moon.stars.fill", effect: .pulse),
+            instructions: AgentInstructions(text: "Rank the night shift's findings and open the ones worth doing.")
+        ),
+        createdAt: Date().addingTimeInterval(-5 * 86_400), updatedAt: Date().addingTimeInterval(-2 * 3_600), archivedAt: nil
     )
 
     /// Pi's built-in tools as the server lists them: the four Pi starts a session with are on.
@@ -788,6 +802,11 @@ final class SettingsSweepPreviewController: PreviewRootController {
             status: nanny.status, version: nanny.version, createdAt: nanny.createdAt,
             updatedAt: nanny.updatedAt, archivedAt: nil
         )
+        let triagerSummary = AgentDefinitionSummary(
+            id: triager.id, name: triager.name, icon: triager.icon, description: triager.description,
+            status: triager.status, version: triager.version, createdAt: triager.createdAt,
+            updatedAt: triager.updatedAt, archivedAt: nil
+        )
         let scheduleSummary = AgentScheduleSummary(
             id: schedule.id, name: schedule.name, status: .active, trigger: schedule.trigger,
             action: AgentScheduleActionSummary(
@@ -861,7 +880,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
                 contributedCommands: ["/workflow"]
             )),
             "/server/resources/extensions/oppi-control": json(controlDetail),
-            "/agents": json(Agents(agents: [agentSummary, nannySummary])),
+            "/agents": json(Agents(agents: [agentSummary, nannySummary, triagerSummary])),
             "/mcp/scopes/global/servers": json(McpServersResponse(scope: mcpScope, activeSignIn: nil)),
             "/icon-assets/\(agentIconAssetId)": agentIconFetchFails ? Data() : agentIconGIF ?? Data(),
             "/schedules/\(schedule.id)/runs": Data(#"{"runs":[]}"#.utf8),
@@ -873,15 +892,17 @@ final class SettingsSweepPreviewController: PreviewRootController {
         final class Records: @unchecked Sendable {
             var agent: StoredAgentDefinition
             var nanny: StoredAgentDefinition
+            var triager: StoredAgentDefinition
             var schedule: AgentSchedule
 
-            init(agent: StoredAgentDefinition, nanny: StoredAgentDefinition, schedule: AgentSchedule) {
+            init(agent: StoredAgentDefinition, nanny: StoredAgentDefinition, triager: StoredAgentDefinition, schedule: AgentSchedule) {
                 self.agent = agent
                 self.nanny = nanny
+                self.triager = triager
                 self.schedule = schedule
             }
         }
-        let records = Records(agent: agent, nanny: nanny, schedule: schedule)
+        let records = Records(agent: agent, nanny: nanny, triager: triager, schedule: schedule)
         // The list reloads after a pause, so it shows the status the pause stored.
         func currentScheduleSummary() -> AgentScheduleSummary {
             var current = scheduleSummary
@@ -890,6 +911,9 @@ final class SettingsSweepPreviewController: PreviewRootController {
         }
         SettingsSweepFixtureURLProtocol.recordHandler = { method, path, body in
             let object = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
+            if path == "/agents/\(triager.id)", method == "GET" {
+                return json(AgentBody(agent: records.triager))
+            }
             if path == "/agents/\(nanny.id)" {
                 switch method {
                 case "GET":
