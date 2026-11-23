@@ -1200,19 +1200,25 @@ final class RexMonitor {
 
     /// A new pane in an existing session: a shell split after the session's
     /// opening pane (`Session.openingPane`), focused on the host no further than Rex
-    /// requires, and returned for the caller to open. The session's own view event
+    /// requires, and returned for the caller to open. A session with no pane (made
+    /// empty, or whose last window closed) has nothing to split, and Rex refuses a
+    /// split there (`conflict`, "session has no windows"), so its pane comes in a
+    /// new window, which Rex makes the active one. The session's own view event
     /// lists it, as for a session made here.
     func createPane(in sessionID: String) async throws -> RexPaneTarget {
         let control = try openControl()
-        guard let session = snapshot?.sessions.first(where: { $0.sessionID == sessionID }),
-              let anchor = session.openingPane else {
+        guard let session = snapshot?.sessions.first(where: { $0.sessionID == sessionID }) else {
             throw RexClientError.unreadable("the session to add a pane to")
         }
-        let shell = ["flavor": RexSessionConnection.shellFlavor]
-        let answer = try await control.call("session.new_split", [
-            "session_id": sessionID, "anchor_id": anchor.blockID, "direction": "horizontal", "side": "after",
-            "focus": false, "layout": ["block": shell],
-        ])
+        let layout = ["block": ["flavor": RexSessionConnection.shellFlavor]]
+        let answer = if let anchor = session.openingPane {
+            try await control.call("session.new_split", [
+                "session_id": sessionID, "anchor_id": anchor.blockID, "direction": "horizontal", "side": "after",
+                "focus": false, "layout": layout,
+            ])
+        } else {
+            try await control.call("session.new_window", ["session_id": sessionID, "focus": false, "layout": layout])
+        }
         struct Created: Decodable {
             let blockIDs: [String?]?
             enum CodingKeys: String, CodingKey { case blockIDs = "block_ids" }

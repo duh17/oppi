@@ -1264,12 +1264,15 @@ struct SSHTerminalTests {
     nonisolated private static let rexPlain = "block:01a18a7e-911a-721b-a50b-14dfc0cc62cb"
     nonisolated private static let rexBlocked = "block:01a18a7e-911a-721b-a50b-14dfc0cc62ca"
     nonisolated private static let rexNew = "block:01a18a7e-911a-721b-a50b-14dfc0cc62cd"
+    nonisolated private static let rexSplitBlock = "block:01a205a8-58ec-7720-b23a-37f3374669dd"
+    nonisolated private static let rexWindowBlock = "block:01a205a8-58cf-720b-ad30-8666b309ee52"
 
     /// What Rex answers, shaped like a real host: a session with two windows
     /// (the second not active) holding a reporting pi, a plain shell, and a
     /// Claude whose tool waits on a permission, beside a session with no
-    /// windows (Rex writes its `windows` as null). The tests change it between
-    /// requests, as a Rex that moves on.
+    /// windows (Rex leaves `windows` out). The tests change it between
+    /// requests, as a Rex that moves on. New panes answer with replies a real
+    /// Rex (0.1.0-preview.21, API revision 13 negotiated) sent.
     private final class RexWorld: Sendable {
         struct State {
             var revision = 5
@@ -1300,7 +1303,7 @@ struct SSHTerminalTests {
                 return .result(#"{"sessions":[{"session_id":"\#(SSHTerminalTests.rexSession)","label":"\#(state.withLock { $0.label })"},{"session_id":"\#(SSHTerminalTests.rexEmpty)","label":"empty"}]}"#)
             case "session.view":
                 if request.string("session_id") == SSHTerminalTests.rexEmpty {
-                    return .result(#"{"revision":1,"session_id":"\#(SSHTerminalTests.rexEmpty)","label":"empty","windows":null}"#)
+                    return .result(#"{"revision":24,"session_id":"\#(SSHTerminalTests.rexEmpty)","label":"empty"}"#)
                 }
                 guard request.string("session_id") == SSHTerminalTests.rexSession else {
                     return .refuse(code: "session_not_found", message: "no such session")
@@ -1328,6 +1331,17 @@ struct SSHTerminalTests {
                 default:
                     return .result(#"{"records":[]}"#)
                 }
+            case "session.new_split":
+                // Rex splits a placed block only; a session without windows has none.
+                guard request.string("session_id") == SSHTerminalTests.rexSession else {
+                    return .refuse(code: "conflict", message: "session has no windows")
+                }
+                return .result(#"{"anchor_id":"\#(request.string("anchor_id") ?? "")","block_ids":["\#(SSHTerminalTests.rexSplitBlock)"],"split_ids":["split:01a205a8-58fc-70c7-8ac6-510a61a28764"],"revision":6}"#)
+            case "session.new_window":
+                return .result(#"{"window_id":"window:01a205a8-58eb-7236-a3d7-3059ac876ab2","block_ids":["\#(SSHTerminalTests.rexWindowBlock)"],"revision":25}"#)
+            case "session.disown_block":
+                let blocks = (request.object("block_ids") as? [String] ?? []).map { #"{"block_id":"\#($0)"}"# }
+                return .result(#"{"blocks":[\#(blocks.joined(separator: ","))]}"#)
             default:
                 return .refuse(code: "bad_request", message: "unexpected \(request.method)")
             }
@@ -1418,6 +1432,40 @@ struct SSHTerminalTests {
 
         await rig.stop()
         #expect(host.isClosed)
+    }
+
+    /// ⊕ on a session adds a shell and hands it back to open: beside the
+    /// session's opening pane, or, in a session with no windows (where Rex
+    /// refuses a split), in a new window. Either way the pane is unfocused on
+    /// the host beyond what Rex requires and given back for the terminal that
+    /// opens it to take.
+    @Test func aNewPaneSplitsTheOpeningPaneOrOpensAWindowInAnEmptySession() async throws {
+        let host = RexWorld().host()
+        let rig = try await startRex([host])
+        let monitor = rig.monitor
+        func payload(_ request: RexFakeHost.Request?) throws -> NSDictionary {
+            let request = try #require(request)
+            return try #require(JSONSerialization.jsonObject(with: Data(request.payload.utf8)) as? NSDictionary)
+        }
+        let shell = ["block": ["flavor": RexSessionConnection.shellFlavor]] as NSDictionary
+
+        let split = try await monitor.createPane(in: Self.rexSession)
+        #expect(split == RexPaneTarget(sessionID: Self.rexSession, blockID: Self.rexSplitBlock, label: "Shell"))
+        #expect(try payload(host.requests.last { $0.method == "session.new_split" }) == [
+            "session_id": Self.rexSession, "anchor_id": Self.rexPi, "direction": "horizontal", "side": "after",
+            "focus": false, "layout": shell,
+        ] as NSDictionary)
+
+        let windowed = try await monitor.createPane(in: Self.rexEmpty)
+        #expect(windowed == RexPaneTarget(sessionID: Self.rexEmpty, blockID: Self.rexWindowBlock, label: "Shell"))
+        #expect(host.requests.filter { $0.method == "session.new_split" }.count == 1, "an empty session is not split")
+        #expect(try payload(host.requests.last { $0.method == "session.new_window" }) == [
+            "session_id": Self.rexEmpty, "focus": false, "layout": shell,
+        ] as NSDictionary)
+        #expect(host.requests.filter { $0.method == "session.disown_block" }.map { $0.object("block_ids") as? [String] }
+            == [[Self.rexSplitBlock], [Self.rexWindowBlock]])
+
+        await rig.stop()
     }
 
     /// Events change the picture without another read: titles, folders, and
@@ -3760,5 +3808,12 @@ private actor TerminalConnectionFixture: SSHTerminalConnection {
         byteSink.finish()
         resizeSink.finish()
         attemptSink.finish()
+    }
+}
+
+private extension RexFakeHost.Request {
+    /// A field of the payload that is not a string, such as `block_ids`.
+    func object(_ key: String) -> Any? {
+        (try? JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any])?[key]
     }
 }
